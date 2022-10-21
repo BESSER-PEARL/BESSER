@@ -128,7 +128,6 @@ class Class(Type):
         super().__init__(name)
         self.attributes: set[Property] = attributes
 
-
     @property
     def attributes(self) -> set[Property]:
         return self.__attributes
@@ -178,7 +177,7 @@ class BinaryAssociation(Association):
 
 class AssociationClass(Class):
     # Class that has an association nature
-    def __init__(self, name: str, attributes: set[Property], references: set[Property], association: Association):
+    def __init__(self, name: str, attributes: set[Property], association: Association):
         super().__init__(name, attributes)
         self.association: Association = association
 
@@ -253,6 +252,21 @@ class GeneralizationSet(NamedElement):
         self.__is_complete = is_complete
 
 
+# A set of related classes that should be processed togehter
+class Package(NamedElement):
+    def __init__(self, name: str, classes: set[Class]):
+        super().__init__(name)
+        self.classes: set[Class] = classes
+
+    @property
+    def classes(self) -> set[Class]:
+        return self.__classes
+
+    @classes.setter
+    def classes(self, classes: set[Class]):
+        self.__classes = classes
+
+
 # A model is the root element that comprises a number of classes and associations
 class DomainModel(NamedElement):
 
@@ -279,6 +293,7 @@ class DomainModel(NamedElement):
     def get_associations(self) -> set[Association]:
         return {element for element in self.elements if isinstance(element, Association)}
 
-
+    def get_packages(self) -> set[Package]:
+        return {element for element in self.elements if isinstance(element, Package)}
 
 

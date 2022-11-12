@@ -252,7 +252,7 @@ class GeneralizationSet(NamedElement):
         self.__is_complete = is_complete
 
 
-# A set of related classes that should be processed togehter
+# A set of related classes that should be processed together
 class Package(NamedElement):
     def __init__(self, name: str, classes: set[Class]):
         super().__init__(name)

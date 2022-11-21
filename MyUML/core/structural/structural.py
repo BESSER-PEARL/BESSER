@@ -177,6 +177,8 @@ class BinaryAssociation(Association):
 
 class AssociationClass(Class):
     # Class that has an association nature
+    # Note that Python does support multiple inheritance but we do not use it here as this is a diamon-shape structure
+    # and we prefer the simpler solution to stick to single inheritance
     def __init__(self, name: str, attributes: set[Property], association: Association):
         super().__init__(name, attributes)
         self.association: Association = association

@@ -1,7 +1,7 @@
 import pytest
 
-from core.structural.structural import NamedElement, DomainModel, Type, Class, \
-    Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, GeneralizationSet
+from MyUML.core.structural.structural import NamedElement, DomainModel, Type, Class, \
+    Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, GeneralizationSet, AssociationClass
 
 
 def test_named_element():
@@ -98,6 +98,21 @@ def test_binary_association():
         aend: Property = Property(name="end1", owner=None, property_type=class1, multiplicity=Multiplicity(0, 1))
         association: BinaryAssociation = BinaryAssociation(name="association1", ends={aend})
         assert "A binary association should have two ends" in str(excinfo.value)
+
+
+# Testing the creation of an association class with an attribute
+def test_association_class():
+    class1: Class = Class(name="name1", attributes=None)
+    class2: Class = Class(name="name2", attributes=None)
+    aend1: Property = Property(name="end1", owner=None, property_type=class1, multiplicity=Multiplicity(0, 1))
+    aend2: Property = Property(name="end2", owner=None, property_type=class2, multiplicity=Multiplicity(0, 1))
+    association: BinaryAssociation = BinaryAssociation(name="association1", ends={aend1, aend2})
+    attribute1: Property = Property(name="attribute1", owner=None, property_type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
+    association_class: AssociationClass = AssociationClass(name="association_class1", attributes={attribute1}, association=association)
+    assert len(association_class.attributes) == 1
+    assert attribute1 in association_class.attributes
+    assert association_class.association.name == "association1"
+
 
 def test_generalization_initialization():
     class1: Class = Class(name="name1", attributes=None)

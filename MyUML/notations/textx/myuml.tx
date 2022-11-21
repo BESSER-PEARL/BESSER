@@ -1,3 +1,23 @@
 DomainModel:
-  'model' name=STRING
+  'domain' name=STRING
 ;
+
+
+/*
+DomainModel:
+  'domain' name=STRING '{'
+      classes+=Class
+  '}'
+;
+
+Class:
+  'class' name=STRING '{'
+      attributes+=Attribute
+  '}'
+;
+
+Attribute:
+  'attribute' name=STRING type=STRING
+;
+*/
+

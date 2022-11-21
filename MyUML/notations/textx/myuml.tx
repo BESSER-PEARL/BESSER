@@ -1,7 +1,3 @@
-HelloWorldModel:
-  'hello' to_greet+=Who[',']
-;
-
-Who:
-  name = /[^,]*/
+DomainModel:
+  'model' name=STRING
 ;

@@ -272,7 +272,7 @@ class Package(NamedElement):
 # A model is the root element that comprises a number of classes and associations
 class DomainModel(NamedElement):
 
-    def __init__(self, name: str, elements: set[Type]):
+    def __init__(self, name: str, elements: set[Type] = None):
         super().__init__(name)
         self.elements: set[Type] = elements
 
@@ -283,11 +283,14 @@ class DomainModel(NamedElement):
     @elements.setter
     def elements(self, elements: set[Type]):
         # Check no duplicate names
-        # Get a list of names from the elements
-        names = [element.name for element in elements]
-        if len(names) != len(set(names)):
-            raise ValueError("The model cannot have two types with the same name")
-        self.__elements = elements
+        if (elements is not None):
+            # Get a list of names from the elements
+            names = [element.name for element in elements]
+            if len(names) != len(set(names)):
+                raise ValueError("The model cannot have two types with the same name")
+            self.__elements = elements
+        else:
+            self.__elements = set()
 
     def get_classes(self) -> set[Class]:
         return {element for element in self.elements if isinstance(element, Class)}

@@ -14,6 +14,8 @@ def test_model_initialization():
     class2: Type = Type(name="element2")
     model: DomainModel = DomainModel(name="mymodel", elements={class1, class2})
     assert len(model.elements) == 2
+    model_empty: DomainModel = DomainModel(name="mymodel")
+    assert len(model_empty.elements) == 0
 
 
 # Testing the WFR for duplicate names in a model

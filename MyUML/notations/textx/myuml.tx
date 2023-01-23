@@ -1,10 +1,4 @@
 DomainModel:
-  'domain' name=STRING
-;
-
-
-/*
-DomainModel:
   'domain' name=STRING '{'
       classes+=Class
   '}'
@@ -12,12 +6,6 @@ DomainModel:
 
 Class:
   'class' name=STRING '{'
-      attributes+=Attribute
   '}'
 ;
-
-Attribute:
-  'attribute' name=STRING type=STRING
-;
-*/
 

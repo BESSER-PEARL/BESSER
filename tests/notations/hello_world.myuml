@@ -1,1 +1,6 @@
-domain "MyFirstModel"
+domain "MyFirstModel" {
+   class "A" {
+   }
+   class "B" {
+   }
+}

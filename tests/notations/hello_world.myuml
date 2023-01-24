@@ -1,6 +1,10 @@
-domain "MyFirstModel" {
-   class "A" {
+domain MyFirstModel {
+   class A {
+      a1: int
+      a2: int
    }
-   class "B" {
+   class B
+   {
+       b1: int
    }
 }

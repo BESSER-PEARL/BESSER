@@ -1,11 +1,20 @@
 DomainModel:
-  'domain' name=STRING '{'
+  'domain' name=ID '{'
       classes+=Class
   '}'
 ;
 
 Class:
-  'class' name=STRING '{'
+  'class' name=ID '{'
+        attributes+=Attribute
   '}'
 ;
 
+Attribute:
+  name=ID ':' type=Type
+;
+
+
+Type:
+  "int" | "str" | "float"
+;

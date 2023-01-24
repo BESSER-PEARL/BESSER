@@ -25,4 +25,11 @@ def test_textx_transf():
     assert len(domain.elements) == 2
     # assert an element of the elements set is named A via transforming first the set into a list
     assert list(domain.elements)[0].name == "A" or list(domain.elements)[1].name == "A"
+    classA: Class = list(domain.elements)[0] if list(domain.elements)[0].name == "A" else list(domain.elements)[1]
+    assert len(classA.attributes) == 2
+    #select the name of all elements in the attributes set and assert that the set contains "a1" and "a2"
+    assert "a1" in [attr.name for attr in classA.attributes]
+
+
+
 

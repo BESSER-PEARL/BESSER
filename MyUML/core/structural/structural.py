@@ -85,7 +85,7 @@ class Multiplicity:
 # Properties are owned by a class or an association and point to a type with a multiplicity
 class Property(NamedElement):
 
-    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity):
+    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1)):
         super().__init__(name)
         self.owner: Type = owner
         self.type: Type = property_type

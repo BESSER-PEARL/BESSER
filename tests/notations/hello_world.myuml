@@ -1,10 +1,23 @@
-domain MyFirstModel {
+@startuml
    class A {
-      a1: int
-      a2: int
+      -a1: int
+      b1: string
    }
+   
    class B
    {
-       b1: int
+      +b1: int
+      +functionB()
    }
-}
+   
+   class C
+   {
+      +c1: int
+      +void functionC()
+   }
+
+   A o-- B: AggregationAB
+   A *-- C: CompositionAC
+   B -- C: BidirectionalBC
+   C <--A: UnidirectionalAC
+@enduml

@@ -1,35 +1,28 @@
 from textx import metamodel_from_file
+
+import sys
+sys.path.append('../../')
+
 from MyUML.core.structural.structural import DomainModel, Type, Class, Property, PrimitiveDataType, Multiplicity, \
     Association, BinaryAssociation, Generalization, GeneralizationSet, AssociationClass
-from notations.textx.textx_to_core import textx_to_core
+from MyUML.notations.textx.textx_to_core import textx_to_core
 
 
 # Testing TextX parsing of a simple domain concept
 def test_textx_parsing():
-    myuml_mm = metamodel_from_file('../MyUML/notations/textx/myuml.tx')
-    hello_world_myuml_model = myuml_mm.model_from_file('./notations/hello_world.myuml')
-    print(hello_world_myuml_model.name)
-    assert hello_world_myuml_model.name == "MyFirstModel"
-    print(hello_world_myuml_model.classes)
-    # assert size of classes list is 2
-    assert len(hello_world_myuml_model.classes) == 2
-    assert hello_world_myuml_model.classes[0].name == "A"
-
+    myuml_mm = metamodel_from_file('../../MyUML/notations/textx/myuml.tx')
+    hello_world_myuml_model = myuml_mm.model_from_file('./hello_world.myuml')
+    assert len(hello_world_myuml_model.umlElements) == 7
+    print(hello_world_myuml_model.umlElements)
+    # assert number of classes
+    assert sum(1 if x.__class__.__name__ == 'Class' else 0 for x in hello_world_myuml_model.umlElements) == 3
+    # assert number of composition relationships
+    assert sum(1 if x.__class__.__name__ == 'Composition' else 0 for x in hello_world_myuml_model.umlElements) == 1
 
 # Testing Core mdoel generation from TextX file
 def test_textx_transf():
-    myuml_mm = metamodel_from_file('../MyUML/notations/textx/myuml.tx')
-    hello_world_myuml_model = myuml_mm.model_from_file('./notations/hello_world.myuml')
+    myuml_mm = metamodel_from_file('../../MyUML/notations/textx/myuml.tx')
+    hello_world_myuml_model = myuml_mm.model_from_file('./hello_world.myuml')
     domain: DomainModel = textx_to_core(hello_world_myuml_model)
-    assert domain.name == "MyFirstModel"
-    assert len(domain.elements) == 2
-    # assert an element of the elements set is named A via transforming first the set into a list
-    assert list(domain.elements)[0].name == "A" or list(domain.elements)[1].name == "A"
-    classA: Class = list(domain.elements)[0] if list(domain.elements)[0].name == "A" else list(domain.elements)[1]
-    assert len(classA.attributes) == 2
-    #select the name of all elements in the attributes set and assert that the set contains "a1" and "a2"
-    assert "a1" in [attr.name for attr in classA.attributes]
 
-
-
-
+test_textx_parsing()

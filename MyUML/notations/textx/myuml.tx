@@ -1,20 +1,72 @@
 DomainModel:
-  'domain' name=ID '{'
-      classes+=Class
-  '}'
+  '@startuml'
+    umlElements*=ClassElement
+    oclConstraints*=Constraint
+  '@enduml'
+;
+
+ClassElement:
+  Class | Relationship
 ;
 
 Class:
   'class' name=ID '{'
-        attributes+=Attribute
+    classContents*=ClassContent
   '}'
 ;
 
-Attribute:
-  name=ID ':' type=Type
+Relationship:
+  Association | Inheritance
 ;
 
+Association:
+  Bidirectional | Unidirectional | Aggregation | Composition
+;
+
+Bidirectional:
+  from=[Class] '--' to=[Class] ':' name=ID
+;
+
+Unidirectional:
+  from=[Class] '<'? '--' '>'? to=[Class] ':' name=ID
+;
+
+Aggregation:
+  from=[Class] 'o'? '--' 'o'? to=[Class] ':' name=ID
+;
+
+Composition:
+  from=[Class] '*'? '--' '*'? to=[Class] ':' name=ID
+;
+
+Inheritance:
+  from=[Class] '<|'? '--' '|>'? to=[Class]
+;
+
+ClassContent:
+  Attribute | Method
+;
+
+Attribute:
+  visibility?=Visibility name=ID ':' type=Type
+;
+
+Method:
+  visibility?=Visibility modifier?=Modifier 'void'? name=ID '()'
+;
+
+Visibility: 
+  '#' | '-' | '~' | '+'
+;
 
 Type:
-  "int" | "str" | "float"
+  /.*/
+;
+
+Modifier:
+  '{static}' | '{abstract}'
+;
+
+Constraint:
+  'constraint:' expression=STRING
 ;

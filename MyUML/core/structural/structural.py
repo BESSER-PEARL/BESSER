@@ -1,12 +1,11 @@
 from abc import ABC, abstractmethod
+from typing import Any
  
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
 
-
 class Element(ABC):
     pass
-
 
 # Superclass of all structural elements with a name
 class NamedElement(Element):

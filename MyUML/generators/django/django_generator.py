@@ -1,6 +1,7 @@
 import os
 
 from core.structural.structural import DomainModel
+from generators.django.auxiliary import get_constraints_for_class
 
 
 class DjangoGenerator:
@@ -60,14 +61,21 @@ class DjangoModelsGeneratorRuleBased(DjangoModelsGenerator):
 
         # Open the file in write mode
         with open(file_path, "w") as f :
-            for element in self.model.elements:
-                class_text: str = f'''class {element.name}(models.Model) :'''
+            for class_to_generate in self.model.get_classes():
+                class_text: str = f'''class {class_to_generate.name}(models.Model) :'''
                 f.write(class_text +"\n")
-                #for each element that it's a class
-                for attribute in element.attributes:
+                #for each attribute in the class
+                for attribute in class_to_generate.attributes:
                     attribute_text: str = f'''{attribute.name} = models.CharField(max_length=100)''' #to be replaced with the actual text depending on the type
                     f.write("    " + attribute_text +"\n")
-
+                # for each constraint in the model that has as context class_to_generate
+                constraints_for_class = get_constraints_for_class(self.model, class_to_generate)
+                if (len(constraints_for_class)>0):
+                    f.write("\n"+"    " + "def clean(self):" + "\n")
+                    for constraint in constraints_for_class:
+                        validator_text = f'''if not({constraint.expression.to_string()}) : raise ValidationError("Constraint {constraint.name} violated")'''
+                        f.write("        " + validator_text + "\n")
+                f.write("\n")
 
 
 class DjangoModelsGeneratorLLMBased(DjangoModelsGenerator):

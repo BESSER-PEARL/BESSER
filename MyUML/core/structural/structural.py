@@ -60,6 +60,20 @@ class PrimitiveDataType(DataType):
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
 
+class TypedElement(NamedElement):
+    def __init__(self, name: str, type: Type):
+        super().__init__(name)
+        self.type: Type = type
+
+    @property
+    def type(self) -> Type:
+        return self.__type
+
+    @type.setter
+    def type(self, type: Type):
+        self.__type = type
+
+
 # Min and max multiplicities of a Property
 class Multiplicity:
     def __init__(self, min_multiplicity: int, max_multiplicity: int):
@@ -93,12 +107,12 @@ class Multiplicity:
 
 
 # Properties are owned by a class or an association and point to a type with a multiplicity
-class Property(NamedElement):
+class Property(TypedElement):
 
     def __init__(self, name: str, visibility: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), is_composite : bool = False):
         super().__init__(name, visibility)
         self.owner: Type = owner
-        self.type: Type = property_type
+        self.type: Type = type
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
 
@@ -112,14 +126,6 @@ class Property(NamedElement):
         if isinstance(owner, DataType):
             raise ValueError("Invalid owner")
         self.__owner = owner
-
-    @property
-    def type(self) -> Type:
-        return self.__type
-
-    @type.setter
-    def type(self, property_type: Type):
-        self.__type = property_type
 
     @property
     def multiplicity(self) -> Multiplicity:
@@ -154,13 +160,31 @@ class Class(Type):
 
     @attributes.setter
     def attributes(self, attributes: set[Property]):
-        if(attributes is not None):
+        if attributes is not None:
             names = [attribute.name for attribute in attributes]
             if len(names) != len(set(names)):
                 raise ValueError("A class cannot have two attributes with the same name")
             for attribute in attributes:
                 attribute.owner = self
             self.__attributes = attributes
+        else:
+            self.__attributes = set()
+
+    #add attribute method
+    def add_attribute(self, attribute: Property):
+        if self.attributes is not None:
+            if attribute.name in [attribute.name for attribute in self.attributes]:
+                raise ValueError("A class cannot have two attributes with the same name")
+        attribute.owner = self
+        self.attributes.add(attribute)
+
+    @property
+    def is_abstract(self) -> bool:
+        return self.__is_abstract
+
+    @is_abstract.setter
+    def is_abstract(self, is_abstract: bool):
+        self.__is_abstract = is_abstract
 
     @property
     def is_abstract(self) -> bool:
@@ -297,28 +321,115 @@ class Package(NamedElement):
         self.__classes = classes
 
 
+# A constraint class to represent a constraint over a class
+class Constraint(NamedElement):
+    def __init__(self, name: str, context: Class, expression: Any, language: str):
+        super().__init__(name)
+        self.context: Class = context
+        self.expression: str = expression
+        self.language: str = language
+
+    @property
+    def context(self) -> Class:
+        return self.__context
+
+    @context.setter
+    def context(self, context: Class):
+        self.__context = context
+
+    @property
+    def expression(self) -> str:
+        return self.__expression
+
+    @expression.setter
+    def expression(self, expression: Any):
+        self.__expression = expression
+
+    @property
+    def language(self) -> str:
+        return self.__language
+
+    @language.setter
+    def language(self, language: str):
+        self.__language = language
+
+    def __repr__(self):
+        return f'Constraint({self.name},{self.context.name},{self.language},{self.expression})'
+
+
 # A model is the root element that comprises a number of classes and associations
 class DomainModel(NamedElement):
 
-    def __init__(self, name: str, elements: set[Type] = None):
+    def __init__(self, name: str, types: set[Type], associations: set[Association], packages: set[Package], constraints: set[Constraint]):
         super().__init__(name)
-        self.elements: set[Type] = elements
+        self.types: set[Type] = types
+        self.packages: set[Package] = packages
+        self.constraints: set[Constraint] = constraints
+        self.associations: set[Association] = associations
 
     @property
-    def elements(self) -> set[Type]:
-        return self.__elements
+    def types(self) -> set[Type]:
+        return self.__types
 
-    @elements.setter
-    def elements(self, elements: set[Type]):
+    @types.setter
+    def types(self, types: set[Type]):
         # Check no duplicate names
-        if (elements is not None):
+        if types is not None:
             # Get a list of names from the elements
-            names = [element.name for element in elements]
+            names = [type.name for type in types]
             if len(names) != len(set(names)):
                 raise ValueError("The model cannot have two types with the same name")
-            self.__elements = elements
+            self.__types = types
         else:
-            self.__elements = set()
+            self.__types = set()
+
+    @property
+    def associations(self) -> set[Association]:
+        return self.__associations
+
+    @associations.setter
+    def associations(self, associations: set[Association]):
+        # Check no duplicate names
+        if associations is not None:
+            # Get a list of names from the elements
+            names = [association.name for association in associations]
+            if len(names) != len(set(names)):
+                raise ValueError("The model cannot have two associations with the same name")
+            self.__associations = associations
+        else:
+            self.__associations = set()
+
+    @property
+    def packages(self) -> set[Package]:
+        return self.__packages
+
+    @packages.setter
+    def packages(self, packages: set[Package]):
+        # Check no duplicate names
+        if packages is not None:
+            # Get a list of names from the elements
+            names = [package.name for package in packages]
+            if len(names) != len(set(names)):
+                raise ValueError("The model cannot have two packages with the same name")
+            self.__packages = packages
+        else:
+            self.__packages = set()
+
+    @property
+    def constraints(self) -> set[Constraint]:
+        return self.__constraints
+
+    @constraints.setter
+    def constraints(self, constraints: set[Constraint]):
+        # Check no duplicate names
+        if constraints is not None:
+            # Get a list of names from the elements
+            names = [constraint.name for constraint in constraints]
+            if len(names) != len(set(names)):
+                raise ValueError("The model cannot have two constraints with the same name")
+            self.__constraints = constraints
+        else:
+            self.__constraints = set()
 
     def get_classes(self) -> set[Class]:
         return {element for element in self.elements if isinstance(element, Class)}

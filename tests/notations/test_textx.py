@@ -32,6 +32,8 @@ def test_textx_transf():
     myuml_mm = metamodel_from_file('../../MyUML/notations/textx/myuml.tx')
     hello_world_myuml_model = myuml_mm.model_from_file('./hello_world.myuml')
     domain: DomainModel = textx_to_core(hello_world_myuml_model)
-    return domain
+    # assert number of classes
+    assert sum(1 if x.__class__.__name__ == 'Class' else 0 for x in domain.types) == 3
 
 test_textx_parsing()
+test_textx_transf()

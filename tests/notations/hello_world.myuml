@@ -1,10 +1,10 @@
 @startuml
    class A {
       -a1: int
-      b1: bool
+      a2: bool
    }
 
-   class B {
+   abstract class B {
       +b1: int
       #b2: float
       functionB()

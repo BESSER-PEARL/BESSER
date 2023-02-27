@@ -359,7 +359,7 @@ class Constraint(NamedElement):
 # A model is the root element that comprises a number of classes and associations
 class DomainModel(NamedElement):
 
-    def __init__(self, name: str, types: set[Type], associations: set[Association], packages: set[Package], constraints: set[Constraint]):
+    def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None, packages: set[Package] = None, constraints: set[Constraint] = None):
         super().__init__(name)
         self.types: set[Type] = types
         self.packages: set[Package] = packages

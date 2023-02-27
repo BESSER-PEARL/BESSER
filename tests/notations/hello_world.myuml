@@ -1,23 +1,23 @@
 @startuml
    class A {
       -a1: int
-      b1: string
+      b1: bool
    }
-   
-   class B
-   {
+
+   class B {
       +b1: int
-      +functionB()
+      #b2: float
+      functionB()
    }
-   
-   class C
-   {
+
+   class C {
       +c1: int
       +void functionC()
    }
 
    A o-- B: AggregationAB
+   A --o B: AggregationAB2
    A *-- C: CompositionAC
-   B -- C: BidirectionalBC
-   C <--A: UnidirectionalAC
+   B '1' -- '1..*' C: BidirectionalBC
+   C <-- A: UnidirectionalAC
 @enduml

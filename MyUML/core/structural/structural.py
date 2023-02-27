@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-
+ 
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
 
@@ -11,8 +11,9 @@ class Element(ABC):
 # Superclass of all structural elements with a name
 class NamedElement(Element):
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, visibility: str = "public"):
         self.name: str = name
+        self.visibility = visibility
 
     @property
     def name(self) -> str:
@@ -22,6 +23,15 @@ class NamedElement(Element):
     def name(self, name: str):
         self.__name = name
 
+    @property
+    def visibility(self) -> str:
+        return self.__visibility
+
+    @visibility.setter
+    def visibility(self, visibility: str):
+        if visibility not in ['public', 'private', 'protected', 'package']:
+            raise ValueError("Invalid visibility")
+        self.__visibility = visibility
 
 # Superclass of classes and data types in the model
 class Type(NamedElement):
@@ -85,11 +95,12 @@ class Multiplicity:
 # Properties are owned by a class or an association and point to a type with a multiplicity
 class Property(NamedElement):
 
-    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1)):
-        super().__init__(name)
+    def __init__(self, name: str, visibility: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), is_composite : bool = False):
+        super().__init__(name, visibility)
         self.owner: Type = owner
         self.type: Type = property_type
         self.multiplicity: Multiplicity = multiplicity
+        self.is_composite: bool = is_composite
 
     @property
     def owner(self) -> Type:
@@ -118,14 +129,23 @@ class Property(NamedElement):
     def multiplicity(self, multiplicity: Multiplicity):
         self.__multiplicity = multiplicity
 
+    @property
+    def is_composite(self) -> bool:
+        return self.__is_composite
+
+    @is_composite.setter
+    def is_composite(self, is_composite: bool):
+        self.__is_composite = is_composite
+
     def __repr__(self):
-        return f'Property({self.name},{self.owner},{self.type},{self.multiplicity})'
+        return f'Property({self.name},{self.visibility},{self.owner},{self.type},{self.multiplicity},{self.is_composite})'
 
 
 class Class(Type):
 
-    def __init__(self, name: str, attributes: set[Property]):
+    def __init__(self, name: str, is_abstract: bool, attributes: set[Property]):
         super().__init__(name)
+        self.is_abstract: bool = is_abstract
         self.attributes: set[Property] = attributes
 
     @property
@@ -141,6 +161,14 @@ class Class(Type):
             for attribute in attributes:
                 attribute.owner = self
             self.__attributes = attributes
+
+    @property
+    def is_abstract(self) -> bool:
+        return self.__is_abstract
+
+    @is_abstract.setter
+    def is_abstract(self, is_abstract: bool):
+        self.__is_abstract = is_abstract
 
     def __repr__(self):
         return f'Class({self.name},{self.attributes})'
@@ -300,5 +328,3 @@ class DomainModel(NamedElement):
 
     def get_packages(self) -> set[Package]:
         return {element for element in self.elements if isinstance(element, Package)}
-
-

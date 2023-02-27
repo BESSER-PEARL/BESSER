@@ -10,7 +10,7 @@ ClassElement:
 ;
 
 Class:
-  'class' name=ID '{'
+  isAbstract?='abstract' 'class' name=ID '{'
     classContents*=ClassContent
   '}'
 ;

@@ -1,12 +1,20 @@
-from MyUML.core.structural.structural import DomainModel, Class, Property, PrimitiveDataType, BinaryAssociation
+from MyUML.core.structural.structural import DomainModel, Class, Property, PrimitiveDataType, BinaryAssociation, Multiplicity, Constraint
+
+def get_class_by_name(model: DomainModel, name: str):
+    for type in model.types:
+        if type.__class__.__name__ == "Class" and type.name == name:
+            return type
+    return False
 
 # Function transformting textX model to core model
 def textx_to_core(textx_model) -> DomainModel:
     model: DomainModel = DomainModel(name="StructuralModel")
     model.umlElements = set()
+
     # Class definition
     for element in textx_model.umlElements:
-        if element.__class__.__name__ == "Class":
+        element_type: str = element.__class__.__name__
+        if element_type == "Class":
             new_class: Class = Class(name=element.name, is_abstract=element.isAbstract, attributes=set())
             model.types.add(new_class)
             # Attributes and operations definition
@@ -16,14 +24,52 @@ def textx_to_core(textx_model) -> DomainModel:
                 # Attributes
                 if content.__class__.__name__ == "Attribute":
                     attrs.add(Property(name=content.name, visibility="public", owner=new_class, property_type=PrimitiveDataType(name=content.type)))
+                # Operations
+                # if content.__class__.__name__ == "Method":
             new_class.attributes = attrs
+    
     # Association definition
-    # for element in textx_model.associations:
-    #     ends: set[Property] = set()
-    #     for memberEnd in element.ends:
-    #         ends.add(next((x for x in model.elements if x.name == memberEnd.name), None))
-    #     new_association: BinaryAssociation = BinaryAssociation(name=element.name, ends=ends)
-    #     model.elements.add(new_association)
+    for element in textx_model.umlElements:
+        element_type: str = element.__class__.__name__
+        if element_type == "Bidirectional" or element_type == "Unidirectional" or element_type == "Aggregation" or element_type == "Composition":
+            # reference from
+            class_from: Class = get_class_by_name(model=model, name=element.fromClass.name)
+            min_from = element.fromCar.min
+            max_from = min_from if element.fromCar.max is None else element.fromCar.max
+            navigable_from: bool = True
+            composition_from: bool = False
+            aggregation_from: bool = False
+            # reference to
+            class_to: Class = get_class_by_name(model=model, name=element.toClass.name)
+            min_to = element.toCar.min
+            max_to = min_to if element.toCar.max is None else element.toCar.max
+            navigable_to: bool = True
+            composition_to: bool = False
+            aggregation_to: bool = False
+            ends: set[Property] = set()
+            if element.__class__.__name__ == "Unidirectional":
+                navigable_from = element.fromNav
+                navigable_to = element.toNav
+            if element.__class__.__name__ == "Aggregation":
+                aggregation_from = element.fromAgg
+                aggregation_to = element.toAgg            
+            if element.__class__.__name__ == "Composition":
+                composition_from = element.fromComp
+                composition_to = element.toComp
+            ends.add(Property(name=element.name, visibility="public", owner=class_from, property_type=class_from, 
+                              multiplicity=Multiplicity(min_multiplicity=min_from,max_multiplicity=max_from), is_composite=composition_from, 
+                              is_navigable=navigable_from, is_aggregation=aggregation_from))
+            ends.add(Property(name=element.name, visibility="public", owner=class_to, property_type=class_to, 
+                              multiplicity=Multiplicity(min_multiplicity=min_to, max_multiplicity=max_to), is_composite=composition_to, 
+                              is_navigable=navigable_to, is_aggregation=aggregation_to))
+            new_association: BinaryAssociation = BinaryAssociation(name=element.name, ends=ends)
+            model.associations.add(new_association)
+    
+    # Constraint definition
+    for element in textx_model.oclConstraints:
+        context: Class = get_class_by_name(model=model, name=element.context)
+        new_constraint: Constraint = Constraint(name=element.name, context=context, expression=element.expression, language="OCL")
+        model.constraints.add(new_constraint)
     return model
 
 

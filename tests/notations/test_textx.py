@@ -34,6 +34,14 @@ def test_textx_transf():
     domain: DomainModel = textx_to_core(hello_world_myuml_model)
     # assert number of classes
     assert sum(1 if x.__class__.__name__ == 'Class' else 0 for x in domain.types) == 3
+    # assert number of aggregation associations
+    assert len(domain.associations) == 5
+    # assert that the CompositionAC relationship is composite
+    for rel in domain.associations:
+        if rel.name == "CompositionAC":
+            assert list(rel.ends)[0].is_composite == True or list(rel.ends)[1].is_composite == True
+    # assert number of constraints
+    assert len(domain.constraints) == 2
 
 test_textx_parsing()
 test_textx_transf()

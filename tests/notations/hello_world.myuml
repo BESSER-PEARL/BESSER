@@ -11,13 +11,19 @@
    }
 
    class C {
-      +c1: int
+      +c1: str
       +void functionC()
    }
 
-   A o-- B: AggregationAB
-   A --o B: AggregationAB2
-   A *-- C: CompositionAC
+   A '1' o-- '1..*' B: AggregationAB
+   A '1' --o '1' B: AggregationAB2
+   A '1' *-- '1' C: CompositionAC
    B '1' -- '1..*' C: BidirectionalBC
-   C <-- A: UnidirectionalAC
+   C '1..*' <-- '1..*' A: UnidirectionalAC
 @enduml
+
+context A inv a1ConstraintValue:
+"self.a1 > 0"
+
+context C inv c1Unique: 
+"C.allInstances() -> isUnique(c1)"

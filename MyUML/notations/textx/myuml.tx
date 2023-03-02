@@ -1,8 +1,8 @@
 DomainModel:
   '@startuml'
     umlElements*=ClassElement
-    oclConstraints*=Constraint
   '@enduml'
+  oclConstraints*=Constraint
 ;
 
 ClassElement:
@@ -24,23 +24,23 @@ Association:
 ;
 
 Bidirectional:
-  from=[Class] fromCar=Cardinality? '--' toCar=Cardinality? to=[Class] ':' name=ID
+  fromClass=[Class] fromCar=Cardinality? '--' toCar=Cardinality? toClass=[Class] ':' name=ID
 ;
 
 Unidirectional:
-  from=[Class] fromCar=Cardinality? fromNav?='<' '--' toNav?='>' toCar=Cardinality? to=[Class] ':' name=ID
+  fromClass=[Class] fromCar=Cardinality? fromNav?='<' '--' toNav?='>' toCar=Cardinality? toClass=[Class] ':' name=ID
 ;
 
 Aggregation:
-  from=[Class] fromCar=Cardinality? fromAgg?='o' fromNav?='<' '--' toNav?='>' toAgg?='o' toCar=Cardinality? to=[Class] ':' name=ID
+  fromClass=[Class] fromCar=Cardinality? fromAgg?='o' fromNav?='<' '--' toNav?='>' toAgg?='o' toCar=Cardinality? toClass=[Class] ':' name=ID
 ;
 
 Composition:
-  from=[Class] fromCar=Cardinality? fromComp?='*' fromNav?='<' '--' toNav?='>' toComp?='*' toCar=Cardinality? to=[Class] ':' name=ID
+  fromClass=[Class] fromCar=Cardinality? fromComp?='*' fromNav?='<' '--' toNav?='>' toComp?='*' toCar=Cardinality? toClass=[Class] ':' name=ID
 ;
 
 Inheritance:
-  from=[Class] fromInh?='<|' '--' toInh?='|>' to=[Class]
+  fromClass=[Class] fromInh?='<|' '--' toInh?='|>' toClass=[Class]
 ;
 
 Cardinality:
@@ -76,5 +76,6 @@ Modifier:
 ;
 
 Constraint:
-  'constraint:' expression=STRING
+  'context' context=[Class] 'inv' name=ID ':'
+  expression=STRING
 ;

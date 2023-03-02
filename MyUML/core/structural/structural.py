@@ -95,6 +95,8 @@ class Multiplicity:
 
     @max.setter
     def max(self, max_multiplicity: int):
+        if max_multiplicity == "*":
+            max_multiplicity = UNLIMITED_MAX_MULTIPLICITY
         if max_multiplicity < 0:
             raise ValueError("Invalid max multiplicity")
         if max_multiplicity < self.min:
@@ -108,12 +110,14 @@ class Multiplicity:
 # Properties are owned by a class or an association and point to a type with a multiplicity
 class Property(TypedElement):
 
-    def __init__(self, name: str, visibility: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), is_composite : bool = False):
+    def __init__(self, name: str, visibility: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
         super().__init__(name, visibility)
         self.owner: Type = owner
         self.type: Type = type
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
+        self.is_navigable: bool = is_navigable
+        self.is_aggregation: bool = is_aggregation
 
     @property
     def owner(self) -> Type:
@@ -141,6 +145,22 @@ class Property(TypedElement):
     @is_composite.setter
     def is_composite(self, is_composite: bool):
         self.__is_composite = is_composite
+
+    @property
+    def is_navigable(self) -> bool:
+        return self.__is_navigable
+
+    @is_navigable.setter
+    def is_navigable(self, is_navigable: bool):
+        self.__is_navigable = is_navigable
+
+    @property
+    def is_aggregation(self) -> bool:
+        return self.__is_aggregation
+
+    @is_aggregation.setter
+    def is_aggregation(self, is_aggregation: bool):
+        self.__is_aggregation = is_aggregation
 
     def __repr__(self):
         return f'Property({self.name},{self.visibility},{self.owner},{self.type},{self.multiplicity},{self.is_composite})'
@@ -176,7 +196,7 @@ class Class(Type):
                 raise ValueError("A class cannot have two attributes with the same name")
         attribute.owner = self
         self.attributes.add(attribute)
-
+    
     @property
     def is_abstract(self) -> bool:
         return self.__is_abstract
@@ -214,7 +234,6 @@ class Association(NamedElement):
             end.owner = self
         self.__ends = ends
 
-
 class BinaryAssociation(Association):
     def __init__(self, name: str, ends: set[Property]):
         super().__init__(name, ends)
@@ -223,6 +242,10 @@ class BinaryAssociation(Association):
     def ends(self, ends: set[Property]):
         if len(ends) != 2:
             raise ValueError("A binary must have exactly two ends")
+        if list(ends)[0].is_aggregation == True and list(ends)[1].is_aggregation == True:
+            raise ValueError("The aggregation attribute cannot be tagged at both ends")
+        if list(ends)[0].is_composite == True and list(ends)[1].is_composite == True:
+            raise ValueError("The composition attribute cannot be tagged at both ends")
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
 
 

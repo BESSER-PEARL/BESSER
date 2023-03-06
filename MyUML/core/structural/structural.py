@@ -382,12 +382,13 @@ class Constraint(NamedElement):
 # A model is the root element that comprises a number of classes and associations
 class DomainModel(NamedElement):
 
-    def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None, packages: set[Package] = None, constraints: set[Constraint] = None):
+    def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None, generalizations: set[Generalization] = None, packages: set[Package] = None, constraints: set[Constraint] = None):
         super().__init__(name)
         self.types: set[Type] = types
         self.packages: set[Package] = packages
         self.constraints: set[Constraint] = constraints
         self.associations: set[Association] = associations
+        self.generalizations: set[Generalization] = generalizations
 
     @property
     def types(self) -> set[Type]:
@@ -422,6 +423,17 @@ class DomainModel(NamedElement):
             self.__associations = set()
 
     @property
+    def generalizations(self) -> set[Generalization]:
+        return self.__generalizations
+
+    @generalizations.setter
+    def generalizations(self, generalizations: set[Generalization]):
+        if generalizations is not None:
+            self.__generalizations = generalizations
+        else:
+            self.__generalizations = set()
+
+    @property
     def packages(self) -> set[Package]:
         return self.__packages
 
@@ -454,7 +466,10 @@ class DomainModel(NamedElement):
             self.__constraints = set()
 
     def get_classes(self) -> set[Class]:
-        return {element for element in self.elements if isinstance(element, Class)}
+        return {element for element in self.types if isinstance(element, Class)}
+    
+    def get_class_by_name(self, class_name: str) -> Class:
+        return {element for element in self.types if isinstance(element, Class) and element.name == class_name}
 
     def get_associations(self) -> set[Association]:
         return {element for element in self.elements if isinstance(element, Association)}

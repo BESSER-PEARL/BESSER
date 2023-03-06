@@ -20,6 +20,8 @@
    A '1' *-- '1' C: CompositionAC
    B '1' -- '1..*' C: BidirectionalBC
    C '1..*' <-- '1..*' A: UnidirectionalAC
+   A <|-- B
+   C --|> B
 @enduml
 
 context A inv a1ConstraintValue:

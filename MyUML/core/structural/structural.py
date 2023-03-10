@@ -205,14 +205,6 @@ class Class(Type):
     def is_abstract(self, is_abstract: bool):
         self.__is_abstract = is_abstract
 
-    @property
-    def is_abstract(self) -> bool:
-        return self.__is_abstract
-
-    @is_abstract.setter
-    def is_abstract(self, is_abstract: bool):
-        self.__is_abstract = is_abstract
-
     def __repr__(self):
         return f'Class({self.name},{self.attributes})'
 

@@ -110,10 +110,10 @@ class Multiplicity:
 # Properties are owned by a class or an association and point to a type with a multiplicity
 class Property(TypedElement):
 
-    def __init__(self, name: str, visibility: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
+    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
         super().__init__(name, visibility)
         self.owner: Type = owner
-        self.type: Type = type
+        self.type: Type = property_type
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
         self.is_navigable: bool = is_navigable
@@ -168,7 +168,7 @@ class Property(TypedElement):
 
 class Class(Type):
 
-    def __init__(self, name: str, is_abstract: bool, attributes: set[Property]):
+    def __init__(self, name: str, attributes: set[Property], is_abstract: bool= False):
         super().__init__(name)
         self.is_abstract: bool = is_abstract
         self.attributes: set[Property] = attributes

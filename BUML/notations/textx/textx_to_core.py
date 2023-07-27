@@ -1,4 +1,4 @@
-from MyUML.core.structural.structural import DomainModel, Class, Property, PrimitiveDataType, \
+from metamodel.structural.structural import DomainModel, Class, Property, PrimitiveDataType, \
      BinaryAssociation, Multiplicity, Constraint, Generalization
 
 # Function transformting textX model to core model

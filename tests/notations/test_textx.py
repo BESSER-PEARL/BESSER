@@ -1,17 +1,14 @@
 from textx import metamodel_from_file
 
-import sys
-sys.path.append('../../')
-
-from MyUML.core.structural.structural import DomainModel, Type, Class, Property, PrimitiveDataType, Multiplicity, \
+from metamodel.structural.structural import DomainModel, Type, Class, Property, PrimitiveDataType, Multiplicity, \
     Association, BinaryAssociation, Generalization, GeneralizationSet, AssociationClass
-from MyUML.notations.textx.textx_to_core import textx_to_core
+from notations.textx.textx_to_core import textx_to_core
 
 
 # Testing TextX parsing of a simple domain concept
 def test_textx_parsing():
-    myuml_mm = metamodel_from_file('../../MyUML/notations/textx/myuml.tx')
-    hello_world_myuml_model = myuml_mm.model_from_file('./hello_world.myuml')
+    myuml_mm = metamodel_from_file('BUML/notations/textx/myuml.tx')
+    hello_world_myuml_model = myuml_mm.model_from_file('tests/notations/hello_world.myuml')
     assert len(hello_world_myuml_model.umlElements) == 10
     # assert number of classes
     assert sum(1 if x.__class__.__name__ == 'Class' else 0 for x in hello_world_myuml_model.umlElements) == 3
@@ -31,8 +28,8 @@ def test_textx_parsing():
 
 # Testing Core mdoel generation from TextX file
 def test_textx_transf():
-    myuml_mm = metamodel_from_file('../../MyUML/notations/textx/myuml.tx')
-    hello_world_myuml_model = myuml_mm.model_from_file('./hello_world.myuml')
+    myuml_mm = metamodel_from_file('BUML/notations/textx/myuml.tx')
+    hello_world_myuml_model = myuml_mm.model_from_file('tests/notations/hello_world.myuml')
     domain: DomainModel = textx_to_core(hello_world_myuml_model)
     # assert number of classes
     assert len(domain.get_classes()) == 3
@@ -44,6 +41,3 @@ def test_textx_transf():
             assert list(rel.ends)[0].is_composite == True or list(rel.ends)[1].is_composite == True
     # assert number of constraints
     assert len(domain.constraints) == 2
-
-test_textx_parsing()
-test_textx_transf()

@@ -1,2 +1,6 @@
 /virtual-env/
 __pycache__/
+
+# package
+/dist/
+buml.egg-info/

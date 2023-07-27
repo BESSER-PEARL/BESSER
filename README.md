@@ -13,15 +13,15 @@ The requirements to install BESSER UML are:
 * Python 3.10.11 or later
 * *setuptools* 65.5.0 or later
 
-To install python you can go to [the website](https://www.python.org/downloads/). Then, you can install *setuptools* by running the following command:
+You can download and install Python from [the website](https://www.python.org/downloads/). Then, you can install *setuptools* by running the following command:
 
     pip install setuptools
 
-Download the latest release of the project [here](https://github.com/BESSER-PEARL/BESSER-UML/releases/latest), and install BESSER UML (buml) in your environment. You can install the *wheels* package with the following command
+Download the latest release of the project [here](https://github.com/BESSER-PEARL/BESSER-UML/releases/latest), and install BESSER UML (buml) in your environment by executing the following command (using the wheels package):
 
     pip install buml-x.x.x-py3-none-any.whl
 
-Or if you prefer you can install the *Tar GZ* package with the following command
+Or if you prefer, you can install the *Tar GZ* package with the following command:
 
     pip install buml-x.x.x.tar.gz
 
@@ -30,3 +30,5 @@ Or if you prefer you can install the *Tar GZ* package with the following command
 ## Getting Started
 
 ...
+
+    from metamodel.structual import DomainModel, Class, Constraint

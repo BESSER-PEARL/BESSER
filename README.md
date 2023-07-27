@@ -21,10 +21,6 @@ Download the latest release of the project [here](https://github.com/BESSER-PEAR
 
     pip install buml-x.x.x-py3-none-any.whl
 
-Or if you prefer, you can install the *Tar GZ* package with the following command:
-
-    pip install buml-x.x.x.tar.gz
-
 **Note:** replace *x.x.x* with version number
 
 ## Getting Started

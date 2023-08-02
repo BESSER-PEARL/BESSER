@@ -6,12 +6,11 @@ def textx_to_core(textx_model) -> DomainModel:
     model: DomainModel = DomainModel(name="StructuralModel")
     model.umlElements = set()
 
-    # Class definition
+    # Class transformation
     for element in textx_model.umlElements:
         element_type: str = element.__class__.__name__
         if element_type == "Class":
             new_class: Class = Class(name=element.name, is_abstract=element.isAbstract, attributes=set())
-            model.types.add(new_class)
             # Attributes and operations definition
             attrs: set[Property] = set()
             opers: set[Property] = set()
@@ -23,6 +22,8 @@ def textx_to_core(textx_model) -> DomainModel:
                 # Operations
                 # if content.__class__.__name__ == "Method":
             new_class.attributes = attrs
+            # Add new class to the model
+            model.types.add(new_class)
     
     # Association definition
     for element in textx_model.umlElements:

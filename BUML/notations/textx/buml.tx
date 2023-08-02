@@ -44,7 +44,7 @@ Inheritance:
 ;
 
 Cardinality:
-  "'" min=CardinalityVal '..'? max=CardinalityVal? "'"
+  '"' min=CardinalityVal '..'? max=CardinalityVal? '"'
 ;
 
 CardinalityVal:

@@ -58,7 +58,7 @@ attribute2: Property = Property(name="attr2", owner=None, property_type=Primitiv
 
 ### Example
 
-<img src="/docs/img/class.jpg" alt="Class" style="height: 60%; width:60%;"/>
+<img src="/docs/img/class.jpg" alt="Class" style="height: 20%; width:20%;"/>
 
 ```python
 # Import BUML classes
@@ -84,7 +84,7 @@ class1: Class = Class(name="Cls1", attributes={attribute1, attribute2})
 
 ### Example
 
-<img src="/docs/img/association.jpg" alt="Association" style="height: 70%; width:70%;"/>
+<img src="/docs/img/association.jpg" alt="Association" style="height: 55%; width:55%;"/>
 
 ```python
 # Import BUML classes
@@ -119,7 +119,7 @@ BinaryAssociation is similar to [Association](metamodel-doc.md#association) but 
 
 ### Example
 
-<img src="/docs/img/binaryAsso.jpg" alt="Binary Association" style="height: 70%; width:70%;"/>
+<img src="/docs/img/binaryAsso.jpg" alt="Binary Association" style="height: 60%; width:60%;"/>
 
 ```python
 # Import BUML classes
@@ -150,7 +150,7 @@ binaryA: BinaryAssociation = BinaryAssociation(name="BinaryA1", ends={aend1, aen
 
 ### Example
 
-<img src="/docs/img/associationClass.jpg" alt="Association Class" style="height: 70%; width:70%;"/>
+<img src="/docs/img/associationClass.jpg" alt="Association Class" style="height: 60%; width:60%;"/>
 
 ```python
 # Import BUML classes
@@ -182,7 +182,7 @@ association_class: AssociationClass = AssociationClass(name="AssociationCls", at
 
 ### Example
 
-<img src="/docs/img/generalization.jpg" alt="Generalization" style="height: 70%; width:70%;"/>
+<img src="/docs/img/generalization.jpg" alt="Generalization" style="height: 20%; width:20%;"/>
 
 ```python
 # Import BUML classes
@@ -210,7 +210,7 @@ generalization: Generalization = Generalization(general=class1, specific=class2)
 
 ### Example
 
-<img src="/docs/img/generalizationSet.jpg" alt="Generalization Set" style="height: 70%; width:70%;"/>
+<img src="/docs/img/generalizationSet.jpg" alt="Generalization Set" style="height: 50%; width:50%;"/>
 
 ```python
 # Import BUML classes
@@ -242,7 +242,7 @@ generalization_set: GeneralizationSet = GeneralizationSet(name="GenSet", general
 
 ### Example
 
-<img src="/docs/img/package.jpg" alt="Package" style="height: 70%; width:70%;"/>
+<img src="/docs/img/package.jpg" alt="Package" style="height: 40%; width:40%;"/>
 
 ```python
 # Import BUML classes

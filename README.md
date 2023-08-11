@@ -25,8 +25,8 @@ Download the latest release of the project [here](https://github.com/BESSER-PEAR
 
 ## BUML Documentation
 
-* [BUML modeling](https://github.com/BESSER-PEARL/BESSER-UML/tree/main/docs/metamodel-doc.md): to model a problem, system, domain, or anything else.
+* [BUML modeling](https://github.com/BESSER-PEARL/BESSER-UML/blob/master/docs/metamodel-doc.md): to model a problem, system, domain, or anything else.
 
-* [BUML PlantUML notation](https://github.com/BESSER-PEARL/BESSER-UML/tree/main/docs/plantuml-doc.md): to use the [PlantUML](https://plantuml.com/) notation to generate a BUML model.
+* [BUML PlantUML notation](https://github.com/BESSER-PEARL/BESSER-UML/blob/master/plantuml-doc.md): to use the [PlantUML](https://plantuml.com/) notation to generate a BUML model.
 
-* [BUML Django generator](https://github.com/BESSER-PEARL/BESSER-UML/tree/main/docs/django-generator-doc.md): to generate a [Django](https://www.djangoproject.com/) application from a BUML model.
+* [BUML Django generator](https://github.com/BESSER-PEARL/BESSER-UML/blob/master/django-generator-doc.md): to generate a [Django](https://www.djangoproject.com/) application from a BUML model.

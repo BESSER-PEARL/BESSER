@@ -6,7 +6,7 @@ The metamodel is summarised in the following figure.
 
 <img src="/docs/img/metamodel.jpg" alt="Metamodel" style="height: 100%; width:100%;"/>
 
-## Installation Guide
+## Installation
 
 The requirements to install BESSER UML are:
 
@@ -23,8 +23,10 @@ Download the latest release of the project [here](https://github.com/BESSER-PEAR
 
 **Note:** replace *x.x.x* with version number
 
-## Getting Started
+## BUML Documentation
 
-...
+* [BUML modeling](https://github.com/BESSER-PEARL/BESSER-UML/tree/main/docs/metamodel-doc.md): to model a problem, system, domain, or anything else.
 
-    from metamodel.structual import DomainModel, Class, Constraint
+* [BUML PlantUML notation](https://github.com/BESSER-PEARL/BESSER-UML/tree/main/docs/plantuml-doc.md): to use the [PlantUML](https://plantuml.com/) notation to generate a BUML model.
+
+* [BUML Django generator](https://github.com/BESSER-PEARL/BESSER-UML/tree/main/docs/django-generator-doc.md): to generate a [Django](https://www.djangoproject.com/) application from a BUML model.

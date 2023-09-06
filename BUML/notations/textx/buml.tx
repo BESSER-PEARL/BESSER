@@ -1,12 +1,16 @@
 DomainModel:
   '@startuml'
-    umlElements*=ClassElement
+    elements*=Element
   '@enduml'
   oclConstraints*=Constraint
 ;
 
-ClassElement:
-  Class | Relationship
+Element:
+  SkinParam | Class | Relationship
+;
+
+SkinParam:
+  'skinparam' 'groupInheritance' group=INT
 ;
 
 Class:

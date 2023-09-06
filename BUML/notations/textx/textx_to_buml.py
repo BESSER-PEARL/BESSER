@@ -1,13 +1,13 @@
 from metamodel.structural.structural import DomainModel, Class, Property, PrimitiveDataType, \
-     BinaryAssociation, Multiplicity, Constraint, Generalization
+     BinaryAssociation, Multiplicity, Constraint, Generalization, GeneralizationSet
 
 # Function transformting textX model to core model
-def textx_to_core(textx_model) -> DomainModel:
+def textx_to_buml(textx_model) -> DomainModel:
     model: DomainModel = DomainModel(name="StructuralModel")
-    model.umlElements = set()
+    inheritanceGroup: int = 0
 
     # Class transformation
-    for element in textx_model.umlElements:
+    for element in textx_model.elements:
         element_type: str = element.__class__.__name__
         if element_type == "Class":
             new_class: Class = Class(name=element.name, is_abstract=element.isAbstract, attributes=set())
@@ -24,9 +24,11 @@ def textx_to_core(textx_model) -> DomainModel:
             new_class.attributes = attrs
             # Add new class to the model
             model.types.add(new_class)
+        if element_type == "SkinParam":
+            inheritanceGroup = element.group
     
     # Association definition
-    for element in textx_model.umlElements:
+    for element in textx_model.elements:
         element_type: str = element.__class__.__name__
         if element_type == "Bidirectional" or element_type == "Unidirectional" or \
             element_type == "Aggregation" or element_type == "Composition":
@@ -73,6 +75,23 @@ def textx_to_core(textx_model) -> DomainModel:
                 specificClass: Class = model.get_class_by_name(element.fromClass.name)
             new_generalization: Generalization = Generalization(general=generalClass, specific=specificClass)
             model.generalizations.add(new_generalization)
+    
+    # Generalization group definition
+    if inheritanceGroup > 1:
+        gen_classes_list = []
+        gen_classes_set = set()
+        for generalization in model.generalizations:
+            gen_classes_list.append(generalization.general)
+            gen_classes_set.add(generalization.general)
+
+        for general in gen_classes_set:
+            if gen_classes_list.count(general) >= inheritanceGroup:
+                generalizations: set = []
+                for generalization in model.generalizations:
+                    if general == generalization.general:
+                        generalizations.append(generalization)
+                new_generalizationSet: GeneralizationSet = GeneralizationSet(name="gen-set-" + general.name, generalizations=generalizations, 
+                                                                             is_disjoint=True, is_complete=True)
 
     # Constraint definition
     for element in textx_model.oclConstraints:

@@ -461,7 +461,7 @@ class DomainModel(NamedElement):
         return {element for element in self.types if isinstance(element, Class)}
     
     def get_class_by_name(self, class_name: str) -> Class:
-        return {element for element in self.types if isinstance(element, Class) and element.name == class_name}
+        return next((element for element in self.types if isinstance(element, Class) and element.name == class_name), None)
 
     def get_associations(self) -> set[Association]:
         return {element for element in self.elements if isinstance(element, Association)}

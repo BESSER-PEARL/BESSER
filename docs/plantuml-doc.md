@@ -47,8 +47,10 @@ from notations.textx.textx_to_buml import textx_to_buml
 # Building metamodel from buml.tx grammar
 buml_mm = metamodel_from_file('buml.tx')
 
-# 
+# Transforming the textual model to plain Python objects
 hello_world_buml_model = buml_mm.model_from_file('hello_world.buml')
+
+# Transforming the Python objects to BUML model
 domain: DomainModel = textx_to_buml(hello_world_buml_model)
 ```
 > _Note: you must have two files: (1) the plantUML model `hello_world.buml`, and (2) the grammar `buml.tx` which can be found at this [link](https://github.com/BESSER-PEARL/BESSER-UML/blob/master/BUML/notations/textx/buml.tx)._

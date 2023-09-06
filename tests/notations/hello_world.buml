@@ -1,4 +1,6 @@
 @startuml
+   skinparam groupInheritance 2
+
    class A {
       -a1: int
       a2: bool
@@ -15,13 +17,16 @@
       +void functionC()
    }
 
-   A "1" o-- "1..*" B: AggregationAB
-   A "1" --o "1" B: AggregationAB2
+   class D {
+      +d1: str
+      +void functionC()
+   }
+
+   A "1" o-- "1..*" D: AggregationAD
    A "1" *-- "1" C: CompositionAC
-   B "1" -- "1..*" C: BidirectionalBC
-   C "1..*" <-- "1..*" A: UnidirectionalAC
-   A <|-- B
-   C --|> B
+   D "1" -- "1..*" C: BidirectionalDC
+   B <|-- A
+   B <|-- C
 @enduml
 
 context A inv a1ConstraintValue:

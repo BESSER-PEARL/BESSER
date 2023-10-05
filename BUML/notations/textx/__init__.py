@@ -1,1 +1,1 @@
-from .textx_to_core import *
+from .textx_to_buml import *

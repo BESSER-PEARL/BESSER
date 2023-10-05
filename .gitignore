@@ -1,5 +1,8 @@
-/virtual-env/
 __pycache__/
+
+# pipenv
+Pipfile
+Pipfile.lock
 
 # package
 /dist/

@@ -44,8 +44,8 @@ Then, load and process the model using our grammar and apply the transformation 
 from textx import metamodel_from_file
 from notations.textx.textx_to_buml import textx_to_buml
 
-# Building metamodel from buml.tx grammar
-buml_mm = metamodel_from_file('buml.tx')
+# Building metamodel from the grammar
+buml_mm = build_buml_mm_from_grammar()
 
 # Transforming the textual model to plain Python objects
 hello_world_buml_model = buml_mm.model_from_file('hello_world.buml')

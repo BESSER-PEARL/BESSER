@@ -7,10 +7,10 @@ BUML is based on UML and allows you to define models using Python Object-Oriente
 * [Property](metamodel-doc.md#property)
 * [Class](metamodel-doc.md#class)
 * [Association](metamodel-doc.md#association)
-* [BinaryAssociation](metamodel-doc.md#binary-association)
-* [AssocationClass](metamodel-doc.md#association-class)
+* [Binary Association](metamodel-doc.md#binary-association)
+* [Assocation Class](metamodel-doc.md#association-class)
 * [Generalization](metamodel-doc.md#generalization)
-* [GeneralizationSet](metamodel-doc.md#generalization-set)
+* [Generalization Set](metamodel-doc.md#generalization-set)
 * [Package](metamodel-doc.md#package)
 * [Constraint](metamodel-doc.md#constraint)
 * [DomainModel](metamodel-doc.md#domain-model)
@@ -108,7 +108,7 @@ aend3: Property = Property(name="end3", owner=None, property_type=class3, multip
 association: Association = Association(name="association", ends={aend1, aend2,aend3})
 ```
 
-## BinaryAssociation
+## Binary Association
 
 > BinaryAssociation(name, ends)
 
@@ -143,7 +143,7 @@ aend2: Property = Property(name="end2", owner=None, property_type=class2, multip
 binaryA: BinaryAssociation = BinaryAssociation(name="BinaryA1", ends={aend1, aend2})
 ```
 
-## AssocationClass
+## Assocation Class
 > AssociationClass(name, attributes, association)
 
 ### Parameters
@@ -206,7 +206,7 @@ class2: Class = Class(name="Cls2", attributes=None)
 generalization: Generalization = Generalization(general=class1, specific=class2)
 ```
 
-## GeneralizationSet
+## Generalization Set
 > GeneralizationSet(name, generalizations, is_disjoint, is_complete)
 
 ### Parameters

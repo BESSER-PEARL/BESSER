@@ -8,7 +8,7 @@ BUML is based on UML and allows you to define models using Python Object-Oriente
 * [Class](metamodel-doc.md#class)
 * [Association](metamodel-doc.md#association)
 * [Binary Association](metamodel-doc.md#binary-association)
-* [Assocation Class](metamodel-doc.md#association-class)
+* [Association Class](metamodel-doc.md#association-class)
 * [Generalization](metamodel-doc.md#generalization)
 * [Generalization Set](metamodel-doc.md#generalization-set)
 * [Package](metamodel-doc.md#package)
@@ -143,7 +143,7 @@ aend2: Property = Property(name="end2", owner=None, property_type=class2, multip
 binaryA: BinaryAssociation = BinaryAssociation(name="BinaryA1", ends={aend1, aend2})
 ```
 
-## Assocation Class
+## Association Class
 > AssociationClass(name, attributes, association)
 
 ### Parameters

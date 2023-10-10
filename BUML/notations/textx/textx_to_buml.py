@@ -1,7 +1,17 @@
 from metamodel.structural.structural import DomainModel, Class, Property, PrimitiveDataType, \
      BinaryAssociation, Multiplicity, Constraint, Generalization, GeneralizationSet
+from textx import metamodel_from_file
+import os
 
-# Function transformting textX model to core model
+# Function to build the buml metamodel from the grammar
+def build_buml_mm_from_grammar():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    print(script_dir)
+    grammar_path = os.path.join(script_dir, 'buml.tx')
+    buml_mm = metamodel_from_file(grammar_path)
+    return buml_mm
+
+# Function transforming textX model to core model
 def textx_to_buml(textx_model) -> DomainModel:
     model: DomainModel = DomainModel(name="StructuralModel")
     inheritanceGroup: int = 0

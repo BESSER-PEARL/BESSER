@@ -2,12 +2,12 @@ from textx import metamodel_from_file
 
 from metamodel.structural.structural import DomainModel, Type, Class, Property, PrimitiveDataType, Multiplicity, \
     Association, BinaryAssociation, Generalization, GeneralizationSet, AssociationClass
-from notations.textx.textx_to_buml import textx_to_buml
+from notations.textx.textx_to_buml import textx_to_buml, build_buml_mm_from_grammar
 
 
 # Testing TextX parsing of a simple domain concept
 def test_textx_parsing():
-    buml_mm = metamodel_from_file('BUML/notations/textx/buml.tx')
+    buml_mm = build_buml_mm_from_grammar()
     hello_world_buml_model = buml_mm.model_from_file('tests/notations/hello_world.buml')
     assert len(hello_world_buml_model.elements) == 10
     # assert number of classes
@@ -28,7 +28,7 @@ def test_textx_parsing():
 
 # Testing Core model generation from TextX file
 def test_textx_transf():
-    buml_mm = metamodel_from_file('BUML/notations/textx/buml.tx')
+    buml_mm = build_buml_mm_from_grammar()
     hello_world_buml_model = buml_mm.model_from_file('tests/notations/hello_world.buml')
     domain: DomainModel = textx_to_buml(hello_world_buml_model)
     # assert number of classes

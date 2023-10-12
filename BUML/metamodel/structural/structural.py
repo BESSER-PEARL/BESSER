@@ -53,7 +53,7 @@ class PrimitiveDataType(DataType):
 
     @NamedElement.name.setter
     def name(self, name: str):
-        if name not in ['int', 'float', 'str', 'bool']:
+        if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
             raise ValueError("Invalid primitive data type")
         # calling the setter of the superclass if there are no errors
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)

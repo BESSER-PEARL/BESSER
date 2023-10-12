@@ -4,7 +4,6 @@ from textx import metamodel_from_file
 import os
 
 # Function to build the buml metamodel from the grammar
-# is there a point to stil have this function and not simply use this as is in the textx to buml
 def build_buml_mm_from_grammar():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     print(script_dir)

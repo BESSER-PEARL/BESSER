@@ -47,7 +47,7 @@ class DataType(NamedElement):
         super().__init__(name)
         
     def name(self, name: str):
-        if name not in ['int', 'float', 'complex', 'str', 'bool', 'list', 'tuple', 'range', 'dict', 'set', 'date', 'time', 'datetime', 'timedelta', 'Enum']:
+        if name not in ['int', 'float', 'complex', 'str', 'bool', 'date', 'time', 'datetime', 'timedelta']:
             raise ValueError("Invalid data type")
         # calling the setter of the superclass if there are no errors
         super(DataType, DataType).name.fset(self, name)

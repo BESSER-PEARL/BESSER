@@ -1,5 +1,5 @@
 from typing import Any
-from metamodel.structural.structural import Class, NamedElement, TypedElement, Type, PrimitiveDataType, Property, Constraint
+from metamodel.structural.structural import Class, NamedElement, TypedElement, Type, DataType, Property, Constraint
 
 
 class OCLExpression(TypedElement):
@@ -29,7 +29,7 @@ class LiteralExpression(OCLExpression):
 
 class IntegerLiteralExpression(LiteralExpression):
     def __init__(self, name: str, value: int):
-        super().__init__(name, type=PrimitiveDataType(name="int"), value=value)
+        super().__init__(name, type=DataType(name="int"), value=value)
 
     def __repr__(self):
         return f'IntegerLiteralExpression({self.value})'
@@ -61,7 +61,7 @@ class PropertyCallExpression(OCLExpression):
 # arithmetic comparison operations from the standard OCL library
 class OperationCallExpression(OCLExpression):
     def __init__(self, name: str, operation: str, arguments: list[OCLExpression]):
-        super().__init__(name, Type(PrimitiveDataType("bool")))  # Type for now is always boolean, it should be the return type of the operation
+        super().__init__(name, Type(DataType("bool")))  # Type for now is always boolean, it should be the return type of the operation
         self.operation: str = operation
         self.arguments: list[OCLExpression] = arguments
 

@@ -1,5 +1,5 @@
 from metamodel.structural.rules import Constraint, OCLConstraint, OCLExpression, IntegerLiteralExpression, PropertyCallExpression, OperationCallExpression
-from metamodel.structural.structural import Class, Property, PrimitiveDataType
+from metamodel.structural.structural import Class, Property, DataType
 
 
 # Test I can create a class and assign an empty constraint to it
@@ -25,7 +25,7 @@ def test_simple_ocl_constraint():
 def test_oclexpression_property_arithmetic_comparison_constraint():
     #We first create a class A with a Property a1 of type Integer
     classA: Class = Class(name="A", attributes=None)
-    propertyA1: Property = Property(name="a1", owner=classA, property_type=PrimitiveDataType(name="int"))
+    propertyA1: Property = Property(name="a1", owner=classA, property_type=DataType(name="int"))
     classA.add_attribute(propertyA1)
 
     # We then create an OCL constraint linked to classA

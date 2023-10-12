@@ -45,18 +45,12 @@ class Type(NamedElement):
 class DataType(NamedElement):
     def __init__(self, name: str):
         super().__init__(name)
-
-
-class PrimitiveDataType(DataType):
-    def __init__(self, name: str):
-        super().__init__(name)
-
-    @NamedElement.name.setter
+        
     def name(self, name: str):
         if name not in ['int', 'float', 'complex', 'str', 'bool', 'list', 'tuple', 'range', 'dict', 'set', 'date', 'time', 'datetime', 'timedelta', 'Enum']:
-            raise ValueError("Invalid primitive data type")
+            raise ValueError("Invalid data type")
         # calling the setter of the superclass if there are no errors
-        super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
+        super(DataType, DataType).name.fset(self, name)
 
 
 class TypedElement(NamedElement):

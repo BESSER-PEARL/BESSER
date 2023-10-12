@@ -26,7 +26,7 @@ A Property object can be used to specify an *attribute* of a [Class](metamodel-d
 | --------- |------------| ----------- |-------|
 | name | str | Name of the Property | |
 | owner | Type | Owner of the property. Should be a [Class](metamodel-doc.md#class) if the Property describes a class attribute | |
-| property_type | Type | Type of property. It could be a *PrimitiveDataType* if the property is to define an attribute of a [Class](metamodel-doc.md#class), or it could be a [Class](metamodel-doc.md#class) if the property defines an *end* of an [Association](metamodel-doc.md#association) | |
+| property_type | Type | Type of property. It could be a *DataType* if the property is to define an attribute of a [Class](metamodel-doc.md#class), or it could be a [Class](metamodel-doc.md#class) if the property defines an *end* of an [Association](metamodel-doc.md#association) | |
 | multiplicity | Multiplicity | Multiplicity of the Property when it define an *end* of an [Association](metamodel-doc.md#association) |   (1,1)   |
 | visibility | str | The visibility of the property can be *public*, *private*, *protected*, or *package* | *public* |
 | is_composite | bool | When the Property defines an *end* of an [Association](metamodel-doc.md#association), *is_composite* specifies whether the relationship is a composite or not | False |
@@ -38,11 +38,11 @@ The following example defines two *attributes*.
 
 ```python
 # Import BUML classes
-from metamodel.structural.structural import Property, PrimitiveDataType, Multiplicity
+from metamodel.structural.structural import Property, DataType, Multiplicity
 
 # Attributes definition
-attribute1: Property = Property(name="attr1", owner=None, property_type=PrimitiveDataType("int"))
-attribute2: Property = Property(name="attr2", owner=None, property_type=PrimitiveDataType("str"))
+attribute1: Property = Property(name="attr1", owner=None, property_type=DataType("int"))
+attribute2: Property = Property(name="attr2", owner=None, property_type=DataType("str"))
 ```
 
 ## Class
@@ -64,11 +64,11 @@ attribute2: Property = Property(name="attr2", owner=None, property_type=Primitiv
 
 ```python
 # Import BUML classes
-from metamodel.structural.structural import Property, PrimitiveDataType, Multiplicity, Class
+from metamodel.structural.structural import Property, DataType, Multiplicity, Class
 
 # Attributes definition
-attribute1: Property = Property(name="attr1", owner=None, property_type=PrimitiveDataType("int"))
-attribute2: Property = Property(name="attr2", owner=None, property_type=PrimitiveDataType("str"))
+attribute1: Property = Property(name="attr1", owner=None, property_type=DataType("int"))
+attribute2: Property = Property(name="attr2", owner=None, property_type=DataType("str"))
 
 # Class definition
 class1: Class = Class(name="Cls1", attributes={attribute1, attribute2})
@@ -162,7 +162,7 @@ binaryA: BinaryAssociation = BinaryAssociation(name="BinaryA1", ends={aend1, aen
 
 ```python
 # Import BUML classes
-from metamodel.structural.structural import Class, Property, Multiplicity, BinaryAssociation, PrimitiveDataType, AssociationClass
+from metamodel.structural.structural import Class, Property, Multiplicity, BinaryAssociation, DataType, AssociationClass
 
 # Classes definition
 class1: Class = Class(name="Cls1", attributes=None)
@@ -174,7 +174,7 @@ aend2: Property = Property(name="end2", owner=None, property_type=class2, multip
 association: BinaryAssociation = BinaryAssociation(name="association1", ends={aend1, aend2})
 
 # Attribute and AssociationClass definition
-attribute1: Property = Property(name="attr", owner=None, property_type=PrimitiveDataType("int"))
+attribute1: Property = Property(name="attr", owner=None, property_type=DataType("int"))
 association_class: AssociationClass = AssociationClass(name="AssociationCls", attributes={attribute1}, association=association)
 ```
 
@@ -303,7 +303,7 @@ package: Package = Package(name="Package", classes={class1, class2})
 
 ```python
 # Import BUML classes
-from metamodel.structural.structural import Class, Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Package, Constraint
+from metamodel.structural.structural import Class, Property, DataType, Multiplicity, Association, BinaryAssociation, Package, Constraint
 
 # DomainModel definition, assuming that the model objects (class1, class2, assoc, etc.) have already been previously defined
 model: DomainModel = DomainModel(name="model", types={class1,class2}, associations={assoc,binary_assoc}, generalizations={gen1,gen2}, packages={pkg}, constraints={const1, const2})

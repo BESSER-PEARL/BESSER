@@ -1,15 +1,17 @@
-from metamodel.structural.structural import DomainModel, Class, Property, PrimitiveDataType, \
+from metamodel.structural.structural import DomainModel, Class, Property, DataType, \
      BinaryAssociation, Multiplicity, Constraint, Generalization, GeneralizationSet
 from textx import metamodel_from_file
 import os
 
 # Function to build the buml metamodel from the grammar
+# is there a point to stil have this function and not simply use this as is in the textx to buml
 def build_buml_mm_from_grammar():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     print(script_dir)
     grammar_path = os.path.join(script_dir, 'buml.tx')
     buml_mm = metamodel_from_file(grammar_path)
     return buml_mm
+
 
 # Function transforming textX model to core model
 def textx_to_buml(textx_model) -> DomainModel:
@@ -28,7 +30,7 @@ def textx_to_buml(textx_model) -> DomainModel:
                 # Attributes
                 if content.__class__.__name__ == "Attribute":
                     attrs.add(Property(name=content.name, visibility="public", owner=new_class, 
-                                       property_type=PrimitiveDataType(name=content.type)))
+                                       property_type=DataType(name=content.type)))
                 # Operations
                 # if content.__class__.__name__ == "Method":
             new_class.attributes = attrs

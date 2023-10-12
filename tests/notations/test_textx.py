@@ -1,6 +1,6 @@
 from textx import metamodel_from_file
 
-from metamodel.structural.structural import DomainModel, Type, Class, Property, PrimitiveDataType, Multiplicity, \
+from metamodel.structural.structural import DomainModel, Type, Class, Property, DataType, Multiplicity, \
     Association, BinaryAssociation, Generalization, GeneralizationSet, AssociationClass
 from notations.textx.textx_to_buml import textx_to_buml, build_buml_mm_from_grammar
 

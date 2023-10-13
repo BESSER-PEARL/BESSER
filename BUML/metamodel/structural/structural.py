@@ -263,12 +263,7 @@ class Generalization(Element):
     def __init__(self, general: Class, specific: Class):
         self.general: Class = general
         self.specific: Class = specific
-        # this currently only adds the attribute from the immediate parent class
-        # in case the parent class also inherits from another class,
-        # then the attributes will be present only if the inheritance
-        # is specified before the current inheritance
-        for attribute in general.attributes:
-            specific.add_attribute(attribute)
+        
     @property
     def general(self) -> Class:
         return self.__general

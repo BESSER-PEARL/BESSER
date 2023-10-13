@@ -11,6 +11,31 @@ def build_buml_mm_from_grammar():
     buml_mm = metamodel_from_file(grammar_path)
     return buml_mm
 
+def handle_inheritance(general_class: Class, specific_class: Class, model: DomainModel, inherited_classes: dict):
+    # Check if we have already inherited attributes from the parent class
+    if general_class.name in inherited_classes[specific_class.name]:
+        return    
+    # Check whether there are already common parent classes of general and specific to not duplicate atttributes
+    common_parents = set(inherited_classes[general_class.name]) & set(inherited_classes[specific_class.name])
+    inherited_attr = []
+    for c in common_parents:
+        for a in model.get_class_by_name(c).attributes:
+            inherited_attr.append(a)
+    # Add attributes of general class, ignore already added attributes
+    for attribute in general_class.attributes:
+        if attribute not in inherited_attr:
+            specific_class.add_attribute(attribute)                
+    # Add current parent and parents of parent class to list of parent classes of child class
+    inherited_classes[specific_class.name].append(general_class.name)
+    for parent in inherited_classes[general_class.name]:
+        inherited_classes[specific_class.name].append(parent)
+    # Look for the next parent class (if any)
+    for generalization in model.generalizations:
+        if generalization.specific == general_class:
+            if generalization.general.name not in inherited_classes[general_class.name]:
+                ancestor_class = generalization.general
+                handle_inheritance(ancestor_class, specific_class, model, inherited_classes)
+
 # Function transforming textX model to core model
 def textx_to_buml(textx_model) -> DomainModel:
     model: DomainModel = DomainModel(name="StructuralModel")
@@ -93,7 +118,6 @@ def textx_to_buml(textx_model) -> DomainModel:
         for generalization in model.generalizations:
             gen_classes_list.append(generalization.general)
             gen_classes_set.add(generalization.general)
-
         for general in gen_classes_set:
             if gen_classes_list.count(general) >= inheritanceGroup:
                 generalizations: set = []
@@ -102,7 +126,17 @@ def textx_to_buml(textx_model) -> DomainModel:
                         generalizations.append(generalization)
                 new_generalizationSet: GeneralizationSet = GeneralizationSet(name="gen-set-" + general.name, generalizations=generalizations, 
                                                                              is_disjoint=True, is_complete=True)
-
+    # prepare inherited classes list
+    inherited_classes = dict()
+    for c in model.get_classes():
+        inherited_classes[c.name] = []
+   # Iterate through the generalizations in model
+    for generalization in model.generalizations:
+        specific_class = generalization.specific
+        general_class = generalization.general
+        # Start the inheritance process
+        handle_inheritance(general_class, specific_class, model, inherited_classes) 
+        
     # Constraint definition
     for element in textx_model.oclConstraints:
         context: Class = model.get_class_by_name(element.context.name)

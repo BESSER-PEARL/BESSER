@@ -194,7 +194,8 @@ class Class(Type):
         if self.attributes is not None:
             if attribute.name in [attribute.name for attribute in self.attributes]:
                 raise ValueError("A class cannot have two attributes with the same name")
-        attribute.owner = self
+        if attribute.owner is None:
+            attribute.owner = self   
         self.attributes.add(attribute)
     
     @property

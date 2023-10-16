@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+from abc import ABC, abstractmethod 
 from typing import Any
  
 # constant
@@ -41,11 +41,9 @@ class Type(NamedElement):
     def __repr__(self):
         return f"Name({self.name})"
 
-
 class DataType(NamedElement):
     def __init__(self, name: str):
         super().__init__(name)
-
 
 class PrimitiveDataType(DataType):
     def __init__(self, name: str):
@@ -57,7 +55,6 @@ class PrimitiveDataType(DataType):
             raise ValueError("Invalid primitive data type")
         # calling the setter of the superclass if there are no errors
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
-
 
 class TypedElement(NamedElement):
     def __init__(self, name: str, type: Type):
@@ -71,7 +68,6 @@ class TypedElement(NamedElement):
     @type.setter
     def type(self, type: Type):
         self.__type = type
-
 
 # Min and max multiplicities of a Property
 class Multiplicity:
@@ -106,7 +102,6 @@ class Multiplicity:
     def __repr__(self):
         return f'Multiplicity({self.min},{self.max})'
 
-
 # Properties are owned by a class or an association and point to a type with a multiplicity
 class Property(TypedElement):
 
@@ -129,6 +124,14 @@ class Property(TypedElement):
         if isinstance(owner, DataType):
             raise ValueError("Invalid owner")
         self.__owner = owner
+
+    @property
+    def type(self) -> Type:
+        return self.__type
+
+    @type.setter
+    def type(self, property_type: Type):
+        self.__type = property_type
 
     @property
     def multiplicity(self) -> Multiplicity:
@@ -163,8 +166,7 @@ class Property(TypedElement):
         self.__is_aggregation = is_aggregation
 
     def __repr__(self):
-        return f'Property({self.name},{self.visibility},{self.owner},{self.type},{self.multiplicity},{self.is_composite})'
-
+        return f'Property({self.name},{self.visibility},{self.type},{self.multiplicity},{self.is_composite})'
 
 class Class(Type):
 
@@ -172,6 +174,8 @@ class Class(Type):
         super().__init__(name)
         self.is_abstract: bool = is_abstract
         self.attributes: set[Property] = attributes
+        self.__associations: set[Association] = set()
+        self.__generalizations: set[Generalization] = set()
 
     @property
     def attributes(self) -> set[Property]:
@@ -189,6 +193,10 @@ class Class(Type):
         else:
             self.__attributes = set()
 
+    def all_attributes(self) -> set[Property]:
+        inherited_attributes: set[Property] = self.get_inherited_attributes()
+        return self.__attributes | inherited_attributes
+
     #add attribute method
     def add_attribute(self, attribute: Property):
         if self.attributes is not None:
@@ -205,9 +213,34 @@ class Class(Type):
     def is_abstract(self, is_abstract: bool):
         self.__is_abstract = is_abstract
 
+    def associations(self):
+        return self.__associations
+    
+    def _add_association(self, association):
+        self.__associations.add(association)
+    
+    def _delete_association(self, association):
+        self.__associations.discard(association)
+
+    def generalizations(self):
+        return self.__generalizations
+    
+    def _add_generalization(self, generalization):
+        self.__generalizations.add(generalization)
+
+    def _delete_generalization(self, generalization):
+        self.__generalizations.discard(generalization)
+
+    #get inherited attributes method
+    def get_inherited_attributes(self) -> set[Property]:
+        for generalization in self.__generalizations:
+            if (self == generalization.specific):
+                inherited_attributes: set[Property] = generalization.general.attributes
+                return inherited_attributes
+        return set()
+    
     def __repr__(self):
         return f'Class({self.name},{self.attributes})'
-
 
 class Association(NamedElement):
     def __init__(self, name: str, ends: set[Property]):
@@ -222,8 +255,12 @@ class Association(NamedElement):
     def ends(self, ends: set[Property]):
         if len(ends) <= 1:
             raise ValueError("An association must have more than one end")
+        if hasattr(self, "ends"):
+            for end in self.ends:
+                end.type._delete_association(association=self)
         for end in ends:
             end.owner = self
+            end.type._add_association(association=self)
         self.__ends = ends
 
 class BinaryAssociation(Association):
@@ -239,7 +276,6 @@ class BinaryAssociation(Association):
         if list(ends)[0].is_composite == True and list(ends)[1].is_composite == True:
             raise ValueError("The composition attribute cannot be tagged at both ends")
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
-
 
 class AssociationClass(Class):
     # Class that has an association nature
@@ -257,7 +293,6 @@ class AssociationClass(Class):
     def association(self, association: Association):
         self.__association = association
 
-
 class Generalization(Element):
     # Generalization between two classes
     def __init__(self, general: Class, specific: Class):
@@ -270,6 +305,10 @@ class Generalization(Element):
 
     @general.setter
     def general(self, general: Class):
+        #general.del_generalization()
+        if hasattr(self, "general"):
+            self.general._delete_generalization(generalization=self)
+        general._add_generalization(generalization=self)
         self.__general = general
 
     @property
@@ -281,11 +320,13 @@ class Generalization(Element):
         # specific cannot be the same class as general
         if specific == self.general:
             raise ValueError("you cannot have your own parent")
+        if hasattr(self, "specific"):
+            self.specific._delete_generalization(generalization=self)
+        specific._add_generalization(generalization=self)
         self.__specific = specific
 
     def __repr__(self):
         return f'Generalization({self.general},{self.specific})'
-
 
 class GeneralizationSet(NamedElement):
     # set of generalization relationships
@@ -319,7 +360,6 @@ class GeneralizationSet(NamedElement):
     def is_complete(self, is_complete: bool):
         self.__is_complete = is_complete
 
-
 # A set of related classes that should be processed together
 class Package(NamedElement):
     def __init__(self, name: str, classes: set[Class]):
@@ -333,7 +373,6 @@ class Package(NamedElement):
     @classes.setter
     def classes(self, classes: set[Class]):
         self.__classes = classes
-
 
 # A constraint class to represent a constraint over a class
 class Constraint(NamedElement):
@@ -369,7 +408,6 @@ class Constraint(NamedElement):
 
     def __repr__(self):
         return f'Constraint({self.name},{self.context.name},{self.language},{self.expression})'
-
 
 # A model is the root element that comprises a number of classes and associations
 class DomainModel(NamedElement):

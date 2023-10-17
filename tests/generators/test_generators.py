@@ -1,6 +1,6 @@
-from metamodel.structural.rules import OCLExpression, PropertyCallExpression, IntegerLiteralExpression, \
+from BUML.metamodel.structural.rules import OCLExpression, PropertyCallExpression, IntegerLiteralExpression, \
     OperationCallExpression, OCLConstraint
-from metamodel.structural.structural import DomainModel, Class, Property, PrimitiveDataType, Multiplicity, Constraint
+from BUML.metamodel.structural.structural import DomainModel, Class, Property, PrimitiveDataType, Multiplicity, Constraint
 from generators.django.django_generator import DjangoGenerator
 
 

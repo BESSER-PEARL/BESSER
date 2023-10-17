@@ -1,4 +1,4 @@
-from metamodel.structural.structural import DomainModel, Class, Constraint
+from BUML.metamodel.structural.structural import DomainModel, Class, Constraint
 
 
 def get_constraints_for_class(model:DomainModel, cl: Class) -> set[Constraint]:

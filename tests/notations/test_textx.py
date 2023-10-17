@@ -1,8 +1,8 @@
 from textx import metamodel_from_file
 
-from metamodel.structural.structural import DomainModel, Type, Class, Property, PrimitiveDataType, Multiplicity, \
+from BUML.metamodel.structural.structural import DomainModel, Type, Class, Property, PrimitiveDataType, Multiplicity, \
     Association, BinaryAssociation, Generalization, GeneralizationSet, AssociationClass
-from notations.textx.textx_to_buml import textx_to_buml, build_buml_mm_from_grammar
+from BUML.notations.textx.textx_to_buml import textx_to_buml, build_buml_mm_from_grammar
 
 
 # Testing TextX parsing of a simple domain concept

@@ -1,4 +1,4 @@
-from metamodel.structural.structural import DomainModel, Class, Property, PrimitiveDataType, \
+from BUML.metamodel.structural.structural import DomainModel, Class, Property, PrimitiveDataType, \
      BinaryAssociation, Multiplicity, Constraint, Generalization, GeneralizationSet
 from textx import metamodel_from_file
 import os

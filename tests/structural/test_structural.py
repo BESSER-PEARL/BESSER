@@ -1,6 +1,6 @@
 import pytest
 
-from metamodel.structural.structural import NamedElement, DomainModel, Type, Class, \
+from BUML.metamodel.structural.structural import NamedElement, DomainModel, Type, Class, \
     Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, GeneralizationSet, AssociationClass
 
 
@@ -84,8 +84,8 @@ def test_duplicated_name_class():
 
 
 def test_association_initialization():
-    class1: Type = Type(name="name1")
-    class2: Type = Type(name="name2")
+    class1: Class = Class(name="name1", attributes=set())
+    class2: Class = Class(name="name2", attributes=set())
     aend1: Property = Property(name="end1", owner=None, property_type=class1, multiplicity=Multiplicity(0, 1))
     aend2: Property = Property(name="end2", owner=None, property_type=class2, multiplicity=Multiplicity(0, 1))
     association: BinaryAssociation = BinaryAssociation(name="association1", ends={aend1, aend2})

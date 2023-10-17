@@ -1,6 +1,6 @@
 import os
 
-from metamodel.structural.structural import DomainModel
+from BUML.metamodel.structural.structural import DomainModel
 from generators.django.auxiliary import get_constraints_for_class
 
 

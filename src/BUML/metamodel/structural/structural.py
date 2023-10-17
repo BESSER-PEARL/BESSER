@@ -213,6 +213,7 @@ class Class(Type):
     def is_abstract(self, is_abstract: bool):
         self.__is_abstract = is_abstract
 
+    @property
     def associations(self):
         return self.__associations
     
@@ -222,6 +223,7 @@ class Class(Type):
     def _delete_association(self, association):
         self.__associations.discard(association)
 
+    @property
     def generalizations(self):
         return self.__generalizations
     

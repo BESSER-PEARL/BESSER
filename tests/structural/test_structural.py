@@ -92,6 +92,7 @@ def test_association_initialization():
     assert len(association.ends) == 2
     assert aend1 in association.ends
     assert aend1.owner == association
+    assert class1.associations == {association}
 
 # Testing the creation of a binary association cannot have more than two ends
 def test_binary_association():
@@ -122,6 +123,7 @@ def test_generalization_initialization():
     generalization: Generalization = Generalization(general=class1, specific=class2)
     assert generalization.general == class1
     assert generalization.specific == class2
+    assert class2.generalizations == {generalization}
 
 def test_no_generalization_loop():
     with pytest.raises(ValueError) as excinfo:

@@ -7,8 +7,20 @@ UNLIMITED_MAX_MULTIPLICITY = 9999
 class Element(ABC):
     pass
 
-# Superclass of all structural elements with a name
 class NamedElement(Element):
+    """The NamedElement is the Superclass of all structural elements with a name.
+
+    Args:
+        name (str): the NamedElement's name
+        visibility: Determines the kind of visibility of the NamedElement. It can be public, private, protected, or package
+        parameters (list[IntentParameter] or None): the intent's parameters
+
+    Attributes:
+        name (str): The intent's name
+        training_sentences (list[str]): The intent's training sentences
+        processed_training_sentences (list[str] or None): Processed training sentences are stored for intent prediction
+        parameters (list[IntentParameter]): The intent's parameters
+    """
 
     def __init__(self, name: str, visibility: str = "public"):
         self.name: str = name
@@ -16,14 +28,17 @@ class NamedElement(Element):
 
     @property
     def name(self) -> str:
+        """str: Get the name of the NamedElement."""
         return self.__name
 
     @name.setter
     def name(self, name: str):
+        """str: Set the name of the NamedElement."""
         self.__name = name
 
     @property
     def visibility(self) -> str:
+        """str: Get the visibility of the NamedElement."""
         return self.__visibility
 
     @visibility.setter

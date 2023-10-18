@@ -2,13 +2,13 @@ from textx import metamodel_from_file
 
 from BUML.metamodel.structural.structural import DomainModel, Type, Class, Property, PrimitiveDataType, Multiplicity, \
     Association, BinaryAssociation, Generalization, GeneralizationSet, AssociationClass
-from BUML.notations.textx.textx_to_buml import textx_to_buml, build_buml_mm_from_grammar
+from BUML.notations.plantUML.plantuml_to_buml import plantuml_to_buml, build_buml_mm_from_grammar
 
 
 # Testing TextX parsing of a simple domain concept
 def test_textx_parsing():
     buml_mm = build_buml_mm_from_grammar()
-    hello_world_buml_model = buml_mm.model_from_file('tests/notations/hello_world.buml')
+    hello_world_buml_model = buml_mm.model_from_file('tests/notations/hello_world.plantuml')
     assert len(hello_world_buml_model.elements) == 10
     # assert number of classes
     assert sum(1 if x.__class__.__name__ == 'Class' else 0 for x in hello_world_buml_model.elements) == 4
@@ -27,10 +27,10 @@ def test_textx_parsing():
                 assert attr.visibility == '#'
 
 # Testing Core model generation from TextX file
-def test_textx_transf():
+def test_plantuml_transformation():
     buml_mm = build_buml_mm_from_grammar()
-    hello_world_buml_model = buml_mm.model_from_file('tests/notations/hello_world.buml')
-    domain: DomainModel = textx_to_buml(hello_world_buml_model)
+    hello_world_buml_model = buml_mm.model_from_file('tests/notations/hello_world.plantuml')
+    domain: DomainModel = plantuml_to_buml(hello_world_buml_model)
     # assert number of classes
     assert len(domain.get_classes()) == 4
     # assert number of aggregation associations
@@ -43,5 +43,3 @@ def test_textx_transf():
     assert len(domain.generalizations) == 2
     # assert number of constraints
     assert len(domain.constraints) == 2
-
-test_textx_transf()

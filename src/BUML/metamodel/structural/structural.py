@@ -11,45 +11,52 @@ class NamedElement(Element):
     """The NamedElement is the Superclass of all structural elements with a name.
 
     Args:
-        name (str): the NamedElement's name
-        visibility: Determines the kind of visibility of the NamedElement. It can be public, private, protected, or package
-        parameters (list[IntentParameter] or None): the intent's parameters
+        name (str): the name of the named element
+        visibility: Determines the kind of visibility of the named element (public as default).
 
     Attributes:
-        name (str): The intent's name
-        training_sentences (list[str]): The intent's training sentences
-        processed_training_sentences (list[str] or None): Processed training sentences are stored for intent prediction
-        parameters (list[IntentParameter]): The intent's parameters
-    """
+        name (str): The name of the named element
+        visibility: Determines the kind of visibility of the named element (public as default).
 
+    Raises:
+        ValueError: (Invalid visibility) if an invalid visibility is provided.
+    """
     def __init__(self, name: str, visibility: str = "public"):
         self.name: str = name
         self.visibility = visibility
 
     @property
     def name(self) -> str:
-        """str: Get the name of the NamedElement."""
+        """str: Get the name of the named element."""
         return self.__name
 
     @name.setter
     def name(self, name: str):
-        """str: Set the name of the NamedElement."""
+        """str: Set the name of the named element."""
         self.__name = name
 
     @property
     def visibility(self) -> str:
-        """str: Get the visibility of the NamedElement."""
+        """str: Get the visibility of the named element."""
         return self.__visibility
 
     @visibility.setter
     def visibility(self, visibility: str):
+        """str: Set the visibility of the named element. The allowed visibility values 
+        are public, private, protected, or package"""
         if visibility not in ['public', 'private', 'protected', 'package']:
             raise ValueError("Invalid visibility")
         self.__visibility = visibility
 
-# Superclass of classes and data types in the model
 class Type(NamedElement):
+    """Type is the Superclass of classes and data types in the model.
 
+    Args:
+        name (str): the name of the Type.
+
+    Attributes:
+        name (str): The name of the Type.
+    """
     def __init__(self, name: str):
         super().__init__(name)
 
@@ -57,21 +64,58 @@ class Type(NamedElement):
         return f"Name({self.name})"
 
 class DataType(NamedElement):
+    """Represents a data type.
+
+    This class inherits from NamedElement and is used to model data types.
+
+    Args:
+        name (str): The name of the data type.
+
+    Attributes:
+        name (str): The name of the data type.
+    """
     def __init__(self, name: str):
         super().__init__(name)
 
 class PrimitiveDataType(DataType):
+    """Class representing a primitive data type.
+
+    This class is a subclass of DataType and is used to represent primitive data types
+    with a specified name.
+
+    Args:
+        name (str): the name of the primitive data type.
+
+    Attributes:
+        name (str): the name of the primitive data type.
+
+    Raises:
+        ValueError: (Invalid primitive data type) if an invalid primitive data type is provided.
+    """    
     def __init__(self, name: str):
         super().__init__(name)
 
     @NamedElement.name.setter
     def name(self, name: str):
+        """str: Set the name of the PrimitiveDataType. The allowed values are int, float, str, 
+        bool, time, date, datetime, and timedelta"""
         if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
             raise ValueError("Invalid primitive data type")
         # calling the setter of the superclass if there are no errors
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
 class TypedElement(NamedElement):
+    """TypedElement is a subclass of NamedElement and is used to represent elements
+    that have a specific type.
+
+    Args:
+        name (str): The name of the typed element.
+        type (Type): The data type of the typed element.
+
+    Attributes:
+        name (str): The name of the typed element.
+        type (Type): The data type of the typed element.
+    """
     def __init__(self, name: str, type: Type):
         super().__init__(name)
         self.type: Type = type
@@ -84,28 +128,43 @@ class TypedElement(NamedElement):
     def type(self, type: Type):
         self.__type = type
 
-# Min and max multiplicities of a Property
 class Multiplicity:
+    """Represents the multiplicity of a Property.
+
+    It consists of a minimum and maximum value, indicating the allowed range.
+
+    Args:
+        min (int): The minimum multiplicity.
+        max (int): The maximum multiplicity. Use "*" for unlimited.
+
+    Attributes:
+        min (int): The minimum multiplicity.
+        max (int): The maximum multiplicity. Use "*" for unlimited.
+    """
     def __init__(self, min_multiplicity: int, max_multiplicity: int):
         self.min: int = min_multiplicity
         self.max: int = max_multiplicity
 
     @property
     def min(self) -> int:
+        """int: Get the minimum multiplicity."""
         return self.__min
 
     @min.setter
     def min(self, min_multiplicity: int):
+        """int: Set the minimum multiplicity (must be greater than or equal to zero)."""
         if min_multiplicity < 0:
             raise ValueError("Invalid min multiplicity")
         self.__min = min_multiplicity
 
     @property
     def max(self) -> int:
+        """int: Get the maximum multiplicity."""
         return self.__max
 
     @max.setter
     def max(self, max_multiplicity: int):
+        """int: Set the maximum multiplicity. (must be greater than or equal to minimum multiplicity)."""
         if max_multiplicity == "*":
             max_multiplicity = UNLIMITED_MAX_MULTIPLICITY
         if max_multiplicity < 0:
@@ -119,8 +178,35 @@ class Multiplicity:
 
 # Properties are owned by a class or an association and point to a type with a multiplicity
 class Property(TypedElement):
+    """A property can represents an attribute of a class or an end of an association.
 
-    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
+    Properties are owned by a class or an association.
+
+    Args:
+        name (str): The name of the property.
+        owner (Type): The type that owns the property.
+        property_type (Type): The type of the property.
+        multiplicity (Multiplicity): The multiplicity of the property.
+        visibility (str): The visibility of the property ('public', 'private', etc.).
+        is_composite (bool): Indicates whether the property is a composite.
+        is_navigable (bool): Indicates whether the property is navigable in a relationship.
+        is_aggregation (bool): Indicates whether the property represents an aggregation.
+
+    Attributes:
+        name (str): The name of the property.
+        owner (Type): The type that owns the property.
+        property_type (Type): The type of the property.
+        multiplicity (Multiplicity): The multiplicity of the property.
+        visibility (str): The visibility of the property ('public', 'private', etc.).
+        is_composite (bool): Indicates whether the property is a composite.
+        is_navigable (bool): Indicates whether the property is navigable in a relationship.
+        is_aggregation (bool): Indicates whether the property represents an aggregation.
+    
+    Raises:
+        ValueError: (Invalid owner) if the owner is instance of DataType.
+    """
+    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), visibility: str = 'public', 
+                 is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
         super().__init__(name, visibility)
         self.owner: Type = owner
         self.type: Type = property_type
@@ -131,60 +217,90 @@ class Property(TypedElement):
 
     @property
     def owner(self) -> Type:
+        """Type: Get the owner type of the property."""
         return self.__owner
 
     @owner.setter
     def owner(self, owner: Type):
-        # owner cannot be a datatype
+        """Type: Set the owner type of the property. The owner cannot be a datatype."""
         if isinstance(owner, DataType):
             raise ValueError("Invalid owner")
         self.__owner = owner
 
     @property
     def type(self) -> Type:
+        """Type: Get the property type."""
         return self.__type
 
     @type.setter
     def type(self, property_type: Type):
+        """Type: Set the property type."""
         self.__type = property_type
 
     @property
     def multiplicity(self) -> Multiplicity:
+        """Multiplicity: Get the multiplicity of the property."""
         return self.__multiplicity
 
     @multiplicity.setter
     def multiplicity(self, multiplicity: Multiplicity):
+        """Multiplicity: Set the multiplicity of the property."""
         self.__multiplicity = multiplicity
 
     @property
     def is_composite(self) -> bool:
+        """bool: Get wheter the property is composite."""
         return self.__is_composite
 
     @is_composite.setter
     def is_composite(self, is_composite: bool):
+        """bool: Set wheter the property is composite."""
         self.__is_composite = is_composite
 
     @property
     def is_navigable(self) -> bool:
+        """bool: Get wheter the property is navigable."""
         return self.__is_navigable
 
     @is_navigable.setter
     def is_navigable(self, is_navigable: bool):
+        """bool: Set wheter the property is navigable."""
         self.__is_navigable = is_navigable
 
     @property
     def is_aggregation(self) -> bool:
+        """bool: Get wheter the property represents an aggregation."""
         return self.__is_aggregation
 
     @is_aggregation.setter
     def is_aggregation(self, is_aggregation: bool):
+        """bool: Set wheter the property represents an aggregation."""
         self.__is_aggregation = is_aggregation
 
     def __repr__(self):
         return f'Property({self.name},{self.visibility},{self.type},{self.multiplicity},{self.is_composite})'
 
 class Class(Type):
+    """Represents a class in a modeling context.
 
+    A Class is a type that defines a blueprint for objects. It can have attributes, associations,
+    and generalizations with other classes.
+
+    Args:
+        name (str): The name of the class.
+        attributes (set[Property]): The set of attributes associated with the class.
+        is_abstract (bool): Indicates whether the class is abstract.
+
+    Attributes:
+        name (str): The name of the class.
+        attributes (set[Property]): The set of attributes associated with the class.
+        is_abstract (bool): Indicates whether the class is abstract.
+        __associations: Set of associations involving the class.
+        __generalizations: Set of generalizations involving the class.
+    
+    Raises:
+        ValueError: if two attributes have the same name.
+    """
     def __init__(self, name: str, attributes: set[Property], is_abstract: bool= False):
         super().__init__(name)
         self.is_abstract: bool = is_abstract
@@ -194,10 +310,12 @@ class Class(Type):
 
     @property
     def attributes(self) -> set[Property]:
+        """set[Property]: Get the attributes of the class."""
         return self.__attributes
 
     @attributes.setter
     def attributes(self, attributes: set[Property]):
+        """set[Property]: Set the attributes of the class. Attributes must have unique names"""
         if attributes is not None:
             names = [attribute.name for attribute in attributes]
             if len(names) != len(set(names)):
@@ -209,11 +327,12 @@ class Class(Type):
             self.__attributes = set()
 
     def all_attributes(self) -> set[Property]:
+        """set[Property]: Get all attributes, including inherited ones."""
         inherited_attributes: set[Property] = self.get_inherited_attributes()
         return self.__attributes | inherited_attributes
 
-    #add attribute method
     def add_attribute(self, attribute: Property):
+        """Property: Add an attribute to the list of class attributes. The attribute name must be unique"""
         if self.attributes is not None:
             if attribute.name in [attribute.name for attribute in self.attributes]:
                 raise ValueError("A class cannot have two attributes with the same name")
@@ -222,34 +341,42 @@ class Class(Type):
     
     @property
     def is_abstract(self) -> bool:
+        """bool: Get wheter the class is abstract."""
         return self.__is_abstract
 
     @is_abstract.setter
     def is_abstract(self, is_abstract: bool):
+        """bool: Set wheter the class is abstract."""
         self.__is_abstract = is_abstract
 
     @property
     def associations(self):
+        """set[Association]: Get the set of associations involving the class."""
         return self.__associations
     
     def _add_association(self, association):
+        """Association: Add an association to the list of class associations."""
         self.__associations.add(association)
     
     def _delete_association(self, association):
+        """Association: Remove an association to the list of class associations."""
         self.__associations.discard(association)
 
     @property
     def generalizations(self):
+        """set[Generalization]: Get the set of generalizations involving the class."""
         return self.__generalizations
     
     def _add_generalization(self, generalization):
+        """Generalization: Add a generalization to the list of class generalizations."""
         self.__generalizations.add(generalization)
 
     def _delete_generalization(self, generalization):
+        """Generalization: Remove a generalization to the list of class generalizations."""
         self.__generalizations.discard(generalization)
 
-    #get inherited attributes method
     def get_inherited_attributes(self) -> set[Property]:
+        """set[Property]: Get the list of inherited attributes."""
         for generalization in self.__generalizations:
             if (self == generalization.specific):
                 inherited_attributes: set[Property] = generalization.general.attributes

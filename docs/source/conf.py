@@ -27,8 +27,11 @@ intersphinx_disabled_domains = ['std']
 
 templates_path = ['_templates']
 
+html_title = f"{project} {release}"
+
 # -- Options for HTML output
 
+html_logo = "img/besser_logo.png"
 html_theme = 'furo'
 #html_static_path = ['_static']
 

@@ -1,4 +1,4 @@
-BUML core structure
-===================
+Using B-UML core
+================
 
 Metamodel....

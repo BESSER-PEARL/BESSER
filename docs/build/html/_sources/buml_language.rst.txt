@@ -1,5 +1,15 @@
-BUML Language
-=============
+B-UML Language
+==============
+
+B-UML is the base language of the BESSER low-code platform. This language (inspired by UML) is implemented in Python. The metamodel is summarised in the following figure.
+
+.. image:: img/metamodel.jpg
+  :width: 800
+  :alt: B-UML metamodel
+
+How to use B-UML
+----------------
+To use B-UML you can directly instantiate the metamodel classes using Python, or you can use the PlantUML notation to transform a PlantUML model to a B-UML model.
 
 .. toctree::
 

@@ -1,4 +1,4 @@
-PlantUML Notation
-=================
+Using PlantUML Notation
+=======================
 
 Grammar

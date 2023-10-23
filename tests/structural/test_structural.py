@@ -119,15 +119,18 @@ def test_association_class():
 
 
 def test_generalization_initialization():
-    class1: Class = Class(name="name1", attributes=None)
+    attribute1: Property = Property(name="attribute1", owner = None, property_type=PrimitiveDataType("int"),
+                                    multiplicity=Multiplicity(0, 1))
+    class1: Class = Class(name="name1", attributes={attribute1})
     class2: Class = Class(name="name2", attributes=None)
     generalization: Generalization = Generalization(general=class1, specific=class2)
     assert generalization.general == class1
     assert generalization.specific == class2
     assert class2.generalizations == {generalization}
-    assert class1.childs() == {class2}
+    assert class1.specializations() == {class2}
     assert class2.parents() == {class1}
-    assert class2.childs() == set()
+    assert class2.specializations() == set()
+    assert class2.all_attributes() == {attribute1}
 
 
 def test_no_generalization_loop():
@@ -147,7 +150,7 @@ def test_generalization_set_initialization():
     assert generalization_set.is_disjoint == True
     assert generalization_set.is_complete == True
     assert class1.generalizations == {generalization1, generalization2}
-    assert class1.childs() == {class3, class2}
+    assert class1.specializations() == {class3, class2}
     assert class2.parents() == {class1}
     assert class3.parents() == {class1}
-    assert class2.childs() == set()
+    assert class2.specializations() == set()

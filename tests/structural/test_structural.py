@@ -93,6 +93,7 @@ def test_association_initialization():
     assert aend1 in association.ends
     assert aend1.owner == association
     assert class1.associations == {association}
+    assert class1.association_ends() == {aend2}
 
 # Testing the creation of a binary association cannot have more than two ends
 def test_binary_association():
@@ -124,9 +125,29 @@ def test_generalization_initialization():
     assert generalization.general == class1
     assert generalization.specific == class2
     assert class2.generalizations == {generalization}
+    assert class1.childs() == {class2}
+    assert class2.parents() == {class1}
+    assert class2.childs() == set()
+
 
 def test_no_generalization_loop():
     with pytest.raises(ValueError) as excinfo:
         class1: Class = Class(name="name1", attributes=None)
         generalization: Generalization = Generalization(general=class1, specific=class1)
         assert "A class cannot be a generalization of itself" in str(excinfo.value)
+
+def test_generalization_set_initialization():
+    class1: Class = Class(name="name1", attributes=None)
+    class2: Class = Class(name="name2", attributes=None)
+    class3: Class = Class(name="name3", attributes=None)
+    generalization1: Generalization = Generalization(general=class1, specific=class2)
+    generalization2: Generalization = Generalization(general=class1, specific=class3)
+    generalization_set: GeneralizationSet = GeneralizationSet(name="Generalization Set", generalizations={
+        generalization1,generalization2}, is_disjoint=True, is_complete=True)
+    assert generalization_set.is_disjoint == True
+    assert generalization_set.is_complete == True
+    assert class1.generalizations == {generalization1, generalization2}
+    assert class1.childs() == {class3, class2}
+    assert class2.parents() == {class1}
+    assert class3.parents() == {class1}
+    assert class2.childs() == set()

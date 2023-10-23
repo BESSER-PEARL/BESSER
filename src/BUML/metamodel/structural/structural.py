@@ -235,11 +235,10 @@ class Class(Type):
 
     #get inherited attributes method
     def inherited_attributes(self) -> set[Property]:
-        for generalization in self.__generalizations:
-            if (self == generalization.specific):
-                inherited_attributes: set[Property] = generalization.general.attributes
-                return inherited_attributes
-        return set()
+        inherited_attributes = set()
+        for parent in self.all_parents():
+            inherited_attributes.update(parent.attributes)
+        return inherited_attributes
     
     def association_ends(self) -> set:
         ends = set()
@@ -252,7 +251,7 @@ class Class(Type):
                     if end.type == self:
                         ends.discard(end)
         return ends
-
+    
     def parents(self) -> set:
         parents = set()
         for generalization in self.__generalizations:
@@ -260,12 +259,19 @@ class Class(Type):
                 parents.add(generalization.general)
         return parents
 
-    def childs(self) -> set:
-        childs = set()
+    def all_parents(self) -> set:
+        all_parents = set()
+        all_parents.update(self.parents())
+        for parent in self.parents():
+            all_parents.update(parent.all_parents())
+        return all_parents
+
+    def specializations(self) -> set:
+        specializations = set()
         for generalization in self.__generalizations:
             if generalization.specific != self:
-                childs.add(generalization.specific)
-        return childs
+                specializations.add(generalization.specific)
+        return specializations
     
     def __repr__(self):
         return f'Class({self.name},{self.attributes})'

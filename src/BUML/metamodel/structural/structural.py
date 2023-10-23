@@ -273,6 +273,13 @@ class Class(Type):
                 specializations.add(generalization.specific)
         return specializations
     
+    def all_specializations(self) -> set:
+        all_spec = set()
+        all_spec.update(self.specializations())
+        for specialization in self.specializations():
+            all_spec.update(specialization.all_specializations())
+        return all_spec
+    
     def __repr__(self):
         return f'Class({self.name},{self.attributes})'
 

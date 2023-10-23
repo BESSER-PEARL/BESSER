@@ -93,6 +93,7 @@ def test_association_initialization():
     assert aend1 in association.ends
     assert aend1.owner == association
     assert class1.associations == {association}
+    assert class1.association_ends() == {aend2}
 
 # Testing the creation of a binary association cannot have more than two ends
 def test_binary_association():
@@ -118,15 +119,38 @@ def test_association_class():
 
 
 def test_generalization_initialization():
-    class1: Class = Class(name="name1", attributes=None)
+    attribute1: Property = Property(name="attribute1", owner = None, property_type=PrimitiveDataType("int"),
+                                    multiplicity=Multiplicity(0, 1))
+    class1: Class = Class(name="name1", attributes={attribute1})
     class2: Class = Class(name="name2", attributes=None)
     generalization: Generalization = Generalization(general=class1, specific=class2)
     assert generalization.general == class1
     assert generalization.specific == class2
     assert class2.generalizations == {generalization}
+    assert class1.specializations() == {class2}
+    assert class2.parents() == {class1}
+    assert class2.specializations() == set()
+    assert class2.all_attributes() == {attribute1}
+
 
 def test_no_generalization_loop():
     with pytest.raises(ValueError) as excinfo:
         class1: Class = Class(name="name1", attributes=None)
         generalization: Generalization = Generalization(general=class1, specific=class1)
         assert "A class cannot be a generalization of itself" in str(excinfo.value)
+
+def test_generalization_set_initialization():
+    class1: Class = Class(name="name1", attributes=None)
+    class2: Class = Class(name="name2", attributes=None)
+    class3: Class = Class(name="name3", attributes=None)
+    generalization1: Generalization = Generalization(general=class1, specific=class2)
+    generalization2: Generalization = Generalization(general=class1, specific=class3)
+    generalization_set: GeneralizationSet = GeneralizationSet(name="Generalization Set", generalizations={
+        generalization1,generalization2}, is_disjoint=True, is_complete=True)
+    assert generalization_set.is_disjoint == True
+    assert generalization_set.is_complete == True
+    assert class1.generalizations == {generalization1, generalization2}
+    assert class1.specializations() == {class3, class2}
+    assert class2.parents() == {class1}
+    assert class3.parents() == {class1}
+    assert class2.specializations() == set()

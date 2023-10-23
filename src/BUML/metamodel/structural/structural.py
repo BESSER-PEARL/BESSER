@@ -194,7 +194,7 @@ class Class(Type):
             self.__attributes = set()
 
     def all_attributes(self) -> set[Property]:
-        inherited_attributes: set[Property] = self.get_inherited_attributes()
+        inherited_attributes: set[Property] = self.inherited_attributes()
         return self.__attributes | inherited_attributes
 
     #add attribute method
@@ -214,7 +214,7 @@ class Class(Type):
         self.__is_abstract = is_abstract
 
     @property
-    def associations(self):
+    def associations(self) -> set:
         return self.__associations
     
     def _add_association(self, association):
@@ -224,7 +224,7 @@ class Class(Type):
         self.__associations.discard(association)
 
     @property
-    def generalizations(self):
+    def generalizations(self) -> set:
         return self.__generalizations
     
     def _add_generalization(self, generalization):
@@ -234,12 +234,51 @@ class Class(Type):
         self.__generalizations.discard(generalization)
 
     #get inherited attributes method
-    def get_inherited_attributes(self) -> set[Property]:
+    def inherited_attributes(self) -> set[Property]:
+        inherited_attributes = set()
+        for parent in self.all_parents():
+            inherited_attributes.update(parent.attributes)
+        return inherited_attributes
+    
+    def association_ends(self) -> set:
+        ends = set()
+        for association in self.__associations:
+            aends = association.ends
+            ends.update(aends)
+            l_aends = list(aends)
+            if not(len(l_aends) == 2 and l_aends[0].type == l_aends[1].type):
+                for end in aends:
+                    if end.type == self:
+                        ends.discard(end)
+        return ends
+    
+    def parents(self) -> set:
+        parents = set()
         for generalization in self.__generalizations:
-            if (self == generalization.specific):
-                inherited_attributes: set[Property] = generalization.general.attributes
-                return inherited_attributes
-        return set()
+            if generalization.general != self:
+                parents.add(generalization.general)
+        return parents
+
+    def all_parents(self) -> set:
+        all_parents = set()
+        all_parents.update(self.parents())
+        for parent in self.parents():
+            all_parents.update(parent.all_parents())
+        return all_parents
+
+    def specializations(self) -> set:
+        specializations = set()
+        for generalization in self.__generalizations:
+            if generalization.specific != self:
+                specializations.add(generalization.specific)
+        return specializations
+    
+    def all_specializations(self) -> set:
+        all_spec = set()
+        all_spec.update(self.specializations())
+        for specialization in self.specializations():
+            all_spec.update(specialization.all_specializations())
+        return all_spec
     
     def __repr__(self):
         return f'Class({self.name},{self.attributes})'

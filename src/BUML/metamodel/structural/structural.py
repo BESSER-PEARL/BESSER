@@ -57,8 +57,8 @@ class PrimitiveDataType(DataType):
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
 class TypedElement(NamedElement):
-    def __init__(self, name: str, type: Type):
-        super().__init__(name)
+    def __init__(self, name: str, type: Type, visibility: str="public"):
+        super().__init__(name, visibility)
         self.type: Type = type
 
     @property
@@ -106,9 +106,8 @@ class Multiplicity:
 class Property(TypedElement):
 
     def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
-        super().__init__(name, visibility)
+        super().__init__(name, property_type, visibility)
         self.owner: Type = owner
-        self.type: Type = property_type
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
         self.is_navigable: bool = is_navigable
@@ -124,14 +123,6 @@ class Property(TypedElement):
         if isinstance(owner, DataType):
             raise ValueError("Invalid owner")
         self.__owner = owner
-
-    @property
-    def type(self) -> Type:
-        return self.__type
-
-    @type.setter
-    def type(self, property_type: Type):
-        self.__type = property_type
 
     @property
     def multiplicity(self) -> Multiplicity:

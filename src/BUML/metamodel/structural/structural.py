@@ -121,8 +121,8 @@ class TypedElement(NamedElement):
         type (Type): The data type of the typed element.
     """
 
-    def __init__(self, name: str, type: Type):
-        super().__init__(name)
+    def __init__(self, name: str, type: Type, visibility: str="public"):
+        super().__init__(name, visibility)
         self.type: Type = type
 
     @property
@@ -212,11 +212,9 @@ class Property(TypedElement):
         ValueError: (Invalid owner) if the owner is instance of DataType.
     """
     
-    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), visibility: str = 'public', 
-                 is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
-        super().__init__(name, visibility)
+    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
+        super().__init__(name, property_type, visibility)
         self.owner: Type = owner
-        self.type: Type = property_type
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
         self.is_navigable: bool = is_navigable
@@ -233,16 +231,6 @@ class Property(TypedElement):
         if isinstance(owner, DataType):
             raise ValueError("Invalid owner")
         self.__owner = owner
-
-    @property
-    def type(self) -> Type:
-        """Type: Get the property type."""
-        return self.__type
-
-    @type.setter
-    def type(self, property_type: Type):
-        """Type: Set the property type."""
-        self.__type = property_type
 
     @property
     def multiplicity(self) -> Multiplicity:
@@ -336,7 +324,7 @@ class Class(Type):
 
     def all_attributes(self) -> set[Property]:
         """set[Property]: Get all attributes, including inherited ones."""
-        inherited_attributes: set[Property] = self.get_inherited_attributes()
+        inherited_attributes: set[Property] = self.inherited_attributes()
         return self.__attributes | inherited_attributes
 
     def add_attribute(self, attribute: Property):
@@ -358,7 +346,7 @@ class Class(Type):
         self.__is_abstract = is_abstract
 
     @property
-    def associations(self):
+    def associations(self) -> set:
         """set[Association]: Get the set of associations involving the class."""
         return self.__associations
     
@@ -371,7 +359,7 @@ class Class(Type):
         self.__associations.discard(association)
 
     @property
-    def generalizations(self):
+    def generalizations(self) -> set:
         """set[Generalization]: Get the set of generalizations involving the class."""
         return self.__generalizations
     
@@ -383,13 +371,52 @@ class Class(Type):
         """Generalization: Remove a generalization to the list of class generalizations."""
         self.__generalizations.discard(generalization)
 
-    def get_inherited_attributes(self) -> set[Property]:
+    def inherited_attributes(self) -> set[Property]:
         """set[Property]: Get the list of inherited attributes."""
+        inherited_attributes = set()
+        for parent in self.all_parents():
+            inherited_attributes.update(parent.attributes)
+        return inherited_attributes
+    
+    def association_ends(self) -> set:
+        ends = set()
+        for association in self.__associations:
+            aends = association.ends
+            ends.update(aends)
+            l_aends = list(aends)
+            if not(len(l_aends) == 2 and l_aends[0].type == l_aends[1].type):
+                for end in aends:
+                    if end.type == self:
+                        ends.discard(end)
+        return ends
+    
+    def parents(self) -> set:
+        parents = set()
         for generalization in self.__generalizations:
-            if (self == generalization.specific):
-                inherited_attributes: set[Property] = generalization.general.attributes
-                return inherited_attributes
-        return set()
+            if generalization.general != self:
+                parents.add(generalization.general)
+        return parents
+
+    def all_parents(self) -> set:
+        all_parents = set()
+        all_parents.update(self.parents())
+        for parent in self.parents():
+            all_parents.update(parent.all_parents())
+        return all_parents
+
+    def specializations(self) -> set:
+        specializations = set()
+        for generalization in self.__generalizations:
+            if generalization.specific != self:
+                specializations.add(generalization.specific)
+        return specializations
+    
+    def all_specializations(self) -> set:
+        all_spec = set()
+        all_spec.update(self.specializations())
+        for specialization in self.specializations():
+            all_spec.update(specialization.all_specializations())
+        return all_spec
     
     def __repr__(self):
         return f'Class({self.name},{self.attributes})'

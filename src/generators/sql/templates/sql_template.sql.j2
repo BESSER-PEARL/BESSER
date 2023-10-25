@@ -1,0 +1,71 @@
+{# Template for CREATE TABLE statement #}
+{% macro create_table(class_name, attributes) %}
+CREATE TABLE IF NOT EXISTS {{ class_name }} (
+    {{ class_name }}_id SERIAL PRIMARY KEY,
+    {% for attribute in attributes %}
+    {{ attribute.name }} {{ types[attribute.type.name] }},
+    {% endfor %}
+);
+{% endmacro %}
+{# Template for ALTER TABLE statement to add a reference #}
+{% macro alter_table(class_name, reference_name, reference_table, reference_column) %}
+ALTER TABLE {{ class_name }}
+ADD COLUMN {{ reference_name }}_id INT REFERENCES {{ reference_table }}({{ reference_column }}_id);
+{%- endmacro %}
+{# Iterate over classes and generate CREATE TABLE statements #}
+{% for class_obj in model.get_classes() %}
+{% set class_name = class_obj.name|lower %}
+{% set attributes = class_obj.all_attributes() %}
+{{ create_table(class_name, attributes) }}
+{% endfor %}
+{# Iterate over associations and generate SQL statements based on association type #}
+{% for association in model.associations %}
+{% if association.ends|length == 2 %}
+{% set end1 = association.ends.pop() %}
+{% set end2 = association.ends.pop() %}
+{% set class1_name = end1.type.name|lower %}
+{% set class2_name = end2.type.name|lower %}
+{# Check multiplicity and generate appropriate SQL statement #}
+{% if end1.multiplicity.max > 1 and end2.multiplicity.max > 1 %}
+{# N:M Relationship: Create intermediate table #}
+CREATE TABLE IF NOT EXISTS {{ class1_name }}_{{ class2_name }} (
+    {{ class1_name }}_id INT REFERENCES {{ class1_name }}({{ class1_name }}_id),
+    {{ class2_name }}_id INT REFERENCES {{ class2_name }}({{ class2_name }}_id),
+    PRIMARY KEY ({{ class1_name }}_id, {{ class2_name }}_id)
+);
+{% elif end1.multiplicity.max > 1 and end2.multiplicity.max == 1 %}
+{# N:1 Relationship: Add reference to Nary end #}
+{{ alter_table(class1_name, class2_name, class2_name, class2_name) }}
+{% elif end1.multiplicity.max == 1 and end2.multiplicity.max > 1 %}
+{# 1:N Relationship: Add reference to Nary end #}
+{{ alter_table(class2_name, class1_name, class1_name, class1_name) }}
+{% elif end1.multiplicity.max == 1 and end2.multiplicity.max == 1 %}
+{# 1:1 Relationship: Add unique reference to one of the ends #}
+{{ alter_table(class1_name, class2_name, class2_name, class2_name) }}
+{% endif %}
+{% else %}
+{# Convert Nary relationship to Binary relationships and intermediate table #}
+{% set intermediate_class = association.name|lower %}
+CREATE TABLE IF NOT EXISTS {{ intermediate_class }} (
+    {{ intermediate_class }}_id SERIAL PRIMARY KEY
+);
+{% set end_intermediate_multiplicity_max = 9999 %}
+{% for end in association.ends +%}
+{# Check multiplicity and generate appropriate SQL statement #}
+{% set class1_name = intermediate_class %}
+{% set class2_name = end.type.name %}
+{# End of intermediate table should have multiplicity of the original end to the class #}
+{% if end.multiplicity.max > 1 and end_intermediate_multiplicity_max > 1 %}
+{# N:M Relationship: Create intermediate table #}
+CREATE TABLE IF NOT EXISTS {{ class1_name }}_{{ class2_name }} (
+    {{ class1_name }}_id INT REFERENCES {{ class1_name }}({{ class1_name }}_id),
+    {{ class2_name }}_id INT REFERENCES {{ class2_name }}({{ class2_name }}_id),
+    PRIMARY KEY ({{ class1_name }}_id, {{ class2_name }}_id)
+);
+{% elif end.multiplicity.max == 1 and end_intermediate_multiplicity_max > 1 %}
+{# 1:N Relationship: Add reference to Nary end #}
+{{ alter_table(class1_name, class2_name, class2_name, class2_name) }}
+{% endif %}
+{% endfor %}
+{% endif +%}
+{% endfor %}

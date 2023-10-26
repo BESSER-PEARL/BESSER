@@ -1,4 +1,6 @@
 # Configuration file for the Sphinx documentation builder.
+import importlib
+import inspect
 
 # -- Project information
 
@@ -12,11 +14,13 @@ version = '0.1.0'
 # -- General configuration
 
 extensions = [
-    'sphinx.ext.duration',
-    'sphinx.ext.doctest',
-    'sphinx.ext.autodoc',
-    'sphinx.ext.autosummary',
-    'sphinx.ext.intersphinx',
+    'sphinx.ext.duration',  # measure durations of Sphinx processing
+    'sphinx.ext.doctest',  
+    'sphinx.ext.autodoc',  # include documentation from docstrings
+    'sphinx.ext.autosummary',  # generate autodoc summaries
+    'sphinx.ext.intersphinx',  # link to other projects’ documentation
+    'sphinx_paramlinks',  # allows :param: directives within Python documentation to be linkable
+    'sphinx.ext.linkcode',  # add external links to source code
 ]
 
 intersphinx_mapping = {
@@ -37,3 +41,31 @@ html_theme = 'furo'
 
 # -- Options for EPUB output
 #epub_show_urls = 'footnote'
+
+
+def linkcode_resolve(domain, info):
+    """Generate links to module components."""
+    if domain != 'py':
+        return None
+    if not info['module']:
+        return None
+    mod = importlib.import_module(info["module"])
+    if "." in info["fullname"]:
+        objname, attrname = info["fullname"].split(".")
+        obj = getattr(mod, objname)
+        try:
+            # object is a method of a class
+            obj = getattr(obj, attrname)
+        except AttributeError:
+            # object is an attribute of a class
+            return None
+    else:
+        obj = getattr(mod, info["fullname"])
+
+    try:
+        lines = inspect.getsourcelines(obj)
+    except TypeError:
+        return None
+    start, end = lines[1], lines[1] + len(lines[0]) - 1
+    filename = info['module'].replace('.', '/')
+    return f"https://github.com/BESSER-PEARL/bot-framework/blob/Documentation/{filename}.py#L{start}-L{end}"

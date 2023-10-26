@@ -3,4 +3,4 @@ Code Generators
 
 .. toctree::
 
-   generators/django
+   generators/python_classes

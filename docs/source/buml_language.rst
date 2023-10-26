@@ -9,9 +9,10 @@ B-UML is the base language of the BESSER low-code platform. This language (inspi
 
 How to use B-UML
 ----------------
-To obtain a B-UML model, you can directly instantiate the metamodel classes using Python, or you can use the PlantUML notation to transform a PlantUML model to a B-UML model.
+There are two ways to specify your model using B-UML: build the model coding in Python (based on the B-UML metamodel), or import a `PlantUML <https://plantuml.com/>`_ 
+model to transform it into a B-UML model.
 
 .. toctree::
 
-   buml_language/buml_core
-   buml_language/plantuml
+  buml_language/buml_core
+  buml_language/plantuml

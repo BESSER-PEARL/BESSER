@@ -13,13 +13,10 @@ class NamedElement(Element):
     Args:
         name (str): the name of the named element
         visibility: Determines the kind of visibility of the named element (public as default).
-
+    
     Attributes:
-        name (str): The name of the named element
+        name (str): the name of the named element
         visibility: Determines the kind of visibility of the named element (public as default).
-
-    Raises:
-        ValueError: (Invalid visibility) if an invalid visibility is provided.
     """
 
     def __init__(self, name: str, visibility: str = "public"):
@@ -43,8 +40,14 @@ class NamedElement(Element):
 
     @visibility.setter
     def visibility(self, visibility: str):
-        """str: Set the visibility of the named element. The allowed visibility values 
-        are public, private, protected, or package"""
+        """
+        str: Set the visibility of the named element.
+        
+        Raises:
+            ValueError: (invalid visibility) if the visibility 
+            provided is none of these: public, private, protected, 
+            or package.
+        """
         if visibility not in ['public', 'private', 'protected', 'package']:
             raise ValueError("Invalid visibility")
         self.__visibility = visibility
@@ -56,7 +59,7 @@ class Type(NamedElement):
         name (str): the name of the Type.
 
     Attributes:
-        name (str): The name of the Type.
+        name (str): Inherited from NamedElement, represents the name of the Type.
     """
 
     def __init__(self, name: str):
@@ -74,7 +77,7 @@ class DataType(NamedElement):
         name (str): The name of the data type.
 
     Attributes:
-        name (str): The name of the data type.
+        name (str): Inherited from NamedElement, represents the name of the data type.
     """
 
     def __init__(self, name: str):
@@ -90,10 +93,7 @@ class PrimitiveDataType(DataType):
         name (str): the name of the primitive data type.
 
     Attributes:
-        name (str): the name of the primitive data type.
-
-    Raises:
-        ValueError: (Invalid primitive data type) if an invalid primitive data type is provided.
+        name (str): Inherited from DataType, represents the name of the primitive data type.
     """    
 
     def __init__(self, name: str):
@@ -101,11 +101,16 @@ class PrimitiveDataType(DataType):
 
     @NamedElement.name.setter
     def name(self, name: str):
-        """str: Set the name of the PrimitiveDataType. The allowed values are int, float, str, 
-        bool, time, date, datetime, and timedelta"""
+        """
+        str: Set the name of the PrimitiveDataType. 
+        
+        Raises:
+            ValueError: (Invalid primitive data type) if an invalid primitive data type 
+            is provided. The allowed values are int, float, str, bool, time, date, datetime, 
+            and timedelta
+        """
         if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
             raise ValueError("Invalid primitive data type")
-        # calling the setter of the superclass if there are no errors
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
 class TypedElement(NamedElement):
@@ -115,9 +120,11 @@ class TypedElement(NamedElement):
     Args:
         name (str): The name of the typed element.
         type (Type): The data type of the typed element.
+        visibility: Determines the kind of visibility of the typed element (public as default).
 
     Attributes:
-        name (str): The name of the typed element.
+        name (str): Inherited from NamedElement, represents the name of the typed element.
+        visibility: Inherited from NamedElement, represents the visibility of the typed element.
         type (Type): The data type of the typed element.
     """
 
@@ -158,7 +165,12 @@ class Multiplicity:
 
     @min.setter
     def min(self, min_multiplicity: int):
-        """int: Set the minimum multiplicity (must be greater than or equal to zero)."""
+        """
+        int: Set the minimum multiplicity 
+        
+        Raises:
+            ValueError: (Invalid min multiplicity) if the minimun multiplicity is less than 0.
+        """
         if min_multiplicity < 0:
             raise ValueError("Invalid min multiplicity")
         self.__min = min_multiplicity
@@ -170,7 +182,13 @@ class Multiplicity:
 
     @max.setter
     def max(self, max_multiplicity: int):
-        """int: Set the maximum multiplicity. (must be greater than or equal to minimum multiplicity)."""
+        """
+        int: Set the maximum multiplicity.
+        
+        Raises:
+            ValueError: (Invalid max multiplicity) if the maximum multiplicity is less than 0 or
+            less than minimun multiplicity.
+        """
         if max_multiplicity == "*":
             max_multiplicity = UNLIMITED_MAX_MULTIPLICITY
         if max_multiplicity < 0:
@@ -199,17 +217,14 @@ class Property(TypedElement):
         is_aggregation (bool): Indicates whether the property represents an aggregation.
 
     Attributes:
-        name (str): The name of the property.
+        name (str): Inherited from TypedElement, represents the name of the property.
         owner (Type): The type that owns the property.
-        property_type (Type): The type of the property.
+        property_type (Type): Inherited from TypedElement, represents the type of the property.
         multiplicity (Multiplicity): The multiplicity of the property.
-        visibility (str): The visibility of the property ('public', 'private', etc.).
+        visibility (str): Inherited from TypedElement, represents the visibility of the property.
         is_composite (bool): Indicates whether the property is a composite.
         is_navigable (bool): Indicates whether the property is navigable in a relationship.
         is_aggregation (bool): Indicates whether the property represents an aggregation.
-    
-    Raises:
-        ValueError: (Invalid owner) if the owner is instance of DataType.
     """
     
     def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
@@ -227,7 +242,12 @@ class Property(TypedElement):
 
     @owner.setter
     def owner(self, owner: Type):
-        """Type: Set the owner type of the property. The owner cannot be a datatype."""
+        """
+        Type: Set the owner type of the property.
+        
+        Raises:
+            ValueError: (Invalid owner) if the owner is instance of DataType.
+        """
         if isinstance(owner, DataType):
             raise ValueError("Invalid owner")
         self.__owner = owner
@@ -287,14 +307,11 @@ class Class(Type):
         is_abstract (bool): Indicates whether the class is abstract.
 
     Attributes:
-        name (str): The name of the class.
+        name (str): Inherited from Type, represents the name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
         is_abstract (bool): Indicates whether the class is abstract.
         __associations: Set of associations involving the class.
         __generalizations: Set of generalizations involving the class.
-    
-    Raises:
-        ValueError: if two attributes have the same name.
     """
 
     def __init__(self, name: str, attributes: set[Property], is_abstract: bool= False):
@@ -311,7 +328,12 @@ class Class(Type):
 
     @attributes.setter
     def attributes(self, attributes: set[Property]):
-        """set[Property]: Set the attributes of the class. Attributes must have unique names"""
+        """
+        set[Property]: Set the attributes of the class.
+        
+        Raises:
+            ValueError: if two attributes have the same name.
+        """
         if attributes is not None:
             names = [attribute.name for attribute in attributes]
             if len(names) != len(set(names)):
@@ -328,7 +350,12 @@ class Class(Type):
         return self.__attributes | inherited_attributes
 
     def add_attribute(self, attribute: Property):
-        """Property: Add an attribute to the list of class attributes. The attribute name must be unique"""
+        """
+        Property: Add an attribute to the set of class attributes.
+        
+        Raises:
+            ValueError: if the attribute name already exist.
+        """
         if self.attributes is not None:
             if attribute.name in [attribute.name for attribute in self.attributes]:
                 raise ValueError("A class cannot have two attributes with the same name")
@@ -351,11 +378,11 @@ class Class(Type):
         return self.__associations
     
     def _add_association(self, association):
-        """Association: Add an association to the list of class associations."""
+        """Association: Add an association to the set of class associations."""
         self.__associations.add(association)
     
     def _delete_association(self, association):
-        """Association: Remove an association to the list of class associations."""
+        """Association: Remove an association to the set of class associations."""
         self.__associations.discard(association)
 
     @property
@@ -364,21 +391,22 @@ class Class(Type):
         return self.__generalizations
     
     def _add_generalization(self, generalization):
-        """Generalization: Add a generalization to the list of class generalizations."""
+        """Generalization: Add a generalization to the set of class generalizations."""
         self.__generalizations.add(generalization)
 
     def _delete_generalization(self, generalization):
-        """Generalization: Remove a generalization to the list of class generalizations."""
+        """Generalization: Remove a generalization to the set of class generalizations."""
         self.__generalizations.discard(generalization)
 
     def inherited_attributes(self) -> set[Property]:
-        """set[Property]: Get the list of inherited attributes."""
+        """set[Property]: Get the set of inherited attributes."""
         inherited_attributes = set()
         for parent in self.all_parents():
             inherited_attributes.update(parent.attributes)
         return inherited_attributes
     
     def association_ends(self) -> set:
+        """set[Property]: Get the set of association ends of the class."""
         ends = set()
         for association in self.__associations:
             aends = association.ends
@@ -391,6 +419,7 @@ class Class(Type):
         return ends
     
     def parents(self) -> set:
+        """set[Class]: Get the set of direct parents of the class."""
         parents = set()
         for generalization in self.__generalizations:
             if generalization.general != self:
@@ -398,6 +427,7 @@ class Class(Type):
         return parents
 
     def all_parents(self) -> set:
+        """set[Class]: Get the set of direct and indirect parents of the class."""
         all_parents = set()
         all_parents.update(self.parents())
         for parent in self.parents():
@@ -405,6 +435,7 @@ class Class(Type):
         return all_parents
 
     def specializations(self) -> set:
+        """set[Class]: Get the set of direct specializations (children) of the class."""
         specializations = set()
         for generalization in self.__generalizations:
             if generalization.specific != self:
@@ -412,6 +443,7 @@ class Class(Type):
         return specializations
     
     def all_specializations(self) -> set:
+        """set[Class]: Get the set of direct and indirect specializations (children) of the class."""
         all_spec = set()
         all_spec.update(self.specializations())
         for specialization in self.specializations():
@@ -429,14 +461,11 @@ class Association(NamedElement):
 
     Args:
         name (str): The name of the association.
-        ends (set[Property]): The set of ends associated with the association.
+        ends (set[Property]): The set of ends related to the association.
         
     Attributes:
-        name (str): The name of the association.
-        ends (set[Property]): The set of ends associated with the association.
-
-    Raises:
-        ValueError: if an association has less than two ends.
+        name (str): Inherited from NamedElement, represents the name of the association.
+        ends (set[Property]): The set of ends related to the association.
     """
 
     def __init__(self, name: str, ends: set[Property]):
@@ -450,7 +479,12 @@ class Association(NamedElement):
 
     @ends.setter
     def ends(self, ends: set[Property]):
-        """set[Property]: Set the ends of the association. Two or more ends are required"""
+        """
+        set[Property]: Set the ends of the association. Two or more ends are required.
+        
+        Raises:
+            ValueError: if an association has less than two ends.
+        """
         if len(ends) <= 1:
             raise ValueError("An association must have more than one end")
         if hasattr(self, "ends"):
@@ -470,16 +504,11 @@ class BinaryAssociation(Association):
 
     Args:
         name (str): The name of the binary association.
-        ends (set[Property]): The set of ends associated with the binary association. 
+        ends (set[Property]): The set of ends related to the binary association. 
 
     Attributes:
-        name (str): The name of the binary association.
-        ends (set[Property]): The set of ends associated with the binary association.
-    
-    Raises:
-        ValueError: if the associaiton ends are not exactly two.
-        ValueError: if both ends are tagged as agregation.
-        ValueError: if both ends are tagged as composition.
+        name (str): Inherited from Association, represents the name of the binary association.
+        ends (set[Property]): Inherited from NamedElement, represents the set of ends related to the binary association.
     """
 
     def __init__(self, name: str, ends: set[Property]):
@@ -487,8 +516,12 @@ class BinaryAssociation(Association):
 
     @Association.ends.setter
     def ends(self, ends: set[Property]):
-        """set[Property]: Set the ends of the association. Two ends are required. Both ends 
-        cannot be tagged as aggregation. Both ends cannot be tagged as composition."""
+        """set[Property]: Set the ends of the association.
+        
+        Raises:
+            ValueError: if the associaiton ends are not exactly two, or if both ends are tagged as agregation, or 
+            if both ends are tagged as composition.
+        """
         if len(ends) != 2:
             raise ValueError("A binary must have exactly two ends")
         if list(ends)[0].is_aggregation == True and list(ends)[1].is_aggregation == True:
@@ -508,8 +541,8 @@ class AssociationClass(Class):
         association (Association): The underlying association linked to the association class.
 
     Attributes:
-        name (str): The name of the association class.
-        attributes (set[Property]): The set of attributes associated with the association class.
+        name (str): Inherited from Class, represents the name of the association class.
+        attributes (set[Property]): Inherited from Class, represents the set of attributes associated with the association class.
         association (Association): The underlying association linked to the association class.
     """
 
@@ -540,9 +573,6 @@ class Generalization(Element):
     Attributes:
         general (Class): The general (parent) class in the generalization relationship.
         specific (Class): The specific (child) class in the generalization relationship.
-
-    Raises:
-        ValueError: if the general class is equal to the specific class
     """
 
     def __init__(self, general: Class, specific: Class):
@@ -569,7 +599,12 @@ class Generalization(Element):
 
     @specific.setter
     def specific(self, specific: Class):
-        """Class: Set the specific (child) class. Specific cannot be the same class as general"""
+        """
+        Class: Set the specific (child) class.
+        
+        Raises:
+            ValueError: if the general class is equal to the specific class
+        """
         if specific == self.general:
             raise ValueError("you cannot have your own parent")
         if hasattr(self, "specific"):
@@ -590,7 +625,7 @@ class GeneralizationSet(NamedElement):
         is_complete (bool): Indicates whether the set is complete (every instance of the superclass must belong to a subclass).
 
     Attributes:
-        name (str): The name of the generalization set.
+        name (str): Inherited from NamedElement, represents the name of the generalization set.
         generalizations (set[Generalization]): The set of generalization relationships in the set.
         is_disjoint (bool): Indicates whether the set is disjoint (instances cannot belong to more than one class in the set).
         is_complete (bool): Indicates whether the set is complete (every instance of the superclass must belong to a subclass).
@@ -640,7 +675,7 @@ class Package(NamedElement):
         classes (set[Class]): The set of classes contained in the package.
     
     Attributes:
-        name (str): The name of the package.
+        name (str): Inherited from NamedElement, represents the name of the package.
         classes (set[Class]): The set of classes contained in the package.
     """
 
@@ -669,7 +704,7 @@ class Constraint(NamedElement):
         language (str): The language in which the constraint expression is written.
 
     Attributes:
-        name (str): The name of the constraint.
+        name (str): Inherited from NamedElement, represents the name of the constraint.
         context (Class): The class to which the constraint is associated.
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
@@ -727,17 +762,12 @@ class DomainModel(NamedElement):
         generalizations (set[Generalization]): The set of generalizations in the domain model.
 
     Attributes:
-        name (str): The name of the domain model.
+        name (str): Inherited from NamedElement, represents the name of the domain model.
         types (set[Type]): The set of types (classes and datatypes) in the domain model.
         packages (set[Package]): The set of packages in the domain model.
         constraints (set[Constraint]): The set of constraints in the domain model.
         associations (set[Association]): The set of associations in the domain model.
         generalizations (set[Generalization]): The set of generalizations in the domain model.
-
-    Raises:
-        ValueError: if there are two types with the same name
-        ValueError: if there are two associations with the same name
-        ValueError: if there are two packages with the same name
     """
 
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None, generalizations: set[Generalization] = None, packages: set[Package] = None, constraints: set[Constraint] = None):
@@ -755,8 +785,12 @@ class DomainModel(NamedElement):
 
     @types.setter
     def types(self, types: set[Type]):
-        """set[Type]: Set the set of types in the domain model. The model cannot contain
-         two types with the same name."""
+        """
+        set[Type]: Set the set of types in the domain model.
+        
+        Raises:
+            ValueError: if there are two types with the same name.
+        """
         if types is not None:
             names = [type.name for type in types]
             if len(names) != len(set(names)):
@@ -772,8 +806,12 @@ class DomainModel(NamedElement):
 
     @associations.setter
     def associations(self, associations: set[Association]):
-        """set[Association]: Set the set of associations in the domain model. The model 
-        cannot contain two associations with the same name."""
+        """
+        set[Association]: Set the set of associations in the domain model.
+        
+        Raises:
+            ValueError: if there are two associations with the same name.
+        """
         if associations is not None:
             names = [association.name for association in associations]
             if len(names) != len(set(names)):
@@ -802,8 +840,12 @@ class DomainModel(NamedElement):
 
     @packages.setter
     def packages(self, packages: set[Package]):
-        """set[Package]: Get the set of packages in the domain model. The model 
-        cannot contain two packages with the same name."""
+        """
+        set[Package]: Get the set of packages in the domain model.
+        
+        Raises:
+            ValueError: if there are two packages with the same name.
+        """
         if packages is not None:
             names = [package.name for package in packages]
             if len(names) != len(set(names)):
@@ -819,8 +861,12 @@ class DomainModel(NamedElement):
 
     @constraints.setter
     def constraints(self, constraints: set[Constraint]):
-        """set[Constraint]: Get the set of constraints in the domain model. The model 
-        cannot contain two constraints with the same name."""
+        """
+        set[Constraint]: Get the set of constraints in the domain model.
+        
+        Raises:
+            ValueError: if there are two constraints with the same name.
+        """
         if constraints is not None:
             names = [constraint.name for constraint in constraints]
             if len(names) != len(set(names)):

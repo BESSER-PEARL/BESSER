@@ -1,4 +1,0 @@
-PlantUML Notation
-=================
-
-Grammar

@@ -1,4 +1,0 @@
-BUML core structure
-===================
-
-Metamodel....

@@ -1,0 +1,65 @@
+{# Template for CREATE TABLE statement #}
+{% macro create_table(class_name, attributes, types, sql_dialect) %}
+    {% if sql_dialect == "postgres" %}
+CREATE TABLE IF NOT EXISTS {{ class_name }} (
+    {{ class_name }}_id SERIAL PRIMARY KEY,
+    {% for attribute in attributes %}
+    {{ attribute.name }} {{ types[attribute.type.name] }},
+    {% endfor %}
+);
+    {% elif sql_dialect == "mysql" %}
+CREATE TABLE IF NOT EXISTS {{ class_name }} (
+    {{ class_name }}_id AUTO_INCREMENT INT PRIMARY KEY,
+    {% for attribute in attributes %}
+    {{ attribute.name }} {{ types[attribute.type.name] }},
+    {% endfor %}
+);
+    {% else %}
+CREATE TABLE IF NOT EXISTS {{ class_name }} (
+    {{ class_name }}_id SERIAL PRIMARY KEY,
+    {% for attribute in attributes %}
+    {{ attribute.name }} {{ types[attribute.type.name] }},
+    {% endfor %}
+);
+    {% endif %}
+{%- endmacro %}
+{# Template for ALTER TABLE statement to add a reference #}
+{% macro alter_table(class_name, reference_name, reference_table, reference_column, sql_dialect) %}
+    {% if sql_dialect == "postgres" %}
+ALTER TABLE {{ class_name }}
+ADD COLUMN {{ reference_name }}_id INT REFERENCES {{ reference_table }}({{ reference_column }}_id);
+    {% elif sql_dialect == "mysql" %}
+ALTER TABLE {{ class_name }}
+ADD COLUMN {{ reference_name }}_id INT,
+ADD CONSTRAINT fk_{{ class_name }}_{{ reference_name }}_id
+    FOREIGN KEY ({{ reference_name }}_id)
+    REFERENCES {{ reference_table }} ({{ reference_column }}_id);
+    {% else %}
+ALTER TABLE {{ class_name }}
+ADD COLUMN {{ reference_name }}_id INT REFERENCES {{ reference_table }}({{ reference_column }}_id);
+    {% endif %}
+{%- endmacro %}
+{# Template for N:M relartion intermediate table #}
+{% macro create_nm_table(class1_name, class2_name, sql_dialect) %}
+    {% if sql_dialect == "postgres" %}
+CREATE TABLE IF NOT EXISTS {{ class1_name }}_{{ class2_name }} (
+    {{ class1_name }}_id INT REFERENCES {{ class1_name }}({{ class1_name }}_id),
+    {{ class2_name }}_id INT REFERENCES {{ class2_name }}({{ class2_name }}_id),
+    PRIMARY KEY ({{ class1_name }}_id, {{ class2_name }}_id)
+);
+    {% elif sql_dialect == "mysql" %}
+CREATE TABLE IF NOT EXISTS {{ class1_name }}_{{ class2_name }} (
+    {{ class1_name }}_id INT,
+    {{ class2_name }}_id INT,
+    PRIMARY KEY ({{ class1_name }}_id, {{ class2_name }}_id),
+    FOREIGN KEY ({{ class1_name }}_id) REFERENCES {{ class1_name }}({{ class1_name }}_id),
+    FOREIGN KEY ({{ class2_name }}_id) REFERENCES {{ class2_name }}({{ class2_name }}_id)
+);
+    {% else %}
+CREATE TABLE IF NOT EXISTS {{ class1_name }}_{{ class2_name }} (
+    {{ class1_name }}_id INT REFERENCES {{ class1_name }}({{ class1_name }}_id),
+    {{ class2_name }}_id INT REFERENCES {{ class2_name }}({{ class2_name }}_id),
+    PRIMARY KEY ({{ class1_name }}_id, {{ class2_name }}_id)
+);
+    {% endif %}
+{%- endmacro %}

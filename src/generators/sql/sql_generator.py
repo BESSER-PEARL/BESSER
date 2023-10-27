@@ -16,8 +16,9 @@ class SQLGenerator(GeneratorInterface):
         "timedelta": "interval",
     }
 
-    def __init__(self, model: DomainModel, output_dir: str = None):
+    def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect = None):
         super().__init__(model, output_dir)
+        self.sql_dialect = sql_dialect
 
     def generate(self):
         file_name = "tables.sql"
@@ -32,6 +33,6 @@ class SQLGenerator(GeneratorInterface):
         env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True, lstrip_blocks=True)
         template = env.get_template('sql_template.sql.j2')
         with open(file_path, mode="w") as f:
-            generated_code = template.render(model=self.model, types=self.TYPES)
+            generated_code = template.render(model=self.model, types=self.TYPES, sql_dialect=self.sql_dialect)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

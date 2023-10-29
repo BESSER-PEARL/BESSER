@@ -6,9 +6,8 @@ B-UML is the base language of the BESSER low-code platform. This language (inspi
 .. image:: img/metamodel.jpg
   :width: 800
   :alt: B-UML metamodel
+  :align: center
 
-How to use B-UML
-----------------
 There are two ways to specify your model using B-UML: build the model coding in Python (based on the B-UML metamodel), or import a `PlantUML <https://plantuml.com/>`_ 
 model to transform it into a B-UML model.
 

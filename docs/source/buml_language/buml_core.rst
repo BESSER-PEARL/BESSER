@@ -6,6 +6,7 @@ The following guide shows how to define the classic Library model (see following
 .. image:: ../img/library_uml_model.jpg
   :width: 600
   :alt: Library model
+  :align: center
 
 To define your model using B-UML, you must first import the B-UML classes you are going to use. The following classes 
 must be imported for this Library modeling example.
@@ -48,11 +49,30 @@ Finally, create the domain model and add the classes, relationships and other el
                                               associations={lib_book_association, book_author_association})
 
 
+Now, ``library_model`` is your model specified using B-UML. You can access the classes, attributes, relationships, and all the 
+elements of the model. For instance, you could print the name attributes of the ``Book`` class as follows.
 
+.. code-block:: python
 
+    # Getting the attributes of the Book class
+    for attribute in book.attributes:
+        print (attribute.name)
 
+You should get output like this:
+
+.. code-block:: console
+
+    tittle
+    pages
+    release
+
+.. note::
+    
+    You can consult the complete code for this basic example :doc:`here <../examples/library_example>`.
 
 .. note::
     
     For a detailed description of metamodel elements such as classes, attributes, generalizations and others, 
-    please refer to the API documentation or consult other examples.
+    please refer to the :doc:`API documentation <../api>` documentation.
+
+Now that you have a model defined with B-UML, you can use the :doc:`../generators`.

@@ -1,7 +1,6 @@
 from textx import metamodel_from_file
 
-from BUML.metamodel.structural.structural import DomainModel, Type, Class, Property, PrimitiveDataType, Multiplicity, \
-    Association, BinaryAssociation, Generalization, GeneralizationSet, AssociationClass
+from BUML.metamodel.structural.structural import DomainModel
 from BUML.notations.plantUML.plantuml_to_buml import plantuml_to_buml, build_buml_mm_from_grammar
 
 
@@ -28,9 +27,7 @@ def test_textx_parsing():
 
 # Testing Core model generation from TextX file
 def test_plantuml_transformation():
-    buml_mm = build_buml_mm_from_grammar()
-    hello_world_buml_model = buml_mm.model_from_file('tests/notations/hello_world.plantuml')
-    domain: DomainModel = plantuml_to_buml(hello_world_buml_model)
+    domain: DomainModel = plantuml_to_buml(model_path='tests/notations/hello_world.plantuml')
     # assert number of classes
     assert len(domain.get_classes()) == 4
     # assert number of aggregation associations

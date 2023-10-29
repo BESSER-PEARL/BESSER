@@ -11,7 +11,9 @@ def build_buml_mm_from_grammar():
     return buml_mm
 
 # Function transforming textX model to core model
-def plantuml_to_buml(textx_model) -> DomainModel:
+def plantuml_to_buml(model_path:str) -> DomainModel:
+    buml_mm = build_buml_mm_from_grammar()
+    textx_model = buml_mm.model_from_file(model_path)
     model: DomainModel = DomainModel(name="StructuralModel")
     inheritanceGroup: int = 0
 
@@ -43,14 +45,14 @@ def plantuml_to_buml(textx_model) -> DomainModel:
             element_type == "Aggregation" or element_type == "Composition":
             # reference from
             class_from: Class = model.get_class_by_name(element.fromClass.name)
-            min_from = element.fromCar.min
-            max_from = min_from if element.fromCar.max is None else element.fromCar.max
+            min_from = 0 if element.fromCar.min == "*" and element.fromCar.max is None else element.fromCar.min
+            max_from = element.fromCar.min if element.fromCar.max is None else element.fromCar.max
             navigable_from: bool = True
             composition_from: bool = False
             aggregation_from: bool = False
             # reference to
             class_to: Class = model.get_class_by_name(element.toClass.name)
-            min_to = element.toCar.min
+            min_to = 0 if element.toCar.min == "*" and element.toCar.max is None else element.toCar.min
             max_to = min_to if element.toCar.max is None else element.toCar.max
             navigable_to: bool = True
             composition_to: bool = False

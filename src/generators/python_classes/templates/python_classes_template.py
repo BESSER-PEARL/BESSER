@@ -8,6 +8,10 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
         {% endif -%}
         {% for attribute in class.attributes %}self.{{ attribute.name }} = {{ attribute.name }}
         {% endfor -%}
+        {% for end in class.association_ends() %}{% if end.is_navigable == True %}self.{{ end.name }} = {{ end.name }} 
+        {% endif -%}{% endfor -%}
+
+
     {% for attribute in class.attributes %}
     @property
     def {{ attribute.name }}(self) -> {{ attribute.type.name }}:
@@ -17,4 +21,15 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
     def {{ attribute.name }}(self, {{ attribute.name }}: {{ attribute.type.name }}):
         self.__{{ attribute.name }} = {{ attribute.name }}
     {% endfor -%}
+
+    {% for end in class.association_ends() %}{% if end.is_navigable == True %}
+    @property
+    def {{ end.name }}(self):
+        return self.__{{ end.name }}
+    
+    @{{ end.name }}.setter
+    def {{ end.name }}(self, {{ end.name }}):
+        self.__{{ end.name }} = {{ end.name }}
+    {% endif -%}{% endfor -%}
+
 {% endfor %}

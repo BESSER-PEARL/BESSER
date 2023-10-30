@@ -18,7 +18,7 @@ class Python_Generator(GeneratorInterface):
             os.makedirs(os.path.join(working_path, "output"), exist_ok=True)
             file_path = os.path.join(working_path, "output", file_name)
         env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('python_classes_template.py')
+        template = env.get_template('python_classes_template.py.j2')
         with open(file_path, mode="w") as f:
             generated_code = template.render(classes=self.model.get_classes())
             f.write(generated_code)

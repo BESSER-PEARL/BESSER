@@ -21,15 +21,9 @@ class SQLGenerator(GeneratorInterface):
         self.sql_dialect = sql_dialect
 
     def generate(self):
-        file_name = "tables.sql"
-        working_path = os.path.abspath('')
+        file_path = self.build_generation_path(file_name="tables.sql")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
-        if self.output_dir != None:
-            file_path = os.path.join(self.output_dir, file_name)
-        else:
-            os.makedirs(os.path.join(working_path, "output"), exist_ok=True)
-            file_path = os.path.join(working_path, "output", file_name)
         env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True, lstrip_blocks=True)
         template = env.get_template('sql_template.sql.j2')
         with open(file_path, mode="w") as f:

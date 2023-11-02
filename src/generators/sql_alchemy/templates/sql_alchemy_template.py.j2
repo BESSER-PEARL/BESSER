@@ -1,0 +1,89 @@
+from typing import List
+from typing import Optional
+from sqlalchemy import create_engine
+from sqlalchemy import Column
+from sqlalchemy import ForeignKey
+from sqlalchemy import String
+from sqlalchemy import Table
+from sqlalchemy import Text
+from sqlalchemy.orm import column_property
+from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import Mapped
+from sqlalchemy.orm import mapped_column
+from sqlalchemy.orm import relationship
+from sqlalchemy import Boolean, String, Date, Time, DateTime, Float, Integer
+from datetime import datetime, time, date
+
+class Base(DeclarativeBase):
+    pass
+
+{% for association in associations if association.ends|length == 2 %}
+    {%- set ns = namespace(many_to_many = True) %}
+    {%- for end in association.ends %}
+        {%- if end.multiplicity.max < 2 %} 
+            {%- set ns.many_to_many = False %} 
+        {%- endif %}
+    {%- endfor %}
+    {%- if ns.many_to_many == True %}
+{{ association.name.lower() }} = Table(
+    "{{ association.name.lower() }}",
+    Base.metadata,
+    {%- for end in association.ends %}
+    Column("{{ end.type.name.lower() }}_id", ForeignKey("{{ end.type.name.lower() }}.id"), primary_key=True),
+    {%- endfor %}
+)
+    {% endif %}
+{%- endfor %}
+
+{% for class in classes %}
+class {{ class.name }}(
+    {%- if class.parents() -%}
+        {% for parent in class.parents() -%}
+            {{parent.name}}{{ ", " if not loop.last else "):" }}
+        {% endfor -%}
+    {% else -%}
+        Base):
+    {% endif %}
+    __tablename__ = "{{class.name.lower()}}"
+    {%- for parent in class.parents() %}
+    id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.id"), primary_key=True)
+    {%- endfor %}
+    {%- if class.parents()|length == 0 %}
+    id: Mapped[int] = mapped_column(primary_key=True)
+    {%- endif %}
+    {%- if class.specializations()|length > 0 %}
+    type: Mapped[str]
+    {%- endif %}
+    {% for attribute in class.attributes -%}
+    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({{types[attribute.type.name]}})
+    {% endfor -%}
+
+    {%- for end in class.association_ends() if end.owner.ends|length == 2 -%}
+        {% set ns = namespace(end_own=end) -%}
+        {% for a_end in end.owner.ends if a_end != end -%}
+            {% set ns.end_own = a_end -%}
+        {% endfor -%}
+        {%- if end.multiplicity.max > 1 %}
+    {{end.name}}: Mapped[List["{{end.type.name}}"]] = relationship(
+            {%- if ns.end_own.multiplicity.max > 1 -%}
+                secondary={{ end.owner.name.lower() }},{{" "}}
+            {%- endif -%}back_populates="{{ns.end_own.name}}")
+        {%- endif %}
+        {%- if end.multiplicity.max == 1 %}
+    {{end.type.name.lower()}}_id: Mapped["{{end.type.name}}"] = mapped_column(ForeignKey("{{end.type.name.lower()}}.id"))
+    {{end.name}}: Mapped["{{end.type.name}}"] = relationship(back_populates="{{ns.end_own.name}}")
+        {%- endif %}
+    {%- endfor %}
+
+    {% if class.specializations()|length > 0 -%}
+    __mapper_args__ = {
+        "polymorphic_identity": "{{ class.name.lower() }}",
+        "polymorphic_on": "type",
+    }
+    {%- endif %}
+    {% for parent in class.parents() -%}
+    __mapper_args__ = {
+        "polymorphic_identity": "{{ parent.name.lower() }}",
+    }
+    {%- endfor %}
+{% endfor %}

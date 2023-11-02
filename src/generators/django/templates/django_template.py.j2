@@ -1,0 +1,55 @@
+{# Django model template generator #}
+{% import "django_fields.py.j2" as django_fields %}
+{# django_fields.j2 should contain mappings to Django's ORM field types #}
+from django.db import models
+
+{% for class_obj in model.get_classes() %}
+class {{ class_obj.name|capitalize }}(models.Model):
+    {% for attr in class_obj.all_attributes() %}
+    {{ attr.name }} = {{ django_fields.get_field(attr.type.name, attr.properties) }}
+    {%- endfor %}
+
+    def __str__(self):
+        return str(self.id)
+
+{% endfor %}
+{% for association in model.associations %}
+    {% if association.ends|length == 2 %}
+        {% set end1 = association.ends.pop() %}
+        {% set end2 = association.ends.pop() %}
+        {% set class1_name = end1.type.name %}
+        {% set class2_name = end2.type.name %}
+        {% if end1.multiplicity.max > 1 and end2.multiplicity.max > 1 %}
+        {# N:M Relationship: Use ManyToManyField in Django #}
+class {{ class1_name|capitalize }}(models.Model):
+    {{ class2_name.lower() }} = models.ManyToManyField({{ class2_name|capitalize }}, related_name='{{ class1_name.lower() }}_set')
+        {% elif end1.multiplicity.max > 1 and end2.multiplicity.max == 1 %}
+        {# N:1 Relationship: Use ForeignKey in Django #}
+class {{ class1_name|capitalize }}(models.Model):
+    {{ class2_name.lower() }} = models.ForeignKey({{ class2_name|capitalize }}, related_name='{{ class1_name.lower() }}_set', on_delete=models.CASCADE)
+        {% elif end1.multiplicity.max == 1 and end2.multiplicity.max > 1 %}
+        {# 1:N Relationship: Use ForeignKey in Django #}
+class {{ class2_name|capitalize }}(models.Model):
+    {{ class1_name.lower() }} = models.ForeignKey({{ class1_name|capitalize }}, related_name='{{ class2_name.lower() }}_set', on_delete=models.CASCADE)
+        {% elif end1.multiplicity.max == 1 and end2.multiplicity.max == 1 %}
+        {# 1:1 Relationship: Use OneToOneField in Django #}
+class {{ class1_name|capitalize }}(models.Model):
+    {{ class2_name.lower() }} = models.OneToOneField({{ class2_name|capitalize }}, on_delete=models.CASCADE, related_name='{{ class1_name.lower() }}')
+        {% endif %}
+    {% else %}
+        {# Nary relationship handling (intermediate table) #}
+class {{ association.name|capitalize }}(models.Model):
+        {# Here is a good place to define AssociationClass fields, TODO #}
+        {% for end in association.ends %}
+            {% set class_name = end.type.name %}
+            {% if end.multiplicity.max > 1 %}
+                {# N:M Relationship: Use ManyToManyField in Django for intermediate table #}
+    {{ class_name.lower() }} = models.ManyToManyField({{ class_name|capitalize }}, on_delete=models.CASCADE)
+            {% else %}
+                {# 1:N Relationship: Use ForeignKey in Django for intermediate table #}
+    {{ class_name.lower() }} = models.ForeignKey({{ class_name|capitalize }}, on_delete=models.CASCADE)
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+
+{% endfor %}

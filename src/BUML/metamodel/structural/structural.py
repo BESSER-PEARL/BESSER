@@ -41,7 +41,7 @@ class Type(NamedElement):
     def __repr__(self):
         return f"Name({self.name})"
 
-class DataType(NamedElement):
+class DataType(Type):
     def __init__(self, name: str):
         super().__init__(name)
 

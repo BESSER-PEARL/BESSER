@@ -532,3 +532,13 @@ class DomainModel(NamedElement):
     
     def get_class_by_name(self, class_name: str) -> Class:
         return next((element for element in self.types if isinstance(element, Class) and element.name == class_name), None)
+    
+    def classes_sorted_by_inheritance(self) -> list[Class]:
+        classes: set[Class] = self.get_classes()
+        ordered_classes: list = []
+        while len(classes) != 0:
+            for cl in classes:
+                if len(cl.parents()) == 0 or all(parent in ordered_classes for parent in cl.parents()):
+                    ordered_classes.append(cl)
+            classes.difference_update(ordered_classes)
+        return ordered_classes

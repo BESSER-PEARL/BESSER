@@ -45,15 +45,27 @@ def plantuml_to_buml(model_path:str) -> DomainModel:
             element_type == "Aggregation" or element_type == "Composition":
             # reference from
             class_from: Class = model.get_class_by_name(element.fromClass.name)
-            min_from = 0 if element.fromCar.min == "*" and element.fromCar.max is None else element.fromCar.min
-            max_from = element.fromCar.min if element.fromCar.max is None else element.fromCar.max
+            min_from = 1
+            max_from = 1
+            if element.fromCar is not None: 
+                if element.fromCar.min == "*" and element.fromCar.max is None:
+                    min_from = 0
+                elif element.fromCar.min is not None:
+                    min_from = element.fromCar.min                
+                max_from = element.fromCar.min if element.fromCar.max is None else element.fromCar.max
             navigable_from: bool = True
             composition_from: bool = False
             aggregation_from: bool = False
             # reference to
             class_to: Class = model.get_class_by_name(element.toClass.name)
-            min_to = 0 if element.toCar.min == "*" and element.toCar.max is None else element.toCar.min
-            max_to = min_to if element.toCar.max is None else element.toCar.max
+            min_to = 1
+            max_to = 1
+            if element.toCar is not None: 
+                if element.toCar.min == "*" and element.toCar.max is None:
+                    min_from = 0
+                elif element.toCar.min is not None:
+                    min_from = element.toCar.min                
+                max_from = element.toCar.min if element.toCar.max is None else element.toCar.max
             navigable_to: bool = True
             composition_to: bool = False
             aggregation_to: bool = False
@@ -67,6 +79,14 @@ def plantuml_to_buml(model_path:str) -> DomainModel:
             if element.__class__.__name__ == "Composition":
                 composition_from = element.fromComp
                 composition_to = element.toComp
+            if element.name is None or element.name == "":
+                if element.__class__.__name__ == "Unidirectional":
+                    if element.fromNav:
+                        element.name = class_from.name.lower()
+                    else:
+                        element.name = class_to.name.lower()
+                else:
+                    element.name = class_from.name + class_to.name
             ends.add(Property(name=element.name, visibility="public", owner=class_from, property_type=class_from, 
                               multiplicity=Multiplicity(min_multiplicity=min_from,max_multiplicity=max_from), 
                               is_composite=composition_from, is_navigable=navigable_from, is_aggregation=aggregation_from))

@@ -62,10 +62,10 @@ def plantuml_to_buml(model_path:str) -> DomainModel:
             max_to = 1
             if element.toCar is not None: 
                 if element.toCar.min == "*" and element.toCar.max is None:
-                    min_from = 0
+                    min_to = 0
                 elif element.toCar.min is not None:
-                    min_from = element.toCar.min                
-                max_from = element.toCar.min if element.toCar.max is None else element.toCar.max
+                    min_to = element.toCar.min                
+                max_to = element.toCar.min if element.toCar.max is None else element.toCar.max
             navigable_to: bool = True
             composition_to: bool = False
             aggregation_to: bool = False

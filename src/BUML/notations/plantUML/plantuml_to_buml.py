@@ -81,11 +81,12 @@ def plantuml_to_buml(model_path:str) -> DomainModel:
             if element.fromInh == True:
                 generalClass: Class = model.get_class_by_name(element.fromClass.name)
                 specificClass: Class = model.get_class_by_name(element.toClass.name)
-            else:
+            elif element.toInh == True:
                 generalClass: Class = model.get_class_by_name(element.toClass.name)
                 specificClass: Class = model.get_class_by_name(element.fromClass.name)
-            new_generalization: Generalization = Generalization(general=generalClass, specific=specificClass)
-            model.generalizations.add(new_generalization)
+            if element.fromInh != element.toInh:               
+                new_generalization: Generalization = Generalization(general=generalClass, specific=specificClass)
+                model.generalizations.add(new_generalization)
     
     # Generalization group definition
     if inheritanceGroup > 1:

@@ -6,7 +6,7 @@ import os
 class GeneratorInterface(ABC):
     
     @abstractmethod
-    def __init__(self, model: DomainModel, output_dir: str = "generated_output"):
+    def __init__(self, model: DomainModel, output_dir: str = None):
         self.model = model
         self.output_dir = output_dir
 

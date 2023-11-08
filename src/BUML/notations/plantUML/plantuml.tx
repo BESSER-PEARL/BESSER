@@ -28,19 +28,19 @@ Association:
 ;
 
 Bidirectional:
-  fromClass=[Class] fromCar=Cardinality? '--' toCar=Cardinality? toClass=[Class] ':' name=ID
+  fromClass=[Class] fromCar=Cardinality? '--' toCar=Cardinality? toClass=[Class] (':' name=ID)?
 ;
 
 Unidirectional:
-  fromClass=[Class] fromCar=Cardinality? fromNav?='<' '--' toNav?='>' toCar=Cardinality? toClass=[Class] ':' name=ID
+  fromClass=[Class] fromCar=Cardinality? fromNav?='<' '--' toNav?='>' toCar=Cardinality? toClass=[Class] (':' name=ID)?
 ;
 
 Aggregation:
-  fromClass=[Class] fromCar=Cardinality? fromAgg?='o' fromNav?='<' '--' toNav?='>' toAgg?='o' toCar=Cardinality? toClass=[Class] ':' name=ID
+  fromClass=[Class] fromCar=Cardinality? fromAgg?='o' fromNav?='<' '--' toNav?='>' toAgg?='o' toCar=Cardinality? toClass=[Class] (':' name=ID)?
 ;
 
 Composition:
-  fromClass=[Class] fromCar=Cardinality? fromComp?='*' fromNav?='<' '--' toNav?='>' toComp?='*' toCar=Cardinality? toClass=[Class] ':' name=ID
+  fromClass=[Class] fromCar=Cardinality? fromComp?='*' fromNav?='<' '--' toNav?='>' toComp?='*' toCar=Cardinality? toClass=[Class] (':' name=ID)?
 ;
 
 Inheritance:

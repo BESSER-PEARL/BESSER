@@ -10,6 +10,22 @@ def build_buml_mm_from_grammar():
     buml_mm = metamodel_from_file(grammar_path)
     return buml_mm
 
+def __association_name_helper(from_class_name, to_class_name, from_bool, to_bool, from_max, to_max):
+    if any(from_bool):
+        if from_max == 1: 
+            return from_class_name.lower()
+        else:
+            return from_class_name.lower() + "s"
+    elif any(to_bool):
+        if to_max == 1: 
+            return to_class_name.lower()
+        else:
+            return to_class_name.lower() + "s" 
+    else:
+        # This shouldn't be possible actually
+        return "variable"
+    
+
 # Function transforming textX model to core model
 def plantuml_to_buml(model_path:str) -> DomainModel:
     buml_mm = build_buml_mm_from_grammar()
@@ -80,13 +96,10 @@ def plantuml_to_buml(model_path:str) -> DomainModel:
                 composition_from = element.fromComp
                 composition_to = element.toComp
             if element.name is None or element.name == "":
-                if element.__class__.__name__ == "Unidirectional":
-                    if element.fromNav:
-                        element.name = class_from.name.lower()
-                    else:
-                        element.name = class_to.name.lower()
-                else:
+                if element.__class__.__name__ == "Bidirectional":
                     element.name = class_from.name + class_to.name
+                else:
+                    element.name = __association_name_helper(class_from.name, class_to.name, [navigable_from, aggregation_from, composition_from], [navigable_to, aggregation_to, composition_to], max_from, max_to)
             ends.add(Property(name=element.name, visibility="public", owner=class_from, property_type=class_from, 
                               multiplicity=Multiplicity(min_multiplicity=min_from,max_multiplicity=max_from), 
                               is_composite=composition_from, is_navigable=navigable_from, is_aggregation=aggregation_from))

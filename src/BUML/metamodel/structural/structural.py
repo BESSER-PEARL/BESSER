@@ -56,6 +56,43 @@ class PrimitiveDataType(DataType):
         # calling the setter of the superclass if there are no errors
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
+class EnumerationLiteral(NamedElement):
+    def __init__(self, name: str, owner: DataType):
+        super().__init__(name)
+        self.owner: DataType = owner
+    
+    @property
+    def owner(self) -> DataType:
+        return self.__owner
+
+    @owner.setter
+    def owner(self, owner: DataType):
+        # owner cannot be a PrimitiveDataType
+        if isinstance(owner, PrimitiveDataType):
+            raise ValueError("Invalid owner")
+        self.__owner = owner
+
+class Enumeration(DataType):
+    def __init__(self, name: str, literals: set[EnumerationLiteral]):
+        super().__init__(name)
+        self.literals: set[EnumerationLiteral] = literals
+
+    @property
+    def literals(self) -> set[EnumerationLiteral]:
+        return self.__literals
+
+    @literals.setter
+    def literals(self, literals: set[EnumerationLiteral]):
+        if literals is not None:
+            names = [literal.name for literal in literals]
+            if len(names) != len(set(names)):
+                raise ValueError("An enumeration cannot have two literals with the same name")
+            for literal in literals:
+                literal.owner = self
+            self.__literals = literals
+        else:
+            self.__literals = set()
+
 class TypedElement(NamedElement):
     def __init__(self, name: str, type: Type, visibility: str="public"):
         super().__init__(name, visibility)

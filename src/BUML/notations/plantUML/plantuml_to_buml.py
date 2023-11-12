@@ -3,13 +3,6 @@ from BUML.metamodel.structural.structural import DomainModel, Class, Property, P
 from textx import metamodel_from_file
 import os
 
-# Function to build the buml metamodel from the grammar
-def build_buml_mm_from_grammar():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    grammar_path = os.path.join(script_dir, 'plantuml.tx')
-    buml_mm = metamodel_from_file(grammar_path)
-    return buml_mm
-
 def __association_name_helper(from_class_name, to_class_name, from_bool, to_bool, from_max, to_max):
     if any(from_bool):
         if from_max == 1: 
@@ -24,12 +17,12 @@ def __association_name_helper(from_class_name, to_class_name, from_bool, to_bool
     else:
         # This shouldn't be possible actually
         return "variable"
-    
 
 # Function transforming textX model to core model
 def plantuml_to_buml(model_path:str) -> DomainModel:
-    buml_mm = build_buml_mm_from_grammar()
-    textx_model = buml_mm.model_from_file(model_path)
+    grammar_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plantuml.tx')
+    plantUML_mm = metamodel_from_file(grammar_path)
+    textx_model = plantUML_mm.model_from_file(model_path)
     model: DomainModel = DomainModel(name="StructuralModel")
     inheritanceGroup: int = 0
 

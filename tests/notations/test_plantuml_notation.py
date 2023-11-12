@@ -1,13 +1,13 @@
 from textx import metamodel_from_file
 
 from BUML.metamodel.structural.structural import DomainModel
-from BUML.notations.plantUML.plantuml_to_buml import plantuml_to_buml, build_buml_mm_from_grammar
+from BUML.notations.plantUML.plantuml_to_buml import plantuml_to_buml
 
 
 # Testing TextX parsing of a simple domain concept
 def test_textx_parsing():
-    buml_mm = build_buml_mm_from_grammar()
-    hello_world_buml_model = buml_mm.model_from_file('tests/notations/hello_world.plantuml')
+    plantUML_mm = metamodel_from_file('src/BUML/notations/plantUML/plantuml.tx')
+    hello_world_buml_model = plantUML_mm.model_from_file('tests/notations/hello_world.plantuml')
     assert len(hello_world_buml_model.elements) == 10
     # assert number of classes
     assert sum(1 if x.__class__.__name__ == 'Class' else 0 for x in hello_world_buml_model.elements) == 4

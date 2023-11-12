@@ -5,3 +5,4 @@ Code Generators
 
    generators/python_classes
    generators/sql
+   generators/sql_alchemy

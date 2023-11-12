@@ -44,12 +44,11 @@ class NamedElement(Element):
         str: Set the visibility of the named element.
         
         Raises:
-            ValueError: (invalid visibility) if the visibility 
-            provided is none of these: public, private, protected, 
-            or package.
+            ValueError: If the visibility provided is none of these: public, 
+            private, protected, or package.
         """
         if visibility not in ['public', 'private', 'protected', 'package']:
-            raise ValueError("Invalid visibility")
+            raise ValueError("Invalid value of visibility")
         self.__visibility = visibility
 
 class Type(NamedElement):
@@ -84,16 +83,18 @@ class DataType(Type):
         super().__init__(name)
 
 class PrimitiveDataType(DataType):
-    """Class representing a primitive data type.
+    """Class representing an enumeration literal.
 
-    This class is a subclass of DataType and is used to represent primitive data types
-    with a specified name.
+    This class is a subclass of NamedElement and is used to represent individual
+    literals within an enumeration.
 
     Args:
-        name (str): the name of the primitive data type.
+        name (str): the name of the enumeration literal.
+        owner (DataType): the owner data type of the enumeration literal.
 
     Attributes:
-        name (str): Inherited from DataType, represents the name of the primitive data type.
+        name (str): Inherited from NamedElement, represents the name of the enumeration literal.
+        owner (DataType): Represents the owner data type of the enumeration literal.
     """    
 
     def __init__(self, name: str):
@@ -105,41 +106,81 @@ class PrimitiveDataType(DataType):
         str: Set the name of the PrimitiveDataType. 
         
         Raises:
-            ValueError: (Invalid primitive data type) if an invalid primitive data type 
-            is provided. The allowed values are int, float, str, bool, time, date, datetime, 
-            and timedelta
+            ValueError: If an invalid primitive data type is provided.
+                        Allowed values are int, float, str, bool, time, date, datetime, and timedelta.
         """
         if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
             raise ValueError("Invalid primitive data type")
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
 class EnumerationLiteral(NamedElement):
+    """Class representing a primitive data type.
+
+    This class is a subclass of DataType and is used to represent primitive data types
+    with a specified name.
+
+    Args:
+        name (str): the name of the primitive data type.
+        owner (DataType): the owner data type (Enumeration) of the enumeration literal.
+
+    Attributes:
+        name (str): Inherited from NamedElement, represents the name of the enumeration literal.
+        owner (DataType): Represents the owner data type (Enumeration) of the enumeration literal.
+    """
+    
     def __init__(self, name: str, owner: DataType):
         super().__init__(name)
         self.owner: DataType = owner
     
     @property
     def owner(self) -> DataType:
+        """Datatype: Get the owner."""
         return self.__owner
 
     @owner.setter
     def owner(self, owner: DataType):
-        # owner cannot be a PrimitiveDataType
+        """
+        DataType: Set the owner. 
+        
+        Raises:
+            ValueError: If the owner is not an enumeration.
+        """
         if isinstance(owner, PrimitiveDataType):
             raise ValueError("Invalid owner")
         self.__owner = owner
 
 class Enumeration(DataType):
+    """Class representing an enumeration.
+
+    This class is a subclass of DataType and is used to represent enumerations
+    with a specified name and a set of enumeration literals.
+
+    Args:
+        name (str): the name of the enumeration data type.
+        literals (set[EnumerationLiteral]): set of enumeration literals associated with the enumeration.
+
+    Attributes:
+        name (str): Inherited from DataType, represents the name of the enumeration.
+        literals (set[EnumerationLiteral]): Represents a set of enumeration literals associated with the enumeration.
+    """
+    
     def __init__(self, name: str, literals: set[EnumerationLiteral]):
         super().__init__(name)
         self.literals: set[EnumerationLiteral] = literals
 
     @property
     def literals(self) -> set[EnumerationLiteral]:
+        """set[EnumerationLiteral]: Get the set of literals."""
         return self.__literals
 
     @literals.setter
     def literals(self, literals: set[EnumerationLiteral]):
+        """
+        DataType: Set the literals. 
+        
+        Raises:
+            ValueError: if two literals have the same name.
+        """
         if literals is not None:
             names = [literal.name for literal in literals]
             if len(names) != len(set(names)):
@@ -183,8 +224,8 @@ class Multiplicity:
     It consists of a minimum and maximum value, indicating the allowed range.
 
     Args:
-        min (int): The minimum multiplicity.
-        max (int): The maximum multiplicity. Use "*" for unlimited.
+        min_multiplicity (int): The minimum multiplicity.
+        max_multiplicity (int): The maximum multiplicity. Use "*" for unlimited.
 
     Attributes:
         min (int): The minimum multiplicity.
@@ -348,8 +389,8 @@ class Class(Type):
         name (str): Inherited from Type, represents the name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
         is_abstract (bool): Indicates whether the class is abstract.
-        __associations: Set of associations involving the class.
-        __generalizations: Set of generalizations involving the class.
+        __associations (set[Association]): Set of associations involving the class.
+        __generalizations (set[Generalization]): Set of generalizations involving the class.
     """
 
     def __init__(self, name: str, attributes: set[Property], is_abstract: bool= False):
@@ -794,18 +835,20 @@ class DomainModel(NamedElement):
     Args:
         name (str): The name of the domain model.
         types (set[Type]): The set of types (classes and datatypes) in the domain model.
-        packages (set[Package]): The set of packages in the domain model.
-        constraints (set[Constraint]): The set of constraints in the domain model.
         associations (set[Association]): The set of associations in the domain model.
         generalizations (set[Generalization]): The set of generalizations in the domain model.
+        enumerations (set[Enumeration]): The set of enumerations in the domain model.
+        packages (set[Package]): The set of packages in the domain model.
+        constraints (set[Constraint]): The set of constraints in the domain model.
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the domain model.
         types (set[Type]): The set of types (classes and datatypes) in the domain model.
-        packages (set[Package]): The set of packages in the domain model.
-        constraints (set[Constraint]): The set of constraints in the domain model.
         associations (set[Association]): The set of associations in the domain model.
         generalizations (set[Generalization]): The set of generalizations in the domain model.
+        enumerations (set[Enumeration]): The set of enumerations in the domain model.
+        packages (set[Package]): The set of packages in the domain model.
+        constraints (set[Constraint]): The set of constraints in the domain model.
     """
 
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None, generalizations: set[Generalization] = None, 
@@ -875,13 +918,18 @@ class DomainModel(NamedElement):
 
     @property
     def enumerations(self) -> set[Enumeration]:
+        """set[Enumeration]: Get the set of enumerations in the domain model."""
         return self.__enumerations
 
     @enumerations.setter
     def enumerations(self, enumerations: set[Enumeration]):
-        # Check no duplicate names
+        """
+        set[Enumeration]: Set the set of enumerations in the domain model.
+        
+        Raises:
+            ValueError: if there are two enumerations with the same name.
+        """
         if enumerations is not None:
-            # Get a list of names from the elements
             names = [enumeration.name for enumeration in enumerations]
             if len(names) != len(set(names)):
                 raise ValueError("The model cannot have two enumerations with the same name")
@@ -940,6 +988,7 @@ class DomainModel(NamedElement):
         return next((element for element in self.types if isinstance(element, Class) and element.name == class_name), None)
     
     def classes_sorted_by_inheritance(self) -> list[Class]:
+        """list[Class]: Get the list of classes ordered by inheritance."""
         classes: set[Class] = self.get_classes()
         ordered_classes: list = []
         while len(classes) != 0:

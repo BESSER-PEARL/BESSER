@@ -68,7 +68,7 @@ class Type(NamedElement):
     def __repr__(self):
         return f"Name({self.name})"
 
-class DataType(NamedElement):
+class DataType(Type):
     """Represents a data type.
 
     This class inherits from NamedElement and is used to model data types.
@@ -112,6 +112,43 @@ class PrimitiveDataType(DataType):
         if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
             raise ValueError("Invalid primitive data type")
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
+
+class EnumerationLiteral(NamedElement):
+    def __init__(self, name: str, owner: DataType):
+        super().__init__(name)
+        self.owner: DataType = owner
+    
+    @property
+    def owner(self) -> DataType:
+        return self.__owner
+
+    @owner.setter
+    def owner(self, owner: DataType):
+        # owner cannot be a PrimitiveDataType
+        if isinstance(owner, PrimitiveDataType):
+            raise ValueError("Invalid owner")
+        self.__owner = owner
+
+class Enumeration(DataType):
+    def __init__(self, name: str, literals: set[EnumerationLiteral]):
+        super().__init__(name)
+        self.literals: set[EnumerationLiteral] = literals
+
+    @property
+    def literals(self) -> set[EnumerationLiteral]:
+        return self.__literals
+
+    @literals.setter
+    def literals(self, literals: set[EnumerationLiteral]):
+        if literals is not None:
+            names = [literal.name for literal in literals]
+            if len(names) != len(set(names)):
+                raise ValueError("An enumeration cannot have two literals with the same name")
+            for literal in literals:
+                literal.owner = self
+            self.__literals = literals
+        else:
+            self.__literals = set()
 
 class TypedElement(NamedElement):
     """TypedElement is a subclass of NamedElement and is used to represent elements
@@ -227,7 +264,8 @@ class Property(TypedElement):
         is_aggregation (bool): Indicates whether the property represents an aggregation.
     """
     
-    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
+    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), 
+                 visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
         super().__init__(name, property_type, visibility)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
@@ -770,12 +808,14 @@ class DomainModel(NamedElement):
         generalizations (set[Generalization]): The set of generalizations in the domain model.
     """
 
-    def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None, generalizations: set[Generalization] = None, packages: set[Package] = None, constraints: set[Constraint] = None):
+    def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None, generalizations: set[Generalization] = None, 
+                 enumerations: set[Enumeration] = None, packages: set[Package] = None, constraints: set[Constraint] = None):
         super().__init__(name)
         self.types: set[Type] = types
         self.packages: set[Package] = packages
         self.constraints: set[Constraint] = constraints
         self.associations: set[Association] = associations
+        self.enumerations: set[Enumeration] = enumerations
         self.generalizations: set[Generalization] = generalizations
 
     @property
@@ -834,6 +874,22 @@ class DomainModel(NamedElement):
             self.__generalizations = set()
 
     @property
+    def enumerations(self) -> set[Enumeration]:
+        return self.__enumerations
+
+    @enumerations.setter
+    def enumerations(self, enumerations: set[Enumeration]):
+        # Check no duplicate names
+        if enumerations is not None:
+            # Get a list of names from the elements
+            names = [enumeration.name for enumeration in enumerations]
+            if len(names) != len(set(names)):
+                raise ValueError("The model cannot have two enumerations with the same name")
+            self.__enumerations = enumerations
+        else:
+            self.__enumerations = set()
+
+    @property
     def packages(self) -> set[Package]:
         """set[Package]: Get the set of packages in the domain model."""
         return self.__packages
@@ -882,3 +938,13 @@ class DomainModel(NamedElement):
     def get_class_by_name(self, class_name: str) -> Class:
         """Class: Gets a class by name."""
         return next((element for element in self.types if isinstance(element, Class) and element.name == class_name), None)
+    
+    def classes_sorted_by_inheritance(self) -> list[Class]:
+        classes: set[Class] = self.get_classes()
+        ordered_classes: list = []
+        while len(classes) != 0:
+            for cl in classes:
+                if len(cl.parents()) == 0 or all(parent in ordered_classes for parent in cl.parents()):
+                    ordered_classes.append(cl)
+            classes.difference_update(ordered_classes)
+        return ordered_classes

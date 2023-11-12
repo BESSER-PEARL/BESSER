@@ -142,7 +142,8 @@ class Multiplicity:
 # Properties are owned by a class or an association and point to a type with a multiplicity
 class Property(TypedElement):
 
-    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
+    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), 
+                 visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
         super().__init__(name, property_type, visibility)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
@@ -481,12 +482,14 @@ class Constraint(NamedElement):
 # A model is the root element that comprises a number of classes and associations
 class DomainModel(NamedElement):
 
-    def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None, generalizations: set[Generalization] = None, packages: set[Package] = None, constraints: set[Constraint] = None):
+    def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None, generalizations: set[Generalization] = None, 
+                 enumerations: set[Enumeration] = None, packages: set[Package] = None, constraints: set[Constraint] = None):
         super().__init__(name)
         self.types: set[Type] = types
         self.packages: set[Package] = packages
         self.constraints: set[Constraint] = constraints
         self.associations: set[Association] = associations
+        self.enumerations: set[Enumeration] = enumerations
         self.generalizations: set[Generalization] = generalizations
 
     @property
@@ -531,6 +534,22 @@ class DomainModel(NamedElement):
             self.__generalizations = generalizations
         else:
             self.__generalizations = set()
+
+    @property
+    def enumerations(self) -> set[Enumeration]:
+        return self.__enumerations
+
+    @enumerations.setter
+    def enumerations(self, enumerations: set[Enumeration]):
+        # Check no duplicate names
+        if enumerations is not None:
+            # Get a list of names from the elements
+            names = [enumeration.name for enumeration in enumerations]
+            if len(names) != len(set(names)):
+                raise ValueError("The model cannot have two enumerations with the same name")
+            self.__enumerations = enumerations
+        else:
+            self.__enumerations = set()
 
     @property
     def packages(self) -> set[Package]:

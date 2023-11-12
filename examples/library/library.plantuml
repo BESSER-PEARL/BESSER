@@ -1,0 +1,20 @@
+@startuml
+class Library {
+- name: str
+- address: str
+}
+
+class Book {
++ tittle: str
++ pages: int
++ release: date
+}
+
+class Author {
++ name: str
++ email: str 
+}
+
+Book "*" -- "1..*" Author: writedBy
+Library "1" -- "*" Book: has
+@enduml

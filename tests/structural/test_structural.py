@@ -1,7 +1,8 @@
 import pytest
 
 from BUML.metamodel.structural.structural import NamedElement, DomainModel, Type, Class, \
-    Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, GeneralizationSet, AssociationClass
+    Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, \
+    GeneralizationSet, AssociationClass, Enumeration, EnumerationLiteral
 
 
 def test_named_element():
@@ -154,3 +155,20 @@ def test_generalization_set_initialization():
     assert class2.parents() == {class1}
     assert class3.parents() == {class1}
     assert class2.specializations() == set()
+    
+# Testing enumeration and literals initialization
+def test_enumeration_initialization():
+    literal1: EnumerationLiteral = EnumerationLiteral(name="literal_1", owner=None)
+    literal2: EnumerationLiteral = EnumerationLiteral(name="literal_2", owner=None)
+    literal3: EnumerationLiteral = EnumerationLiteral(name="literal_3", owner=None)
+    enum: Enumeration = Enumeration(name="Enumeration", literals={literal1,literal2,literal3})
+    assert len(enum.literals) == 3
+    assert literal1.owner == enum
+    
+# Testing no duplicated literal names in an enumeration
+def test_duplicated_name_literal():
+    with pytest.raises(ValueError) as excinfo:
+        literal1: EnumerationLiteral = EnumerationLiteral(name="duplicated_name", owner=None)
+        literal2: EnumerationLiteral = EnumerationLiteral(name="duplicated_name", owner=None)
+        enum1: Enumeration = Enumeration(name="Enumeration", literals={literal1,literal2})
+        assert "An enumeration cannot have two literals with the same name" in str(excinfo.value)

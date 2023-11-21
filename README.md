@@ -32,3 +32,7 @@ Download the latest release of the project [here](https://github.com/BESSER-PEAR
 * [BUML modeling](https://github.com/BESSER-PEARL/BESSER-UML/blob/master/docs/metamodel-doc.md): to model a problem, system, domain, or anything else.
 
 * [BUML PlantUML notation](https://github.com/BESSER-PEARL/BESSER-UML/blob/master/docs/plantuml-doc.md): to use the [PlantUML](https://plantuml.com/) notation to generate a BUML model.
+
+## License
+
+This project is licensed under the [MIT](https://mit-license.org/) license.

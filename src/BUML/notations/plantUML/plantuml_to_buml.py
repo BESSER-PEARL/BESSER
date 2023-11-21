@@ -3,17 +3,26 @@ from BUML.metamodel.structural.structural import DomainModel, Class, Property, P
 from textx import metamodel_from_file
 import os
 
-# Function to build the buml metamodel from the grammar
-def build_buml_mm_from_grammar():
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    grammar_path = os.path.join(script_dir, 'plantuml.tx')
-    buml_mm = metamodel_from_file(grammar_path)
-    return buml_mm
+def __association_name_helper(from_class_name, to_class_name, from_bool, to_bool, from_max, to_max):
+    if any(from_bool):
+        if from_max == 1: 
+            return from_class_name.lower()
+        else:
+            return from_class_name.lower() + "s"
+    elif any(to_bool):
+        if to_max == 1: 
+            return to_class_name.lower()
+        else:
+            return to_class_name.lower() + "s" 
+    else:
+        # This shouldn't be possible actually
+        return "variable"
 
 # Function transforming textX model to core model
 def plantuml_to_buml(model_path:str) -> DomainModel:
-    buml_mm = build_buml_mm_from_grammar()
-    textx_model = buml_mm.model_from_file(model_path)
+    grammar_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plantuml.tx')
+    plantUML_mm = metamodel_from_file(grammar_path)
+    textx_model = plantUML_mm.model_from_file(model_path)
     model: DomainModel = DomainModel(name="StructuralModel")
     inheritanceGroup: int = 0
 
@@ -45,15 +54,27 @@ def plantuml_to_buml(model_path:str) -> DomainModel:
             element_type == "Aggregation" or element_type == "Composition":
             # reference from
             class_from: Class = model.get_class_by_name(element.fromClass.name)
-            min_from = 0 if element.fromCar.min == "*" and element.fromCar.max is None else element.fromCar.min
-            max_from = element.fromCar.min if element.fromCar.max is None else element.fromCar.max
+            min_from = 1
+            max_from = 1
+            if element.fromCar is not None: 
+                if element.fromCar.min == "*" and element.fromCar.max is None:
+                    min_from = 0
+                elif element.fromCar.min is not None:
+                    min_from = element.fromCar.min                
+                max_from = element.fromCar.min if element.fromCar.max is None else element.fromCar.max
             navigable_from: bool = True
             composition_from: bool = False
             aggregation_from: bool = False
             # reference to
             class_to: Class = model.get_class_by_name(element.toClass.name)
-            min_to = 0 if element.toCar.min == "*" and element.toCar.max is None else element.toCar.min
-            max_to = min_to if element.toCar.max is None else element.toCar.max
+            min_to = 1
+            max_to = 1
+            if element.toCar is not None: 
+                if element.toCar.min == "*" and element.toCar.max is None:
+                    min_to = 0
+                elif element.toCar.min is not None:
+                    min_to = element.toCar.min                
+                max_to = element.toCar.min if element.toCar.max is None else element.toCar.max
             navigable_to: bool = True
             composition_to: bool = False
             aggregation_to: bool = False
@@ -67,6 +88,11 @@ def plantuml_to_buml(model_path:str) -> DomainModel:
             if element.__class__.__name__ == "Composition":
                 composition_from = element.fromComp
                 composition_to = element.toComp
+            if element.name is None or element.name == "":
+                if element.__class__.__name__ == "Bidirectional":
+                    element.name = class_from.name + class_to.name
+                else:
+                    element.name = __association_name_helper(class_from.name, class_to.name, [navigable_from, aggregation_from, composition_from], [navigable_to, aggregation_to, composition_to], max_from, max_to)
             ends.add(Property(name=element.name, visibility="public", owner=class_from, property_type=class_from, 
                               multiplicity=Multiplicity(min_multiplicity=min_from,max_multiplicity=max_from), 
                               is_composite=composition_from, is_navigable=navigable_from, is_aggregation=aggregation_from))
@@ -81,11 +107,12 @@ def plantuml_to_buml(model_path:str) -> DomainModel:
             if element.fromInh == True:
                 generalClass: Class = model.get_class_by_name(element.fromClass.name)
                 specificClass: Class = model.get_class_by_name(element.toClass.name)
-            else:
+            elif element.toInh == True:
                 generalClass: Class = model.get_class_by_name(element.toClass.name)
                 specificClass: Class = model.get_class_by_name(element.fromClass.name)
-            new_generalization: Generalization = Generalization(general=generalClass, specific=specificClass)
-            model.generalizations.add(new_generalization)
+            if element.fromInh != element.toInh:               
+                new_generalization: Generalization = Generalization(general=generalClass, specific=specificClass)
+                model.generalizations.add(new_generalization)
     
     # Generalization group definition
     if inheritanceGroup > 1:

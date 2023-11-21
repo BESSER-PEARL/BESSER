@@ -3,61 +3,65 @@
 {# django_fields.j2 should contain mappings to Django's ORM field types #}
 from django.db import models
 
-{% for class_obj in model.get_classes() %}
-{% set generals = namespace(names=[]) %}
-{% if class_obj.generalizations|length != 0 %}
-    {% for obj in class_obj.generalizations %}
-        {% set general = obj.general %}
-        {% set specific = obj.specific %}
-        {% if specific == class_obj %}
-            {% set _ = generals.names.append(general.name | capitalize) %}
-        {% endif %}
-    {% endfor %}
-{% endif %}
-{% set inheritance = generals.names | join(', ') %}
-class {{ class_obj.name|capitalize }}({{ inheritance | default('models.Model', true) }}):
+{% set processed_associations = [] %}
+{% for class_obj in model.classes_sorted_by_inheritance() %}
+    {% set generals = namespace(names=[]) %}
+    {% if class_obj.generalizations|length != 0 %}
+        {% for obj in class_obj.generalizations %}
+            {% set general = obj.general %}
+            {% set specific = obj.specific %}
+            {% if specific == class_obj %}
+                {% set _ = generals.names.append(general.name | capitalize) %}
+            {% endif %}
+        {% endfor %}
+    {% endif %}
+    {% set inheritance = generals.names | join(', ') %}
+class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     {% for attr in class_obj.all_attributes() %}
     {{ attr.name }} = {{ django_fields.get_field(attr.type.name, attr.properties) }}
     {%- endfor %}
+    {% for association in class_obj.associations %}
+        {% if association.ends|length == 2 and association.name not in processed_associations %}
+            {% set ns = namespace(end1=None, end2=None) %}
+            {% for end in association.ends %}
+                {% set ns.end1=end if end.type.name == class_obj.name else ns.end1 %}
+                {% set ns.end2=end if end.type.name != class_obj.name else ns.end2 %}
+            {% endfor %}
+            {% set class1_name = ns.end1.type.name %}
+            {% set class2_name = ns.end2.type.name %}
+            {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
+            {# N:M Relationship: Use ManyToManyField in Django #}
+    {{ class2_name.lower() }} = models.ManyToManyField('{{ class2_name }}')
+                {% do processed_associations.append(association.name) %}
+            {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+            {# N:1 Relationship: Use ForeignKey in Django #}
+    {{ class2_name.lower() }} = models.ForeignKey('{{ class2_name }}', on_delete=models.CASCADE)
+                {% do processed_associations.append(association.name) %}
+            {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+            {# 1:1 Relationship: Use OneToOneField in Django #}
+    {{ class2_name.lower() }} = models.OneToOneField('{{ class2_name }}')
+                {% do processed_associations.append(association.name) %}
+            {% endif %}
+        {% endif %}
+    {% endfor %}
 
     def __str__(self):
         return str(self.id)
 
 {% endfor %}
+
 {% for association in model.associations %}
-    {% if association.ends|length == 2 %}
-        {% set ns = namespace(end1=None, end2=None) %}
-        {% for end in association.ends %}
-            {% set ns.end1=end if loop.index == 1 else ns.end1 %}
-            {% set ns.end2=end if loop.index == 2 else ns.end2 %}
-        {% endfor %}
-        {% set class1_name = ns.end1.type.name %}
-        {% set class2_name = ns.end2.type.name %}
-        {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
-        {# N:M Relationship: Use ManyToManyField in Django #}
-{{ class1_name|capitalize }}.{{ class2_name.lower() }} = models.ManyToManyField({{ class2_name|capitalize }})
-        {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
-        {# N:1 Relationship: Use ForeignKey in Django #}
-{{ class1_name|capitalize }}.{{ class2_name.lower() }} = models.ForeignKey({{ class2_name|capitalize }}, on_delete=models.CASCADE)
-        {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
-        {# 1:N Relationship: Use ForeignKey in Django #}
-{{ class2_name|capitalize }}.{{ class1_name.lower() }} = models.ForeignKey({{ class1_name|capitalize }}, on_delete=models.CASCADE)
-        {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
-        {# 1:1 Relationship: Use OneToOneField in Django #}
-{{ class1_name|capitalize }}.{{ class2_name.lower() }} = models.OneToOneField({{ class2_name|capitalize }})
-        {% endif %}
-    {% else %}
-        {# Nary relationship handling (intermediate table) #}
+    {% if association.name not in processed_associations %}
+{# Nary relationship handling (intermediate table) #}
 class {{ association.name|capitalize }}(models.Model):
-        {# Here is a good place to define AssociationClass fields, TODO #}
         {% for end in association.ends %}
             {% set class_name = end.type.name %}
             {% if end.multiplicity.max > 1 %}
-                {# N:M Relationship: Use ManyToManyField in Django for intermediate table #}
-    {{ class_name.lower() }} = models.ManyToManyField({{ class_name|capitalize }}, on_delete=models.CASCADE)
+                {# N:M Relationship: Use ManyToManyField in Django  intermediate table #}
+    {{ class_name.lower() }} = models.ManyToManyField({{ class_name }}, on_delete=models.CASCADE)
             {% else %}
-                {# 1:N Relationship: Use ForeignKey in Django for intermediate table #}
-    {{ class_name.lower() }} = models.ForeignKey({{ class_name|capitalize }}, on_delete=models.CASCADE)
+                {# 1:N Relationship: Use ForeignKey in Django  intermediate table #}
+    {{ class_name.lower() }} = models.ForeignKey({{ class_name }}, on_delete=models.CASCADE)
             {% endif %}
         {% endfor %}
     {% endif %}

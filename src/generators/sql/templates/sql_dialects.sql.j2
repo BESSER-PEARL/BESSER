@@ -63,3 +63,17 @@ CREATE TABLE IF NOT EXISTS {{ class1_name }}_{{ class2_name }} (
 );
     {% endif %}
 {%- endmacro %}
+{% macro add_generalization(class_name, generalization, sql_dialect) %}
+    {% if sql_dialect == "postgres" %}
+ALTER TABLE {{ class_name }}
+ADD COLUMN {{ generalization.general.name }}_id INT REFERENCES {{ generalization.general.name }}(id);
+    {% elif sql_dialect == "mysql" %}
+ALTER TABLE {{ class_name }}
+ADD COLUMN {{ generalization.general.name }}_id INT,
+ADD CONSTRAINT fk_{{ generalization.general.name }}
+FOREIGN KEY ({{ generalization.general.name }}_id) REFERENCES {{ generalization.general.name }}(id);
+    {% else %}
+ALTER TABLE {{ class_name }}
+ADD COLUMN {{ generalization.general.name }}_id INT REFERENCES {{ generalization.general.name }}(id);
+    {% endif %}
+{%- endmacro %}

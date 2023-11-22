@@ -1,9 +1,17 @@
 {% import "sql_dialects.sql.j2" as sql_templates %}
 {# Iterate over classes and generate CREATE TABLE statements #}
-{% for class_obj in model.get_classes() %}
-    {% set class_name = class_obj.name|lower %}
+{% for class_obj in model.classes_sorted_by_inheritance() %}
+    {% set class_name = class_obj.name %}
     {% set attributes = class_obj.all_attributes() %}
     {{- sql_templates.create_table(class_name, attributes, types, sql_dialect) }}
+    {# Handling generalizations (inheritance) #}
+    {% if class_obj.generalizations %}
+        {% for generalization in class_obj.generalizations %}
+            {% if generalization.specific.name == class_name %}
+                {{- sql_templates.add_generalization(class_name, generalization, sql_dialect) }}
+            {% endif %}
+        {% endfor %}
+    {% endif %}
 {% endfor %}
 {# Iterate over associations and generate SQL statements based on association type #}
 {% for association in model.associations %}

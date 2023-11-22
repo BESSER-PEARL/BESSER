@@ -90,14 +90,14 @@ CREATE TABLE IF NOT EXISTS {{ class1_name }}_{{ class2_name }} (
 {% macro add_generalization(class_name, generalization, sql_dialect) %}
     {% if sql_dialect == "postgres" %}
 ALTER TABLE {{ class_name }}
-ADD COLUMN {{ generalization.general.name }}_id INT REFERENCES {{ generalization.general.name }}(id);
+ADD COLUMN {{ generalization.general.name }}_id INT REFERENCES {{ generalization.general.name }}({{ generalization.general.name }}_id);
     {% elif sql_dialect == "mysql" %}
 ALTER TABLE {{ class_name }}
 ADD COLUMN {{ generalization.general.name }}_id INT,
 ADD CONSTRAINT generalization_{{ generalization.general.name }}
-FOREIGN KEY ({{ generalization.general.name }}_id) REFERENCES {{ generalization.general.name }}(id);
+FOREIGN KEY ({{ generalization.general.name }}_id) REFERENCES {{ generalization.general.name }}({{ generalization.general.name }}_id);
     {% else %}
 ALTER TABLE {{ class_name }}
-ADD COLUMN {{ generalization.general.name }}_id INT REFERENCES {{ generalization.general.name }}(id);
+ADD COLUMN {{ generalization.general.name }}_id INT REFERENCES {{ generalization.general.name }}({{ generalization.general.name }}_id);
     {% endif %}
 {%- endmacro %}

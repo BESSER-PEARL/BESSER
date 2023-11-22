@@ -4,21 +4,33 @@
 CREATE TABLE IF NOT EXISTS {{ class_name }} (
     {{ class_name }}_id SERIAL PRIMARY KEY,
     {% for attribute in attributes %}
-    {{ attribute.name }} {{ types[attribute.type.name] }},
+        {% if loop.last %}
+    {{ attribute.name }} {{ types[attribute.type.name] }}
+        {% else %}
+    {{ attribute.name }} {{ types[attribute.type.name] }},      
+        {% endif %}
     {% endfor %}
 );
     {% elif sql_dialect == "mysql" %}
 CREATE TABLE IF NOT EXISTS {{ class_name }} (
     {{ class_name }}_id AUTO_INCREMENT INT PRIMARY KEY,
     {% for attribute in attributes %}
-    {{ attribute.name }} {{ types[attribute.type.name] }},
+        {% if loop.last %}
+    {{ attribute.name }} {{ types[attribute.type.name] }}
+        {% else %}
+    {{ attribute.name }} {{ types[attribute.type.name] }},      
+        {% endif %}
     {% endfor %}
 );
     {% else %}
 CREATE TABLE IF NOT EXISTS {{ class_name }} (
     {{ class_name }}_id SERIAL PRIMARY KEY,
     {% for attribute in attributes %}
-    {{ attribute.name }} {{ types[attribute.type.name] }},
+        {% if loop.last %}
+    {{ attribute.name }} {{ types[attribute.type.name] }}
+        {% else %}
+    {{ attribute.name }} {{ types[attribute.type.name] }},      
+        {% endif %}
     {% endfor %}
 );
     {% endif %}

@@ -2,36 +2,48 @@
 {% macro create_table(class_name, attributes, types, sql_dialect) %}
     {% if sql_dialect == "postgres" %}
 CREATE TABLE IF NOT EXISTS {{ class_name }} (
-    {{ class_name }}_id SERIAL PRIMARY KEY,
-    {% for attribute in attributes %}
-        {% if loop.last %}
-    {{ attribute.name }} {{ types[attribute.type.name] }}
+        {% if attributes | length == 0%}
+    {{ class_name }}_id SERIAL PRIMARY KEY
         {% else %}
+    {{ class_name }}_id SERIAL PRIMARY KEY,
+            {% for attribute in attributes %}
+                {% if loop.last %}
+    {{ attribute.name }} {{ types[attribute.type.name] }}
+                {% else %}
     {{ attribute.name }} {{ types[attribute.type.name] }},      
+                {% endif %}
+            {% endfor %}
         {% endif %}
-    {% endfor %}
 );
     {% elif sql_dialect == "mysql" %}
 CREATE TABLE IF NOT EXISTS {{ class_name }} (
-    {{ class_name }}_id AUTO_INCREMENT INT PRIMARY KEY,
-    {% for attribute in attributes %}
-        {% if loop.last %}
-    {{ attribute.name }} {{ types[attribute.type.name] }}
+        {% if attributes | length == 0%}
+    {{ class_name }}_id AUTO_INCREMENT PRIMARY KEY
         {% else %}
+    {{ class_name }}_id AUTO_INCREMENT PRIMARY KEY,
+            {% for attribute in attributes %}
+                {% if loop.last %}
+    {{ attribute.name }} {{ types[attribute.type.name] }}
+                {% else %}
     {{ attribute.name }} {{ types[attribute.type.name] }},      
+                {% endif %}
+            {% endfor %}
         {% endif %}
-    {% endfor %}
 );
     {% else %}
 CREATE TABLE IF NOT EXISTS {{ class_name }} (
-    {{ class_name }}_id SERIAL PRIMARY KEY,
-    {% for attribute in attributes %}
-        {% if loop.last %}
-    {{ attribute.name }} {{ types[attribute.type.name] }}
+        {% if attributes | length == 0%}
+    {{ class_name }}_id SERIAL PRIMARY KEY
         {% else %}
+    {{ class_name }}_id SERIAL PRIMARY KEY,
+            {% for attribute in attributes %}
+                {% if loop.last %}
+    {{ attribute.name }} {{ types[attribute.type.name] }}
+                {% else %}
     {{ attribute.name }} {{ types[attribute.type.name] }},      
+                {% endif %}
+            {% endfor %}
         {% endif %}
-    {% endfor %}
 );
     {% endif %}
 {%- endmacro %}

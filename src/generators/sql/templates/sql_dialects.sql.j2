@@ -70,7 +70,7 @@ ADD COLUMN {{ generalization.general.name }}_id INT REFERENCES {{ generalization
     {% elif sql_dialect == "mysql" %}
 ALTER TABLE {{ class_name }}
 ADD COLUMN {{ generalization.general.name }}_id INT,
-ADD CONSTRAINT fk_{{ generalization.general.name }}
+ADD CONSTRAINT generalization_{{ generalization.general.name }}
 FOREIGN KEY ({{ generalization.general.name }}_id) REFERENCES {{ generalization.general.name }}(id);
     {% else %}
 ALTER TABLE {{ class_name }}

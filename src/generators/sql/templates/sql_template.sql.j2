@@ -2,7 +2,7 @@
 {# Iterate over classes and generate CREATE TABLE statements #}
 {% for class_obj in model.classes_sorted_by_inheritance() %}
     {% set class_name = class_obj.name %}
-    {% set attributes = class_obj.all_attributes() %}
+    {% set attributes = class_obj.attributes %}
     {{- sql_templates.create_table(class_name, attributes, types, sql_dialect) }}
     {# Handling generalizations (inheritance) #}
     {% if class_obj.generalizations %}

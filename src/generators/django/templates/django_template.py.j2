@@ -6,18 +6,12 @@ from django.db import models
 {% set processed_associations = [] %}
 {% for class_obj in model.classes_sorted_by_inheritance() %}
     {% set generals = namespace(names=[]) %}
-    {% if class_obj.generalizations|length != 0 %}
-        {% for obj in class_obj.generalizations %}
-            {% set general = obj.general %}
-            {% set specific = obj.specific %}
-            {% if specific == class_obj %}
-                {% set _ = generals.names.append(general.name | capitalize) %}
-            {% endif %}
-        {% endfor %}
-    {% endif %}
+    {% for parent in class_obj.parents() %}
+        {% set _ = generals.names.append(parent.name) %}
+    {% endfor %}
     {% set inheritance = generals.names | join(', ') %}
 class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
-    {% for attr in class_obj.all_attributes() %}
+    {% for attr in class_obj.attributes %}
     {{ attr.name }} = {{ django_fields.get_field(attr.type.name, attr.properties) }}
     {%- endfor %}
     {% for association in class_obj.associations %}
@@ -31,7 +25,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
             {% set class2_name = ns.end2.type.name %}
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
             {# N:M Relationship: Use ManyToManyField in Django #}
-    {{ class2_name.lower() }} = models.ManyToManyField('{{ class2_name }}')
+    {{ class2_name.lower() }} = models.ManyToManyField('{{ class2_name }}', on_delete=models.CASCADE)
                 {% do processed_associations.append(association.name) %}
             {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
             {# N:1 Relationship: Use ForeignKey in Django #}
@@ -39,7 +33,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
                 {% do processed_associations.append(association.name) %}
             {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
             {# 1:1 Relationship: Use OneToOneField in Django #}
-    {{ class2_name.lower() }} = models.OneToOneField('{{ class2_name }}')
+    {{ class2_name.lower() }} = models.OneToOneField('{{ class2_name }}', on_delete=models.CASCADE)
                 {% do processed_associations.append(association.name) %}
             {% endif %}
         {% endif %}

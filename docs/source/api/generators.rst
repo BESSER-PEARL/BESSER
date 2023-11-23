@@ -1,5 +1,5 @@
 Generators
-===
+==========
 
 .. toctree::
 

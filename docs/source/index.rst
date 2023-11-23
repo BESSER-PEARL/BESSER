@@ -27,6 +27,7 @@ Contents
    installation
    buml_language
    generators
+   utilities
    examples
    api
    about

@@ -1,7 +1,7 @@
 @startuml
 class Library {
-- name: str
-- address: str
++ name: str
++ address: str
 }
 
 class Book {

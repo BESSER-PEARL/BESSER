@@ -25,7 +25,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
             {% set class2_name = ns.end2.type.name %}
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
             {# N:M Relationship: Use ManyToManyField in Django #}
-    {{ class2_name.lower() }} = models.ManyToManyField('{{ class2_name }}', on_delete=models.CASCADE)
+    {{ class2_name.lower() }} = models.ManyToManyField('{{ class2_name }}')
                 {% do processed_associations.append(association.name) %}
             {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
             {# N:1 Relationship: Use ForeignKey in Django #}
@@ -52,7 +52,7 @@ class {{ association.name|capitalize }}(models.Model):
             {% set class_name = end.type.name %}
             {% if end.multiplicity.max > 1 %}
                 {# N:M Relationship: Use ManyToManyField in Django  intermediate table #}
-    {{ class_name.lower() }} = models.ManyToManyField({{ class_name }}, on_delete=models.CASCADE)
+    {{ class_name.lower() }} = models.ManyToManyField({{ class_name }})
             {% else %}
                 {# 1:N Relationship: Use ForeignKey in Django  intermediate table #}
     {{ class_name.lower() }} = models.ForeignKey({{ class_name }}, on_delete=models.CASCADE)

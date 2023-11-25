@@ -2,24 +2,48 @@
 {% macro create_table(class_name, attributes, types, sql_dialect) %}
     {% if sql_dialect == "postgres" %}
 CREATE TABLE IF NOT EXISTS {{ class_name }} (
+        {% if attributes | length == 0%}
+    {{ class_name }}_id SERIAL PRIMARY KEY
+        {% else %}
     {{ class_name }}_id SERIAL PRIMARY KEY,
-    {% for attribute in attributes %}
-    {{ attribute.name }} {{ types[attribute.type.name] }},
-    {% endfor %}
+            {% for attribute in attributes %}
+                {% if loop.last %}
+    {{ attribute.name }} {{ types[attribute.type.name] }}
+                {% else %}
+    {{ attribute.name }} {{ types[attribute.type.name] }},      
+                {% endif %}
+            {% endfor %}
+        {% endif %}
 );
     {% elif sql_dialect == "mysql" %}
 CREATE TABLE IF NOT EXISTS {{ class_name }} (
-    {{ class_name }}_id AUTO_INCREMENT INT PRIMARY KEY,
-    {% for attribute in attributes %}
-    {{ attribute.name }} {{ types[attribute.type.name] }},
-    {% endfor %}
+        {% if attributes | length == 0%}
+    {{ class_name }}_id AUTO_INCREMENT PRIMARY KEY
+        {% else %}
+    {{ class_name }}_id AUTO_INCREMENT PRIMARY KEY,
+            {% for attribute in attributes %}
+                {% if loop.last %}
+    {{ attribute.name }} {{ types[attribute.type.name] }}
+                {% else %}
+    {{ attribute.name }} {{ types[attribute.type.name] }},      
+                {% endif %}
+            {% endfor %}
+        {% endif %}
 );
     {% else %}
 CREATE TABLE IF NOT EXISTS {{ class_name }} (
+        {% if attributes | length == 0%}
+    {{ class_name }}_id SERIAL PRIMARY KEY
+        {% else %}
     {{ class_name }}_id SERIAL PRIMARY KEY,
-    {% for attribute in attributes %}
-    {{ attribute.name }} {{ types[attribute.type.name] }},
-    {% endfor %}
+            {% for attribute in attributes %}
+                {% if loop.last %}
+    {{ attribute.name }} {{ types[attribute.type.name] }}
+                {% else %}
+    {{ attribute.name }} {{ types[attribute.type.name] }},      
+                {% endif %}
+            {% endfor %}
+        {% endif %}
 );
     {% endif %}
 {%- endmacro %}
@@ -61,5 +85,19 @@ CREATE TABLE IF NOT EXISTS {{ class1_name }}_{{ class2_name }} (
     {{ class2_name }}_id INT REFERENCES {{ class2_name }}({{ class2_name }}_id),
     PRIMARY KEY ({{ class1_name }}_id, {{ class2_name }}_id)
 );
+    {% endif %}
+{%- endmacro %}
+{% macro add_generalization(class_name, generalization, sql_dialect) %}
+    {% if sql_dialect == "postgres" %}
+ALTER TABLE {{ class_name }}
+ADD COLUMN {{ generalization.general.name }}_id INT REFERENCES {{ generalization.general.name }}({{ generalization.general.name }}_id);
+    {% elif sql_dialect == "mysql" %}
+ALTER TABLE {{ class_name }}
+ADD COLUMN {{ generalization.general.name }}_id INT,
+ADD CONSTRAINT generalization_{{ generalization.general.name }}
+FOREIGN KEY ({{ generalization.general.name }}_id) REFERENCES {{ generalization.general.name }}({{ generalization.general.name }}_id);
+    {% else %}
+ALTER TABLE {{ class_name }}
+ADD COLUMN {{ generalization.general.name }}_id INT REFERENCES {{ generalization.general.name }}({{ generalization.general.name }}_id);
     {% endif %}
 {%- endmacro %}

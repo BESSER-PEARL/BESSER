@@ -1,0 +1,22 @@
+{% macro get_field(attr_type, attr_properties) %}
+    {% if attr_type == "str" %}
+models.CharField(max_length=255)
+    {% elif attr_type == "int" %}
+models.IntegerField()
+    {% elif attr_type == "float" %}
+models.FloatField()
+    {% elif attr_type == "date" %}
+models.DateField()
+    {% elif attr_type == "datetime" %}
+models.DateTimeField()
+    {% elif attr_type == "bool" %}
+models.BooleanField()
+    {% elif attr_type == "text" %}
+models.TextField()
+    {% elif attr_type == "uuid" %}
+models.UUIDField()
+    {% else %}
+    {# Unknown field type #}
+None
+    {% endif %}
+{% endmacro %}

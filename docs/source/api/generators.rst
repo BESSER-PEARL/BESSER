@@ -3,4 +3,6 @@ Generators
 
 .. toctree::
 
-   generators/django/django_generator
+   generators/django
+   generators/python
+   generators/alchemy

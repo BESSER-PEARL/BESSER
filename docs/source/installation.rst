@@ -1,8 +1,8 @@
 Installation
 =============
 
-Basic Installation
-------------------
+Basic Installation (coming soon)
+--------------------------------
 BESSER works with Pyhton 3.9+. We recommend creating a virtual environment (e.g. `venv <https://docs.python.org/3/tutorial/venv.html>`_, 
 `conda <https://docs.conda.io/en/latest/>`_).
 

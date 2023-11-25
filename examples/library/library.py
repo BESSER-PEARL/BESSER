@@ -23,12 +23,12 @@ author: Class = Class (name="Author", attributes={author_name, email})
 # Library-Book association definition
 located_in_end: Property = Property(name="locatedIn", owner=None, property_type=library, multiplicity=Multiplicity(1, 1))
 has_end: Property = Property(name="has", owner=None, property_type=book, multiplicity=Multiplicity(0, "*"))
-lib_book_association: BinaryAssociation = BinaryAssociation(name="lib-book-assoc", ends={located_in_end, has_end})
+lib_book_association: BinaryAssociation = BinaryAssociation(name="lib_book_assoc", ends={located_in_end, has_end})
 
 # Book-Author association definition
 publishes_end: Property = Property(name="publishes", owner=None, property_type=book, multiplicity=Multiplicity(0, "*"))
 writed_by_end: Property = Property(name="writedBy", owner=None, property_type=author, multiplicity=Multiplicity(1, "*"))
-book_author_association: BinaryAssociation = BinaryAssociation(name="book-author-assoc", ends={writed_by_end, publishes_end})
+book_author_association: BinaryAssociation = BinaryAssociation(name="book_author_assoc", ends={writed_by_end, publishes_end})
 
 # Domain model definition
 library_model : DomainModel = DomainModel(name="Library model", types={library, book, author}, 

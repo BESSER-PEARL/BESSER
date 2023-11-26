@@ -1,20 +1,25 @@
 # Configuration file for the Sphinx documentation builder.
+import datetime
 import importlib
 import inspect
 import os
 import sys
+from configparser import ConfigParser
 
 # -- Add the project root directory to the path
 sys.path.insert(0, os.path.abspath('../../'))
 
+config: ConfigParser = ConfigParser()
+config.read('../../setup.cfg')
+
 # -- Project information
-
-project = 'BESSER'
-copyright = '2023, Luxembourg Institute of Science and Technology (LIST)'
-author = 'list-of-authors'
-
-release = '0.1'
-version = '0.1.0'
+project = config.get('metadata', 'description')
+author = config.get('metadata', 'author')
+release = config.get('metadata', 'version')
+year = datetime.date.today().year
+if year > 2023:
+    year = '2023 - ' + str(year)
+copyright = f'{year} {author}. All Rights Reserved'
 
 # -- General configuration
 

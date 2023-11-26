@@ -1,7 +1,7 @@
 Utilities
 =========
 
-.. automodule:: utilities.utils
+.. automodule:: src.utilities.utils
    :members:
    :private-members:
    :undoc-members:

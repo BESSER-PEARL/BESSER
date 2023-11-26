@@ -1,6 +1,11 @@
 # Configuration file for the Sphinx documentation builder.
 import importlib
 import inspect
+import os
+import sys
+
+# -- Add the project root directory to the path
+sys.path.insert(0, os.path.abspath('../../'))
 
 # -- Project information
 

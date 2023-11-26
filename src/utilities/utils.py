@@ -2,6 +2,16 @@ import pickle, os
 from BUML.metamodel.structural.structural import DomainModel
 
 class ModelSerializer():
+    """
+    ModelSerializer is a simple class for serializing and deserializing BESSER models and Python objects.
+
+    Attributes:
+        None
+
+    Note:
+        This class uses the `pickle` module for serialization and deserialization. Ensure that the models/objects you are
+        serializing are safe and trusted since `pickle` can execute arbitrary code.
+    """
     def __init__(self) -> None:
         pass
 

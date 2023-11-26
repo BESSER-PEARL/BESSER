@@ -18,8 +18,17 @@ def __association_name_helper(from_class_name, to_class_name, from_bool, to_bool
         # This shouldn't be possible actually
         return "variable"
 
-# Function transforming textX model to core model
 def plantuml_to_buml(model_path:str) -> DomainModel:
+    """
+    Converts a PlantUML model to a model conforms to B-UML.
+
+    Args:
+        model_path (str): The path to the PlantUML model file.
+
+    Returns:
+        DomainModel: The resulting model conforms to B-UML.
+    """
+    
     grammar_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plantuml.tx')
     plantUML_mm = metamodel_from_file(grammar_path)
     textx_model = plantUML_mm.model_from_file(model_path)

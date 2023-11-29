@@ -19,9 +19,12 @@ To obtain the full code, including examples and tests, you can clone the git rep
 .. code-block:: console
 
     $ git clone https://github.com/BESSER-PEARL/BESSER.git
+    $ cd BESSER
 
-Once you have the code, install the necessary packages and libraries.
+Now, install *build*, then generate and install the *besser* package.
 
 .. code-block:: console
 
-    $ pip install -r requirements.txt
+    $ pip install --upgrade build
+    $ python -m build
+    $ pip install dist/besser-0.1.0-py3-none-any.whl

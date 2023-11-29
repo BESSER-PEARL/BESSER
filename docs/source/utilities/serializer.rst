@@ -11,8 +11,8 @@ Any model within BESSER can be serialized as follows.
 
 .. code-block:: python
 
-    from BUML.metamodel.structural.structural import DomainModel
-    from utilities.utils import ModelSerializer
+    from BUML.metamodel.structural import DomainModel
+    from utilities import ModelSerializer
 
     # Create an instance of DomainModel
     test_model: DomainModel = DomainModel(name = "testModel")
@@ -37,8 +37,8 @@ To deserialize a model (for example a Model Domain of B-UML) you can use the ``l
 
 .. code-block:: python
 
-    from BUML.metamodel.structural.structural import DomainModel
-    from utilities.utils import ModelSerializer
+    from BUML.metamodel.structural import DomainModel
+    from utilities import ModelSerializer
 
     # Create an instance of ModelSerializer
     serializar: ModelSerializer = ModelSerializer()

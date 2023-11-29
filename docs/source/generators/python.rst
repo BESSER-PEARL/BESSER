@@ -9,7 +9,7 @@ You should create a ``PythonGenerator`` object, provide the B-UML model, and use
 
 .. code-block:: python
     
-    from generators.python_classes.python_classes_generator import Python_Generator
+    from generators.python_classes import Python_Generator
     
     generator: Python_Generator = Python_Generator(model=library_model)
     generator.generate()

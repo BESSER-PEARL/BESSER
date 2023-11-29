@@ -4,28 +4,24 @@ BESSER is a [low-modeling](https://modeling-languages.com/welcome-to-the-low-mod
 
 The BESSER low-code platform is built on top of our Python-based personal interpretation of a "Universal Modeling Language" (yes, heavily inspired and a simplified version of the better known UML, the Unified Modeling Language) 
 
+**Check out the official [documentation](https://besser.readthedocs.io/en/latest/)**
+
 ## Installation
 
-The requirements to install BESSER UML are:
+BESSER works with Pyhton 3.9+. The pip *besser* package will be available soon, but you can also build it from source. First, clone the repository.
 
-* Python 3.10.11 or later
-* *setuptools* 65.5.0 or later
+    $ git clone https://github.com/BESSER-PEARL/BESSER.git
+    $ cd BESSER
 
-You can download and install Python from [the website](https://www.python.org/downloads/). Then, you can install *setuptools* by running the following command:
+Install *build*, then generate and install the *besser* package.
 
-    pip install setuptools
+    $ pip install --upgrade build
+    $ python -m build
+    $ pip install dist/besser-0.1.0-py3-none-any.whl
 
-Download the latest release of the project [here](https://github.com/BESSER-PEARL/BESSER-UML/releases/latest), and install BESSER UML (buml) in your environment by executing the following command (using the wheels package):
+You can check the installation of the *besser* package.
 
-    pip install buml-x.x.x-py3-none-any.whl
-
-**Note:** replace *x.x.x* with version number
-
-## BUML Documentation
-
-* [BUML modeling](https://github.com/BESSER-PEARL/BESSER-UML/blob/master/docs/metamodel-doc.md): to model a problem, system, domain, or anything else.
-
-* [BUML PlantUML notation](https://github.com/BESSER-PEARL/BESSER-UML/blob/master/docs/plantuml-doc.md): to use the [PlantUML](https://plantuml.com/) notation to generate a BUML model.
+    $ pip list
 
 ## License
 

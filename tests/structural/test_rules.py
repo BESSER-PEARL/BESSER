@@ -1,5 +1,5 @@
-from BUML.metamodel.structural.rules import Constraint, OCLConstraint, OCLExpression, IntegerLiteralExpression, PropertyCallExpression, OperationCallExpression
-from BUML.metamodel.structural.structural import Class, Property, PrimitiveDataType
+from BUML.metamodel.structural import Constraint, OCLConstraint, OCLExpression, IntegerLiteralExpression, PropertyCallExpression, OperationCallExpression
+from BUML.metamodel.structural import Class, Property, PrimitiveDataType
 
 
 # Test I can create a class and assign an empty constraint to it

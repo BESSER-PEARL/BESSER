@@ -1,7 +1,7 @@
 from textx import metamodel_from_file
 
-from BUML.metamodel.structural.structural import DomainModel
-from BUML.notations.plantUML.plantuml_to_buml import plantuml_to_buml
+from BUML.metamodel.structural import DomainModel
+from BUML.notations.plantUML import plantuml_to_buml
 
 
 # Testing TextX parsing of a simple domain concept

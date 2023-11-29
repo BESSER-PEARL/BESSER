@@ -1,4 +1,4 @@
-from BUML.metamodel.structural.structural import DomainModel, Class, Property, \
+from BUML.metamodel.structural import DomainModel, Class, Property, \
     PrimitiveDataType, Multiplicity, BinaryAssociation
 
 # Library attributes definition

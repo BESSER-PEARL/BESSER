@@ -10,7 +10,7 @@ library: Class = Class (name="Library", attributes={library_name, address})
 # Book attributes definition
 title: Property = Property(name="title", owner=None, property_type=PrimitiveDataType("str"))
 pages: Property = Property(name="pages", owner=None, property_type=PrimitiveDataType("int"))
-release: Property = Property(name="release", owner=None, property_type=PrimitiveDataType("date"))
+release: Property = Property(name="release", owner=None, property_type=PrimitiveDataType("datetime"))
 # Book class definition
 book: Class = Class (name="Book", attributes={title, pages, release})
 

@@ -6,7 +6,7 @@ class OCLExpression(TypedElement):
     def __init__(self, name: str, type: Type):
         super().__init__(name, type)
 
-    def to_string(self) -> str:
+    def __str__(self) -> str:
         pass
 
 
@@ -24,7 +24,7 @@ class LiteralExpression(OCLExpression):
     def value(self, value: Any):
         self.__value = value
 
-    def to_string(self) -> str:
+    def __str__(self) -> str:
         return str(self.value)
 
 class IntegerLiteralExpression(LiteralExpression):
@@ -44,7 +44,7 @@ class PropertyCallExpression(OCLExpression):
     def __repr__(self):
         return f'PropertyCallExpression({self.property.name})'
 
-    def to_string(self) -> str:
+    def __str__(self) -> str:
         return str(self.property.name)
 
     @property
@@ -69,11 +69,11 @@ class OperationCallExpression(OCLExpression):
         return f'OperationCallExpression({self.operation},{self.arguments})'
 
     @property
-    def operation(self) -> Property:
+    def operation(self) -> str:
         return self.__operation
 
     @operation.setter
-    def operation(self, operation: Property):
+    def operation(self, operation: str):
         self.__operation = operation
 
     @property
@@ -84,8 +84,8 @@ class OperationCallExpression(OCLExpression):
     def arguments(self, arguments: list[OCLExpression]):
         self.__arguments = arguments
 
-    def to_string(self) -> str:
-        return str(self.arguments[0].to_string()+ " " + self.operation + " " + self.arguments[1].to_string())
+    def __str__(self) -> str:
+        return f'{self.arguments[0]} {self.operation} {self.arguments[1]}'
 
 # A class to represents OCL constriants, i.e. constraints written with the OCL language
 class OCLConstraint(Constraint):

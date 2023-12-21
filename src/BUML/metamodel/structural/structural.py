@@ -286,8 +286,8 @@ class Property(TypedElement):
 
     Args:
         name (str): The name of the property.
-        owner (Type): The type that owns the property.
         property_type (Type): The type of the property.
+        owner (Type): The type that owns the property.
         multiplicity (Multiplicity): The multiplicity of the property.
         visibility (str): The visibility of the property ('public', 'private', etc.).
         is_composite (bool): Indicates whether the property is a composite.
@@ -296,8 +296,8 @@ class Property(TypedElement):
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the property.
-        owner (Type): The type that owns the property.
         property_type (Type): Inherited from TypedElement, represents the type of the property.
+        owner (Type): The type that owns the property.
         multiplicity (Multiplicity): The multiplicity of the property.
         visibility (str): Inherited from TypedElement, represents the visibility of the property.
         is_composite (bool): Indicates whether the property is a composite.
@@ -305,7 +305,7 @@ class Property(TypedElement):
         is_aggregation (bool): Indicates whether the property represents an aggregation.
     """
     
-    def __init__(self, name: str, owner: Type, property_type: Type, multiplicity: Multiplicity = Multiplicity(1, 1), 
+    def __init__(self, name: str, property_type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1), 
                  visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
         super().__init__(name, property_type, visibility)
         self.owner: Type = owner

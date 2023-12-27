@@ -10,3 +10,6 @@ buml.egg-info/
 
 # Sphinx documentation
 docs/_build/
+
+# ANTLR
+**/.antlr/**

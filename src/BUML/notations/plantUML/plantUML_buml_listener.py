@@ -13,6 +13,8 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__ends: list = list()
         self.__inheritances: dict = dict()
         self.__relation_classes: list = list()
+        self.__group_inh: int = 0
+        self.__parent_classes: dict = dict()
         
     def enterClass(self, ctx: PlantUMLParser.ClassContext):
         text = "# " + ctx.ID().getText() + " class definition \n"
@@ -91,12 +93,19 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__relation_classes.append(general)
         self.__relation_classes.append(specific)
 
+        if general not in self.__parent_classes:
+            self.__parent_classes[general] = []
+        self.__parent_classes[general].append(inheritance_name)
+
     def enterExtends(self, ctx: PlantUMLParser.ExtendsContext):
         general = ctx.ID().getText()
         specific = ctx.parentCtx.ID().getText()
         inheritance_name = "gen_" + general + "_" + specific
         text = inheritance_name + ": Generalization = Generalization(general=" + general + ", specific=" + specific + ")\n"
         self.__inheritances[inheritance_name] = text
+    
+    def enterSkinParam(self, ctx: PlantUMLParser.SkinParamContext):
+        self.__group_inh = int(ctx.INT().getText())
 
     def exitDomainModel(self, ctx: PlantUMLParser.DomainModelContext):
         self.check_classes_definition()
@@ -106,12 +115,13 @@ class BUMLGenerationListener(PlantUMLListener):
         self.output.write("\n# Generalizations\n")
         for inheritance in self.__inheritances.values():
             self.output.write(inheritance)
+        if self.__group_inh > 1:
+            self.create_generalization_set()
         classes = ", ".join(self.__classes)
         associations = ", ".join(self.__relations.keys())
         generalizations = ", ".join(self.__inheritances.keys())
         self.output.write("\n\n# Domain Model\n")
         self.output.write("domain: DomainModel = DomainModel(name=\"Domain Model\", types={" + classes + "}, associations={" + associations + "}, generalizations={" + generalizations + "})")
-
         text = '''from BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \\
         Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, \\
         GeneralizationSet, AssociationClass \n\n'''
@@ -129,6 +139,15 @@ class BUMLGenerationListener(PlantUMLListener):
             text = "# " + cls + " class definition \n"
             text += cls + ": Class = Class(name=\"" + cls + "\", attributes={})\n\n"
             self.output.write(text)
+
+    def create_generalization_set(self):
+        print(self.__parent_classes)
+        for key, value in self.__parent_classes.items():
+            if len(value) >= self.__group_inh:
+                generalizations = ", ".join(value)
+                text = key + "_generalization_set: GeneralizationSet = GeneralizationSet(name=\"" + key + \
+                     "_gen_set\", generalizations={" + generalizations + "}, is_disjoint=True, is_complete=True)\n"
+                self.output.write(text)
 
 def getMultiplicity(car:PlantUMLParser.CardinalityContext):
     min = ""

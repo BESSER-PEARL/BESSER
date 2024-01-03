@@ -54,7 +54,7 @@ class BUMLGenerationListener(PlantUMLListener):
             association_name = ctx.ID(2).getText()
         text = association_name + ": BinaryAssociation = BinaryAssociation(name=\"" + association_name + "\", ends={\n\
         Property(name=\"" + cl_name_1 + "_end\", property_type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.cardinality(0)) + self.__ends[0] + "),\n\
-        Property(name=\"" + cl_name_2 + "_end\", property_type=" + ctx.ID(1).getText() + self.__ends[1] + ")})\n"
+        Property(name=\"" + cl_name_2 + "_end\", property_type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.cardinality(1)) + self.__ends[1] + ")})\n"
         self.__relations[association_name] = text
         self.__relation_classes.append(cl_name_1)
         self.__relation_classes.append(cl_name_2)
@@ -141,7 +141,6 @@ class BUMLGenerationListener(PlantUMLListener):
             self.output.write(text)
 
     def create_generalization_set(self):
-        print(self.__parent_classes)
         for key, value in self.__parent_classes.items():
             if len(value) >= self.__group_inh:
                 generalizations = ", ".join(value)
@@ -154,7 +153,8 @@ def getMultiplicity(car:PlantUMLParser.CardinalityContext):
     max = ""
     cardinality = ""
     if car is None:
-        cardinality = "one"
+        min = "1"
+        max = "1"
     if car.cardinalityVal(0).INT():
         min = car.cardinalityVal(0).INT().getText()
     elif car.cardinalityVal(0).ASTK():

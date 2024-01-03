@@ -7,9 +7,10 @@ import os
 
 class PlantUMLToBUML:
 
-    def __init__(self, plantUML_model:str):
+    def __init__(self, plantUML_model:str, model_file_name:str = "buml_model"):
         self.plantUML_model: str = plantUML_model
         self.BUML_model: DomainModel = None
+        self.model_file_name: str = model_file_name
 
     def generate_BUML_model(self):
         lexer = PlantUMLLexer(FileStream(self.plantUML_model))
@@ -18,14 +19,14 @@ class PlantUMLToBUML:
         # file creation
         if not os.path.exists("buml"):
             os.makedirs("buml")
-        output = open("buml/buml_model.py","w+")
+        output = open("buml/" + self.model_file_name + ".py","w+")
         listen = BUMLGenerationListener(output)
         walker = ParseTreeWalker()
         walker.walk(listen, parse_tree)
         output.close()
         # model creation
         namespace = {}
-        with open("buml/buml_model.py", 'r') as model_code:
+        with open("buml/" + self.model_file_name + ".py", 'r') as model_code:
             code = model_code.read()
             exec(code, namespace)
         self.BUML_model = namespace.get('domain')

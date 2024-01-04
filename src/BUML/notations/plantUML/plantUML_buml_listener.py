@@ -27,11 +27,7 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__abstract_class = False
     
     def exitClass(self, ctx: PlantUMLParser.ClassContext):
-        if len(self.__attr_list) == 0:
-            attributes = "set()"
-        else:
-            attributes = ", ".join(self.__attr_list)
-            attributes = "{" + attributes + "}"
+        attributes = list_to_str(self.__attr_list)
         text = ctx.ID().getText() + ": Class = Class(name=\"" + ctx.ID().getText() + "\", attributes=" + attributes
         if self.__abstract_class:
             text += ", is_abstract=True"
@@ -128,11 +124,11 @@ class BUMLGenerationListener(PlantUMLListener):
             self.output.write(inheritance)
         if self.__group_inh > 1:
             self.create_generalization_set()
-        classes = ", ".join(self.__classes)
-        associations = ", ".join(self.__relations.keys())
-        generalizations = ", ".join(self.__inheritances.keys())
+        classes = list_to_str(self.__classes)
+        associations = list_to_str(list(self.__relations.keys()))
+        generalizations = list_to_str(list(self.__inheritances.keys()))
         self.output.write("\n\n# Domain Model\n")
-        self.output.write("domain: DomainModel = DomainModel(name=\"Domain Model\", types={" + classes + "}, associations={" + associations + "}, generalizations={" + generalizations + "})")
+        self.output.write("domain: DomainModel = DomainModel(name=\"Domain Model\", types=" + classes + ", associations=" + associations + ", generalizations=" + generalizations + ")")
         text = '''from BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \\
         Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, \\
         GeneralizationSet, AssociationClass \n\n'''
@@ -158,6 +154,14 @@ class BUMLGenerationListener(PlantUMLListener):
                 text = key + "_generalization_set: GeneralizationSet = GeneralizationSet(name=\"" + key + \
                      "_gen_set\", generalizations={" + generalizations + "}, is_disjoint=True, is_complete=True)\n"
                 self.output.write(text)
+    
+def list_to_str(list:list):
+    if len(list) == 0:
+        str_list = "set()"
+    else:
+        str_list = ", ".join(list)
+        str_list = "{" + str_list + "}"
+    return str_list
 
 def getMultiplicity(car:PlantUMLParser.CardinalityContext):
     min = ""

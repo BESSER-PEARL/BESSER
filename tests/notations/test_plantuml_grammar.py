@@ -1,8 +1,7 @@
 from BUML.metamodel.structural import DomainModel
-from BUML.notations.plantUML import PlantUMLToBUML
+from BUML.notations.plantUML import plantuml_to_buml
 
-plantuml_to_BUML: PlantUMLToBUML = PlantUMLToBUML(plantUML_model="test.plantuml")
-modeltest: DomainModel = plantuml_to_BUML.generate_BUML_model()
+modeltest: DomainModel = plantuml_to_buml(plantUML_model_path="test.plantuml")
 
 # Test the classes of the BUML output model
 def test_classes():

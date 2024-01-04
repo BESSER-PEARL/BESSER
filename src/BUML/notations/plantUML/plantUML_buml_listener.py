@@ -57,11 +57,15 @@ class BUMLGenerationListener(PlantUMLListener):
         cl_name_2 = ctx.ID(1).getText()
         if ctx.ID(2) is None:
             association_name = cl_name_1 + "_" + cl_name_2
+            end1 = "end_" + cl_name_1 + "_" + cl_name_2
+            end2 = "end_" + cl_name_2 + "_" + cl_name_1
         else:
             association_name = ctx.ID(2).getText()
+            end1 = "end_" + cl_name_1 + "_" + association_name
+            end2 = "end_" + cl_name_2 + "_" + association_name
         text = association_name + ": BinaryAssociation = BinaryAssociation(name=\"" + association_name + "\", ends={\n\
-        Property(name=\"" + cl_name_1 + "_end\", property_type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.cardinality(0)) + self.__ends[0] + "),\n\
-        Property(name=\"" + cl_name_2 + "_end\", property_type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.cardinality(1)) + self.__ends[1] + ")})\n"
+        Property(name=\"" + end1 + "\", property_type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.cardinality(0)) + self.__ends[0] + "),\n\
+        Property(name=\"" + end2 + "\", property_type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.cardinality(1)) + self.__ends[1] + ")})\n"
         self.__relations[association_name] = text
         self.__relation_classes.append(cl_name_1)
         self.__relation_classes.append(cl_name_2)

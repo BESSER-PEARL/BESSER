@@ -1,4 +1,5 @@
-from datetime import datetime
+{% import "class_parameters.py.j2" as class_parameters %}
+from datetime import datetime, date, time
 {% set ns = namespace(abstract_found=false) -%}
 {% for class in classes -%}
     {% if class.is_abstract -%}
@@ -11,18 +12,10 @@ from abc import ABC, abstractmethod
 {# Two newlines are added here unconditionally #}
 {% for class in classes %}
 class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC){% endif %}:
-    def __init__(self{% for attribute in class.all_attributes() %}, {{ attribute.name }}: {{ attribute.type.name }}{% endfor %}
-                 {%- for end in class.association_ends() if end.is_navigable == True %}, {{ end.name }}: {% if end.multiplicity.max > 1 %}set["{{ end.type.name }}"]
-                 {%- else %}"{{ end.type.name }}"{%- endif %}{%- endfor %}):
-        {% if class.inherited_attributes() %}super().__init__({% for attr in class.inherited_attributes() %}{{attr.name}}{{ ", " if not loop.last else "" }}{% endfor %})
-        {% endif -%}
-        {% for attribute in class.attributes %}self.{{ attribute.name }} = {{ attribute.name }}
-        {% endfor -%}
-        {% for end in class.association_ends() %}{% if end.is_navigable == True %}self.{{ end.name }} = {{ end.name }} 
-        {% endif -%}{% endfor -%}
+    def __init__({{ class_parameters.init_parameters(class) }}):
+        {{ class_parameters.init_parameters_definition(class) }}
 
-
-    {% for attribute in class.attributes %}
+    {%- for attribute in class.attributes %}
     @property
     def {{ attribute.name }}(self) -> {{ attribute.type.name }}:
         return self.__{{ attribute.name }}

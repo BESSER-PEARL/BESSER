@@ -2,6 +2,10 @@ from .PlantUMLParser import PlantUMLParser
 from .PlantUMLListener import PlantUMLListener
 
 class BUMLGenerationListener(PlantUMLListener):
+    visibility = {"+": "public",
+                  "-": "private",
+                  "#": "protected",
+                  "~": "package"}
 
     def __init__(self, output):
         self.output = output
@@ -34,7 +38,10 @@ class BUMLGenerationListener(PlantUMLListener):
     def enterAttribute(self, ctx: PlantUMLParser.AttributeContext):
         attribute_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID().getText()
         text = attribute_name + ": Property = Property(name=\"" + ctx.ID().getText() + \
-            "\", property_type=t_"+ ctx.primitiveData().getText() +")\n"
+            "\", property_type="+ ctx.primitiveData().getText() +"_type"
+        if ctx.visibility():
+            text += ", visibility=\"" + self.visibility[ctx.visibility().getText()] + "\""
+        text += ")\n"
         self.output.write(text)
         self.__attr_list.append(attribute_name)
         self.__dtypes.add(ctx.primitiveData().getText())
@@ -127,7 +134,7 @@ class BUMLGenerationListener(PlantUMLListener):
         GeneralizationSet, AssociationClass \n\n'''
         text += "# Primitive Data Types \n"
         for dtype in self.__dtypes:
-            text += "t_" + dtype + " = PrimitiveDataType(\"" + dtype + "\")\n"
+            text += dtype + "_type = PrimitiveDataType(\"" + dtype + "\")\n"
         text += "\n"
         self.output.seek(0)
         content = self.output.read()

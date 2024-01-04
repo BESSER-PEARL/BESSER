@@ -3,7 +3,7 @@ import json
 import base64
 import os
 
-from BUML.notations.plantUML.plantuml_to_buml import plantuml_to_buml
+from BUML.notations.plantUML import plantuml_to_buml
 
 
 def image_to_plantuml(image_path: str, openai_token: str):
@@ -59,6 +59,6 @@ def image_to_buml(image_path: str, openai_token: str):
     # Create and write to the file
     with open("image.txt", "w") as file:
         file.write(plant_uml_chunk)    
-    domain = plantuml_to_buml("image.txt")
+    domain = plantuml_to_buml(plantUML_model_path="image.txt")
     os.remove("image.txt")
     return domain

@@ -27,8 +27,12 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__abstract_class = False
     
     def exitClass(self, ctx: PlantUMLParser.ClassContext):
-        attributes = ", ".join(self.__attr_list)
-        text = ctx.ID().getText() + ": Class = Class(name=\"" + ctx.ID().getText() + "\", attributes={" + attributes + "}"
+        if len(self.__attr_list) == 0:
+            attributes = "set()"
+        else:
+            attributes = ", ".join(self.__attr_list)
+            attributes = "{" + attributes + "}"
+        text = ctx.ID().getText() + ": Class = Class(name=\"" + ctx.ID().getText() + "\", attributes=" + attributes
         if self.__abstract_class:
             text += ", is_abstract=True"
         text += ")\n\n"

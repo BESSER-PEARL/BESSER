@@ -56,15 +56,17 @@ class BUMLGenerationListener(PlantUMLListener):
         cl_name_1 = ctx.ID(0).getText()
         cl_name_2 = ctx.ID(1).getText()
         association_name = cl_name_1 + "_" + cl_name_2
-        end1 = cl_name_1
-        end2 = cl_name_2
+        end1 = cl_name_1.lower()
+        end2 = cl_name_2.lower()
         if ctx.ID(2) is not None:
             association_name = ctx.ID(2).getText() + "_" + association_name
+            end1 = ctx.ID(2).getText()
+            end2 = ctx.ID(2).getText()
         if association_name in self.__relations:
             raise ValueError("There are two associations between " + cl_name_1 + " and " + cl_name_2 + " classes with the same or empty name")
         text = association_name + ": BinaryAssociation = BinaryAssociation(name=\"" + association_name + "\", ends={\n\
-        Property(name=\"" + end1.lower() + "\", property_type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.c_left) + self.__ends[0] + "),\n\
-        Property(name=\"" + end2.lower() + "\", property_type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.c_right) + self.__ends[1] + ")})\n"
+        Property(name=\"" + end1 + "\", property_type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.c_left) + self.__ends[0] + "),\n\
+        Property(name=\"" + end2 + "\", property_type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.c_right) + self.__ends[1] + ")})\n"
         self.__relations[association_name] = text
         self.__relation_classes.append(cl_name_1)
         self.__relation_classes.append(cl_name_2)

@@ -17,7 +17,7 @@ def test_classes():
 def test_associations():
     assert len(modeltest.associations) == 2
     for association in modeltest.associations:
-        assert association.name in ["writedBy", "has"]
+        assert association.name in ["writedBy_Book_Author", "has_Library_Book"]
 
 # Test the generalizations of the BUML output model
 def test_generalizations():

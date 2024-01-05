@@ -612,6 +612,8 @@ class PlantUMLParser ( Parser ):
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
             super().__init__(parent, invokingState)
             self.parser = parser
+            self.c_left = None # CardinalityContext
+            self.c_right = None # CardinalityContext
 
         def ID(self, i:int=None):
             if i is None:
@@ -673,7 +675,7 @@ class PlantUMLParser ( Parser ):
             _la = self._input.LA(1)
             if _la==15:
                 self.state = 89
-                self.cardinality()
+                localctx.c_left = self.cardinality()
 
 
             self.state = 96
@@ -705,7 +707,7 @@ class PlantUMLParser ( Parser ):
             _la = self._input.LA(1)
             if _la==15:
                 self.state = 98
-                self.cardinality()
+                localctx.c_right = self.cardinality()
 
 
             self.state = 101

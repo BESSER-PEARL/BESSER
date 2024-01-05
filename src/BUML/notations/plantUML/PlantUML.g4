@@ -18,9 +18,9 @@ abstract            : 'abstract' 'class'? ;
 
 relationship        : association | inheritance ;
 
-association         : ID cardinality?
+association         : ID c_left=cardinality?
                       (bidirectional | unidirectional | aggregation | composition)
-                      cardinality? ID (':' ID)? NL
+                      c_right=cardinality? ID (':' ID)? NL
                       ;
 
 bidirectional       : '--' ;

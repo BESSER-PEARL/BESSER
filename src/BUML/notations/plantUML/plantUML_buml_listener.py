@@ -167,25 +167,26 @@ def list_to_str(list:list):
         str_list = "{" + str_list + "}"
     return str_list
 
-def getMultiplicity(car:PlantUMLParser.CardinalityContext):
+def getMultiplicity(cardinality:PlantUMLParser.CardinalityContext):
     min = ""
     max = ""
-    cardinality = ""
-    if car is None:
+    multiplicity = ""
+    if cardinality is None:
         min = "1"
         max = "1"
-    if car.cardinalityVal(0).INT():
-        min = car.cardinalityVal(0).INT().getText()
-    elif car.cardinalityVal(0).ASTK():
-        min = "\"*\""
-    if car.cardinalityVal(1) and car.cardinalityVal(1).INT():
-        max = car.cardinalityVal(1).INT().getText()
-    elif car.cardinalityVal(1) and car.cardinalityVal(1).ASTK():
-        max = "\"*\""
-    if max == "":
-        max = min
-    if max == "\"*\"" == min:
-        min = "0"
+    else:
+        if cardinality.cardinalityVal(0).INT():
+            min = cardinality.cardinalityVal(0).INT().getText()
+        elif cardinality.cardinalityVal(0).ASTK():
+            min = "\"*\""
+        if cardinality.cardinalityVal(1) and cardinality.cardinalityVal(1).INT():
+            max = cardinality.cardinalityVal(1).INT().getText()
+        elif cardinality.cardinalityVal(1) and cardinality.cardinalityVal(1).ASTK():
+            max = "\"*\""
+        if max == "":
+            max = min
+        if max == "\"*\"" == min:
+            min = "0"
 
-    cardinality = "Multiplicity(" + min + ", " + max + ")"
-    return (cardinality)
+    multiplicity = "Multiplicity(" + min + ", " + max + ")"
+    return (multiplicity)

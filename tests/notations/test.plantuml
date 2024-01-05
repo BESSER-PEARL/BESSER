@@ -27,6 +27,6 @@ class Author {
 }
 
 Book "*" -- "1..*" Author: writedBy
-Library "1" -- "*" Book: has
+Library "1" -- Book: has
 Book <|-- Fantasy
 @enduml

@@ -44,5 +44,5 @@ def test_inherited_attributes():
 def test_association_ends():
     library = modeltest.get_class_by_name("Library")
     assert len(library.association_ends()) == 1
-    assert library.association_ends().pop().multiplicity.min == 0
-    assert library.association_ends().pop().multiplicity.max == 9999
+    assert library.association_ends().pop().multiplicity.min == 1
+    assert library.association_ends().pop().multiplicity.max == 1

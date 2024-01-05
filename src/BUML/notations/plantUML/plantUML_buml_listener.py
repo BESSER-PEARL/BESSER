@@ -55,17 +55,16 @@ class BUMLGenerationListener(PlantUMLListener):
     def exitAssociation(self, ctx: PlantUMLParser.AssociationContext):
         cl_name_1 = ctx.ID(0).getText()
         cl_name_2 = ctx.ID(1).getText()
-        if ctx.ID(2) is None:
-            association_name = cl_name_1 + "_" + cl_name_2
-            end1 = "end_" + cl_name_1 + "_" + cl_name_2
-            end2 = "end_" + cl_name_2 + "_" + cl_name_1
-        else:
-            association_name = ctx.ID(2).getText()
-            end1 = "end_" + cl_name_1 + "_" + association_name
-            end2 = "end_" + cl_name_2 + "_" + association_name
+        association_name = cl_name_1 + "_" + cl_name_2
+        end1 = cl_name_1
+        end2 = cl_name_2
+        if ctx.ID(2) is not None:
+            association_name = ctx.ID(2).getText() + "_" + association_name
+        if association_name in self.__relations:
+            raise ValueError("There are two associations between " + cl_name_1 + " and " + cl_name_2 + " classes with the same or empty name")
         text = association_name + ": BinaryAssociation = BinaryAssociation(name=\"" + association_name + "\", ends={\n\
-        Property(name=\"" + end1 + "\", property_type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.cardinality(0)) + self.__ends[0] + "),\n\
-        Property(name=\"" + end2 + "\", property_type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.cardinality(1)) + self.__ends[1] + ")})\n"
+        Property(name=\"" + end1.lower() + "\", property_type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.cardinality(0)) + self.__ends[0] + "),\n\
+        Property(name=\"" + end2.lower() + "\", property_type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.cardinality(1)) + self.__ends[1] + ")})\n"
         self.__relations[association_name] = text
         self.__relation_classes.append(cl_name_1)
         self.__relation_classes.append(cl_name_2)

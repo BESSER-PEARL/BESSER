@@ -20,7 +20,7 @@ relationship        : association | inheritance ;
 
 association         : ID c_left=cardinality?
                       (bidirectional | unidirectional | aggregation | composition)
-                      c_right=cardinality? ID (':' ID)? NL
+                      c_right=cardinality? ID ':' ID NL
                       ;
 
 bidirectional       : '--' ;

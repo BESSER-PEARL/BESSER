@@ -73,20 +73,20 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__ends = ["", ""]
     
     def enterUnidirectional(self, ctx: PlantUMLParser.UnidirectionalContext):
-        end_1 = ", is_navigable=True" if ctx.nav_l is not None else ""
-        end_2 = ", is_navigable=True" if ctx.nav_r is not None else ""
+        end_1 = ", is_navigable=True" if ctx.nav_l is not None else ", is_navigable=False"
+        end_2 = ", is_navigable=True" if ctx.nav_r is not None else ", is_navigable=False"
         self.__ends.append(end_1)
         self.__ends.append(end_2)
 
     def enterComposition(self, ctx: PlantUMLParser.CompositionContext):
-        end_1 = ", is_composite=True" if ctx.comp_l is not None else ""
-        end_2 = ", is_composite=True" if ctx.comp_r is not None else ""
+        end_1 = ", is_navigable=False, is_composite=True" if ctx.comp_l is not None else ""
+        end_2 = ", is_navigable=False, is_composite=True" if ctx.comp_r is not None else ""
         self.__ends.append(end_1)
         self.__ends.append(end_2)
 
     def enterAggregation(self, ctx: PlantUMLParser.AggregationContext):
-        end_1 = ", is_aggregation=True" if ctx.aggr_l is not None else ""
-        end_2 = ", is_aggregation=True" if ctx.aggr_r is not None else ""
+        end_1 = ", is_navigable=False, is_aggregation=True" if ctx.aggr_l is not None else ""
+        end_2 = ", is_navigable=False, is_aggregation=True" if ctx.aggr_r is not None else ""
         self.__ends.append(end_1)
         self.__ends.append(end_2)
     

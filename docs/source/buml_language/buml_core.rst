@@ -73,6 +73,6 @@ You should get output like this:
 .. note::
     
     For a detailed description of metamodel elements such as classes, attributes, generalizations and others, 
-    please refer to the :doc:`API documentation <../api>` documentation.
+    please refer to the :doc:`API documentation <../api>`.
 
 Now that you have a model defined with B-UML, you can use the :doc:`../generators`.

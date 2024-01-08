@@ -65,7 +65,7 @@ class Type(NamedElement):
         super().__init__(name)
 
     def __repr__(self):
-        return f"Name({self.name})"
+        return f"Type({self.name})"
 
 class DataType(Type):
     """Represents a data type.
@@ -82,6 +82,9 @@ class DataType(Type):
     def __init__(self, name: str):
         super().__init__(name)
 
+    def __repr__(self):
+        return f"DataType({self.name})"
+    
 class PrimitiveDataType(DataType):
     """Class representing an enumeration literal.
 
@@ -112,7 +115,10 @@ class PrimitiveDataType(DataType):
         if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
             raise ValueError("Invalid primitive data type")
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
-
+    
+    def __repr__(self):
+        return f"PrimitiveDataType({self.name})"
+    
 class EnumerationLiteral(NamedElement):
     """Class representing a primitive data type.
 
@@ -149,6 +155,9 @@ class EnumerationLiteral(NamedElement):
             raise ValueError("Invalid owner")
         self.__owner = owner
 
+    def __repr__(self):
+        return f"EnumerationLiteral({self.name})"
+    
 class Enumeration(DataType):
     """Class representing an enumeration.
 
@@ -191,6 +200,9 @@ class Enumeration(DataType):
         else:
             self.__literals = set()
 
+    def __repr__(self):
+        return f"Enumeration({self.name}, {self.literals})"
+    
 class TypedElement(NamedElement):
     """TypedElement is a subclass of NamedElement and is used to represent elements
     that have a specific type.
@@ -372,7 +384,7 @@ class Property(TypedElement):
         self.__is_aggregation = is_aggregation
 
     def __repr__(self):
-        return f'Property({self.name},{self.visibility},{self.type},{self.multiplicity},{self.is_composite})'
+        return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite})'
 
 class Class(Type):
     """Represents a class in a modeling context.
@@ -530,7 +542,7 @@ class Class(Type):
         return all_spec
     
     def __repr__(self):
-        return f'Class({self.name},{self.attributes})'
+        return f'Class({self.name}, {self.attributes})'
 
 class Association(NamedElement):
     """Represents an association between classes.
@@ -574,6 +586,9 @@ class Association(NamedElement):
             end.type._add_association(association=self)
         self.__ends = ends
 
+    def __repr__(self):
+        return f'Association({self.name}, {self.ends})'
+    
 class BinaryAssociation(Association):
     """Represents a binary association between two classes.
 
@@ -609,6 +624,9 @@ class BinaryAssociation(Association):
             raise ValueError("The composition attribute cannot be tagged at both ends")
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
 
+    def __repr__(self):
+        return f'BinaryAssociation({self.name}, {self.ends})'
+    
 class AssociationClass(Class):
     # Class that has an association nature
     """An AssociationClass is a class that that has an association nature.
@@ -638,6 +656,9 @@ class AssociationClass(Class):
     def association(self, association: Association):
         """Association: Set the underlying association of the association class."""
         self.__association = association
+    
+    def __repr__(self):
+        return f'AssociationClass({self.name}, {self.attributes}, {self.association})'
 
 class Generalization(Element):
     """Represents a generalization relationship between two classes.
@@ -692,7 +713,7 @@ class Generalization(Element):
         self.__specific = specific
 
     def __repr__(self):
-        return f'Generalization({self.general},{self.specific})'
+        return f'Generalization({self.general}, {self.specific})'
 
 class GeneralizationSet(NamedElement):
     """Represents a set of generalization relationships.
@@ -746,6 +767,9 @@ class GeneralizationSet(NamedElement):
         """bool: Set whether the set is complete."""
         self.__is_complete = is_complete
 
+    def __repr__(self):
+        return f'GeneralizationSet({self.name}, {self.generalizations}, is_disjoint={self.is_disjoint}, is_complete={self.is_complete})'
+    
 class Package(NamedElement):
     """A Package is a grouping mechanism that allows organizing and managing a set of classes.
 
@@ -772,6 +796,9 @@ class Package(NamedElement):
         """set[Class]: Set the classes contained in the package."""
         self.__classes = classes
 
+    def __repr__(self):
+        return f'Package({self.name}, {self.classes})'
+    
 class Constraint(NamedElement):
     """A Constraint is a statement that restricts or defines conditions on the behavior,
     structure, or other aspects of the modeled system.
@@ -997,3 +1024,6 @@ class DomainModel(NamedElement):
                     ordered_classes.append(cl)
             classes.difference_update(ordered_classes)
         return ordered_classes
+    
+    def __repr__(self):
+        return f'Package({self.name}, {self.types}, {self.associations}, {self.generalizations}, {self.enumerations}, {self.packages}, {self.constraints})'

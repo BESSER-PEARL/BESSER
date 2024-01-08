@@ -18,6 +18,7 @@ BESSER currently enables three ways to specify your model using B-UML: (1) build
 a B-UML model, and (3) transform an image into a BUML model (e.g., a photo of a hand-drawn model on a board).
 
 .. toctree::
+  :maxdepth: 1
 
   buml_language/buml_core
   buml_language/plantuml

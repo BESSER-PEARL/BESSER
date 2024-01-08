@@ -117,14 +117,16 @@ class BUMLGenerationListener(PlantUMLListener):
 
     def exitDomainModel(self, ctx: PlantUMLParser.DomainModelContext):
         self.check_classes_definition()
-        self.output.write("# Relationships\n")
-        for relation in self.__relations.values():
-            self.output.write(relation)
-        self.output.write("\n# Generalizations\n")
-        for inheritance in self.__inheritances.values():
-            self.output.write(inheritance)
-        if self.__group_inh > 1:
-            self.create_generalization_set()
+        if len(self.__relations) != 0:
+            self.output.write("# Relationships\n")
+            for relation in self.__relations.values():
+                self.output.write(relation)
+        if len(self.__inheritances) != 0:
+            self.output.write("\n# Generalizations\n")
+            for inheritance in self.__inheritances.values():
+                self.output.write(inheritance)
+            if self.__group_inh > 1:
+                self.create_generalization_set()
         classes = list_to_str(self.__classes)
         associations = list_to_str(list(self.__relations.keys()))
         generalizations = list_to_str(list(self.__inheritances.keys()))

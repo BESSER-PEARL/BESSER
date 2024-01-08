@@ -20,7 +20,8 @@ based around our B-UML language and a number of generators built on top of it (S
   :align: center
 
 You'll find here all the necessary information about the B-UML language (to model the problem domain) and the 
-different code generators to produce a deployable solution.
+different code generators to produce a deployable solution. You could even build your own code generator for 
+a target technology.
 
 Contents
 --------

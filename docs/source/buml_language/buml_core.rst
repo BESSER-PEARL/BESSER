@@ -16,8 +16,8 @@ must be imported for this Library modeling example.
     from BUML.metamodel.structural import DomainModel, Class, Property, \
         PrimitiveDataType, Multiplicity, BinaryAssociation
 
-Now, we can define the attributes, classes, relationships, and other elements of the model. For classes and attributes 
-use ``Property`` and ``Class`` classes respectively. The following is the definition of the *Book* class including its attributes.
+Now, we can define the attributes, classes, relationships, and other elements of the model. The following is the definition 
+of the *Book* class including its attributes.
 
 .. code-block:: python
 
@@ -36,9 +36,9 @@ and *Book* as follows.
 .. code-block:: python
 
     # Library-Book association definition
-    located_in_end: Property = Property(name="locatedIn", owner=None, property_type=library, multiplicity=Multiplicity(1, 1))
-    has_end: Property = Property(name="has", owner=None, property_type=book, multiplicity=Multiplicity(0, "*"))
-    lib_book_association: BinaryAssociation = BinaryAssociation(name="lib-book-assoc", ends={located_in_end, has_end})
+    located_in: Property = Property(name="locatedIn", owner=None, property_type=library, multiplicity=Multiplicity(1, 1))
+    has: Property = Property(name="has", owner=None, property_type=book, multiplicity=Multiplicity(0, "*"))
+    lib_book_association: BinaryAssociation = BinaryAssociation(name="lib_book_assoc", ends={located_in, has})
 
 Finally, create the domain model and add the classes, relationships and other elements of the model.
 
@@ -75,4 +75,4 @@ You should get output like this:
     For a detailed description of metamodel elements such as classes, attributes, generalizations and others, 
     please refer to the :doc:`API documentation <../api>`.
 
-Now that you have a model defined with B-UML, you can use the :doc:`../generators`.
+Now that you have a model defined with B-UML, you can use our :doc:`../generators`, or even build your own for a target technology.

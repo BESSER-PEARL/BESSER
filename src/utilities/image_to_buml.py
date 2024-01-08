@@ -59,6 +59,6 @@ def image_to_buml(image_path: str, openai_token: str):
     # Create and write to the file
     with open("image.txt", "w") as file:
         file.write(plant_uml_chunk)    
-    domain = plantuml_to_buml(plantUML_model_path="image.txt")
+    domain = plantuml_to_buml(plantUML_model_path="image.txt", buml_model_file_name="buml_model_from_image")
     os.remove("image.txt")
     return domain

@@ -305,6 +305,7 @@ class Property(TypedElement):
         is_composite (bool): Indicates whether the property is a composite.
         is_navigable (bool): Indicates whether the property is navigable in a relationship.
         is_aggregation (bool): Indicates whether the property represents an aggregation.
+        is_id (bool): Indicates whether the property is an id.
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the property.
@@ -315,16 +316,19 @@ class Property(TypedElement):
         is_composite (bool): Indicates whether the property is a composite.
         is_navigable (bool): Indicates whether the property is navigable in a relationship.
         is_aggregation (bool): Indicates whether the property represents an aggregation.
+        is_id (bool): Indicates whether the property is an id.
     """
     
     def __init__(self, name: str, property_type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1), 
-                 visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False):
+                 visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False,
+                 is_id: bool = False):
         super().__init__(name, property_type, visibility)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
         self.is_navigable: bool = is_navigable
         self.is_aggregation: bool = is_aggregation
+        self.is_id: bool = is_id
 
     @property
     def owner(self) -> Type:
@@ -382,9 +386,19 @@ class Property(TypedElement):
     def is_aggregation(self, is_aggregation: bool):
         """bool: Set wheter the property represents an aggregation."""
         self.__is_aggregation = is_aggregation
+    
+    @property
+    def is_id(self) -> bool:
+        """bool: Get wheter the property is an id."""
+        return self.__is_id
+
+    @is_id.setter
+    def is_id(self, is_id: bool):
+        """bool: Set wheter the property is an id."""
+        self.__is_id = is_id
 
     def __repr__(self):
-        return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite})'
+        return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite}, is_id={self.is_id})'
 
 class Class(Type):
     """Represents a class in a modeling context.

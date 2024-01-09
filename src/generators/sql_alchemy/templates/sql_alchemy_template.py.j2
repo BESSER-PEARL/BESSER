@@ -59,15 +59,15 @@ class {{ class.name }}(
     {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({{types[attribute.type.name]}})
     {%- endfor %}
     {%- if class.specializations()|length > 0 %}
-    type: Mapped[str]
+    type_spec: Mapped[str]
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
-        "polymorphic_on": "type",
+        "polymorphic_on": "type_spec",
     }
     {%- endif %}
     {%- for parent in class.parents() %}
     __mapper_args__ = {
-        "polymorphic_identity": "{{ parent.name.lower() }}",
+        "polymorphic_identity": "{{ class.name.lower() }}",
     }
     {%- endfor %}
 {% endfor %}

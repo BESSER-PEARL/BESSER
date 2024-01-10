@@ -86,11 +86,11 @@ class {{ class.name }}(
 {{class.name}}.{{end.name}}: Mapped[List["{{end.type.name}}"]] = relationship(
             {%- if ns.end_own.multiplicity.max > 1 -%}
                 secondary={{ end.owner.name.lower() }},{{" "}}
-            {%- endif %}back_populates="{{ns.end_own.name}}")
+            {%- endif %}"{{end.type.name}}", back_populates="{{ns.end_own.name}}")
         {%- endif %}
         {%- if end.multiplicity.max == 1 %}
 {{class.name}}.{{end.type.name.lower()}}_id: Mapped["{{end.type.name}}"] = mapped_column(ForeignKey("{{end.type.name.lower()}}.id"))
-{{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship(back_populates="{{ns.end_own.name}}")
+{{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{ns.end_own.name}}")
         {%- endif %}
     {%- endfor %}
 {%- endfor %}

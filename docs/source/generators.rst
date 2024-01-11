@@ -13,3 +13,5 @@ own generator).
    generators/django
    generators/python
    generators/alchemy
+   generators/sql
+   generators/build_generator

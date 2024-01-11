@@ -83,10 +83,10 @@ class {{ class.name }}(
             {%- set ns.end_own = a_end %}
         {%- endfor %}
         {%- if end.multiplicity.max > 1 %}
-{{class.name}}.{{end.name}}: Mapped[List["{{end.type.name}}"]] = relationship(
+{{class.name}}.{{end.name}}: Mapped[List["{{end.type.name}}"]] = relationship("{{end.type.name}}"
             {%- if ns.end_own.multiplicity.max > 1 -%}
-                secondary={{ end.owner.name.lower() }},{{" "}}
-            {%- endif %}"{{end.type.name}}", back_populates="{{ns.end_own.name}}")
+                , secondary={{ end.owner.name.lower() }}
+            {%- endif %}, back_populates="{{ns.end_own.name}}")
         {%- endif %}
         {%- if end.multiplicity.max == 1 %}
 {{class.name}}.{{end.type.name.lower()}}_id: Mapped["{{end.type.name}}"] = mapped_column(ForeignKey("{{end.type.name.lower()}}.id"))

@@ -26,36 +26,36 @@ book_author_assoc = Table(
 )
 
 # Tables definition
-class Book(Base):
+class Author(Base):
     
-    __tablename__ = "book"
+    __tablename__ = "author"
     id: Mapped[int] = mapped_column(primary_key=True)
-    release: Mapped[datetime] = mapped_column(DateTime)
-    title: Mapped[str] = mapped_column(String(100))
-    pages: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(100))
 
 class Library(Base):
     
     __tablename__ = "library"
     id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
     address: Mapped[str] = mapped_column(String(100))
-    name: Mapped[str] = mapped_column(String(100))
 
-class Author(Base):
+class Book(Base):
     
-    __tablename__ = "author"
+    __tablename__ = "book"
     id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(100))
-    name: Mapped[str] = mapped_column(String(100))
+    release: Mapped[datetime] = mapped_column(DateTime)
+    pages: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(100))
 
 
-#--- Foreign keys and relationships of the book table
-Book.writedBy: Mapped[List["Author"]] = relationship(secondary=book_author_assoc, "Author", back_populates="publishes")
-Book.library_id: Mapped["Library"] = mapped_column(ForeignKey("library.id"))
-Book.locatedIn: Mapped["Library"] = relationship("Library", back_populates="has")
+#--- Foreign keys and relationships of the author table
+Author.publishes: Mapped[List["Book"]] = relationship("Book", secondary=book_author_assoc, back_populates="writedBy")
 
 #--- Foreign keys and relationships of the library table
 Library.has: Mapped[List["Book"]] = relationship("Book", back_populates="locatedIn")
 
-#--- Foreign keys and relationships of the author table
-Author.publishes: Mapped[List["Book"]] = relationship(secondary=book_author_assoc, "Book", back_populates="writedBy")
+#--- Foreign keys and relationships of the book table
+Book.writedBy: Mapped[List["Author"]] = relationship("Author", secondary=book_author_assoc, back_populates="publishes")
+Book.library_id: Mapped["Library"] = mapped_column(ForeignKey("library.id"))
+Book.locatedIn: Mapped["Library"] = relationship("Library", back_populates="has")

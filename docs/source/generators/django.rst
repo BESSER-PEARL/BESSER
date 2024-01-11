@@ -17,6 +17,6 @@ You should create a ``DjangoGenerator`` object, provide the B-UML model, and use
 The ``models.py`` file with the Django models defined will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../examples/library/output/models.py
+.. literalinclude:: ../../../tests/library_test/output/models.py
    :language: python
    :linenos:

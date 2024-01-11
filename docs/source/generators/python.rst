@@ -17,6 +17,6 @@ You should create a ``PythonGenerator`` object, provide the B-UML model, and use
 The ``classes.py`` file with the Django domain model (i.e., the set of classes) will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../examples/library/output/classes.py
+.. literalinclude:: ../../../tests/library_test/output/classes.py
    :language: python
    :linenos:

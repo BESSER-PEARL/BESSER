@@ -11,11 +11,11 @@ domain of libraries, books and authors. The UML diagram is depicted in the follo
 
 And the Python code to specify the model, including its classes, attributes, and relationships, is as follows.
 
-.. literalinclude:: ../../../examples/library/library.py
+.. literalinclude:: ../../../tests/library_test/library.py
    :language: python
    :linenos:
 
 .. note::
     
-    A B-UML model can also be created from a model designed with PlantUML. You can get more information 
-    :doc:`here <../buml_language/plantuml>`.
+    A B-UML model can also be created :doc:`from a model designed with PlantUML <../buml_language/plantuml>` or even 
+    :doc:`from an image <../buml_language/image_to_buml>`.

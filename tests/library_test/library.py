@@ -3,6 +3,7 @@ from BUML.metamodel.structural import DomainModel, Class, Property, \
 from generators.python_classes import Python_Generator
 from generators.django import DjangoGenerator
 from generators.sql_alchemy import SQLAlchemyGenerator
+from generators.sql import SQLGenerator
 
 # Library attributes definition
 library_name: Property = Property(name="name", owner=None, property_type=PrimitiveDataType("str"))
@@ -50,3 +51,6 @@ django.generate()
 
 sql_alchemy = SQLAlchemyGenerator(model=library_model)
 sql_alchemy.generate()
+
+sql = SQLGenerator(model=library_model)
+sql.generate()

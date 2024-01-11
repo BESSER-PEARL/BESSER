@@ -19,6 +19,6 @@ For this, you should create the generator, provide the B-UML model, and use the 
 The ``sql_alchemy.py`` file with the Declarative Mapping of the database will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../examples/library/output/sql_alchemy.py
+.. literalinclude:: ../../../tests/library_test/output/sql_alchemy.py
    :language: python
    :linenos:

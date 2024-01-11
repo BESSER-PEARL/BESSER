@@ -29,11 +29,11 @@ We encourage contributions from the community and any comment is welcome!
 
 If you are interested in contributing to this project, please read the [CONTRIBUTING.md](CONTRIBUTING.md) file.
 
-# Code of Conduct
+## Code of Conduct
 
 At BESSER, our commitment is centered on establishing and maintaining development environments that are welcoming, inclusive, safe and free from all forms of harassment. All participants are expected to voluntarily respect and support our [Code of Conduct](CODE_OF_CONDUCT.md).
 
-# Governance
+## Governance
 
 The development of this project follows the governance rules described in the [GOVERNANCE.md](GOVERNANCE.md) document.
 

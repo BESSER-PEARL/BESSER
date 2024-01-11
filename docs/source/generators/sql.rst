@@ -17,7 +17,7 @@ Let's generate the SQL code of our :doc:`../examples/library_example` B-UML mode
 The ``tables.sql`` file with the SQL statements will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../tests/library_test/output/tables.py
+.. literalinclude:: ../../../tests/library_test/output/tables.sql
    :language: sql
    :linenos:
 

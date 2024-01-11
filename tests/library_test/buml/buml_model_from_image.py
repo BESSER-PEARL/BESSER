@@ -3,9 +3,9 @@ from BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \
         GeneralizationSet, AssociationClass 
 
 # Primitive Data Types 
-str_type = PrimitiveDataType("str")
 date_type = PrimitiveDataType("date")
 int_type = PrimitiveDataType("int")
+str_type = PrimitiveDataType("str")
 
 # Library class definition 
 Library_name: Property = Property(name="name", property_type=str_type)

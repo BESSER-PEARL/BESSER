@@ -5,7 +5,7 @@ class Library {
 }
 
 class Book {
-+ tittle: str
++ title: str
 + pages: int
 + release: date
 }

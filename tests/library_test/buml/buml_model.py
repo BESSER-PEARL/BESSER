@@ -3,8 +3,8 @@ from BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \
         GeneralizationSet, AssociationClass 
 
 # Primitive Data Types 
-date_type = PrimitiveDataType("date")
 int_type = PrimitiveDataType("int")
+date_type = PrimitiveDataType("date")
 str_type = PrimitiveDataType("str")
 
 # Library class definition 
@@ -13,10 +13,10 @@ Library_address: Property = Property(name="address", property_type=str_type, vis
 Library: Class = Class(name="Library", attributes={Library_name, Library_address})
 
 # Book class definition 
-Book_tittle: Property = Property(name="tittle", property_type=str_type, visibility="public")
+Book_title: Property = Property(name="title", property_type=str_type, visibility="public")
 Book_pages: Property = Property(name="pages", property_type=int_type, visibility="public")
 Book_release: Property = Property(name="release", property_type=date_type, visibility="public")
-Book: Class = Class(name="Book", attributes={Book_tittle, Book_pages, Book_release})
+Book: Class = Class(name="Book", attributes={Book_title, Book_pages, Book_release})
 
 # Author class definition 
 Author_name: Property = Property(name="name", property_type=str_type, visibility="public")

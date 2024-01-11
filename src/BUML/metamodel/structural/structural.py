@@ -523,6 +523,14 @@ class Class(Type):
                         ends.discard(end)
         return ends
     
+    def all_association_ends(self) -> set[Property]:
+        """set[Property]: Get the set of direct and indirect association ends of the class."""
+        all_ends = self.association_ends()
+        for parent in self.all_parents():
+            ends = parent.association_ends()
+            all_ends.update(ends)
+        return all_ends
+
     def parents(self) -> set:
         """set[Class]: Get the set of direct parents of the class."""
         parents = set()

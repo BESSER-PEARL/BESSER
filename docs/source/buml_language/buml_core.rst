@@ -68,7 +68,7 @@ You should get output like this:
 
 .. note::
     
-    You can consult the complete code for this basic example :doc:`here <../tests/library_test>`.
+    You can consult the complete code for this basic example :doc:`here <../examples/library_example>`.
 
 .. note::
     

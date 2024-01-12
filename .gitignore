@@ -13,5 +13,7 @@ docs/_build/
 
 # Build
 build
+**/besser.egg-info/**
+
 # ANTLR
 **/.antlr/**

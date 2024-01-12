@@ -93,31 +93,55 @@ class OCLConstraint(Constraint):
         super().__init__(name, context, expression, language)
 
 
-
-
-
-
-
 class IfExp(OCLExpression):
-    def __init__(self, ifcond = None, elseExp = None, thenExp = None):
+    def __init__(self, name: str, type: Type,ifcond = None, elseExp = None, thenExp = None,):
         # self.ifOwner = null
+        super().__init__(name, type)
+
         self.ifCondition = ifcond
-        self.elseExpression = elseExp
-        self.thenExpression = thenExp
+        self.else_expression = elseExp
+        self.then_expression = thenExp
+
+    @property
+    def get_if_Condition (self):
+        return self.ifCondition
+
+    @property
+    def get_else_condition(self):
+        return self.else_expression
+    @property
+    def get_then_expression(self):
+        return self.then_expression
+
+    @property
+    def set_if_Condition (self,if_cond):
+        self.ifCondition = if_cond
+
+    @property
+    def set_else_condition(self,else_cond):
+        self.else_expression = else_cond
+    @property
+    def set_then_expression(self, then_expression):
+        self.then_expression = then_expression
 class VariableExp(OCLExpression):
-    def __init__(self):
+    def __init__(self,name: str, type: Type):
+        super().__init__(name, type)
+
         self.variable = Variable()
     def set_refferred_variable (self,val):
         if "." in val:
             val = val.split(".")[1]
-        self.variable.set_val(val)
+        self.variable.set_value(val)
     def getVal(self):
-        return self.variable.getVal()
+        return self.variable.get_value()
 class Variable(OCLExpression):
-    def set_val(self,val):
+    def __init__(self,name: str, type: Type):
+        super().__init__(name, type)
+
+    def set_value(self, val):
         self.representatedParameter = Parameter(val)
-    def getVal(self):
-        return self.representatedParameter.getVal()
+    def get_value(self):
+        return self.representatedParameter.get_value()
 
 class Property:
     def __init__(self):
@@ -125,20 +149,23 @@ class Property:
         self.val = None
 
 class TypeExp(OCLExpression):
-        def __init__(self):
-            self.refferedType = Classifier()
+        def __init__(self,name: str, type: Type):
+            super().__init__(name, type)
+
+            self.referedType = Classifier()
 class Parameter:
     def __init__(self,val):
         self.value =val
 
-    def getVal(self):
+    def get_value(self):
         return self.value
-class Classifier:
-    pass
+
 
 class StateExp(OCLExpression):
-        def __init__(self):
-            self.refferedState = State()
+        def __init__(self,name: str, type: Type):
+            super().__init__(name, type)
+
+            self.referedState = State()
 class State:
     def __init__(self):
         self.stateExp = []
@@ -148,7 +175,11 @@ class RealLiteralExpression(LiteralExpression):
         super().__init__(name, type=PrimitiveDataType(name="float"), value=value)
 
     def __repr__(self):
-        return f'IntegerLiteralExpression({self.value})'
+        return f'RealLiteralExpression({self.value})'
+
+
+class Classifier:
+    pass
 class CallExp(OCLExpression):
     pass
 class FeatureCallExp(CallExp):
@@ -158,9 +189,24 @@ class LiteralExp(OCLExpression):
 class InvalidLiteralExp(LiteralExp):
     pass
 class LoopExp(CallExp):
-    def __init__(self):
-        self.body = OCLExpression()
-        self.iterator = Variable()
+    def __init__(self,name: str, type: Type):
+        super().__init__(name, type)
+
+        self.body = None#OCLExpression()
+        self.iterator = None#Variable()
+    @property
+    def set_body(self,body):
+        self.body = body
+    @property
+    def get_body(self):
+        return self.body
+    @property
+    def set_iterator (self,iterator):
+        self.iterator = iterator
+    @property
+    def get_iterator(self):
+        return self.iterator
+
 class MessageExp(OCLExpression):
     pass
 class NavigationCallExp(OCLExpression):
@@ -173,12 +219,15 @@ class PrimitiveLiteralExp(LiteralExp):
 class NumericLiteralExp(PrimitiveLiteralExp):
     pass
 class IterateExp(LoopExp):
-    def __init__(self):
+    def __init__(self,name: str, type: Type):
+        super().__init__(name, type)
+
         self.result=Variable()
 class IteratorExp(LoopExp):
     pass
 class LetExp(OCLExpression):
-    def __init__(self):
+    def __init__(self, name: str, type: Type):
+        super().__init__(name, type)
         self.OCLExpression = None
         self.variable = None
 class BooleanLiteralExpression(LiteralExpression):
@@ -186,10 +235,10 @@ class BooleanLiteralExpression(LiteralExpression):
         super().__init__(name, type=PrimitiveDataType(name="Boolean"), value=value)
 
     def __repr__(self):
-        return f'IntegerLiteralExpression({self.value})'
+        return f'BooleanLiteralExpression({self.value})'
 class StringLiteralExpression(LiteralExpression):
     def __init__(self, name: str, value: str):
         super().__init__(name, type=PrimitiveDataType(name="String"), value=value)
 
     def __repr__(self):
-        return f'IntegerLiteralExpression({self.value})'
+        return f'StringLiteralExpression({self.value})'

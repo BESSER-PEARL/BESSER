@@ -1,0 +1,38 @@
+@startuml
+class ProductPassport{
+  + code: str
+  + product_name: int
+  + brand: str
+}
+
+class LifecycleStage{
+  + start: date
+  + end: date 
+}
+
+class Design extends LifecycleStage {
+}
+
+class Use extends LifecycleStage {
+}
+
+class Manufacture extends LifecycleStage {
+}
+
+class Distribution extends LifecycleStage {
+}
+
+class RawMaterial {
+  + name: str
+}
+
+class Reparation {
+  + description: str
+  + date_set: date
+}
+
+ProductPassport "*" --> "1..*" LifecycleStage: stage
+LifecycleStage "*" --> "1..*" RawMaterial: composition
+Use "1" --> "*" Reparation: reparations
+
+@enduml

@@ -15,7 +15,7 @@ Let's see an example with the classic library model. The textual model writed in
 
 And the diagram produced by PlantUML is as follows.
 
-.. image:: ../../img/library_plantuml.png
+.. image:: ../img/library_plantuml.png
   :width: 120
   :alt: Library model
   :align: center

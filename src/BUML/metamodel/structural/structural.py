@@ -567,6 +567,13 @@ class Class(Type):
             all_spec.update(specialization.all_specializations())
         return all_spec
     
+    def id_attribute(self) -> Property:
+        """Property: Get the id attribute of the class."""
+        for attribute in self.attributes:
+            if attribute.is_id:
+                return attribute
+        return None
+    
     def __repr__(self):
         return f'Class({self.name}, {self.attributes})'
 

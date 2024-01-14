@@ -438,11 +438,15 @@ class Class(Type):
         
         Raises:
             ValueError: if two attributes have the same name.
+            ValueError: if two attributes are id.
         """
         if attributes is not None:
             names = [attribute.name for attribute in attributes]
             if len(names) != len(set(names)):
                 raise ValueError("A class cannot have two attributes with the same name")
+            id_counter = sum(attribute.is_id for attribute in attributes)
+            if id_counter > 1:
+                raise ValueError("A class cannot have two id attributes")
             for attribute in attributes:
                 attribute.owner = self
             self.__attributes = attributes

@@ -83,6 +83,14 @@ def test_duplicated_name_class():
         class1 = Class(name="name1", attributes={attribute1, attribute2})
         assert "A class cannot have two attributes with the same name" in str(excinfo.value)
 
+# Testing for no more than one id attribute in class
+def test_more_than_one_id_class():
+    with pytest.raises(ValueError) as excinfo:
+        class1 : Class
+        attribute1: Property = Property(name="attribute1", property_type=PrimitiveDataType("int"), is_id=True)
+        attribute2: Property = Property(name="attribute2", property_type=PrimitiveDataType("int"), is_id=True)
+        class1 = Class(name="name1", attributes={attribute1, attribute2})
+        assert "A class cannot have two id attributes" in str(excinfo.value)
 
 def test_association_initialization():
     class1: Class = Class(name="name1", attributes=set())

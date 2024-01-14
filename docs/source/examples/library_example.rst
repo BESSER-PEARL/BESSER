@@ -9,7 +9,10 @@ domain of libraries, books and authors. The UML diagram is depicted in the follo
   :alt: Library model
   :align: center
 
-And the Python code to specify the model, including its classes, attributes, and relationships, is as follows.
+The Python code to specify the B-UML model, including its classes, attributes, and relationships, is presented in the following
+code (lines 1-44). Additionally, the ``Python_Generator``, ``DjangoGenerator``, ``SQLAlchemyGenerator``, and ``SQLGenerator``
+code generators are implemented in this example (lines 50-61). Running this script will generate the ``output/`` folder with the
+``classes.py``, ``models.py``, ``sql_alchemy.py``, and ``tables.sql`` files produced by each of the Generators respectively.
 
 .. literalinclude:: ../../../tests/library_test/library.py
    :language: python

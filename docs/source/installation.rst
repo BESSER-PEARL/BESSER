@@ -21,10 +21,10 @@ To obtain the full code, including examples and tests, you can clone the git rep
     $ git clone https://github.com/BESSER-PEARL/BESSER.git
     $ cd BESSER
 
-Now, install *build*, then generate and install the *besser* package.
+Now, install *build*, then generate and install the *besser* package. Remember to replace ``*.*.*`` by the package version number.
 
 .. code-block:: console
 
     $ pip install --upgrade build
     $ python -m build
-    $ pip install dist/besser-0.1.0-py3-none-any.whl
+    $ pip install dist/besser-*.*.*-py3-none-any.whl

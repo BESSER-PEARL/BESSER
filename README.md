@@ -6,18 +6,26 @@ The BESSER low-code platform is built on top of our Python-based personal interp
 
 **Check out the official [documentation](https://besser.readthedocs.io/en/latest/)**
 
-## Installation
+## Basic Installation
 
-BESSER works with Pyhton 3.9+. The pip *besser* package will be available soon, but you can also build it from source. First, clone the repository.
+BESSER works with Pyhton 3.9+. We recommend creating a virtual environment (e.g. [venv](https://docs.python.org/3/tutorial/venv.html), [conda](https://docs.conda.io/en/latest/)).
+
+The latest stable version of BESSER is available in the Python Package Index (PyPi) and can be installed using
+
+    $ pip install besser
+
+## Building From Source
+
+If you prefer to obtain the full code, you can clone the git repository.
 
     $ git clone https://github.com/BESSER-PEARL/BESSER.git
     $ cd BESSER
 
-Install *build*, then generate and install the *besser* package.
+Install *build*, then generate and install the *besser* package. Remember to replace `*.*.*` by the package version number.
 
     $ pip install --upgrade build
     $ python -m build
-    $ pip install dist/besser-0.1.0-py3-none-any.whl
+    $ pip install dist/besser-*.*.*-py3-none-any.whl
 
 You can check the installation of the *besser* package.
 

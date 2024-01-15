@@ -3,6 +3,6 @@ API
 
 .. toctree::
 
-   api/buml
-   api/generators
-   api/utilities
+   api/api_buml
+   api/api_generators
+   api/api_utilities

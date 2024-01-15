@@ -31,6 +31,8 @@ extensions = [
     'sphinx.ext.intersphinx',  # link to other projects’ documentation
     'sphinx_paramlinks',  # allows :param: directives within Python documentation to be linkable
     'sphinx.ext.linkcode',  # add external links to source code
+    'sphinx_copybutton',  # add a little “copy” button to the right of the code blocks
+    'sphinx.ext.napoleon',  # support for Google (and also NumPy) style docstrings
 ]
 
 intersphinx_mapping = {

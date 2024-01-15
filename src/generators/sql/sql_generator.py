@@ -5,6 +5,16 @@ from generators import GeneratorInterface
 
 
 class SQLGenerator(GeneratorInterface):
+    """
+    SQLGenerator is a class that implements the GeneratorInterface and produces the code or set of SQL statements 
+    used to define and modify the structure of the tables in a database..
+
+    Args:
+        model (DomainModel): An instance of the DomainModel class representing the B-UML model.
+        output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
+        sql_dialect (str, optional): The SQL dialect. Values allowed: None, "postgres", or "mysql".
+    """
+
     TYPES = {
         "int": "int",
         "str": "varchar(100)",
@@ -16,11 +26,19 @@ class SQLGenerator(GeneratorInterface):
         "timedelta": "interval",
     }
 
-    def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect = None):
+    def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect: str = None):
         super().__init__(model, output_dir)
         self.sql_dialect = sql_dialect
 
     def generate(self):
+        """
+        Generates SQL code based on the provided B-UML model and saves it to the specified output directory.
+        If the output directory was not specified, the code generated will be stored in the <current directory>/output
+        folder.
+
+        Returns:
+            None, but store the generated code as a file named sql_alchemy.py 
+        """
         file_path = self.build_generation_path(file_name="tables.sql")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")

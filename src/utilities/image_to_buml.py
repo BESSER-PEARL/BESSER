@@ -7,6 +7,15 @@ from BUML.notations.plantUML import plantuml_to_buml
 
 
 def image_to_plantuml(image_path: str, openai_token: str):
+    """Transforms an image into a PlantUML model.
+
+    Args:
+        image_path (str): the path of the image to transform.
+        openai_token (str): the OpenAI token.
+
+    Returns:
+        plant_uml_chunk (str): the PlantUML code.
+    """
     base64_image = ""
     with open(image_path, "rb") as image_file:
         base64_image = base64.b64encode(image_file.read()).decode('utf-8')
@@ -55,6 +64,15 @@ def image_to_plantuml(image_path: str, openai_token: str):
 
 
 def image_to_buml(image_path: str, openai_token: str):
+    """Transforms an image into a B-UML model.
+
+    Args:
+        image_path (str): the path of the image to transform.
+        openai_token (str): the OpenAI token.
+
+    Returns:
+        domain (DomainModel): the B-UML model object.
+    """
     plant_uml_chunk = image_to_plantuml(image_path=image_path, openai_token=openai_token)
     # Create and write to the file
     with open("image.txt", "w") as file:

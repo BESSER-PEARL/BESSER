@@ -17,7 +17,7 @@ build
 
 # ANTLR
 **/.antlr/**
-src/.idea/workspace.xml
+besser/.idea/workspace.xml
 *.iml
 .idea/inspectionProfiles/profiles_settings.xml
 *.xml

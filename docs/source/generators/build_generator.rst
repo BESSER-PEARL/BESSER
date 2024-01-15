@@ -8,7 +8,7 @@ the input to the generator is a B-UML model.
 BESSER provides an interface (abstract class) called ``GeneratorInterface`` that you can inherit to build your code
 generator. This way, we standardize the use of BESSER code generators, improve maintainability, and usability (you can
 check the code of 
-`the GeneratorInterface in the repository <https://github.com/BESSER-PEARL/BESSER/blob/master/src/generators/generator_interface.py>`_).
+`the GeneratorInterface in the repository <https://github.com/BESSER-PEARL/BESSER/blob/master/besser/generators/generator_interface.py>`_).
 
 As an example, let's look at our Python class code generator below. Notice how this generator inherits from the 
 ``GeneratorInterface`` class and defines two methods: 

@@ -1,9 +1,9 @@
-from BUML.metamodel.structural import DomainModel, Class, Property, \
+from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
     PrimitiveDataType, Multiplicity, BinaryAssociation
-from generators.python_classes import Python_Generator
-from generators.django import DjangoGenerator
-from generators.sql_alchemy import SQLAlchemyGenerator
-from generators.sql import SQLGenerator
+from besser.generators.python_classes import Python_Generator
+from besser.generators.django import DjangoGenerator
+from besser.generators.sql_alchemy import SQLAlchemyGenerator
+from besser.generators.sql import SQLGenerator
 
 # Primitive DataTypes
 t_int: PrimitiveDataType = PrimitiveDataType("int")

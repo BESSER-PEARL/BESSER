@@ -1,5 +1,5 @@
 import pickle, os
-from BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel
 
 class ModelSerializer():
     """

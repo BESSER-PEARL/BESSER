@@ -1,7 +1,7 @@
 import os
 from jinja2 import Environment, FileSystemLoader
-from BUML.metamodel.structural import DomainModel
-from generators import GeneratorInterface
+from besser.BUML.metamodel.structural import DomainModel
+from besser.generators import GeneratorInterface
 
 
 class SQLGenerator(GeneratorInterface):

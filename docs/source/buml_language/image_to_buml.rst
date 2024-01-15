@@ -21,8 +21,8 @@ To transform this image to a BUML model you can use the following code.
 
 .. code-block:: python
 
-    from BUML.metamodel.structural import DomainModel
-    from utilities import image_to_buml
+    from besser.BUML.metamodel.structural import DomainModel
+    from besser.utilities import image_to_buml
 
     library_model: DomainModel = image_to_buml(image_path="library_hand_draw.png", openai_token="****")
 
@@ -43,7 +43,7 @@ Similarly, it is also possible to obtain the PlantUML code from a model in an im
 
 .. code-block:: python
 
-    from utilities import image_to_plantuml
+    from besser.utilities import image_to_plantuml
 
     plantUML_model: str = image_to_plantuml(image_path="library_hand_draw.png", openai_token="****")
     print(plantUML_model)

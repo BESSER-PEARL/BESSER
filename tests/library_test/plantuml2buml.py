@@ -1,6 +1,6 @@
 # Import methods and classes
-from BUML.notations.plantUML import plantuml_to_buml
-from BUML.metamodel.structural import DomainModel
+from besser.BUML.notations.plantUML import plantuml_to_buml
+from besser.BUML.metamodel.structural import DomainModel
 
 # PlantUML to B-UML model
 library_buml: DomainModel = plantuml_to_buml(plantUML_model_path='library.plantuml')

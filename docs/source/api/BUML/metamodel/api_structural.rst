@@ -1,7 +1,7 @@
 BUML structure
 ==============
 
-.. automodule:: BUML.metamodel.structural.structural
+.. automodule:: besser.BUML.metamodel.structural.structural
    :members:
    :private-members:
    :undoc-members:

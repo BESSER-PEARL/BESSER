@@ -1,5 +1,5 @@
 from typing import Any
-from BUML.metamodel.structural import Class, NamedElement, TypedElement, Type, PrimitiveDataType, Property, Constraint
+from besser.BUML.metamodel.structural import Class, NamedElement, TypedElement, Type, PrimitiveDataType, Property, Constraint
 
 
 class OCLExpression(TypedElement):

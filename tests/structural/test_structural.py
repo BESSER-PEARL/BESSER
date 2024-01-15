@@ -1,6 +1,6 @@
 import pytest
 
-from BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \
+from besser.BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \
     Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, \
     GeneralizationSet, AssociationClass, Enumeration, EnumerationLiteral
 

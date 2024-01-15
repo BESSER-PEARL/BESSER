@@ -1,7 +1,7 @@
 SQL Generator
 =============
 
-.. automodule:: generators.sql.sql_generator
+.. automodule:: besser.generators.sql.sql_generator
    :members:
    :private-members:
    :undoc-members:

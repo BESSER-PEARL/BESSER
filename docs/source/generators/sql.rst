@@ -9,7 +9,7 @@ Let's generate the SQL code of our :doc:`../examples/library_example` B-UML mode
 
 .. code-block:: python
     
-    from generators.sql import SQLGenerator
+    from besser.generators.sql import SQLGenerator
     
     generator: SQLGenerator = SQLGenerator(model=library_model)
     generator.generate()
@@ -26,7 +26,7 @@ parameter in the ``SQLGenerator``. Currently only ``postgres`` and ``mysql`` are
 
 .. code-block:: python
     
-    from generators.sql import SQLGenerator
+    from besser.generators.sql import SQLGenerator
     
     generator: SQLGenerator = SQLGenerator(model=library_model, sql_dialects="postgres")
     generator.generate()

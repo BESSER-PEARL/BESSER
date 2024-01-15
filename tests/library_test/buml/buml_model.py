@@ -1,11 +1,11 @@
-from BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \
+from besser.BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \
         Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, \
         GeneralizationSet, AssociationClass 
 
 # Primitive Data Types 
 int_type = PrimitiveDataType("int")
-date_type = PrimitiveDataType("date")
 str_type = PrimitiveDataType("str")
+date_type = PrimitiveDataType("date")
 
 # Library class definition 
 Library_name: Property = Property(name="name", property_type=str_type, visibility="public")

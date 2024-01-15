@@ -2,7 +2,7 @@ from antlr4 import CommonTokenStream, FileStream, ParseTreeWalker
 from .PlantUMLLexer import PlantUMLLexer
 from .PlantUMLParser import PlantUMLParser
 from .plantUML_buml_listener import BUMLGenerationListener
-from BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel
 import os
 
 def plantuml_to_buml(plantUML_model_path:str, buml_model_file_name:str = "buml_model"):

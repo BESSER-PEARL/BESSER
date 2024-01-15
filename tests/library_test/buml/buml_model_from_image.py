@@ -1,11 +1,11 @@
-from BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \
+from besser.BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \
         Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, \
         GeneralizationSet, AssociationClass 
 
 # Primitive Data Types 
 date_type = PrimitiveDataType("date")
-int_type = PrimitiveDataType("int")
 str_type = PrimitiveDataType("str")
+int_type = PrimitiveDataType("int")
 
 # Library class definition 
 Library_name: Property = Property(name="name", property_type=str_type)
@@ -28,8 +28,8 @@ has: BinaryAssociation = BinaryAssociation(name="has", ends={
         Property(name="has", property_type=Library, multiplicity=Multiplicity(1, 1)),
         Property(name="has", property_type=Book, multiplicity=Multiplicity(0, "*"))})
 writtenBy: BinaryAssociation = BinaryAssociation(name="writtenBy", ends={
-        Property(name="writtenBy", property_type=Book, multiplicity=Multiplicity(0, "*")),
-        Property(name="writtenBy", property_type=Author, multiplicity=Multiplicity(1, "*"))})
+        Property(name="writtenBy", property_type=Author, multiplicity=Multiplicity(1, "*")),
+        Property(name="writtenBy", property_type=Book, multiplicity=Multiplicity(0, "*"))})
 
 
 # Domain Model

@@ -11,7 +11,7 @@ For this, you should create the generator, provide the B-UML model, and use the 
 
 .. code-block:: python
     
-    from generators.sql_alchemy import SQLAlchemyGenerator
+    from besser.generators.sql_alchemy import SQLAlchemyGenerator
     
     generator: SQLAlchemyGenerator = SQLAlchemyGenerator(model=library_model)
     generator.generate()

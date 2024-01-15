@@ -27,8 +27,8 @@ Then, load and process the model using our grammar and apply the transformation 
 .. code-block:: python
 
     # Import methods and classes
-    from BUML.notations.plantUML import plantuml_to_buml
-    from BUML.metamodel.structural import DomainModel
+    from besser.BUML.notations.plantUML import plantuml_to_buml
+    from besser.BUML.metamodel.structural import DomainModel
 
     # PlantUML to B-UML model
     library_buml: DomainModel = plantuml_to_buml(plantUML_model_path='library.plantuml')

@@ -13,7 +13,7 @@ must be imported for this Library modeling example.
 
 .. code-block:: python
 
-    from BUML.metamodel.structural import DomainModel, Class, Property, \
+    from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
         PrimitiveDataType, Multiplicity, BinaryAssociation
 
 Now, we can define the attributes, classes, relationships, and other elements of the model. The following is the definition 

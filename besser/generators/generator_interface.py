@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel
 import os
 
 # Interface for code generators

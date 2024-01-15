@@ -1,7 +1,7 @@
 Utilities
 =========
 
-.. automodule:: utilities.utils
+.. automodule:: besser.utilities.utils
    :members:
    :private-members:
    :undoc-members:

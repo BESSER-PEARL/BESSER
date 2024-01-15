@@ -1,7 +1,7 @@
 PlantUML notation
 =================
 
-.. automodule:: BUML.notations.plantUML.plantuml_to_buml
+.. automodule:: besser.BUML.notations.plantUML.plantuml_to_buml
    :members:
    :private-members:
    :undoc-members:

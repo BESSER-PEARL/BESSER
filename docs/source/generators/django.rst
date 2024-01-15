@@ -9,7 +9,7 @@ You should create a ``DjangoGenerator`` object, provide the B-UML model, and use
 
 .. code-block:: python
     
-    from generators.django import DjangoGenerator
+    from besser.generators.django import DjangoGenerator
     
     generator: DjangoGenerator = DjangoGenerator(model=library_model)
     generator.generate()

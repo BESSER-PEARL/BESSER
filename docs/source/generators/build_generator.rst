@@ -21,7 +21,7 @@ As an example, let's look at our Python class code generator below. Notice how t
     `Jinja <https://jinja.palletsprojects.com/>`_, a templating engine for generating template-based documents. However,
     you could use the tool of your choice for these transformations.
 
-.. literalinclude:: ../../../src/generators/python_classes/python_classes_generator.py
+.. literalinclude:: ../../../besser/generators/python_classes/python_classes_generator.py
    :language: python
    :linenos:
 

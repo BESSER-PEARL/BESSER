@@ -1,8 +1,9 @@
 B-UML Language
 ==============
 
-B-UML is the base language of the BESSER low-code platform. This language (inspired by UML) is implemented 
-in Python. The metamodel is summarised in the following figure (concepts shaded in blue inherit from *NamedElement*)
+B-UML (short for BESSER's Universal Modeling Language) is the base language of the BESSER low-code platform. This language is heavily inspired by UML but doesn't aim to be fully compliant with it. It doesn't aim to be "unified" but "universal". Meaning that it is (will be) composed by a set of sublanguages modelers can opt to "activate" for a given project depending on their modeling needs. 
+
+B-UML is implemented in Python. The metamodel of the core of B-UML is summarised in the following figure (concepts shaded in blue inherit from *NamedElement*)
 
 .. note::
   This metamodel contains only the main classes, attributes, and methods of the B-UML language. For a detailed 

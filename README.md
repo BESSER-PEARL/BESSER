@@ -8,7 +8,7 @@ The BESSER low-code platform is built on top of our Python-based personal interp
 
 ## Basic Installation
 
-BESSER works with Pyhton 3.9+. We recommend creating a virtual environment (e.g. [venv](https://docs.python.org/3/tutorial/venv.html), [conda](https://docs.conda.io/en/latest/)).
+BESSER works with Python 3.9+. We recommend creating a virtual environment (e.g. [venv](https://docs.python.org/3/tutorial/venv.html), [conda](https://docs.conda.io/en/latest/)).
 
 The latest stable version of BESSER is available in the Python Package Index (PyPi) and can be installed using
 

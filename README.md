@@ -45,6 +45,9 @@ At BESSER, our commitment is centered on establishing and maintaining developmen
 
 The development of this project follows the governance rules described in the [GOVERNANCE.md](GOVERNANCE.md) document.
 
+## Contact
+You can reach us at: [info@besser-pearl.org](mailto:info@besser-pearl-org)
+
 ## License
 
 This project is licensed under the [MIT](https://mit-license.org/) license.

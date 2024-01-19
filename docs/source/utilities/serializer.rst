@@ -17,9 +17,9 @@ Any model within BESSER can be serialized as follows.
     # Create an instance of DomainModel
     test_model: DomainModel = DomainModel(name = "testModel")
     # Create an instance of ModelSerializer
-    serializar: ModelSerializer = ModelSerializer()
+    serializer: ModelSerializer = ModelSerializer()
     # test_model serialization
-    serializar.dump(model=test_model)
+    serializer.dump(model=test_model)
 
 The model is serialized and stored in a file named ``<<model_name>>.buml`` in the current directory.
 However, you can also specify the output directory and name of the serialized model file as follows.
@@ -27,7 +27,7 @@ However, you can also specify the output directory and name of the serialized mo
 .. code-block:: python
 
     # Serialize test_model providing output directory and filename
-    serializar.dump(model=test_model, output_dir="/directory/", output_file_name="filename")
+    serializer.dump(model=test_model, output_dir="/directory/", output_file_name="filename")
 
 Model deserialization
 ---------------------
@@ -41,9 +41,9 @@ To deserialize a model (for example a Model Domain of B-UML) you can use the ``l
     from besser.utilities import ModelSerializer
 
     # Create an instance of ModelSerializer
-    serializar: ModelSerializer = ModelSerializer()
+    serializer: ModelSerializer = ModelSerializer()
     # Load the model
-    model: DomainModel = serializar.load(model_path="/directory/filename")
+    model: DomainModel = serializer.load(model_path="/directory/filename")
 
 .. note::
     

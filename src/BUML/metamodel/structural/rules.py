@@ -1,5 +1,5 @@
 from typing import Any
-from BUML.metamodel.structural import Class, NamedElement, TypedElement, Type, PrimitiveDataType, Property, Constraint
+from src.BUML.metamodel.structural import Class, NamedElement, TypedElement, Type, PrimitiveDataType, Property, Constraint
 
 
 class OCLExpression(TypedElement):
@@ -62,7 +62,8 @@ class PropertyCallExpression(OCLExpression):
 class OperationCallExpression(OCLExpression):
     def __init__(self, name: str, operation: str, arguments: list[OCLExpression]):
         super().__init__(name, Type(PrimitiveDataType("bool")))  # Type for now is always boolean, it should be the return type of the operation
-        self.operation: str = operation
+        self.\
+            operation: str = operation
         self.arguments: list[OCLExpression] = arguments
 
     def __repr__(self):

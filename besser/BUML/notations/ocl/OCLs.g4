@@ -15,14 +15,15 @@ contextDeclaration:
  ;
 
 constraint: (INV | PRE | POST) ID? COLON expression SEMI? ;
-functionCall: ID LPAREN (SingleQuote? expression SingleQuote? COMMA?)* RPAREN | ID LPAREN (ID COLON ID)* RPAREN ;
+functionCall: ID LPAREN (SingleQuote? expression SingleQuote? COMMA?)* RPAREN | ID LPAREN (ID COLON ID)* RPAREN
+ | LPAREN(NUMBER COMMA?)* RPAREN;
 
 type: BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE | OCLANY | OCLVOID | collectionType | userDefinedType|SET ;
 collectionType: SET LT type GT | BAG LT type  GT| SEQUENCE LT type GT | ORDEREDSET LT type GT;
 userDefinedType: ID ;
 
 expression:
-           binaryExpression expression? #binary
+          (AND | OR )? binaryExpression expression? #binary
           | unaryExpression expression? #unary
           | IF expression THEN expression ELSE expression ENDIF  #if
           | primaryExpression  (DOT ID)* DOT OCLISTYPEOF LPAREN type RPAREN expression? #OCLISTYPEOF
@@ -31,7 +32,7 @@ expression:
 
           | primaryExpression?  (DOT ID)* Arrow ISEMPTY LPAREN RPAREN expression? RPAREN* #ISEMPTY
           | primaryExpression?  (DOT ID)* Arrow SUM LPAREN RPAREN expression? RPAREN* #SUM
-          | primaryExpression?  (DOT ID)* Arrow SIZE LPAREN RPAREN expression? RPAREN* #SIZE
+          | primaryExpression?  (DOT ID)* Arrow SIZE   LPAREN RPAREN expression? RPAREN* #SIZE
 
           |  Arrow? INCLUDES LPAREN expression RPAREN expression? RPAREN* #INCLUDES
           |  Arrow? EXCLUDES LPAREN expression RPAREN  expression? RPAREN* #EXCLUDES
@@ -48,34 +49,37 @@ expression:
           | Arrow PREPEND LPAREN+ (SingleQuote? expression SingleQuote? COMMA?)* RPAREN+ expression? #PREPEND
           | Arrow LAST LPAREN RPAREN+ expression? #LAST
           | Arrow APPEND LPAREN (SingleQuote? expression SingleQuote? COMMA?)*  RPAREN+ expression?   #APPEND
-          | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN (ID (COLON ID) COMMA?)+ PIPE expression RPAREN expression? #COLLECTION
+          | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN (ID (COLON ID)? COMMA?)+ PIPE expression RPAREN expression? #COLLECTION
           | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN expression RPAREN expression? #CollectionExpressionVariable
-
-
+//
+//
           | Arrow SYMMETRICDIFFERENCE LPAREN expression RPAREN+ expression? #SYMMETRICDIFFERENCE
           | Arrow FIRST LPAREN RPAREN expression?  #FIRST
           | Arrow DERIVE LPAREN RPAREN expression?  #DERIVE
           | Arrow UNION LPAREN expression RPAREN  expression?#UNION
           | Def COLON expression #defExp
+          | ID COLON ID EQUAL expression #defIDAssignmentexpression
           | LPAREN*  primaryExpression?  (DOT ID)* operator? primaryExpression?  (DOT ID)+ expression? #PrimaryExp
           | primaryExpression  (DOT)* ID* functionCall operator? expression?  #funcCall
-          | operator numberORUserDefined expression? #op
+        | operator numberORUserDefined?  #op
           | Arrow expression #arrowexp
           | NUMBER expression?  #number
           | Arrow? functionCall expression? #PredefinedfunctionCall
           | primaryExpression expression? #ID
           | SingleQuote expression DOT? SingleQuote DOT? expression? #SingleQuoteExp
           | DoubleDots expression #doubleDots
+
+
 ;
 
 
 
-binaryExpression:  primaryExpression  (DOT ID)* operator primaryExpression (DOT ID)* ;
-unaryExpression: (NOT | MINUS) primaryExpression ;
-
+binaryExpression:  ((primaryExpression (DOT ID)*) | NUMBER)   (DOT ID)* operator ((primaryExpression (DOT ID)*) | NUMBER) ;
+unaryExpression: (NOT | MINUS) expression ;
+//
 operator: EQUAL | NOTEQUAL| LT | LE | GT | GE | PLUS | MINUS | EMPTYSTRING | Divide | AND | OR | XOR | IMPLIES ; // Added 'xor' and 'implies'
-
-numberORUserDefined: NUMBER |primaryExpression (DOT primaryExpression)* | expression |SingleQuote? expression SingleQuote? ;
+//
+numberORUserDefined: NUMBER |SingleQuote? ID LPAREN? RPAREN? SingleQuote?  ;
 
 primaryExpression: literal | SELF | functionCall | LPAREN expression RPAREN | ID  ;
 

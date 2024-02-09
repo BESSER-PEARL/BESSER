@@ -85,7 +85,11 @@ class OperationCallExpression(OCLExpression):
         self.__arguments = arguments
 
     def __str__(self) -> str:
-        return f'{self.arguments[0]} {self.operation} {self.arguments[1]}'
+        toRet= ""
+        for arg in self.arguments:
+            toRet = toRet+" "+ str(arg)
+        return toRet
+        # return f'{self.arguments[0]} {self.operation} {self.arguments[1]}'
 
 # A class to represents OCL constriants, i.e. constraints written with the OCL language
 class OCLConstraint(Constraint):
@@ -126,14 +130,18 @@ class IfExp(OCLExpression):
 class VariableExp(OCLExpression):
     def __init__(self,name: str, type: Type):
         super().__init__(name, type)
+        self.name = name
+        self.variable = Variable(name,type)
 
-        self.variable = Variable()
     def set_refferred_variable (self,val):
-        if "." in val:
-            val = val.split(".")[1]
+        val.replace('self.','')
         self.variable.set_value(val)
     def getVal(self):
         return self.variable.get_value()
+
+    def __str__(self):
+        return self.name
+
 class Variable(OCLExpression):
     def __init__(self,name: str, type: Type):
         super().__init__(name, type)
@@ -192,20 +200,34 @@ class LoopExp(CallExp):
     def __init__(self,name: str, type: Type):
         super().__init__(name, type)
 
-        self.body = None#OCLExpression()
-        self.iterator = None#Variable()
-    @property
-    def set_body(self,body):
-        self.body = body
+        self.name = name
+        self.type = type
+        self.body = []
+        self.iterator = []
+
+    def __str__(self):
+        stringToRet = "LoopExpression: " +str(self.name)
+        for it in self.iterator:
+            stringToRet = stringToRet + "\nIterator: " + str(it)
+        for body in self.body:
+            stringToRet = stringToRet + "\nbody: " + str(body)
+        return stringToRet
+
+
+    def add_body(self,body):
+        self.body.append(body)
     @property
     def get_body(self):
         return self.body
-    @property
-    def set_iterator (self,iterator):
-        self.iterator = iterator
+    def addIterator(self,iterator):
+        self.iterator.append(iterator)
+    # @property
+    # def set_iterator (self,iterator):
+    #     self.iterator = iterator
     @property
     def get_iterator(self):
         return self.iterator
+
 
 class MessageExp(OCLExpression):
     pass
@@ -223,8 +245,16 @@ class IterateExp(LoopExp):
         super().__init__(name, type)
 
         self.result=Variable()
+
 class IteratorExp(LoopExp):
+    def __init__(self,name: str, type: Type):
+        super().__init__(name, type)
+        self.name = name
+        self.type = type
     pass
+    def __str__(self):
+        return self.name +":" +self.type
+
 class LetExp(OCLExpression):
     def __init__(self, name: str, type: Type):
         super().__init__(name, type)
@@ -242,3 +272,11 @@ class StringLiteralExpression(LiteralExpression):
 
     def __repr__(self):
         return f'StringLiteralExpression({self.value})'
+
+class InfixOperator:
+    def __init__(self,operator):
+        self.operator = operator
+    def get_infix_operator(self):
+        return self.operator
+    def __str__(self):
+        return self.operator

@@ -2,6 +2,7 @@ import sys
 from antlr4 import *
 from besser.BUML.notations.ocl.OCLsLexer import OCLsLexer
 from besser.BUML.notations.ocl.OCLsParser import OCLsParser
+from besser.BUML.notations.ocl.OCLsListener import OCLsListener
 import unittest
 
 class TestStringMethods(unittest.TestCase):
@@ -1089,12 +1090,15 @@ class TestStringMethods(unittest.TestCase):
         tree = parser.oclFile()
         assert parser.getNumberOfSyntaxErrors() == 0
     def test_78(self):
-        ocl = "context meeting inv: self.start < self.end"
+        ocl = "context meeting inv: self.start < self.end and self.start < 5 and self.end >5"
         input_stream = InputStream(ocl)
         lexer = OCLsLexer(input_stream)
         stream = CommonTokenStream(lexer)
         parser = OCLsParser(stream)
         tree = parser.oclFile()
+        # listener = OCLsListener()
+        # walker = ParseTreeWalker()
+        # walker.walk(listener,tree)
         assert parser.getNumberOfSyntaxErrors() == 0
 
 

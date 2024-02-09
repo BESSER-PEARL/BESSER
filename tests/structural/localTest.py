@@ -17,7 +17,7 @@ if __name__ == '__main__':
     ocl = "context temp inv invariant_LoyaltyProgram16 : self.employee->select( p : Personne | p.age>50)"
     ocl = "context temp inv invariant_LoyaltyProgram16 : self.employee->forAll(age<10)"
     ocl = "context temp inv invariant_LoyaltyProgram16 : self.employee->exists(age<10)"
-    ocl = "context temp inv invariant_LoyaltyProgram16 : self.employee->collect(age<10)"
+    ocl = "context temp inv invariant_LoyaltyProgram16 : self.employee->collect(age)  = Bag{10,5,10,7} "
 
     input_stream = InputStream(ocl)
     rootHandler = Root_Handler()

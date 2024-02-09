@@ -1,3 +1,4 @@
+
 from besser.BUML.notations.ocl.FactoryInstance import Factory
 class Root_Handler:
     def __init__(self):
@@ -29,7 +30,13 @@ class Root_Handler:
             self.all[-1].add_body(op)
     def print(self):
         self.handlePrint(self.root)
+    def handle_ID(self,id):
+        varID =self.factory.create_variable_expression(id,None)
+        self.add_to_root(varID)
+        print('\x1b[6;30;42m' + 'handled ID, verify me!!!' + '\x1b[0m')
+        pass
 
+    def handleBag(self,bag, operator):
     def handlePrimaryExp(self,primaryExp,operator):
         # print("in root handler")
         # if len(self.all) == 0:

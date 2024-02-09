@@ -280,3 +280,52 @@ class InfixOperator:
         return self.operator
     def __str__(self):
         return self.operator
+
+class DataType(Classifier):
+    def __init__(self,name):
+        super().__init__(name)
+
+class CollectionType(DataType):
+    def __init__(self,name):
+        super().__init__(name)
+
+class OrderedSetType(CollectionType):
+    def __init__(self,name):
+        super().__init__(name)
+
+class SequenceType(CollectionType):
+    def __init__(self,name):
+        super().__init__(name)
+
+class BagType(CollectionType):
+    def __init__(self,name):
+        super().__init__(name)
+
+class SetType(CollectionType):
+    def __init__(self,name):
+        super().__init__(name)
+
+
+class CollectionLiteralExp(LiteralExp):
+    def __init__(self, name,type):
+        super().__init__(name)
+        self.kind = type
+
+class CollectionLiteralPart(TypedElement):
+    def __init__(self, name):
+        super().__init__(name)
+
+
+class CollectionItem(CollectionLiteralPart):
+    def __init__(self, name):
+        super().__init__(name)
+    def set(self,  value):
+        self.value = value
+
+class CollectionRange(CollectionLiteralPart):
+    def __init__(self, name):
+        super().__init__(name)
+        self.first = None
+        self.last = None
+
+

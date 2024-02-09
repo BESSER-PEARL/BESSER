@@ -13,6 +13,7 @@ class OCLsListener(ParseTreeListener):
         self.rootHandler = rh
         self.forAllBody = False
         self.operator =[]
+        self.bag = []
     # Enter a parse tree produced by OCLsParser#oclFile.
     def enterOclFile(self, ctx:OCLsParser.OclFileContext):
         print(inspect.stack()[0][3])
@@ -263,10 +264,17 @@ class OCLsListener(ParseTreeListener):
     # Enter a parse tree produced by OCLsParser#BAG.
     def enterBAG(self, ctx:OCLsParser.BAGContext):
         print(inspect.stack()[0][3])
+        self.bag.append([])
+
         pass
 
     # Exit a parse tree produced by OCLsParser#BAG.
     def exitBAG(self, ctx:OCLsParser.BAGContext):
+        op = None
+        if len(self.operator)!=0:
+            op = self.operator[-1]
+        self.rootHandler.handleBag(self.bag.pop(),op)
+
         pass
 
 
@@ -420,6 +428,8 @@ class OCLsListener(ParseTreeListener):
     # Enter a parse tree produced by OCLsParser#op.
     def enterOp(self, ctx:OCLsParser.OpContext):
         print(inspect.stack()[0][3])
+        print(ctx.getText())
+        self.operator.append(ctx.getText())
         pass
 
     # Exit a parse tree produced by OCLsParser#op.
@@ -440,6 +450,7 @@ class OCLsListener(ParseTreeListener):
     # Enter a parse tree produced by OCLsParser#number.
     def enterNumber(self, ctx:OCLsParser.NumberContext):
         print(inspect.stack()[0][3])
+        self.bag[-1].append(ctx.getText())
         pass
 
     # Exit a parse tree produced by OCLsParser#number.
@@ -460,6 +471,8 @@ class OCLsListener(ParseTreeListener):
     # Enter a parse tree produced by OCLsParser#ID.
     def enterID(self, ctx:OCLsParser.IDContext):
         print(inspect.stack()[0][3])
+        print(ctx.getText())
+        self.rootHandler.handle_ID(ctx.getText())
         pass
 
     # Exit a parse tree produced by OCLsParser#ID.
@@ -520,6 +533,7 @@ class OCLsListener(ParseTreeListener):
     def enterOperator(self, ctx:OCLsParser.OperatorContext):
 
         self.operator.append(ctx.getText())
+
         pass
 
     # Exit a parse tree produced by OCLsParser#operator.

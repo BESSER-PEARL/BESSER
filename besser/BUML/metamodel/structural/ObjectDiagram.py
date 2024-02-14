@@ -13,12 +13,10 @@ class Instance(NamedElement):
 class Object(Instance):
     def __init__(self):
         super().__init__()
-        self.value = ""
 
 class DataValue(Instance):
     def __init__(self):
         super().__init__()
-        self.value = ""
 
 
 class Link(NamedElement):

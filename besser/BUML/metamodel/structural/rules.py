@@ -87,6 +87,7 @@ class OperationCallExpression(OCLExpression):
     def __str__(self) -> str:
         toRet= ""
         for arg in self.arguments:
+            # print(type(arg))
             toRet = toRet+" "+ str(arg)
         return toRet
         # return f'{self.arguments[0]} {self.operation} {self.arguments[1]}'
@@ -307,21 +308,33 @@ class SetType(CollectionType):
 
 
 class CollectionLiteralExp(LiteralExp):
-    def __init__(self, name,type):
-        super().__init__(name)
+    def __init__(self, name, type):
+        super().__init__(name,type)
         self.kind = type
+        self.collectionItems = []
+    def __str__(self):
+        toRet= str(self.kind) +": "
+        for item in self.collectionItems:
+            toRet = toRet + str(item)
+        return toRet
+    def add_to_collection_items(self,item):
+        self.collectionItems.append(item)
 
 class CollectionLiteralPart(TypedElement):
     def __init__(self, name):
-        super().__init__(name)
+        super().__init__(name,type = "NP")
 
 
 class CollectionItem(CollectionLiteralPart):
-    def __init__(self, name):
+    def __init__(self, name,item):
         super().__init__(name)
+        self.value = item
     def set(self,  value):
         self.value = value
-
+    def __str__(self):
+        return str(self.value)+","
+    def get(self):
+        return self.value
 class CollectionRange(CollectionLiteralPart):
     def __init__(self, name):
         super().__init__(name)

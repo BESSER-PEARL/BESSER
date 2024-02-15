@@ -28,7 +28,7 @@ propertyValue               : (IDENTIFIER | STRING | NUMBER | DATE)+ ;
 linkDeclaration: linkObjectName linkType linkObjectName (':' linkName)? ;
 
 linkObjectName: IDENTIFIER;
-linkType: ('--' | '..' | '-->' | '..>') ;
+linkType: ('<|--'|'o--' |'--' | '..' | '-->' | '..>') ;
 linkName: STRING |IDENTIFIER ;
 // Lexer rules
 IDENTIFIER: [a-zA-Z_][a-zA-Z0-9_]* ;

@@ -10,28 +10,28 @@ else:
 
 def serializedATN():
     return [
-        4,1,15,80,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,
+        4,1,17,80,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,
         6,2,7,7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,1,0,1,0,1,0,4,0,28,
         8,0,11,0,12,0,29,1,0,1,0,1,1,1,1,1,1,1,1,3,1,38,8,1,1,1,3,1,41,8,
         1,1,2,1,2,1,3,1,3,1,4,1,4,5,4,49,8,4,10,4,12,4,52,9,4,1,4,1,4,1,
         5,1,5,1,5,1,5,1,6,1,6,1,7,4,7,63,8,7,11,7,12,7,64,1,8,1,8,1,8,1,
         8,1,8,3,8,72,8,8,1,9,1,9,1,10,1,10,1,11,1,11,1,11,0,0,12,0,2,4,6,
-        8,10,12,14,16,18,20,22,0,3,2,0,11,13,15,15,1,0,5,8,1,0,11,12,74,
+        8,10,12,14,16,18,20,22,0,3,2,0,13,15,17,17,1,0,5,10,1,0,13,14,74,
         0,24,1,0,0,0,2,33,1,0,0,0,4,42,1,0,0,0,6,44,1,0,0,0,8,46,1,0,0,0,
         10,55,1,0,0,0,12,59,1,0,0,0,14,62,1,0,0,0,16,66,1,0,0,0,18,73,1,
-        0,0,0,20,75,1,0,0,0,22,77,1,0,0,0,24,27,5,9,0,0,25,28,3,2,1,0,26,
+        0,0,0,20,75,1,0,0,0,22,77,1,0,0,0,24,27,5,11,0,0,25,28,3,2,1,0,26,
         28,3,16,8,0,27,25,1,0,0,0,27,26,1,0,0,0,28,29,1,0,0,0,29,27,1,0,
-        0,0,29,30,1,0,0,0,30,31,1,0,0,0,31,32,5,10,0,0,32,1,1,0,0,0,33,34,
+        0,0,29,30,1,0,0,0,30,31,1,0,0,0,31,32,5,12,0,0,32,1,1,0,0,0,33,34,
         5,1,0,0,34,37,3,4,2,0,35,36,5,2,0,0,36,38,3,6,3,0,37,35,1,0,0,0,
         37,38,1,0,0,0,38,40,1,0,0,0,39,41,3,8,4,0,40,39,1,0,0,0,40,41,1,
-        0,0,0,41,3,1,0,0,0,42,43,5,11,0,0,43,5,1,0,0,0,44,45,5,11,0,0,45,
+        0,0,0,41,3,1,0,0,0,42,43,5,13,0,0,43,5,1,0,0,0,44,45,5,13,0,0,45,
         7,1,0,0,0,46,50,5,3,0,0,47,49,3,10,5,0,48,47,1,0,0,0,49,52,1,0,0,
         0,50,48,1,0,0,0,50,51,1,0,0,0,51,53,1,0,0,0,52,50,1,0,0,0,53,54,
         5,4,0,0,54,9,1,0,0,0,55,56,3,12,6,0,56,57,5,2,0,0,57,58,3,14,7,0,
-        58,11,1,0,0,0,59,60,5,11,0,0,60,13,1,0,0,0,61,63,7,0,0,0,62,61,1,
+        58,11,1,0,0,0,59,60,5,13,0,0,60,13,1,0,0,0,61,63,7,0,0,0,62,61,1,
         0,0,0,63,64,1,0,0,0,64,62,1,0,0,0,64,65,1,0,0,0,65,15,1,0,0,0,66,
         67,3,18,9,0,67,68,3,20,10,0,68,71,3,18,9,0,69,70,5,2,0,0,70,72,3,
-        22,11,0,71,69,1,0,0,0,71,72,1,0,0,0,72,17,1,0,0,0,73,74,5,11,0,0,
+        22,11,0,71,69,1,0,0,0,71,72,1,0,0,0,72,17,1,0,0,0,73,74,5,13,0,0,
         74,19,1,0,0,0,75,76,7,1,0,0,76,21,1,0,0,0,77,78,7,2,0,0,78,23,1,
         0,0,0,7,27,29,37,40,50,64,71
     ]
@@ -46,13 +46,14 @@ class ODParser ( Parser ):
 
     sharedContextCache = PredictionContextCache()
 
-    literalNames = [ "<INVALID>", "'Object'", "':'", "'{'", "'}'", "'--'", 
-                     "'..'", "'-->'", "'..>'", "'@startuml'", "'@enduml'" ]
+    literalNames = [ "<INVALID>", "'Object'", "':'", "'{'", "'}'", "'<|--'", 
+                     "'o--'", "'--'", "'..'", "'-->'", "'..>'", "'@startuml'", 
+                     "'@enduml'" ]
 
     symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
                       "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "Start", "End", "IDENTIFIER", "STRING", 
-                      "NUMBER", "WHITESPACE", "DATE" ]
+                      "<INVALID>", "<INVALID>", "<INVALID>", "Start", "End", 
+                      "IDENTIFIER", "STRING", "NUMBER", "WHITESPACE", "DATE" ]
 
     RULE_objectDiagram = 0
     RULE_objectDeclaration = 1
@@ -80,13 +81,15 @@ class ODParser ( Parser ):
     T__5=6
     T__6=7
     T__7=8
-    Start=9
-    End=10
-    IDENTIFIER=11
-    STRING=12
-    NUMBER=13
-    WHITESPACE=14
-    DATE=15
+    T__8=9
+    T__9=10
+    Start=11
+    End=12
+    IDENTIFIER=13
+    STRING=14
+    NUMBER=15
+    WHITESPACE=16
+    DATE=17
 
     def __init__(self, input:TokenStream, output:TextIO = sys.stdout):
         super().__init__(input, output)
@@ -158,7 +161,7 @@ class ODParser ( Parser ):
                     self.state = 25
                     self.objectDeclaration()
                     pass
-                elif token in [11]:
+                elif token in [13]:
                     self.state = 26
                     self.linkDeclaration()
                     pass
@@ -168,7 +171,7 @@ class ODParser ( Parser ):
                 self.state = 29 
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
-                if not (_la==1 or _la==11):
+                if not (_la==1 or _la==13):
                     break
 
             self.state = 31
@@ -375,7 +378,7 @@ class ODParser ( Parser ):
             self.state = 50
             self._errHandler.sync(self)
             _la = self._input.LA(1)
-            while _la==11:
+            while _la==13:
                 self.state = 47
                 self.property_()
                 self.state = 52
@@ -543,7 +546,7 @@ class ODParser ( Parser ):
                 if _alt == 1:
                     self.state = 61
                     _la = self._input.LA(1)
-                    if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 47104) != 0)):
+                    if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 188416) != 0)):
                         self._errHandler.recoverInline(self)
                     else:
                         self._errHandler.reportMatch(self)
@@ -704,7 +707,7 @@ class ODParser ( Parser ):
             self.enterOuterAlt(localctx, 1)
             self.state = 75
             _la = self._input.LA(1)
-            if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 480) != 0)):
+            if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 2016) != 0)):
                 self._errHandler.recoverInline(self)
             else:
                 self._errHandler.reportMatch(self)
@@ -754,7 +757,7 @@ class ODParser ( Parser ):
             self.enterOuterAlt(localctx, 1)
             self.state = 77
             _la = self._input.LA(1)
-            if not(_la==11 or _la==12):
+            if not(_la==13 or _la==14):
                 self._errHandler.recoverInline(self)
             else:
                 self._errHandler.reportMatch(self)

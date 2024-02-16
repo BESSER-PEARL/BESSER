@@ -32,7 +32,7 @@ class ODListener(ParseTreeListener):
     # Enter a parse tree produced by ODParser#objectName.
     def enterObjectName(self, ctx:ODParser.ObjectNameContext):
         self.obj = Object()
-        idProperty = ObjectProperty(name =  ctx.getText(),prop_type="str", is_id= True )
+        idProperty = AttributeLink(name = ctx.getText() , prop_type="str", is_id= True )
         self.obj.add_slot(idProperty)
         self.objs.append(self.obj)
 
@@ -106,15 +106,14 @@ class ODListener(ParseTreeListener):
     # Exit a parse tree produced by ODParser#linkDeclaration.
     def exitLinkDeclaration(self, ctx:ODParser.LinkDeclarationContext):
         linkParts = ctx.getText().split(":")[0].split(self.linkType)
-        link = Link()
+
         obj1 = self.getObject(linkParts[0])
         obj2 = self.getObject(linkParts[1])
-        linkEnd = LinkEnd(linkParts[0],obj1)
-        linkEnd_2 = LinkEnd(linkParts[1], obj2)
+        linkEndLeft = LinkEnd(linkParts[0],obj1)
+        linkEndRight = LinkEnd(linkParts[1], obj2)
 
-        link.add_to_connection(linkEnd)
-        link.add_to_connection(linkEnd_2)
-        obj1.add_to_link(link)
+        obj1.add_to_link_end(linkEndLeft)
+        obj1.add_to_link_end(linkEndRight)
 
 
         # link.add_to_connection(LinkEnd(linkParts[0]))
@@ -153,12 +152,10 @@ class ODListener(ParseTreeListener):
         pass
 
     def getObject(self, param):
-        # print(param)
+
         for object in self.objs:
             for slot in object.get_slots():
-                if isinstance(slot, ObjectProperty):
-                    # pass
-                    if slot.name == param:
+                if slot.get_name() == param:
                         return object
                 # if slot.get_attribute().is_id:
                 #     pass

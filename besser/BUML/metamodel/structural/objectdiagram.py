@@ -1,20 +1,21 @@
 from besser.BUML.metamodel.structural import NamedElement, Property, Type,Association
 
-class ObjectProperty(Property):
-    def __init__(self, name, value =None, prop_type=None, is_id = False):
-        if prop_type is None and value is not None:
+
+
+class AttributeLink:
+    def __init__(self, name,value=None, prop_type=None, is_id=False,property = None):
+
+        if prop_type is None:
             prop_type = self.checkType (value)
-
-        super().__init__(name, property_type=prop_type, is_id = is_id)
-        self.value = value
-    def set_value (self,val):
-        self.value = val
-    def get_value(self):
-        return self.value
-
-    def __repr__(self):
-        return f'ObjectProperty({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite}, is_id={self.is_id}, value = {self.value})'
-
+        if property is None:
+            self.attribute = Property(name= name, property_type=prop_type,is_id= is_id)
+        self.value = DataValue(value)
+    def get_name(self):
+        return self.attribute.name
+    def get_attribute(self):
+        return self.attribute
+    def __str__(self):
+        return "Attribute Link " + str(self.attribute) + " value: " + str(self.value)
     def checkType(self, value):
         if value.isdigit():
             try:
@@ -26,14 +27,6 @@ class ObjectProperty(Property):
         else:
             return "str"
 
-
-class AttributeLink:
-    def __init__(self, name, value=None, prop_type=None, is_id=False):
-        self.attribute = ObjectProperty(name, value, prop_type, is_id)
-    def get_attribute(self):
-        return self.attribute
-    def __str__(self):
-        return "Attribute Link " + str(self.attribute)
 class Instance(NamedElement):
 
     classifier = None
@@ -41,20 +34,22 @@ class Instance(NamedElement):
     ownedLink = None
     linkEnd = None
     def __init__(self):
-        self.classifier: list[Type] =[]
-        self.slots: list[AttributeLink] =[]
-        self.ownedLink: list[Link]=[]
-        self.linkEnd : list[LinkEnd]=[]
-    def add_to_link(self,link):
-        self.ownedLink.append(link)
-    def add_slot(self,slot):
-        self.slots.append(slot)
-    def get_slots(self):
-        return self.slots
+        self.classifier:Type
+
+
 
 class Object(Instance):
     def __init__(self):
         super().__init__()
+        self.slots: list[AttributeLink] = []
+        self.linkEnd: list[LinkEnd] = []
+    def add_slot(self, slot):
+        self.slots.append(slot)
+
+    def add_to_link_end(self, link):
+        self.linkEnd.append(link)
+    def get_slots(self):
+        return self.slots
     def __str__(self):
         toRet =""
         for s in self.slots:
@@ -63,14 +58,21 @@ class Object(Instance):
 
 
 class DataValue(Instance):
-    def __init__(self):
+    def __init__(self,value):
         super().__init__()
+        self.value = value
+    def set_value(self, val):
+          self.value = val
+    def get_value(self):
+       return self.value
 
 class LinkEnd(NamedElement):
     def __init__(self,name,ins):
         super().__init__(name)
-        self.associationEnd = list[Property]
+        self.associationEnd: Property = None
+        self.association: Association = None
         self.instance= ins
+
 class Link(NamedElement):
     def __init__(self):
         self.connection : list[LinkEnd] = []

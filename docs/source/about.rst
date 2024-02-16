@@ -10,29 +10,6 @@ shortage. Moreover, by simplifying the specification and testing of ethical conc
 major societal challenge. Overall, I strongly believe BESSER will significantly improve the **competitiveness** of Luxembourgian and, in general, European 
 companies in the global market.
 
-Our Team
---------
-Maintainers:
-
-* `Iván Alfonso <https://github.com/ivan-alfonso>`_
-* `Jordi Cabot <https://github.com/jcabot>`_
-
-We want to recognize the work of the contributors:
-
-* `Aaron Conrardy <https://github.com/Aran30>`_
-* `Fedor Chikhachev <https://github.com/FChikh>`_
-* `Fitash UL-HAQ <https://github.com/FitashUlHaq>`_
-
-Contributing
-------------
-We encourage contributions from the community and any comment is welcome!
-
-If you are interested in contributing to this project, please read the our `CONTRIBUTING policy <https://github.com/BESSER-PEARL/BESSER/blob/master/CONTRIBUTING.md>`_.
-
-Contact
--------
-
-info@besser-pearl.org
 
 License
 -------
@@ -51,3 +28,10 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
 FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+Contact
+-------
+
+You can reach us at: info@besser-pearl.org
+
+Website: https://besser-pearl.github.io/teampage/

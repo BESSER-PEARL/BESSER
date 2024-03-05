@@ -9,7 +9,7 @@ B-UML is implemented in Python. The metamodel of the core of B-UML is summarised
   This metamodel contains only the main classes, attributes, and methods of the B-UML language. For a detailed 
   description please refer to the :doc:`API documentation </api>`.
 
-.. image:: img/metamodel.jpg
+.. image:: img/structural_mm.png
   :width: 800
   :alt: B-UML metamodel
   :align: center
@@ -21,6 +21,5 @@ a B-UML model, and (3) transform an image into a BUML model (e.g., a photo of a 
 .. toctree::
   :maxdepth: 1
 
-  buml_language/buml_core
-  buml_language/plantuml
-  buml_language/image_to_buml
+  buml_language/model_types
+  buml_language/model_building

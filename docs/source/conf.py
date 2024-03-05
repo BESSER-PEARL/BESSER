@@ -47,9 +47,12 @@ html_title = f"{project} {release}"
 
 # -- Options for HTML output
 
-html_logo = "img/besser_logo.png"
+html_theme_options = {
+    "light_logo": "besser_logo_light.png",
+    "dark_logo": "besser_logo_dark.png"
+}
 html_theme = 'furo'
-#html_static_path = ['_static']
+html_static_path = ['_static']
 
 # -- Options for EPUB output
 #epub_show_urls = 'footnote'

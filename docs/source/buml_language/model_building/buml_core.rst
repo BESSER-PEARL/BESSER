@@ -3,7 +3,7 @@ Build a model using B-UML
 
 The following guide shows how to define the classic Library model (see following image) using the B-UML language.
 
-.. image:: ../img/library_uml_model.jpg
+.. image:: ../../img/library_uml_model.jpg
   :width: 600
   :alt: Library model
   :align: center
@@ -68,11 +68,11 @@ You should get output like this:
 
 .. note::
     
-    You can consult the complete code for this basic example :doc:`here <../examples/library_example>`.
+    You can consult the complete code for this basic example :doc:`here <../../examples/library_example>`.
 
 .. note::
     
     For a detailed description of metamodel elements such as classes, attributes, generalizations and others, 
-    please refer to the :doc:`API documentation <../api>`.
+    please refer to the :doc:`API documentation <../../api>`.
 
-Now that you have a model defined with B-UML, you can use our :doc:`../generators`, or even build your own for a target technology.
+Now that you have a model defined with B-UML, you can use our :doc:`../../generators`, or even build your own for a target technology.

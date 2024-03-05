@@ -20,5 +20,5 @@ code generators are implemented in this example (lines 50-61). Running this scri
 
 .. note::
     
-    A B-UML model can also be created :doc:`from a model designed with PlantUML <../buml_language/plantuml>` or even 
-    :doc:`from an image <../buml_language/image_to_buml>`.
+    A B-UML model can also be created :doc:`from a model designed with PlantUML <../buml_language/model_building/plantuml>` or even 
+    :doc:`from an image <../buml_language/model_building/image_to_buml>`.

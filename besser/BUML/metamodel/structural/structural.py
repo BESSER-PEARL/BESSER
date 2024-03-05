@@ -306,6 +306,7 @@ class Property(TypedElement):
         is_navigable (bool): Indicates whether the property is navigable in a relationship.
         is_aggregation (bool): Indicates whether the property represents an aggregation.
         is_id (bool): Indicates whether the property is an id.
+        is_read_only (bool): Indicates whether the property is read only.
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the property.
@@ -317,11 +318,12 @@ class Property(TypedElement):
         is_navigable (bool): Indicates whether the property is navigable in a relationship.
         is_aggregation (bool): Indicates whether the property represents an aggregation.
         is_id (bool): Indicates whether the property is an id.
+        is_read_only (bool): Indicates whether the property is read only.
     """
     
     def __init__(self, name: str, property_type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1), 
                  visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False,
-                 is_id: bool = False):
+                 is_id: bool = False, is_read_only: bool = False):
         super().__init__(name, property_type, visibility)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
@@ -329,6 +331,7 @@ class Property(TypedElement):
         self.is_navigable: bool = is_navigable
         self.is_aggregation: bool = is_aggregation
         self.is_id: bool = is_id
+        self.is_read_only: bool = is_read_only
 
     @property
     def owner(self) -> Type:
@@ -396,9 +399,19 @@ class Property(TypedElement):
     def is_id(self, is_id: bool):
         """bool: Set wheter the property is an id."""
         self.__is_id = is_id
+    
+    @property
+    def is_read_only(self) -> bool:
+        """bool: Get wheter the property is read only."""
+        return self.__is_read_only
+    
+    @is_read_only.setter
+    def is_read_only(self, is_read_only: bool):
+        """bool: Set wheter the property is read only."""
+        self.__is_read_only = is_read_only
 
     def __repr__(self):
-        return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite}, is_id={self.is_id})'
+        return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite}, is_id={self.is_id}, is_read_only={self.is_read_only})'
 
 class Class(Type):
     """Represents a class in a modeling context.
@@ -410,18 +423,21 @@ class Class(Type):
         name (str): The name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
         is_abstract (bool): Indicates whether the class is abstract.
+        is_read_only (bool): Indicates whether the class is read only.
 
     Attributes:
         name (str): Inherited from Type, represents the name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
         is_abstract (bool): Indicates whether the class is abstract.
+        is_read_only (bool): Indicates whether the class is read only.
         __associations (set[Association]): Set of associations involving the class.
         __generalizations (set[Generalization]): Set of generalizations involving the class.
     """
 
-    def __init__(self, name: str, attributes: set[Property], is_abstract: bool= False):
+    def __init__(self, name: str, attributes: set[Property], is_abstract: bool= False, is_read_only: bool= False):
         super().__init__(name)
         self.is_abstract: bool = is_abstract
+        self.is_read_only: bool = is_read_only
         self.attributes: set[Property] = attributes
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
@@ -480,6 +496,16 @@ class Class(Type):
     def is_abstract(self, is_abstract: bool):
         """bool: Set wheter the class is abstract."""
         self.__is_abstract = is_abstract
+
+    @property
+    def is_read_only(self) -> bool:
+        """bool: Get wheter the class is read only."""
+        return self.__is_read_only
+    
+    @is_read_only.setter
+    def is_read_only(self, is_read_only: bool):
+        """bool: Set wheter the class is read only."""
+        self.__is_read_only = is_read_only
 
     @property
     def associations(self) -> set:

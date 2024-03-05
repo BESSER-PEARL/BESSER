@@ -14,4 +14,5 @@ own generator).
    generators/python
    generators/alchemy
    generators/sql
+   generators/rest_api
    generators/build_generator

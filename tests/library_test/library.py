@@ -4,6 +4,7 @@ from besser.generators.python_classes import Python_Generator
 from besser.generators.django import DjangoGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
+from besser.generators.rest_api import RESTAPIGenerator
 
 # Primitive DataTypes
 t_int: PrimitiveDataType = PrimitiveDataType("int")
@@ -59,3 +60,6 @@ sql_alchemy.generate()
 
 sql = SQLGenerator(model=library_model)
 sql.generate()
+
+rest_api = RESTAPIGenerator(model=library_model)
+rest_api.generate()

@@ -155,7 +155,7 @@ class ODListener(ParseTreeListener):
 
         for object in self.objs:
             for slot in object.get_slots():
-                if slot.get_name() == param:
+                if slot.name == param:
                         return object
                 # if slot.get_attribute().is_id:
                 #     pass

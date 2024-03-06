@@ -3,7 +3,7 @@ from besser.BUML.notations.od.ODLexer import ODLexer
 from besser.BUML.notations.od.ODParser import ODParser
 from besser.BUML.notations.od.ODListener import ODListener
 def test_simple_OD():
-    od = "../../besser/BUML/notations/od/libraryObjectDiagram.plantuml"
+    od = "../library_test/libraryObjectDiagram.plantuml"
     all_objs = []
     input_stream = FileStream(od)
     lexer = ODLexer(input_stream)
@@ -16,7 +16,7 @@ def test_simple_OD():
     assert parser.getNumberOfSyntaxErrors() == 0
 
 def test_number_of_objects():
-    od = "../../besser/BUML/notations/od/libraryObjectDiagram.plantuml"
+    od = "../library_test/libraryObjectDiagram.plantuml"
     all_objs = []
     input_stream = FileStream(od)
     lexer = ODLexer(input_stream)
@@ -26,9 +26,9 @@ def test_number_of_objects():
     listener = ODListener(all_objs)
     walker = ParseTreeWalker()
     walker.walk(listener, tree)
-    assert len(all_objs) == 4
+    assert len(all_objs) == 5
 def test_number_of_slots_for_libaray():
-    od = "../../besser/BUML/notations/od/libraryObjectDiagram.plantuml"
+    od = "../library_test/libraryObjectDiagram.plantuml"
     all_objs = []
     input_stream = FileStream(od)
     lexer = ODLexer(input_stream)
@@ -38,10 +38,11 @@ def test_number_of_slots_for_libaray():
     listener = ODListener(all_objs)
     walker = ParseTreeWalker()
     walker.walk(listener, tree)
+
     assert len(all_objs[0].get_slots()) == 3
 
 def test_number_of_slots_for_libaray1():
-    od = "../../besser/BUML/notations/od/libraryObjectDiagram.plantuml"
+    od = "../library_test/libraryObjectDiagram.plantuml"
     all_objs = []
     input_stream = FileStream(od)
     lexer = ODLexer(input_stream)
@@ -51,10 +52,11 @@ def test_number_of_slots_for_libaray1():
     listener = ODListener(all_objs)
     walker = ParseTreeWalker()
     walker.walk(listener, tree)
-    assert len(all_objs[1].get_slots()) == 3
+
+    assert len(all_objs[1].get_slots()) == 4
 
 def test_number_of_slots_for_book():
-    od = "../../besser/BUML/notations/od/libraryObjectDiagram.plantuml"
+    od = "../library_test/libraryObjectDiagram.plantuml"
     all_objs = []
     input_stream = FileStream(od)
     lexer = ODLexer(input_stream)

@@ -5,7 +5,7 @@ from besser.BUML.notations.ocl.OCLsParser import OCLsParser
 from besser.BUML.notations.ocl.OCLsListener import OCLsListener
 import unittest
 
-class TestStringMethods(unittest.TestCase):
+class TestOclParser(unittest.TestCase):
 # from OCLInterp import OCLInterp
 
     def test_derive(self):

@@ -1,3 +1,5 @@
+import string
+
 from besser.BUML.metamodel.structural import NamedElement, Property, Type,Association
 
 
@@ -10,13 +12,16 @@ class AttributeLink:
         if property is None:
             self.attribute = Property(name= name, property_type=prop_type,is_id= is_id)
         self.value = DataValue(value)
-    def get_name(self):
+    @property
+    def name(self) -> string:
         return self.attribute.name
-    def get_attribute(self):
+
+    @property
+    def get_attribute(self)->Property:
         return self.attribute
-    def __str__(self):
+    def __repr__(self) -> string:
         return "Attribute Link " + str(self.attribute) + " value: " + str(self.value)
-    def checkType(self, value):
+    def checkType(self, value) ->string:
         if value.isdigit():
             try:
                 int (value)
@@ -29,12 +34,12 @@ class AttributeLink:
 
 class Instance(NamedElement):
 
-    classifier = None
-    slots = None
-    ownedLink = None
-    linkEnd = None
+
     def __init__(self):
-        self.classifier:Type
+        self.classifier:Type = None
+        self.__slots = None
+        self.ownedLink = None
+        self.linkEnd = None
 
 
 
@@ -48,29 +53,35 @@ class Object(Instance):
 
     def add_to_link_end(self, link):
         self.linkEnd.append(link)
+
     def get_slots(self):
         return self.slots
-    def __str__(self):
-        toRet =""
-        for s in self.slots:
+
+    def __repr__(self):
+         toRet =""
+         for s in self.slots:
             toRet = toRet + str(s) +'\n'
-        return toRet
+         return toRet
 
 
 class DataValue(Instance):
     def __init__(self,value):
         super().__init__()
-        self.value = value
-    def set_value(self, val):
-          self.value = val
-    def get_value(self):
+        self.__value = value
+
+    @property
+    def value(self):
        return self.value
+
+
+    @value.setter
+    def value(self, val):
+        self.__value = val
 
 class LinkEnd(NamedElement):
     def __init__(self,name,ins):
         super().__init__(name)
         self.associationEnd: Property = None
-        self.association: Association = None
         self.instance= ins
 
 class Link(NamedElement):

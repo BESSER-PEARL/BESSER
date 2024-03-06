@@ -5,6 +5,9 @@ class Root_Handler:
         self.root = None
         self.factory = Factory()
         self.all =[]
+
+    def get_root(self):
+        return self.root
     def pop(self):
         collExp = self.all.pop()
         self.add_to_root(collExp)
@@ -33,10 +36,11 @@ class Root_Handler:
     def handle_ID(self,id):
         varID =self.factory.create_variable_expression(id,None)
         self.add_to_root(varID)
-        print('\x1b[6;30;42m' + 'handled ID, verify me!!!' + '\x1b[0m')
+        # print('\x1b[6;30;42m' + 'handled ID, verify me!!!' + '\x1b[0m')
         pass
 
     def handleBag(self,bag, operator):
+        pass
     def handlePrimaryExp(self,primaryExp,operator):
         # print("in root handler")
         # if len(self.all) == 0:
@@ -114,21 +118,15 @@ class Root_Handler:
         inBetweenOp = None
         if inbetween is not None:
             inBetweenOp = self.factory.create_infix_operator(inbetween)
-        print(leftPart)
-        print(rightPart)
+
 
         opeartion_call_exp = self.factory.create_operation_call_expression(leftPart, rightPart, infixOperator,
                                                                            inBetweenOp)
-        print(opeartion_call_exp)
         self.add_to_root(opeartion_call_exp)
 
 
         pass
 
     def handlePrint(self, root):
-        print(type(root))
+
         print(root)
-        if hasattr(root, 'arguments'):
-            if len(root.arguments)!=0:
-                for arg in root.arguments:
-                    self.handlePrint(arg)

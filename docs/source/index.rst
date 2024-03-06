@@ -35,4 +35,5 @@ Contents
    utilities
    examples
    api
+   contributing
    about

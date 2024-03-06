@@ -48,9 +48,7 @@ class Root_Handler:
         # print('\x1b[6;30;42m' + 'handled ID, verify me!!!' + '\x1b[0m')
         pass
 
-<<<<<<< Updated upstream
-    def handleBag(self,bag, operator):
-=======
+
     def handle_bag(self, bag, operator):
         collectionLiteral = self.factory.create_collection_literal_expression("bag")
         infixOperator = None
@@ -65,8 +63,6 @@ class Root_Handler:
 
             self.add_to_root(operationCallExp)
 
->>>>>>> Stashed changes
-        pass
     def handlePrimaryExp(self,primaryExp,operator):
         pass
 
@@ -138,10 +134,7 @@ class Root_Handler:
         inBetweenOp = None
         if inbetween is not None:
             inBetweenOp = self.factory.create_infix_operator(inbetween)
-<<<<<<< Updated upstream
 
-=======
->>>>>>> Stashed changes
 
         opeartion_call_exp = self.factory.create_operation_call_expression(leftPart, rightPart, infixOperator,
                                                                            inBetweenOp)
@@ -152,12 +145,10 @@ class Root_Handler:
 
     def handlePrint(self, root):
 
-<<<<<<< Updated upstream
         print(root)
-=======
 
         if hasattr(root, 'arguments'):
             if len(root.arguments) != 0:
                 for arg in root.arguments:
                     self.handlePrint(arg)
->>>>>>> Stashed changes
+

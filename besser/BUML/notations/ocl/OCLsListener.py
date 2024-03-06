@@ -263,7 +263,11 @@ class OCLsListener(ParseTreeListener):
 
     # Enter a parse tree produced by OCLsParser#BAG.
     def enterBAG(self, ctx:OCLsParser.BAGContext):
+<<<<<<< Updated upstream
         #print(inspect.stack()[0][3])
+=======
+        # print(inspect.stack()[0][3])
+>>>>>>> Stashed changes
         self.bag.append([])
 
         pass
@@ -273,7 +277,7 @@ class OCLsListener(ParseTreeListener):
         op = None
         if len(self.operator)!=0:
             op = self.operator[-1]
-        self.rootHandler.handleBag(self.bag.pop(),op)
+        self.rootHandler.handle_bag(self.bag.pop(), op)
 
         pass
 
@@ -427,8 +431,13 @@ class OCLsListener(ParseTreeListener):
 
     # Enter a parse tree produced by OCLsParser#op.
     def enterOp(self, ctx:OCLsParser.OpContext):
+<<<<<<< Updated upstream
         #print(inspect.stack()[0][3])
         #print(ctx.getText())
+=======
+        # print(inspect.stack()[0][3])
+        # print(ctx.getText())
+>>>>>>> Stashed changes
         self.operator.append(ctx.getText())
         pass
 
@@ -449,7 +458,11 @@ class OCLsListener(ParseTreeListener):
 
     # Enter a parse tree produced by OCLsParser#number.
     def enterNumber(self, ctx:OCLsParser.NumberContext):
+<<<<<<< Updated upstream
         #print(inspect.stack()[0][3])
+=======
+        # print(inspect.stack()[0][3])
+>>>>>>> Stashed changes
         self.bag[-1].append(ctx.getText())
         pass
 

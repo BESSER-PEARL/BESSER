@@ -28,7 +28,10 @@ class Factory:
     def create_loop_expression(self,collectionOperator):
         return LoopExp(collectionOperator,None)
         pass
-
+    def create_collection_literal_expression(self,type):
+        return CollectionLiteralExp(name = "NP",type=type)
+    def create_collection_item(self,name ,item):
+        return CollectionItem(name,item)
     def create_iterator_expression(self,name,type):
         return IteratorExp(name,type)
         pass

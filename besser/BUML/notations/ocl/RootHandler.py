@@ -1,4 +1,3 @@
-
 from besser.BUML.notations.ocl.FactoryInstance import Factory
 class Root_Handler:
     def __init__(self):
@@ -9,8 +8,8 @@ class Root_Handler:
     def get_root(self):
         return self.root
     def pop(self):
-        collExp = self.all.pop()
-        self.add_to_root(collExp)
+        self.last_coll_exp = self.all.pop()
+        self.add_to_root(self.last_coll_exp)
     def checkNumberOrVariable(self, txt):
         if txt.isnumeric():
             if "." in txt:
@@ -27,10 +26,20 @@ class Root_Handler:
             else:
                 op.arguments.append(self.root)
                 self.root = op
-                # self.root.arguments.append(op)
         else:
-
             self.all[-1].add_body(op)
+    def pop_root(self,root):
+
+        if self.root == self.last_coll_exp:
+            self.root = None
+            return self.last_coll_exp
+        if hasattr(root, "arguments"):
+            if self.last_coll_exp in root.arguments:
+                root.arguments.remove(self.last_coll_exp)
+                return self.last_coll_exp
+            for args in root.arguments:
+                self.pop_root(args)
+
     def print(self):
         self.handlePrint(self.root)
     def handle_ID(self,id):
@@ -39,15 +48,26 @@ class Root_Handler:
         # print('\x1b[6;30;42m' + 'handled ID, verify me!!!' + '\x1b[0m')
         pass
 
+<<<<<<< Updated upstream
     def handleBag(self,bag, operator):
+=======
+    def handle_bag(self, bag, operator):
+        collectionLiteral = self.factory.create_collection_literal_expression("bag")
+        infixOperator = None
+        if operator is not None:
+            infixOperator = self.factory.create_infix_operator(operator)
+        for item in bag:
+            collectionLiteral.add_to_collection_items(self.factory.create_collection_item("bag",item))
+        if infixOperator is not None:
+            left = self.pop_root(self.root)
+
+            operationCallExp = self.factory.create_operation_call_expression(left,collectionLiteral,infixOperator)
+
+            self.add_to_root(operationCallExp)
+
+>>>>>>> Stashed changes
         pass
     def handlePrimaryExp(self,primaryExp,operator):
-        # print("in root handler")
-        # if len(self.all) == 0:
-        #     pass
-        # else:
-        #     pass
-        # print(primaryExp)
         pass
 
 
@@ -118,7 +138,10 @@ class Root_Handler:
         inBetweenOp = None
         if inbetween is not None:
             inBetweenOp = self.factory.create_infix_operator(inbetween)
+<<<<<<< Updated upstream
 
+=======
+>>>>>>> Stashed changes
 
         opeartion_call_exp = self.factory.create_operation_call_expression(leftPart, rightPart, infixOperator,
                                                                            inBetweenOp)
@@ -129,4 +152,12 @@ class Root_Handler:
 
     def handlePrint(self, root):
 
+<<<<<<< Updated upstream
         print(root)
+=======
+
+        if hasattr(root, 'arguments'):
+            if len(root.arguments) != 0:
+                for arg in root.arguments:
+                    self.handlePrint(arg)
+>>>>>>> Stashed changes

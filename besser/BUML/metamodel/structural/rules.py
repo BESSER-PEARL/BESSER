@@ -88,7 +88,7 @@ class OperationCallExpression(OCLExpression):
         toRet= ""
         for arg in self.arguments:
             # print(type(arg))
-            toRet = toRet+" "+ str(arg)
+            toRet = toRet+"  \n "+ str(arg)
         return toRet
         # return f'{self.arguments[0]} {self.operation} {self.arguments[1]}'
 

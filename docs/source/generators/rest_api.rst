@@ -1,5 +1,5 @@
 REST API Generator
-=====================
+==================
 
 BESSER offers a code generator for `REST API <https://www.redhat.com/en/topics/api/what-is-a-rest-api>`_ utilizing the FastAPI framework. 
 This tool automatically transforms classes and relationships defined in a B-UML model into a RESTful service.

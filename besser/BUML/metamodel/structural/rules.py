@@ -85,7 +85,12 @@ class OperationCallExpression(OCLExpression):
         self.__arguments = arguments
 
     def __str__(self) -> str:
-        return f'{self.arguments[0]} {self.operation} {self.arguments[1]}'
+        toRet= ""
+        for arg in self.arguments:
+            # print(type(arg))
+            toRet = toRet+"  \n "+ str(arg)
+        return toRet
+        # return f'{self.arguments[0]} {self.operation} {self.arguments[1]}'
 
 # A class to represents OCL constriants, i.e. constraints written with the OCL language
 class OCLConstraint(Constraint):
@@ -126,14 +131,18 @@ class IfExp(OCLExpression):
 class VariableExp(OCLExpression):
     def __init__(self,name: str, type: Type):
         super().__init__(name, type)
+        self.name = name
+        self.variable = Variable(name,type)
 
-        self.variable = Variable()
     def set_refferred_variable (self,val):
-        if "." in val:
-            val = val.split(".")[1]
+        val.replace('self.','')
         self.variable.set_value(val)
     def getVal(self):
         return self.variable.get_value()
+
+    def __str__(self):
+        return self.name
+
 class Variable(OCLExpression):
     def __init__(self,name: str, type: Type):
         super().__init__(name, type)
@@ -192,20 +201,34 @@ class LoopExp(CallExp):
     def __init__(self,name: str, type: Type):
         super().__init__(name, type)
 
-        self.body = None#OCLExpression()
-        self.iterator = None#Variable()
-    @property
-    def set_body(self,body):
-        self.body = body
+        self.name = name
+        self.type = type
+        self.body = []
+        self.iterator = []
+
+    def __str__(self):
+        stringToRet = "LoopExpression: " +str(self.name)
+        for it in self.iterator:
+            stringToRet = stringToRet + "\nIterator: " + str(it)
+        for body in self.body:
+            stringToRet = stringToRet + "\nbody: " + str(body)
+        return stringToRet
+
+
+    def add_body(self,body):
+        self.body.append(body)
     @property
     def get_body(self):
         return self.body
-    @property
-    def set_iterator (self,iterator):
-        self.iterator = iterator
+    def addIterator(self,iterator):
+        self.iterator.append(iterator)
+    # @property
+    # def set_iterator (self,iterator):
+    #     self.iterator = iterator
     @property
     def get_iterator(self):
         return self.iterator
+
 
 class MessageExp(OCLExpression):
     pass
@@ -223,8 +246,16 @@ class IterateExp(LoopExp):
         super().__init__(name, type)
 
         self.result=Variable()
+
 class IteratorExp(LoopExp):
+    def __init__(self,name: str, type: Type):
+        super().__init__(name, type)
+        self.name = name
+        self.type = type
     pass
+    def __str__(self):
+        return self.name +":" +self.type
+
 class LetExp(OCLExpression):
     def __init__(self, name: str, type: Type):
         super().__init__(name, type)
@@ -242,3 +273,72 @@ class StringLiteralExpression(LiteralExpression):
 
     def __repr__(self):
         return f'StringLiteralExpression({self.value})'
+
+class InfixOperator:
+    def __init__(self,operator):
+        self.operator = operator
+    def get_infix_operator(self):
+        return self.operator
+    def __str__(self):
+        return self.operator
+
+class DataType(Classifier):
+    def __init__(self,name):
+        super().__init__(name)
+
+class CollectionType(DataType):
+    def __init__(self,name):
+        super().__init__(name)
+
+class OrderedSetType(CollectionType):
+    def __init__(self,name):
+        super().__init__(name)
+
+class SequenceType(CollectionType):
+    def __init__(self,name):
+        super().__init__(name)
+
+class BagType(CollectionType):
+    def __init__(self,name):
+        super().__init__(name)
+
+class SetType(CollectionType):
+    def __init__(self,name):
+        super().__init__(name)
+
+
+class CollectionLiteralExp(LiteralExp):
+    def __init__(self, name, type):
+        super().__init__(name,type)
+        self.kind = type
+        self.collectionItems = []
+    def __str__(self):
+        toRet= str(self.kind) +": "
+        for item in self.collectionItems:
+            toRet = toRet + str(item)
+        return toRet
+    def add_to_collection_items(self,item):
+        self.collectionItems.append(item)
+
+class CollectionLiteralPart(TypedElement):
+    def __init__(self, name):
+        super().__init__(name,type = "NP")
+
+
+class CollectionItem(CollectionLiteralPart):
+    def __init__(self, name,item):
+        super().__init__(name)
+        self.value = item
+    def set(self,  value):
+        self.value = value
+    def __str__(self):
+        return str(self.value)+","
+    def get(self):
+        return self.value
+class CollectionRange(CollectionLiteralPart):
+    def __init__(self, name):
+        super().__init__(name)
+        self.first = None
+        self.last = None
+
+

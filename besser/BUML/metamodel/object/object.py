@@ -184,7 +184,7 @@ class LinkEnd(NamedElement):
     @association_end.setter
     def association_end(self, association_end: Property):
         """Property: Method to set the association end"""
-        self.__association = association_end
+        self.__association_end = association_end
 
     @property
     def object(self):

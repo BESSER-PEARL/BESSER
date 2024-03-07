@@ -40,7 +40,7 @@ class AttributeLink():
         self.__attribute = attribute
 
     def __repr__(self) -> str:
-        return f'Attribute Link({self.name}, {self.value}, {self.attribute})'
+        return f'Attribute Link({self.value}, {self.attribute})'
 
 class Instance(NamedElement):
     """The instance defines an entity to which a set of operations can be applied and which has a state that stores the effects of the operations.
@@ -75,17 +75,16 @@ class Object(Instance):
         name (str): the name of the object instance
         classifier (Type): the classifier of the object instance. It could be for example a Class or a PrimitiveDataType of the structural metamodel.
         slots (list[AttributeLink]): list of properties of the instance
-        link_ends (list[LinkEnd]): The set of LinkEnds of the connected Links that are attached to the Instance.
     
     Attributes:
         name (str): inherited from NamedElement, represents the name of the object instance.
         classifier (Type): Inherited from Instance, represents the classifier of the object.
         slots (list[AttributeLink]): list of properties of the instance
-        link_ends (list[LinkEnd]): The set of LinkEnds of the connected Links that are attached to the Instance.
     """
     def __init__(self, name: str, classifier: Type, slots: list[AttributeLink] = []):
         super().__init__(name, classifier)
         self.slots: list[AttributeLink] = slots
+        self.__links: set[Link] = set()
 
     @property
     def slots(self) -> list[AttributeLink]:
@@ -101,8 +100,34 @@ class Object(Instance):
         """ Method to add attribute link to slots"""
         self.slots.append(slot)
 
+    @property
+    def links(self) -> set:
+        """set[Link]: Get the set of links involving the object."""
+        return self.__links
+    
+    def _add_link(self, link):
+        """Link: Add an link to the set of object links."""
+        self.__links.add(link)
+    
+    def _delete_link(self, link):
+        """Link: Remove a link to the set of object links."""
+        self.__links.discard(link)
+
+    def link_ends(self) -> set:
+        """set[LinkEnd]: Get the set of link ends of the object."""
+        ends = set()
+        for link in self.__links:
+            l_ends = link.connections
+            ends.update(l_ends)
+            l_aends = list(l_ends)
+            if not(len(l_aends) == 2 and l_aends[0].object == l_aends[1].object):
+                for end in l_ends:
+                    if end.object == self:
+                        ends.discard(end)
+        return ends
+
     def __repr__(self):
-         return f'Object({self.name}, {self.classifier}, {self.slots}, {self.link_ends})'
+         return f'Object({self.name}, {self.classifier}, {self.slots})'
 
 
 class DataValue(Instance):
@@ -163,7 +188,7 @@ class LinkEnd(NamedElement):
     @property
     def object(self):
        """Object: Method to retrieve the object"""
-       return self.__association
+       return self.__object
 
     @object.setter
     def object(self, object: Object):
@@ -187,7 +212,7 @@ class Link(NamedElement):
     def __init__(self, name: str, association: Association, connections: list[LinkEnd]):
         super().__init__(name)
         self.association: Association = association
-        self.connection: list[LinkEnd] = connections
+        self.connections: list[LinkEnd] = connections
     
     @property
     def association(self):
@@ -207,6 +232,11 @@ class Link(NamedElement):
     @connections.setter
     def connections(self, connections: list[LinkEnd]):
         """list[LinkEnd]: Method to set the connections"""
+        if hasattr(self, "connections"):
+            for conn in self.connections:
+                conn.object._delete_link(link=self)
+        for end in connections:
+            end.object._add_link(link=self)
         self.__connections = connections
 
     def add_to_connection(self,linkEnd):

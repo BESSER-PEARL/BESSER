@@ -1,60 +1,56 @@
 import string
+from besser.BUML.metamodel.structural import NamedElement, Property, Type, Association
 
-from besser.BUML.metamodel.structural import NamedElement, Property, Type,Association
+class AttributeLink(NamedElement):
+    """An attribute link is a named slot in an instance, which holds the value of an attribute
+    
+    Args:
+        name (str): the name of the attribute link
+        value (DataValue): the value of the attribute.
+        attribute (Property): the attribute or property from the structural metamodel.
+    
+    Attributes:
+        name (str): Inherited from NamedElement, represents the name of the association.
+        value (DataValue): the value of the attribute.
+        attribute (Property): the attribute or property from the structural metamodel.
+    """
 
-
-
-class AttributeLink:
-    def __init__(self, name,value=None, prop_type=None, is_id=False,property = None):
-        """An attribute link is a named slot in an instance, which holds the value of an attribute
-       Args:
-           name (str): the name of the property
-           prop_type: type of the property.
-           is_id: Boolean to identify if property is ID
-           property: property from the class diagram
-       Attributes:
-           value: value of the property
-           attribute: property.
-       """
-
-        if prop_type is None:
-            prop_type = self.checkType (value)
-        if property is None:
-            self.attribute = Property(name= name, property_type=prop_type,is_id= is_id)
-        self.value = DataValue(value)
-    @property
-    def name(self) -> string:
-        """str: Get the name of the property."""
-        return self.attribute.name
+    def __init__(self, name, value: "DataValue", attribute: Property):
+        super().__init__(name)
+        self.value: DataValue = value
+        self.attribute: Property = attribute
 
     @property
-    def get_attribute(self)->Property:
-        """str: Get the property."""
-        return self.attribute
-    def __repr__(self) -> string:
-        """str: printing the value of attribute link."""
-        return "Attribute Link " + str(self.attribute) + " value: " + str(self.value)
-    def checkType(self, value) ->string:
-        """str: return the type of value (int, string, real)"""
-        if value.isdigit():
-            try:
-                int (value)
-                return "int"
-            except:
-                return "real"
+    def value(self) -> "DataValue":
+        """DataValue: Get value of the attribute."""
+        return self.__value
 
-        else:
-            return "str"
+    @value.setter
+    def value(self, value: "DataValue"):
+        """bool: Set the value of the attribute."""
+        self.__value = value
+
+    @property
+    def attribute(self) -> Property:
+        """DataValue: Get the attribute."""
+        return self.__attribute
+
+    @value.setter
+    def attribute(self, attribute: Property):
+        """bool: Set the attribute."""
+        self.__attribute = attribute
+
+    def __repr__(self) -> str:
+        return f'Attribute Link({self.name}, {self.value}, {self.attribute})'
 
 class Instance(NamedElement):
-    """The instance defines an entity to which a set of operations can be applied and
-        which has a state that stores the effects of the operations.
-           Attributes:
-               classifier: classname of the instance
-               slots: list of properties
-               ownedLink: the set of Links that are owned by the Instance.
-               linkEnd: The set of LinkEnds of the connected Links that are attached to the
-Instance.
+    """The instance defines an entity to which a set of operations can be applied and which has a state that stores the effects of the operations.
+    
+    Attributes:
+        classifier: classname of the instance
+        slots: list of properties
+        ownedLink: the set of Links that are owned by the Instance.
+        linkEnd: The set of LinkEnds of the connected Links that are attached to the Instance.
            """
 
     def __init__(self):

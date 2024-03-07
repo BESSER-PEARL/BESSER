@@ -4,7 +4,7 @@ if "." in __name__:
     from .ODParser import ODParser
 else:
     from ODParser import ODParser
-from besser.BUML.metamodel.structural.objectdiagram import *
+from besser.BUML.metamodel.object.object import *
 # This class defines a complete listener for a parse tree produced by ODParser.
 class ODListener(ParseTreeListener):
 

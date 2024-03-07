@@ -45,7 +45,6 @@ library_model : DomainModel = DomainModel(name="Library model", types={library, 
                                           associations={lib_book_association, book_author_association})
 
 
-
 #################################
 #   Library object definition   #
 #################################
@@ -62,8 +61,21 @@ author_obj_email: AttributeLink = AttributeLink(attribute=email, value=DataValue
 # Author object
 author_obj: Object = Object(name="Author Object", classifier=author, slots=[author_obj_name, author_obj_email])
 
-# Book object and Author object relationship
-book_link_end: LinkEnd = LinkEnd(name="book_end", association_end=publishes, object=book_obj)
-author_link_end: LinkEnd = LinkEnd(name="author_end", association_end=writed_by, object=author_obj)
-author_book_link: Link = Link(name="author_book_link", association=book_author_association, connections=[book_link_end,author_link_end])
+# Author object attributes
+library_obj_name: AttributeLink = AttributeLink(attribute=library_name, value=DataValue(classifier=t_str, value="Library test"))
+library_obj_address: AttributeLink = AttributeLink(attribute=address, value=DataValue(classifier=t_str, value="street 123"))
+# Author object
+library_obj: Object = Object(name="Library Object", classifier=library, slots=[library_obj_name, library_obj_address])
 
+# Book object and Author object relationship
+book_link_end1: LinkEnd = LinkEnd(name="book_end1", association_end=publishes, object=book_obj)
+author_link_end: LinkEnd = LinkEnd(name="author_end", association_end=writed_by, object=author_obj)
+author_book_link: Link = Link(name="author_book_link", association=book_author_association, connections=[book_link_end1,author_link_end])
+
+# Book Library and Book object relationship
+book_link_end2: LinkEnd = LinkEnd(name="book_end2", association_end=has, object=book_obj)
+library_link_end: LinkEnd = LinkEnd(name="library_end", association_end=located_in, object=library_obj)
+library_book_link: Link = Link(name="library_book_link", association=book_author_association, connections=[book_link_end2,library_link_end])
+
+# Object model definition
+object_model: ObjectModel = ObjectModel(name="Object model", instances={library_obj, author_obj, book_obj}, links={author_book_link, library_book_link})

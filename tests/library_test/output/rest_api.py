@@ -17,15 +17,15 @@ class Author(BaseModel):
  
 
 class Library(BaseModel):
-    name: str
     address: str
+    name: str
     id: int  # the id created
  
 
 class Book(BaseModel):
     pages: int
-    title: str
     release: datetime
+    title: str
     id: int  # the id created
  
 
@@ -48,7 +48,6 @@ book_list = []
 #   Author functions
 #
 ############################################
-
 @app.get("/author/", response_model=List[Author], tags=["author"])
 def get_author():
     return author_list
@@ -59,7 +58,6 @@ def get_author(attribute_id : str):
         if author.id_to_change== attribute_id:
             return author
     raise HTTPException(status_code=404, detail="Author not found")
-
 
 @app.post("/author/", response_model=Author, tags=["author"])
 def create_author(author: Author):
@@ -73,7 +71,6 @@ def change_author(attribute_id : str, updated_author: Author):
             author_list[index] = updated_author
             return updated_author
     raise HTTPException(status_code=404, detail="Author not found")
-
 
 @app.patch("/author/{attribute_id}/{attribute_to_change}", response_model=Author, tags=["author"])
 def update_author(attribute_id : str,  attribute_to_change: str, updated_data: str):
@@ -99,7 +96,6 @@ def delete_author(attribute_id : str):
 #   Library functions
 #
 ############################################
-
 @app.get("/library/", response_model=List[Library], tags=["library"])
 def get_library():
     return library_list
@@ -110,7 +106,6 @@ def get_library(attribute_id : str):
         if library.id_to_change== attribute_id:
             return library
     raise HTTPException(status_code=404, detail="Library not found")
-
 
 @app.post("/library/", response_model=Library, tags=["library"])
 def create_library(library: Library):
@@ -124,7 +119,6 @@ def change_library(attribute_id : str, updated_library: Library):
             library_list[index] = updated_library
             return updated_library
     raise HTTPException(status_code=404, detail="Library not found")
-
 
 @app.patch("/library/{attribute_id}/{attribute_to_change}", response_model=Library, tags=["library"])
 def update_library(attribute_id : str,  attribute_to_change: str, updated_data: str):
@@ -150,7 +144,6 @@ def delete_library(attribute_id : str):
 #   Book functions
 #
 ############################################
-
 @app.get("/book/", response_model=List[Book], tags=["book"])
 def get_book():
     return book_list
@@ -161,7 +154,6 @@ def get_book(attribute_id : str):
         if book.id_to_change== attribute_id:
             return book
     raise HTTPException(status_code=404, detail="Book not found")
-
 
 @app.post("/book/", response_model=Book, tags=["book"])
 def create_book(book: Book):
@@ -175,7 +167,6 @@ def change_book(attribute_id : str, updated_book: Book):
             book_list[index] = updated_book
             return updated_book
     raise HTTPException(status_code=404, detail="Book not found")
-
 
 @app.patch("/book/{attribute_id}/{attribute_to_change}", response_model=Book, tags=["book"])
 def update_book(attribute_id : str,  attribute_to_change: str, updated_data: str):

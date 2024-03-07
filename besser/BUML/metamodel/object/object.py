@@ -242,3 +242,41 @@ class Link(NamedElement):
     def add_to_connection(self,linkEnd):
         """Method to add linkend"""
         self.connection.append(linkEnd)
+
+class ObjectModel(NamedElement):
+    """ An object model is the root element that comprises a number of instances and links.
+
+    Args:
+        name (str): the name of the object model
+        
+    
+    Attributes:
+        name (str): inherited from NamedElement, represents the name of the model
+        association (Association): the Association that represents the Link
+        connections: list of link ends.
+    """
+
+    def __init__(self, name: str, instances: set[Instance], links: set[Link]):
+        super().__init__(name)
+        self.instances: set[Instance] = instances
+        self.links: set[Link] = links
+
+    @property
+    def instances(self):
+       """Association: Method to retrieve the instances"""
+       return self.__instances
+
+    @instances.setter
+    def instances(self, instances: set[Instance]):
+        """Association: Method to set the instances"""
+        self.__instances = instances
+
+    @property
+    def links(self):
+       """Association: Method to retrieve the links"""
+       return self.__links
+
+    @links.setter
+    def links(self, links: set[Instance]):
+        """Association: Method to set the links"""
+        self.__links = links

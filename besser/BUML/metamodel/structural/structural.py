@@ -914,8 +914,21 @@ class Constraint(NamedElement):
     def __repr__(self):
         return f'Constraint({self.name},{self.context.name},{self.language},{self.expression})'
 
-class DomainModel(NamedElement):
-    """A domain model is the root element that comprises a number of types, associations, 
+class Model(NamedElement):
+    """A model is the root element. A model is the root element. There are different types of models
+    that inherit from this class. For example, DomainModel, ObjectModel, or GUIModel.
+
+    Args:
+        name (str): The name of the model.
+        
+    Attributes:
+        name (str): Inherited from NamedElement, represents the name of the model.
+    """
+    def __init__(self, name: str):
+        super().__init__(name)
+
+class DomainModel(Model):
+    """A domain model comprises a number of types, associations, 
     generalizations, packages, constraints, and others.
 
     Args:

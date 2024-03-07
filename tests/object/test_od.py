@@ -39,7 +39,7 @@ def test_number_of_slots_for_libaray():
     walker = ParseTreeWalker()
     walker.walk(listener, tree)
 
-    assert len(all_objs[0].get_slots()) == 3
+    assert len(all_objs[0].slots) == 2
 
 def test_number_of_slots_for_libaray1():
     od = "../library_test/libraryObjectDiagram.plantuml"
@@ -52,8 +52,7 @@ def test_number_of_slots_for_libaray1():
     listener = ODListener(all_objs)
     walker = ParseTreeWalker()
     walker.walk(listener, tree)
-
-    assert len(all_objs[1].get_slots()) == 4
+    assert len(all_objs[1].slots) == 3
 
 def test_number_of_slots_for_book():
     od = "../library_test/libraryObjectDiagram.plantuml"
@@ -66,7 +65,7 @@ def test_number_of_slots_for_book():
     listener = ODListener(all_objs)
     walker = ParseTreeWalker()
     walker.walk(listener, tree)
-    assert len(all_objs[2].get_slots()) == 3
+    assert len(all_objs[2].slots) == 2
 
 if __name__ == '__main__':
     pass

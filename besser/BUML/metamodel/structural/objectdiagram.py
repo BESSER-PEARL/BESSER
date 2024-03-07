@@ -16,6 +16,7 @@ class AttributeLink:
            value: value of the property
            attribute: property.
        """
+
         if prop_type is None:
             prop_type = self.checkType (value)
         if property is None:
@@ -91,7 +92,6 @@ Instance.
 
     def __repr__(self):
          """str: printing the value of object."""
-
          toRet =""
          for s in self.slots:
             toRet = toRet + str(s) +'\n'

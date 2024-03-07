@@ -17,7 +17,7 @@ class AttributeLink():
 
     def __init__(self, value: "DataValue", attribute: Property):
         self.value: DataValue = value
-        self.attribute: Property = attribute
+        self.__attribute: Property = attribute
 
     @property
     def value(self) -> "DataValue":
@@ -40,7 +40,7 @@ class AttributeLink():
         self.__attribute = attribute
 
     def __repr__(self) -> str:
-        return f'Attribute Link({self.value}, {self.attribute})'
+        return f'Attribute Link({self.value}, {self.__attribute})'
 
 class Instance(NamedElement):
     """The instance defines an entity to which a set of operations can be applied and which has a state that stores the effects of the operations.
@@ -83,6 +83,7 @@ class Object(Instance):
     """
     def __init__(self, name: str, classifier: Type, slots: list[AttributeLink] = []):
         super().__init__(name, classifier)
+
         self.slots: list[AttributeLink] = slots
         self.__links: set[Link] = set()
 
@@ -98,7 +99,7 @@ class Object(Instance):
 
     def add_slot(self, slot: AttributeLink):
         """ Method to add attribute link to slots"""
-        self.slots.append(slot)
+        self.__slots.append(slot)
 
     @property
     def links(self) -> set:

@@ -31,9 +31,8 @@ class ODListener(ParseTreeListener):
 
     # Enter a parse tree produced by ODParser#objectName.
     def enterObjectName(self, ctx:ODParser.ObjectNameContext):
-        self.obj = Object()
-        idProperty = AttributeLink(name = ctx.getText() , prop_type="str", is_id= True )
-        self.obj.add_slot(idProperty)
+
+        self.obj = Object(name = ctx.getText(),classifier= "not found", slots = [])
         self.objs.append(self.obj)
 
         # print(ctx.getText())
@@ -78,7 +77,7 @@ class ODListener(ParseTreeListener):
 
     # Enter a parse tree produced by ODParser#propertyName.
     def enterPropertyName(self, ctx:ODParser.PropertyNameContext):
-        self.attribute_name = ctx.getText()
+        self.property = Property(name = ctx.getText(),property_type='NP')
         pass
 
     # Exit a parse tree produced by ODParser#propertyName.
@@ -89,7 +88,7 @@ class ODListener(ParseTreeListener):
     # Enter a parse tree produced by ODParser#propertyValue.
     def enterPropertyValue(self, ctx:ODParser.PropertyValueContext):
 
-        prop = AttributeLink(self.attribute_name,value = ctx.getText(),is_id=False)
+        prop = AttributeLink(value = ctx.getText(),attribute= self.property )
         self.obj.add_slot(prop)
         pass
 
@@ -106,19 +105,17 @@ class ODListener(ParseTreeListener):
     # Exit a parse tree produced by ODParser#linkDeclaration.
     def exitLinkDeclaration(self, ctx:ODParser.LinkDeclarationContext):
         linkParts = ctx.getText().split(":")[0].split(self.linkType)
-
+        linkName = ctx.getText().split(":")[1]
         obj1 = self.getObject(linkParts[0])
         obj2 = self.getObject(linkParts[1])
-        linkEndLeft = LinkEnd(linkParts[0],obj1)
-        linkEndRight = LinkEnd(linkParts[1], obj2)
+        prop = Property(name = linkName, property_type= 'NF')
+        linkEndLeft = LinkEnd(linkName,prop, obj1)
+        linkEndRight = LinkEnd(linkName,prop, obj2)
+        link = Link(linkName, None, [linkEndLeft,linkEndRight])
+        obj1._add_link(link)
+        obj2._add_link(link)
 
-        obj1.add_to_link_end(linkEndLeft)
-        obj1.add_to_link_end(linkEndRight)
 
-
-        # link.add_to_connection(LinkEnd(linkParts[0]))
-        # link.add_to_connection(LinkEnd(linkParts[1]))
-        # self.objs.append(link)
         pass
 
 
@@ -152,13 +149,10 @@ class ODListener(ParseTreeListener):
         pass
 
     def getObject(self, param):
-
         for object in self.objs:
-            for slot in object.get_slots():
-                if slot.name == param:
+            if object.name == param:
                         return object
-                # if slot.get_attribute().is_id:
-                #     pass
+
 
 
 del ODParser

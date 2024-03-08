@@ -1,4 +1,4 @@
-from besser.BUML.metamodel.structural.rules import *
+from besser.BUML.metamodel.ocl.rules import *
 
 class Factory:
 

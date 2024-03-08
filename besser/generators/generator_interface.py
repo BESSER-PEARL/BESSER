@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import Model
 import os
 
 # Interface for code generators
 class GeneratorInterface(ABC):
     
     @abstractmethod
-    def __init__(self, model: DomainModel, output_dir: str = None):
+    def __init__(self, model: Model, output_dir: str = None):
         self.model = model
         self.output_dir = output_dir
 
@@ -15,11 +15,11 @@ class GeneratorInterface(ABC):
         pass
     
     @property
-    def model(self) -> DomainModel:
+    def model(self) -> Model:
         return self.__model
     
     @model.setter
-    def model(self, model: DomainModel):
+    def model(self, model: Model):
         self.__model = model
 
     @property

@@ -14,7 +14,7 @@ is presented in the following code (lines 1-44). Additionally, the ``Python_Gene
 and ``REST API Generator`` code generators are implemented in this example (lines 50-61). Running this script will generate the ``output/`` folder with the
 ``classes.py``, ``models.py``, ``sql_alchemy.py``, ``tables.sql`` and ``rest_api.py`` files produced by each of the Generators respectively.
 
-.. literalinclude:: ../../../tests/library_test/library.py
+.. literalinclude:: ../../../tests/structural/library/library.py
    :language: python
    :linenos:
 

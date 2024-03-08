@@ -1,8 +1,8 @@
 Object model example
 ====================
 
-This example present the Python code of a simple model consisting of a :doc:`../buml_language/model_types/structural` and a :doc:`../buml_language/model_types/object` 
-illustrated in the following figure.
+This example present the Python code to specify a model (illustrated in the following figure) consisting of a 
+:doc:`../buml_language/model_types/structural` and a :doc:`../buml_language/model_types/object`.
 
 .. image:: ../img/library_object.png
   :width: 700

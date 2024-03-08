@@ -1,5 +1,5 @@
-Library
-================
+Structural model example
+========================
 
 This example present the Python code of a basic model (designed with the :doc:`../buml_language`) that describes the typical 
 domain of libraries, books and authors. The UML diagram is depicted in the following figure.

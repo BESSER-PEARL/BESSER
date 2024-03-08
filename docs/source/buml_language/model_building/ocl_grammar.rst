@@ -1,7 +1,7 @@
 Grammar for OCL specification
 =============================
 
-We have designed grammar for parsing OCL constraints. The lexer and parser generated using this grammar can parse all the constraints defined in ` Royal and Loyal Example project <https://github.com/jcabot/ocl-repository/blob/master/academic/RoyalAndLoyal/RoyalAndLoyal.ocl/>`_.
+We have designed grammar for parsing OCL constraints. The lexer and parser generated using this grammar can parse all the constraints defined in `Royal and Loyal Example project <https://github.com/jcabot/ocl-repository/blob/master/academic/RoyalAndLoyal/RoyalAndLoyal.ocl/>`_.
 All the test cases corresponding to these example are in the tests/ocl/test_ocl_parser.py.
 
 The grammar for OCL is shown below:
@@ -186,10 +186,21 @@ To Parse the OCL Constraints you can create the test case using the following co
 
 .. code-block:: python
 
-        ocl = "context LoyaltyAccount::totalPointsEarned : Integer derive :	self.transactions->select( i_Transaction : Transaction | i_Transaction.oclIsTypeOf(Earning) )->collect( i_Transaction : Transaction | i_Transaction.points )->sum()  ;"
-        input_stream = InputStream(ocl)
-        lexer = OCLsLexer(input_stream)
-        stream = CommonTokenStream(lexer)
-        parser = OCLsParser(stream)
-        tree = parser.oclFile()
-        assert parser.getNumberOfSyntaxErrors() == 0
+    from antlr4 import *
+    from besser.BUML.notations.ocl.OCLsLexer import OCLsLexer
+    from besser.BUML.notations.ocl.OCLsParser import OCLsParser
+    from besser.BUML.notations.ocl.OCLsListener import OCLsListener
+    import unittest
+
+    class TestOclParser(unittest.TestCase):
+    # from OCLInterp import OCLInterp
+
+        def test_derive(self):
+
+            ocl = "context LoyaltyAccount::totalPointsEarned : Integer derive :	self.transactions->select( i_Transaction : Transaction | i_Transaction.oclIsTypeOf(Earning) )->collect( i_Transaction : Transaction | i_Transaction.points )->sum()  ;"
+            input_stream = InputStream(ocl)
+            lexer = OCLsLexer(input_stream)
+            stream = CommonTokenStream(lexer)
+            parser = OCLsParser(stream)
+            tree = parser.oclFile()
+            assert parser.getNumberOfSyntaxErrors() == 0

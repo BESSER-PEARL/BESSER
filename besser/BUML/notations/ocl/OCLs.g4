@@ -1,11 +1,5 @@
 grammar OCLs;
 
-//oclFile: contextDeclaration;
-
-//contextDeclaration: CONTEXT ID;
-
-
-
 // Top-level constructs
 oclFile: contextDeclaration (expression  )* ;
 

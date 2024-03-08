@@ -3,9 +3,9 @@ from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
 from besser.BUML.metamodel.object import *
 import datetime
 
-#####################################
-#   Library structural definition   #
-#####################################
+#############################################
+#   Library - structural model definition   #
+#############################################
 
 # Primitive DataTypes
 t_int: PrimitiveDataType = PrimitiveDataType("int")
@@ -46,9 +46,9 @@ library_model : DomainModel = DomainModel(name="Library model", types={library, 
                                           associations={lib_book_association, book_author_association})
 
 
-#################################
-#   Library object definition   #
-#################################
+#########################################
+#   Library - object model definition   #
+#########################################
 
 
 # Library object attributes

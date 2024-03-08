@@ -8,10 +8,9 @@ from besser.generators.sql import SQLGenerator
 from tests.library_test.output.classes import *
 
 
-"""The following model illustrates the output of the BUML model, demonstrating how users can display information about library 
-concepts within the BUML model using concepts in the GUI of mobile apps."""
-
-####################### BUML model  ############################################################################################################
+###################################################
+#   Library class - structural model definition   #
+###################################################
 
 # Primitive DataTypes
 t_str: PrimitiveDataType = PrimitiveDataType("str")
@@ -21,8 +20,9 @@ library_name: Property = Property(name="name", property_type=t_str)
 address: Property = Property(name="address", property_type=t_str)
 library: Class = Class (name="Library", attributes={library_name, address})
 
-
-######################## GUI model #############################################################################################
+##################################
+#      GUI model definition      #
+##################################
 
 #DataSource definition
 datasource_library: ModelElement = ModelElement(name="AwesomeLibrary", dataSourceClass=library, fields={library_name, address})
@@ -62,13 +62,12 @@ MyModule: Module=Module(name=module_name, screens=module_screens)
 
 
 #Application definition:
-application_name:Application.name="Library List App"
 application_package: Application.package="com.example.librarylistapp"
 application_version_Code: Application.versionCode="1"
 application_version_name: Application.versionName="1.0"
 application_description: Application.description="This is a simple Android app"
 application_screenCompatibility:Application.screenCompatibility=False
-MyApp: Application=Application(name=application_name, package=application_package,versionCode=application_version_Code,versionName=application_version_name,description=application_description,screenCompatibility=application_screenCompatibility,modules=[MyModule])
+MyApp: Application=Application(name="Library List App", package=application_package,versionCode=application_version_Code,versionName=application_version_name,description=application_description,screenCompatibility=application_screenCompatibility,modules=[MyModule])
 
 
 print("This App has" + " "+ str(len(MyScreen.components)) +" components")

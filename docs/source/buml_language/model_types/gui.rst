@@ -7,11 +7,18 @@ IFML, we ensure compatibility and interoperability with existing UI modeling too
 syntax also enables the definition of GUI components that read and modify elements from a diversity of data sources, 
 including B-UML model elements.
 
+.. image:: ../../img/gui_mm.png
+  :width: 800
+  :alt: GUI metamodel
+  :align: center
+
 .. note::
 
   The classes highlighted in green originate from the :doc:`structural metamodel <structural>`.
 
-.. image:: ../../img/gui_mm.png
-  :width: 800
-  :alt: B-UML metamodel
-  :align: center
+Supported notations
+-------------------
+
+To create a structural model, you can use the following notation:
+
+* :doc:`Coding in Python Using the B-UML python library <../model_building/buml_core>`

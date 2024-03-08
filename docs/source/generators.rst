@@ -16,3 +16,9 @@ own generator).
    generators/sql
    generators/rest_api
    generators/build_generator
+
+.. warning::
+   
+   Right now, the code generators availables can only handle :doc:`structural models <../buml_language/model_types/structural>`. 
+   But here's the cool part: BESSER offers an interface that makes it easy to :doc:`develop your own code generator </generators/build_generator>` 
+   capable of handling any type of B-UML model.

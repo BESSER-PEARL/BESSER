@@ -8,11 +8,19 @@ the *AttributeLink* class, and associations with other classes are established u
 the object diagram metamodel is primarily utilized for conducting validations or tests on the model. For instance, 
 validating OCL rules over instances of the B-UML model.
 
+.. image:: ../../img/object_mm.png
+  :width: 700
+  :alt: Object metamodel
+  :align: center
+
 .. note::
 
   The classes highlighted in green originate from the :doc:`structural metamodel <structural>`.
 
-.. image:: ../../img/object_mm.png
-  :width: 600
-  :alt: B-UML metamodel
-  :align: center
+Supported notations
+-------------------
+
+To create an object model, you can use any of these notations:
+
+* :doc:`Coding in Python Using the B-UML python library <../model_building/buml_core>`
+* :doc:`Using PlantUML to design you object model <../model_building/plantuml_object>`

@@ -8,12 +8,21 @@ additions have been implemented to provide additional modeling capabilities. For
 has been introduced in the *Property* class to specify whether a property serves as an identifier for the instances of that
 class, a common need in many code generation scenarios.
 
-.. note::
-
-  This metamodel contains only the main classes, attributes, and methods of the B-UML language. For a detailed 
-  description please refer to the :doc:`API documentation <../../api>`.
-
 .. image:: ../../img/structural_mm.png
   :width: 800
   :alt: B-UML metamodel
   :align: center
+
+.. note::
+
+  This figure contains only the main classes, attributes, and methods of the B-UML language. For a detailed 
+  description please refer to the :doc:`API documentation <../../api>`.
+
+Supported notations
+-------------------
+
+To create a structural model, you can use any of these notations:
+
+* :doc:`Coding in Python Using the B-UML python library <../model_building/buml_core>`
+* :doc:`Using PlantUML to design you structural model <../model_building/plantuml>`
+* :doc:`Providing an image (e.g., a photo of yor class diagram model) <../model_building/buml_core>`

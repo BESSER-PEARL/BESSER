@@ -1,4 +1,4 @@
-from besser.BUML.notations.plantUML import plantuml_to_buml
+from besser.BUML.notations.structuralPlantUML import plantuml_to_buml
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators.django import DjangoGenerator
 

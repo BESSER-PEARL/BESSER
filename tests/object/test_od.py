@@ -1,7 +1,7 @@
 from antlr4 import *
-from besser.BUML.notations.od.ODLexer import ODLexer
-from besser.BUML.notations.od.ODParser import ODParser
-from besser.BUML.notations.od.ODListener import ODListener
+from besser.BUML.notations.objectPlantUML.ODLexer import ODLexer
+from besser.BUML.notations.objectPlantUML.ODParser import ODParser
+from besser.BUML.notations.objectPlantUML.ODListener import ODListener
 def test_simple_OD():
     od = "../library_test/libraryObjectDiagram.plantuml"
     all_objs = []

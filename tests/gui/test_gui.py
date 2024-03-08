@@ -29,13 +29,13 @@ def test_unique_module_names():
 
 # Test: Do not have two screens with the same name in an application.
 def test_unique_screen_names():
-    screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", components=[])
-    screen2: Screen = Screen(name="screen2", description="", x_dpi="", y_dpi="", size="SmallScreen", components=[])
-    module1: Module = Module(name="module1", screens=[screen1, screen2])
-    my_app: Application = Application(name="application1", package="", versionCode="", versionName="", description="", screenCompatibility=False, modules=[module1])
+    screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", components={})
+    screen2: Screen = Screen(name="screen2", description="", x_dpi="", y_dpi="", size="SmallScreen", components={})
+    module1: Module = Module(name="module1", screens={screen1, screen2})
+    my_app: Application = Application(name="application1", package="", versionCode="", versionName="", description="", screenCompatibility=False, modules={module1})
     with pytest.raises(ValueError) as excinfo:
         # Try to create a screen with the same name as screen1
-        screen_duplicate: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", components=[])
+        screen_duplicate: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", components={})
         module1.screens = {screen1, screen2, screen_duplicate}
         assert "A module cannot have two screens with the same name" in str(excinfo.value)
 
@@ -43,7 +43,7 @@ def test_unique_screen_names():
 def test_unique_list_names():
     list1: List = List(name="list1", description="", list_sources={})
     list2: List = List(name="list2", description="", list_sources={})
-    screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", components=[list1, list2])
+    screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", components={list1, list2})
     with pytest.raises(ValueError) as excinfo:
         # Try to create a list with the same name as list1
         list_duplicate: List = List(name="list1", description="", list_sources={})
@@ -55,7 +55,7 @@ def test_unique_list_names():
 def test_unique_field_names():
     field1: Property = Property(name="field1", property_type="")
     field2: Property = Property(name="field2", property_type="")
-    modelElement: ModelElement = ModelElement(name="item1", dataSourceClass="", fields=[field1, field2])
+    modelElement: ModelElement = ModelElement(name="item1", dataSourceClass="", fields={field1, field2})
     with pytest.raises(ValueError) as excinfo:
         # Try to create a field with the same name as field1
         field_duplicate: Property = Property(name="field1", property_type="")
@@ -64,12 +64,12 @@ def test_unique_field_names():
 
 # Test: Do not have two items with the same name in a list.
 def test_unique_item_names():
-    item1: ModelElement = ModelElement(name="item1", dataSourceClass="", fields=[])
-    item2: ModelElement = ModelElement(name="item2", dataSourceClass="", fields=[])
-    list1: List = List(name="list1", description="", list_sources=[item1, item2])
+    item1: ModelElement = ModelElement(name="item1", dataSourceClass="", fields={})
+    item2: ModelElement = ModelElement(name="item2", dataSourceClass="", fields={})
+    list1: List = List(name="list1", description="", list_sources={item1, item2})
     with pytest.raises(ValueError) as excinfo:
         # Try to create a item with the same name as item1
-        item_duplicate: ModelElement = ModelElement(name="item1", dataSourceClass="", fields=[])
+        item_duplicate: ModelElement = ModelElement(name="item1", dataSourceClass="", fields={})
         list1.list_sources={item1, item2, item_duplicate}
         assert "A list cannot have two items with the same name" in str(excinfo.value)
 
@@ -77,7 +77,7 @@ def test_unique_item_names():
 def test_unique_button_names():
     button1: Button=Button(name="button1", Label="View List", description="")
     button2: Button=Button(name="button2", Label="Cancel", description="")
-    screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", components=[button1, button2])
+    screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", components={button1, button2})
     with pytest.raises(ValueError) as excinfo:
         # Try to create a button with the same name as button1
         button_duplicate: Button=Button(name="button1", Label="View List", description="")

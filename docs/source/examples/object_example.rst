@@ -9,7 +9,7 @@ This example present the Python code to specify a model (illustrated in the foll
   :alt: Library object model
   :align: center
 
-The Python code to specify the B-UML model, including its classes, attributes, and relationships, is presented in the following
+The Python code to specify the structural and object models (using the B-UML libraries) is presented below., including its classes, attributes, and relationships, is presented in the following
 code (lines 1-44).
 
 .. literalinclude:: ../../../tests/object/library_object.py

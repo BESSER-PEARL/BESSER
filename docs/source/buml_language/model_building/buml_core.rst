@@ -1,5 +1,5 @@
-Build a model using the B-UML library
-=====================================
+Build a model using the B-UML meta-classes
+==========================================
 
 .. note::
     

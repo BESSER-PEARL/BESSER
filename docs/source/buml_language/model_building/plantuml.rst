@@ -1,5 +1,5 @@
-PlantUML grammar for structural models
-======================================
+PlantUML-compatible grammar for structural models
+=================================================
 
 A B-UML model can also be generated from a class model built with `PlantUML <https://plantuml.com/>`_ .
 All you need is to provide the textual model (PlantUML) and our T2M transformation will produce the B-UML 

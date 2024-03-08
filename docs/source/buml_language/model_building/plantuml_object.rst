@@ -1,2 +1,2 @@
-PlantUML grammar for object models
-==================================
+PlantUML-compatible grammar for object models
+=============================================

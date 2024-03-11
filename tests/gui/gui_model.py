@@ -5,7 +5,6 @@ from besser.generators.python_classes import Python_Generator
 from besser.generators.django import DjangoGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
-from tests.library_test.output.classes import *
 
 
 ###################################################

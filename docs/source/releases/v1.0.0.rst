@@ -9,6 +9,3 @@ New features
 * B-UML provides support for OCL specifications
 * New grammar for the OCL specification
 * New REST API code generator to produce the RESTful service for `Fast API framework <https://fastapi.tiangolo.com/>`_.
-
-Improvements
-------------

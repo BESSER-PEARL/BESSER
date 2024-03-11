@@ -17,6 +17,8 @@ We want to recognize the work of the contributors:
 
 * `Aaron Conrardy <https://github.com/Aran30>`_
 * `Fitash UL-HAQ <https://github.com/FitashUlHaq>`_
+* `Atefeh NIRUMAND <https://github.com/AtefehNirumandJazi>`_
+* `Armen SULEJMANI <https://github.com/Arm-Sl>`_
 * `Fedor Chikhachev <https://github.com/FChikh>`_
 
 Contact

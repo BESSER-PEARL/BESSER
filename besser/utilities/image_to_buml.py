@@ -3,7 +3,7 @@ import json
 import base64
 import os
 
-from besser.BUML.notations.plantUML import plantuml_to_buml
+from besser.BUML.notations.structuralPlantUML import plantuml_to_buml
 
 
 def image_to_plantuml(image_path: str, openai_token: str):

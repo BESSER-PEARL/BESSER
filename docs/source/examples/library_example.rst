@@ -1,5 +1,5 @@
-Library
-================
+Structural model example
+========================
 
 This example present the Python code of a basic model (designed with the :doc:`../buml_language`) that describes the typical 
 domain of libraries, books and authors. The UML diagram is depicted in the following figure.
@@ -9,16 +9,16 @@ domain of libraries, books and authors. The UML diagram is depicted in the follo
   :alt: Library model
   :align: center
 
-The Python code to specify the B-UML model, including its classes, attributes, and relationships, is presented in the following
-code (lines 1-44). Additionally, the ``Python_Generator``, ``DjangoGenerator``, ``SQLAlchemyGenerator``, and ``SQLGenerator``
-code generators are implemented in this example (lines 50-61). Running this script will generate the ``output/`` folder with the
-``classes.py``, ``models.py``, ``sql_alchemy.py``, and ``tables.sql`` files produced by each of the Generators respectively.
+The Python code to specify the :doc:`B-UML structural model <../buml_language/model_types/structural>`, including its classes, attributes, and relationships, 
+is presented in the following code (lines 1-44). Additionally, the ``Python_Generator``, ``DjangoGenerator``, ``SQLAlchemyGenerator``, ``SQLGenerator`` 
+and ``REST API Generator`` code generators are implemented in this example (lines 50-61). Running this script will generate the ``output/`` folder with the
+``classes.py``, ``models.py``, ``sql_alchemy.py``, ``tables.sql`` and ``rest_api.py`` files produced by each of the Generators respectively.
 
-.. literalinclude:: ../../../tests/library_test/library.py
+.. literalinclude:: ../../../tests/structural/library/library.py
    :language: python
    :linenos:
 
 .. note::
     
-    A B-UML model can also be created :doc:`from a model designed with PlantUML <../buml_language/plantuml>` or even 
-    :doc:`from an image <../buml_language/image_to_buml>`.
+    This structural model can also be created :doc:`from a model designed with PlantUML <../buml_language/model_building/plantuml>` or even 
+    :doc:`from an image <../buml_language/model_building/image_to_buml>`.

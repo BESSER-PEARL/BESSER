@@ -1,0 +1,22 @@
+Pydantic Classes Generator
+============================
+
+This code generator produces the Pydantic classes, i.e. the set of Pydantic classes that represent the entities and 
+relationships of the B-UML model.
+
+Let's generate the code for the Pydantic classes of our :doc:`../examples/library_example` B-UML model example. 
+You should create a ``Pydantic_Generator`` object, provide the B-UML model, and use the ``generate`` method as follows:
+
+.. code-block:: Pydantic
+    
+    from besser.generators.Pydantic_classes import Pydantic_Generator
+    
+    generator: Pydantic_Generator = Pydantic_Generator(model=library_model)
+    generator.generate()
+
+Upon executing this code, a ``pydantic_classes.py`` file containing the Pydantic models will be generated.  in the ``<<current_directory>>/output`` 
+folder and it will look as follows.
+
+.. literalinclude:: ../../../tests/library_test/output/pydantic_classes.py
+   :language: Python
+   :linenos:

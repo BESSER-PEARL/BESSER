@@ -2,6 +2,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.generators.pydantic_classes import Pydantic_Generator
 
 class RESTAPIGenerator(GeneratorInterface):
     """
@@ -33,8 +34,11 @@ class RESTAPIGenerator(GeneratorInterface):
         folder.
 
         Returns:
-            None, but store the generated code as a file named rest_api.py 
+            None, but store the generated code as a file named rest_api.py and uses the Pydantic_Generator to generate the Pydantic classes
         """
+        pydantic_model = Pydantic_Generator(model=self.model) # in restapigenerator
+        pydantic_model.generate()
+
         file_path = self.build_generation_path(file_name="rest_api.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")

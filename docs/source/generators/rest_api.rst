@@ -15,7 +15,7 @@ You should create a ``RESTAPIGenerator`` object, provide the B-UML model, and us
     rest_api = RESTAPIGenerator(model=library_model)
     rest_api.generate()
 
-Upon executing this code, a ``rest_api.py`` file containing the Pydantic models will be generated.  in the ``<<current_directory>>/output`` 
+Upon executing this code, a ``rest_api.py`` file and ``pydantic_classes.py`` using the ``Pydantic_Generator`` containing the Pydantic models will be generated.  in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
 .. literalinclude:: ../../../tests/library_test/output/rest_api.py

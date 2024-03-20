@@ -5,6 +5,7 @@ from besser.generators.django import DjangoGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.rest_api import RESTAPIGenerator
+from besser.generators.pydantic_classes import Pydantic_Generator
 
 # Primitive DataTypes
 t_int: PrimitiveDataType = PrimitiveDataType("int")
@@ -63,3 +64,9 @@ sql.generate()
 
 rest_api = RESTAPIGenerator(model=library_model)
 rest_api.generate()
+
+'''
+pydantic_model = Pydantic_Generator(model=library_model) #Used in RESTAPIGenerator
+pydantic_model.generate()
+'''
+

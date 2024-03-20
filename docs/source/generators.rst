@@ -12,6 +12,7 @@ own generator).
 
    generators/django
    generators/python
+   generators/pydantic
    generators/alchemy
    generators/sql
    generators/rest_api

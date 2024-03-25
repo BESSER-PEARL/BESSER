@@ -6,6 +6,7 @@ from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.pydantic_classes import Pydantic_Generator
+from besser.generators.backend import Backend_Generator
 
 # Primitive DataTypes
 t_int: PrimitiveDataType = PrimitiveDataType("int")
@@ -16,23 +17,23 @@ t_datetime: PrimitiveDataType = PrimitiveDataType("datetime")
 library_name: Property = Property(name="name", property_type=t_str)
 address: Property = Property(name="address", property_type=t_str)
 # Library class definition
-library: Class = Class (name="Library", attributes={library_name, address})
+library: Class = Class(name="Library", attributes={library_name, address})
 
 # Book attributes definition
 title: Property = Property(name="title", property_type=t_str)
 pages: Property = Property(name="pages", property_type=t_int)
 release: Property = Property(name="release", property_type=t_datetime)
 # Book class definition
-book: Class = Class (name="Book", attributes={title, pages, release})
+book: Class = Class(name="Book", attributes={title, pages, release})
 
 # Author attributes definition
 author_name: Property = Property(name="name", property_type=t_str)
 email: Property = Property(name="email", property_type=t_str)
 # Author class definition
-author: Class = Class (name="Author", attributes={author_name, email})
+author: Class = Class(name="Author", attributes={author_name, email})
 
 # Library-Book association definition
-located_in: Property = Property(name="locatedIn",property_type=library, multiplicity=Multiplicity(1, 1))
+located_in: Property = Property(name="locatedIn", property_type=library, multiplicity=Multiplicity(1, 1))
 has: Property = Property(name="has", property_type=book, multiplicity=Multiplicity(0, "*"))
 lib_book_association: BinaryAssociation = BinaryAssociation(name="lib_book_assoc", ends={located_in, has})
 
@@ -42,14 +43,15 @@ writed_by: Property = Property(name="writedBy", property_type=author, multiplici
 book_author_association: BinaryAssociation = BinaryAssociation(name="book_author_assoc", ends={writed_by, publishes})
 
 # Domain model definition
-library_model : DomainModel = DomainModel(name="Library model", types={library, book, author}, 
-                                          associations={lib_book_association, book_author_association})
+library_model: DomainModel = DomainModel(name="Library model", types={library, book, author},
+                                         associations={lib_book_association, book_author_association})
 
 # Getting the attributes of the Book class
 for attribute in book.attributes:
-    print (attribute.name)
+    print(attribute.name)
 
 # Code Generation
+
 python_model = Python_Generator(model=library_model)
 python_model.generate()
 
@@ -65,8 +67,8 @@ sql.generate()
 rest_api = RESTAPIGenerator(model=library_model)
 rest_api.generate()
 
-'''
-pydantic_model = Pydantic_Generator(model=library_model) #Used in RESTAPIGenerator
+pydantic_model = Pydantic_Generator(model=library_model, backend=True)
 pydantic_model.generate()
-'''
 
+backend = Backend_Generator(model=library_model, http_methods=["GET", "POST", "DELETE"])
+backend.generate()

@@ -20,7 +20,7 @@ from pydantic import BaseModel
 {% endif -%}
 {# Two newlines are added here unconditionally #}
 {% for class in classes %}
-class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC, BaseModel){% else %}(BaseModel){% endif %}:
+class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC, BaseModel){% else %}(BaseModel){% endif %}:
     {% set ns.id_found = false %}
     {% for attribute in class.attributes %}
         {% if attribute.is_id %}
@@ -34,7 +34,7 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
         {% endif %}
     {% endfor -%}
 
-    {% if not ns.id_found and not ns.same_name_found %}
+    {% if not ns.id_found and not ns.same_name_found and not backend %}
     id: int  # the id created
     {% endif %}
 
@@ -55,11 +55,11 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
             {% set class1_name = ns.end1.type.name %}
             {% set class2_name = ns.end2.type.name %}
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
-    {{ association.name.lower() }}: Set["{{ class2_name }}"]  # N:M Relationship
+    {{ association.name.lower() }}: Set["{{ class2_name }}{% if backend %}Create{% endif %}"]  # N:M Relationship
             {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
-    {{ class2_name.lower() }}: "{{ class2_name }}"  # N:1 Relationship
+    {{ class2_name.lower() }}: "{{ class2_name }}{% if backend %}Create{% endif %}"  # N:1 Relationship
             {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
-    {{ class2_name.lower() }}: "{{ class2_name }}"  # 1:1 Relationship
+    {{ class2_name.lower() }}: "{{ class2_name }}{% if backend %}Create{% endif %}"  # 1:1 Relationship
             {% endif %}
                 {% do processed_associations.append(association.name) %}
         {% endif %}

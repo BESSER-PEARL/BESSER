@@ -12,8 +12,9 @@ class Pydantic_Generator(GeneratorInterface):
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
-    def __init__(self, model: DomainModel, output_dir: str = None):
+    def __init__(self, model: DomainModel, backend: bool = False, output_dir: str = None):
         super().__init__(model, output_dir)
+        self.backend = backend
 
     def generate(self):
         """
@@ -28,9 +29,9 @@ class Pydantic_Generator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path),
-                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
+                          trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
         template = env.get_template('pydantic_classes_template.py.j2')
         with open(file_path, mode="w") as f:
-            generated_code = template.render(classes=self.model.classes_sorted_by_inheritance())
+            generated_code = template.render(classes=self.model.classes_sorted_by_inheritance(), backend=self.backend)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

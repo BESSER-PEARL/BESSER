@@ -30,16 +30,16 @@ class Author(Base):
     
     __tablename__ = "author"
     id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(100))
+    email: Mapped[str] = mapped_column(String(100))
 
 class Book(Base):
     
     __tablename__ = "book"
     id: Mapped[int] = mapped_column(primary_key=True)
-    pages: Mapped[int] = mapped_column(Integer)
-    title: Mapped[str] = mapped_column(String(100))
     release: Mapped[datetime] = mapped_column(DateTime)
+    title: Mapped[str] = mapped_column(String(100))
+    pages: Mapped[int] = mapped_column(Integer)
 
 class Library(Base):
     

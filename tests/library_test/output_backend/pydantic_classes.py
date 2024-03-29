@@ -9,16 +9,14 @@ from pydantic import BaseModel
 ############################################
 
 class AuthorCreate(BaseModel):
-    email: str
     name: str
-    book_author_assoc: Set["BookCreate"]  # N:M Relationship
+    email: str
  
 
 class BookCreate(BaseModel):
-    pages: int
-    title: str
     release: datetime
-    library: "LibraryCreate"  # N:1 Relationship
+    title: str
+    pages: int
  
 
 class LibraryCreate(BaseModel):

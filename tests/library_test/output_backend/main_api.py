@@ -33,6 +33,7 @@ def get_db():
 #   Author functions
 #
 ############################################
+
 @app.get("/author/", response_model=None)
 def get_all_author(database: Session = Depends(get_db)) -> list[Author]:
     author_list = database.query(Author).all()
@@ -40,31 +41,43 @@ def get_all_author(database: Session = Depends(get_db)) -> list[Author]:
 
 
 @app.get("/author/{author_id}/", response_model=None)
-async def get_author(author_id : int, database: Session = Depends(get_db)) -> Author:
-    author = database.query(Author).filter(Author.id == {author_id}).first()
-    if author is None:
+async def get_author(author_id: int, database: Session = Depends(get_db)) -> Author:
+    db_author = database.query(Author).filter(Author.id == author_id).first()
+    if db_author is None:
         raise HTTPException(status_code=404, detail="Author not found")
-    database.delete(author)
-    database.commit()
-    return author
+    return db_author
 
 
-@app.post("/author/", response_model=None, tags=["author"])
-def create_author(author: AuthorCreate, database: Session = Depends(get_db)) -> Author:
+@app.post("/author/", response_model=None)
+async def create_author(author: AuthorCreate, database: Session = Depends(get_db)) -> Author:
     db_author = Author(**author.dict())
     database.add(db_author)
     database.commit()
     database.refresh(db_author)
     return db_author
 
-@app.delete("/author/{author_id}/", response_model=None)
-def delete_author(author_id: int, database: Session = Depends(get_db)):
-    author = database.query(Author).filter(Author.id == {author_id}).first()
-    if author is None:
+@app.put("/author/{author_id}/", response_model=None)
+async def update_author(author_id: int, author: AuthorCreate, database: Session = Depends(get_db)) -> Author:
+    db_author = database.query(Author).filter(Author.id == author_id).first()
+    if db_author is None:
         raise HTTPException(status_code=404, detail="Author not found")
-    database.delete(author)
+
+    for key, value in author.dict().items():
+        setattr(db_author, key, value)
+
     database.commit()
-    return author
+    database.refresh(db_author)
+    return db_author
+
+@app.delete("/author/{author_id}/", response_model=None)
+async def delete_author(author_id: int, database: Session = Depends(get_db)):
+    db_author = database.query(Author).filter(Author.id == author_id).first()
+    if db_author is None:
+        raise HTTPException(status_code=404, detail="Author not found")
+    database.delete(db_author)
+    database.commit()
+    return db_author
+
 
 
 
@@ -73,6 +86,7 @@ def delete_author(author_id: int, database: Session = Depends(get_db)):
 #   Book functions
 #
 ############################################
+
 @app.get("/book/", response_model=None)
 def get_all_book(database: Session = Depends(get_db)) -> list[Book]:
     book_list = database.query(Book).all()
@@ -80,31 +94,43 @@ def get_all_book(database: Session = Depends(get_db)) -> list[Book]:
 
 
 @app.get("/book/{book_id}/", response_model=None)
-async def get_book(book_id : int, database: Session = Depends(get_db)) -> Book:
-    book = database.query(Book).filter(Book.id == {book_id}).first()
-    if book is None:
+async def get_book(book_id: int, database: Session = Depends(get_db)) -> Book:
+    db_book = database.query(Book).filter(Book.id == book_id).first()
+    if db_book is None:
         raise HTTPException(status_code=404, detail="Book not found")
-    database.delete(book)
-    database.commit()
-    return book
+    return db_book
 
 
-@app.post("/book/", response_model=None, tags=["book"])
-def create_book(book: BookCreate, database: Session = Depends(get_db)) -> Book:
+@app.post("/book/", response_model=None)
+async def create_book(book: BookCreate, database: Session = Depends(get_db)) -> Book:
     db_book = Book(**book.dict())
     database.add(db_book)
     database.commit()
     database.refresh(db_book)
     return db_book
 
-@app.delete("/book/{book_id}/", response_model=None)
-def delete_book(book_id: int, database: Session = Depends(get_db)):
-    book = database.query(Book).filter(Book.id == {book_id}).first()
-    if book is None:
+@app.put("/book/{book_id}/", response_model=None)
+async def update_book(book_id: int, book: BookCreate, database: Session = Depends(get_db)) -> Book:
+    db_book = database.query(Book).filter(Book.id == book_id).first()
+    if db_book is None:
         raise HTTPException(status_code=404, detail="Book not found")
-    database.delete(book)
+
+    for key, value in book.dict().items():
+        setattr(db_book, key, value)
+
     database.commit()
-    return book
+    database.refresh(db_book)
+    return db_book
+
+@app.delete("/book/{book_id}/", response_model=None)
+async def delete_book(book_id: int, database: Session = Depends(get_db)):
+    db_book = database.query(Book).filter(Book.id == book_id).first()
+    if db_book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+    database.delete(db_book)
+    database.commit()
+    return db_book
+
 
 
 
@@ -113,6 +139,7 @@ def delete_book(book_id: int, database: Session = Depends(get_db)):
 #   Library functions
 #
 ############################################
+
 @app.get("/library/", response_model=None)
 def get_all_library(database: Session = Depends(get_db)) -> list[Library]:
     library_list = database.query(Library).all()
@@ -120,31 +147,43 @@ def get_all_library(database: Session = Depends(get_db)) -> list[Library]:
 
 
 @app.get("/library/{library_id}/", response_model=None)
-async def get_library(library_id : int, database: Session = Depends(get_db)) -> Library:
-    library = database.query(Library).filter(Library.id == {library_id}).first()
-    if library is None:
+async def get_library(library_id: int, database: Session = Depends(get_db)) -> Library:
+    db_library = database.query(Library).filter(Library.id == library_id).first()
+    if db_library is None:
         raise HTTPException(status_code=404, detail="Library not found")
-    database.delete(library)
-    database.commit()
-    return library
+    return db_library
 
 
-@app.post("/library/", response_model=None, tags=["library"])
-def create_library(library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
+@app.post("/library/", response_model=None)
+async def create_library(library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
     db_library = Library(**library.dict())
     database.add(db_library)
     database.commit()
     database.refresh(db_library)
     return db_library
 
-@app.delete("/library/{library_id}/", response_model=None)
-def delete_library(library_id: int, database: Session = Depends(get_db)):
-    library = database.query(Library).filter(Library.id == {library_id}).first()
-    if library is None:
+@app.put("/library/{library_id}/", response_model=None)
+async def update_library(library_id: int, library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
+    db_library = database.query(Library).filter(Library.id == library_id).first()
+    if db_library is None:
         raise HTTPException(status_code=404, detail="Library not found")
-    database.delete(library)
+
+    for key, value in library.dict().items():
+        setattr(db_library, key, value)
+
     database.commit()
-    return library
+    database.refresh(db_library)
+    return db_library
+
+@app.delete("/library/{library_id}/", response_model=None)
+async def delete_library(library_id: int, database: Session = Depends(get_db)):
+    db_library = database.query(Library).filter(Library.id == library_id).first()
+    if db_library is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+    database.delete(db_library)
+    database.commit()
+    return db_library
+
 
 
 
@@ -156,7 +195,7 @@ def delete_library(library_id: int, database: Session = Depends(get_db)):
 if __name__ == "__main__":
     import uvicorn
     openapi_schema = app.openapi()
-    output_dir = os.path.join(os.getcwd(), 'output')
+    output_dir = os.path.join(os.getcwd(), 'output_backend')
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'openapi_specs.json')
     print(f"Writing OpenAPI schema to {output_file}")

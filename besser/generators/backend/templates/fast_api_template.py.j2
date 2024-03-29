@@ -35,20 +35,6 @@ def get_db():
 #
 ############################################
 
-{%- set result = [None] %}
-{%- for attribute in class.attributes %}
-  {%- if attribute.is_id and not result[0] %}
-    {%- set _ = result.pop() %}
-    {%- set _ = result.append(attribute.name) %}
-    {# Exit the loop if we validate the condition #}
-  {%- endif %}
-{%- endfor %}
-
-{%- if not result[0] %}
-  {%- set _ = result.pop() %}
-  {%- set _ = result.append('id_to_change') %}
-{%- endif %}
-
 {% if "GET" in http_methods %}
 @app.get("/{{ class.name | lower}}/", response_model=None)
 def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list[{{ class.name }}]:
@@ -57,19 +43,17 @@ def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list
 
 
 @app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
-async def get_{{ class.name | lower}}({{ class.name | lower}}_id : int, database: Session = Depends(get_db)) -> {{ class.name }}:
-    {{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}).first()
-    if {{ class.name | lower}} is None:
+async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)) -> {{ class.name }}:
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
-    database.delete({{ class.name | lower}})
-    database.commit()
-    return {{ class.name | lower}}
+    return db_{{ class.name | lower}}
 
 {% endif %}
 
 {% if "POST" in http_methods %}
-@app.post("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name | lower}}"])
-def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+@app.post("/{{ class.name | lower}}/", response_model=None)
+async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
     db_{{ class.name | lower}} = {{ class.name }}(**{{ class.name | lower}}.dict())
     database.add(db_{{ class.name | lower}})
     database.commit()
@@ -77,42 +61,34 @@ def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name }}Crea
     return db_{{ class.name | lower}}
 {% endif %}
 
+{% if "PUT" in http_methods %}
+{% if class.is_read_only == False %}
+@app.put("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
+async def update_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{ class.name | lower}}: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    for key, value in {{ class.name | lower}}.dict().items():
+        setattr(db_{{ class.name | lower}}, key, value)
+
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
+    return db_{{ class.name | lower}}
+{% endif %}
+
 {% if "DELETE" in http_methods %}
 @app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
-def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
-    {{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}).first()
-    if {{ class.name | lower}} is None:
+async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
-    database.delete({{ class.name | lower}})
+    database.delete(db_{{ class.name | lower}})
     database.commit()
-    return {{ class.name | lower}}
+    return db_{{ class.name | lower}}
 {% endif %}
 
-{% if "PUT" in http_methods %}
-#Too see
-{% if class.is_read_only == False %}
-@app.put("/{{ class.name | lower}}/{attribute_id}/", response_model={{ class.name }}, tags=["{{ class.name | lower}}"])
-def change_{{ class.name | lower}}(attribute_id : str, updated_{{ class.name | lower}}: {{ class.name }}):
-    for index, {{ class.name | lower}} in enumerate({{ class.name | lower}}_list):
-        if {{ class.name | lower}}.{{ result[0] }} == attribute_id:
-            {{ class.name | lower}}_list[index] = updated_{{ class.name | lower}}
-            return updated_{{ class.name | lower}}
-    raise HTTPException(status_code=404, detail="{{ class.name }} not found")
-{% endif %}
 
-{% if "PATCH" in http_methods %}
-#To see
-@app.patch("/{{ class.name | lower}}/{attribute_id}/{attribute_to_change}", response_model={{ class.name }}, tags=["{{ class.name | lower}}"])
-def update_{{ class.name | lower}}(attribute_id : str,  attribute_to_change: str, updated_data: str):
-    for {{ class.name | lower}} in {{ class.name | lower}}_list:
-        if {{ class.name | lower}}.{{ result[0] }} == attribute_id:
-            if hasattr({{ class.name | lower}}, attribute_to_change):
-                setattr({{ class.name | lower}}, attribute_to_change, updated_data)
-                return {{ class.name | lower}}
-            else:
-                raise HTTPException(status_code=400, detail=f"Attribute '{attribute_to_change}' does not exist")
-    raise HTTPException(status_code=404, detail="{{ class.name }} not found")
-{% endif %}
 {% endif %}
 
 
@@ -127,7 +103,7 @@ def update_{{ class.name | lower}}(attribute_id : str,  attribute_to_change: str
 if __name__ == "__main__":
     import uvicorn
     openapi_schema = app.openapi()
-    output_dir = os.path.join(os.getcwd(), 'output')
+    output_dir = os.path.join(os.getcwd(), 'output_backend')
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'openapi_specs.json')
     print(f"Writing OpenAPI schema to {output_file}")

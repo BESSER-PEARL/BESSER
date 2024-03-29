@@ -44,7 +44,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {% else %}
         "{{ end.type.name }}"
     {% endif %}{% endfor %}-#}
-
+{% if not backend %}
     {% for association in class.associations %}
         {% if association.ends|length == 2 and association.name not in processed_associations %}
             {% set ns = namespace(end1=None, end2=None) %}
@@ -55,7 +55,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
             {% set class1_name = ns.end1.type.name %}
             {% set class2_name = ns.end2.type.name %}
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
-    {{ association.name.lower() }}: Set["{{ class2_name }}{% if backend %}Create{% endif %}"]  # N:M Relationship
+    {{ class2_name.lower() }}s: Set["{{ class2_name }}{% if backend %}Create{% endif %}"]  # N:M Relationship
             {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
     {{ class2_name.lower() }}: "{{ class2_name }}{% if backend %}Create{% endif %}"  # N:1 Relationship
             {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
@@ -64,6 +64,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                 {% do processed_associations.append(association.name) %}
         {% endif %}
     {% endfor %}
+{% endif %}
     {% if not class.attributes -%}
         pass 
     {% endif %} 

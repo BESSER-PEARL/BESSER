@@ -70,5 +70,5 @@ rest_api.generate()
 pydantic_model = Pydantic_Generator(model=library_model, backend=True)
 pydantic_model.generate()
 
-backend = Backend_Generator(model=library_model, http_methods=["GET", "POST", "DELETE"])
+backend = Backend_Generator(model=library_model, http_methods=["GET", "POST", "PUT", "DELETE"])
 backend.generate()

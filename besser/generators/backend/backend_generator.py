@@ -52,7 +52,7 @@ class Backend_Generator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path),
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
-        template = env.get_template('fast_api_template.py.j2')
+        template = env.get_template('backend_fast_api_template.py.j2')
         with open(file_path, mode="w") as f:
             generated_code = template.render(classes=self.model.classes_sorted_by_inheritance(),
                                              http_methods=self.http_methods)

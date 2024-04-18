@@ -50,7 +50,7 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
     return db_{{ class.name | lower}}
 
 {% endif %}
-
+{#
 {% if "POST" in http_methods %}
 @app.post("/{{ class.name | lower}}/", response_model=None)
 async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
@@ -60,9 +60,87 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name 
     database.refresh(db_{{ class.name | lower}})
     return db_{{ class.name | lower}}
 {% endif %}
+#}
 
-{% if "PUT" in http_methods %}
+    {#
+{% for end in class.association_ends() if end.owner.ends|length == 2 %}
+    {% if end.multiplicity.max == 1 %}
+        {{ end.type.name }}
+        {% set ns.end_name_one = end.type.name %}
+        {{ end.type.name.lower() }}
+    {% elif end.multiplicity.max > 1 %}
+        {{ end.type.name }}
+        {% set ns.end_name_multiple = end.type.name %}
+        {{ end.type.name.lower() }}
+    {% endif %}
+{% endfor %}
+    #}
+{% set ns = namespace(end_name_one=[], end_name_multiple=[], manytomany_associations=[], processed_associations=[]) %}
+{% for association in class.associations %}
+    {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
+        {% set lns = namespace(end1=None, end2=None) %}
+        {% for end in association.ends %}
+            {% set lns.end1 = end if end.type.name == class.name else lns.end1 %}
+            {% set lns.end2 = end if end.type.name != class.name else lns.end2 %}
+        {% endfor %}
+        {% set class1_name = lns.end1.type.name %}
+        {% set class2_name = lns.end2.type.name %}
+        {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
+            {% do ns.end_name_multiple.append((class2_name,association.name.lower())) %}
+        {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append(class2_name) %}
+        {#{% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max == 1 %}
+            # 1:1 Relationship#}
+        {% endif %}
+        {#% do ns.processed_associations.append(association.name) {% do ns.end_name_multiple.append(class2_name, association.name.lower()) %}%#}
+    {% endif %}
+{% endfor %}
+
+
+{% if "POST" in http_methods %}
+@app.post("/{{ class.name | lower}}/", response_model=None)
+async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+
+    {% if ns.end_name_one -%}
+    {% for x in ns.end_name_one %}
+    db_{{x|lower}} = database.query({{x}}).filter({{x}}.id == {{ class.name | lower}}.{{x|lower}}_id).first()
+    if not db_{{x|lower}}:
+        raise HTTPException(status_code=400, detail="{{x}} not found")
+    {% endfor -%}
+    {% endif %}
+
+    db_{{ class.name | lower}} = {{ class.name }}(**{{ class.name | lower}}.dict())
+    database.add(db_{{ class.name | lower}})
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
+
+    {% if ns.end_name_multiple %}
+    {% for x in ns.end_name_multiple %}
+    {#% set end_name_multiple_lower = ns.end_name_multiple.lower() %#}
+    for {{x[0] | lower}}_data in {{ class.name | lower}}.{{x[0] | lower}}s:
+        if {{x[0] | lower}}_data.id:
+            db_{{x[0] | lower}}= database.query({{x[0]}}).filter({{x[0]}}.id == {{ x[0]|lower }}_data.id).first()
+            if not db_{{ x[0]|lower }}:
+                raise HTTPException(status_code=404, detail=f"{{x[0]}} with ID {{ x[0]|lower }}_data.id not found")
+        else:
+            db_{{ x[0]|lower }} = {{x[0]}}(**{{ x[0] }}.dict())
+            database.add(db_{{ x[0]|lower }})
+            database.commit()
+            database.refresh(db_{{ x[0]|lower }})
+
+        # Create the association
+        association = {{x[1]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.id, {{ x[0]|lower }}_id=db_{{ x[0]|lower }}.id)
+        database.execute(association)
+        database.commit()
+    {% endfor %}
+    {% endif %}
+
+    return db_{{ class.name | lower}}
+
+{% endif %}
+
 {% if class.is_read_only == False %}
+{% if "PUT" in http_methods %}
 @app.put("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
 async def update_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{ class.name | lower}}: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
@@ -87,7 +165,6 @@ async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, databa
     database.commit()
     return db_{{ class.name | lower}}
 {% endif %}
-
 
 {% endif %}
 

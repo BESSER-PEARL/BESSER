@@ -6,9 +6,9 @@ CREATE TABLE IF NOT EXISTS Library (
 
 CREATE TABLE IF NOT EXISTS Book (
     Book_id SERIAL PRIMARY KEY,
+    title varchar(100),      
     pages int,      
-    release timestamp,      
-    title varchar(100)
+    release timestamp
 );
 
 CREATE TABLE IF NOT EXISTS Author (

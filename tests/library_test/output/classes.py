@@ -33,13 +33,21 @@ class Library:
         self.__has = has
     
 class Book:
-    def __init__(self, pages: int, release: datetime, title: str, locatedIn: "Library", writedBy: set["Author"]):
+    def __init__(self, title: str, pages: int, release: datetime, writedBy: set["Author"], locatedIn: "Library"):
+        self.title = title
         self.pages = pages
         self.release = release
-        self.title = title
-        self.locatedIn = locatedIn 
         self.writedBy = writedBy 
+        self.locatedIn = locatedIn 
         
+    @property
+    def title(self) -> str:
+        return self.__title
+    
+    @title.setter
+    def title(self, title: str):
+        self.__title = title
+    
     @property
     def pages(self) -> int:
         return self.__pages
@@ -57,12 +65,12 @@ class Book:
         self.__release = release
     
     @property
-    def title(self) -> str:
-        return self.__title
+    def writedBy(self):
+        return self.__writedBy
     
-    @title.setter
-    def title(self, title: str):
-        self.__title = title
+    @writedBy.setter
+    def writedBy(self, writedBy):
+        self.__writedBy = writedBy
     
     @property
     def locatedIn(self):
@@ -71,14 +79,6 @@ class Book:
     @locatedIn.setter
     def locatedIn(self, locatedIn):
         self.__locatedIn = locatedIn
-    
-    @property
-    def writedBy(self):
-        return self.__writedBy
-    
-    @writedBy.setter
-    def writedBy(self, writedBy):
-        self.__writedBy = writedBy
     
 class Author:
     def __init__(self, name: str, email: str, publishes: set["Book"]):

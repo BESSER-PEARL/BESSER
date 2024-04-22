@@ -34,7 +34,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
         {% endif %}
     {% endfor -%}
 
-    {% if not ns.id_found and not ns.same_name_found %}
+    {% if not ns.id_found and not ns.same_name_found and not backend %}
     id: int  # id created
     {% endif -%}
 
@@ -48,7 +48,11 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
             {% set class1_name = ns.end1.type.name %}
             {% set class2_name = ns.end2.type.name %}
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
-    {{ class2_name.lower() }}s: Set["{{ class2_name }}{% if backend %}Create{% endif %}"]  # N:M Relationship
+            {% if not backend %}
+    {{ class2_name.lower() }}s: Set["{{ class2_name }}"]  # N:M Relationship
+            {% else %}
+    {{ class2_name.lower() }}s_id: List[int]
+            {% endif %}
             {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
             {% if not backend %}
     {{ class2_name.lower() }}: "{{ class2_name }}"  # N:1 Relationship
@@ -64,8 +68,8 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
         {% endif %}
     {% endfor %}
 
-    {% if not class.attributes and not backend -%}
-        pass
+    {% if not class.attributes %}
+    pass
     {% endif %} 
 {# Two newlines are added here unconditionally #}
 

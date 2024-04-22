@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from typing import List, Set
 from pydantic import BaseModel
 
@@ -8,24 +8,25 @@ from pydantic import BaseModel
 #
 ############################################
 
-class Author(BaseModel):
+class LibraryCreate(BaseModel):
+    address: str
     name: str
-    email: str
-    id: int  # the id created
-    books: Set["Book"]  # N:M Relationship
+
  
 
-class Book(BaseModel):
+class BookCreate(BaseModel):
+    title: str
     pages: int
     release: datetime
-    title: str
-    id: int  # the id created
-    library: "Library"  # N:1 Relationship
+    authors_id: List[int]
+    library_id: int
+
  
 
-class Library(BaseModel):
+class AuthorCreate(BaseModel):
     name: str
-    address: str
-    id: int  # the id created
+    email: str
+    books_id: List[int]
+
  
 

@@ -6,7 +6,6 @@ from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.pydantic_classes import Pydantic_Generator
 
 
-
 class Backend_Generator(GeneratorInterface):
     """
     Backend_Generator is a class that implements the GeneratorInterface and is responsible for generating
@@ -31,7 +30,7 @@ class Backend_Generator(GeneratorInterface):
     def generate(self):
         """
         Generates Backend model code based on the provided B-UML model and saves it to the specified output directory.
-        If the output directory was not specified, the code generated will be stored in the <current directory>/output
+        If the output directory was not specified, the code generated will be stored in the <current directory>/output_backend
         folder.
 
         Returns:

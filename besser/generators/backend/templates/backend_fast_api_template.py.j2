@@ -107,9 +107,19 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name 
     if not db_{{x|lower}}:
         raise HTTPException(status_code=400, detail="{{x}} not found")
     {% endfor -%}
+    {%- endif %}
+    
+    {#-excluded_fields = {k: v for k, v in {{ class.name | lower}}.dict().items() if k not in ['{% for x in ns.end_name_multiple %}{{x[0]|lower}}s_id{% if not loop.last %}','{% endif %}{% endfor %}']}
+    db_{{ class.name | lower}} = {{ class.name }}(**excluded_fields)-#}
+
+    {%if class.attributes%}
+    db_{{ class.name | lower}} = {{ class.name }}({% for attribute in class.attributes %}{{attribute.name}}={{ class.name | lower}}.{{attribute.name}}{% if not loop.last %}, {% endif %}{% endfor %})
+    {% else %}
+    {% for parent in class.parents()  %}
+    db_{{ class.name | lower}} = {{ class.name }}({%for attrparent in parent.attributes %}{{attrparent.name}}={{ class.name | lower}}.{{attrparent.name}}{% if not loop.last %}, {% endif %}{% endfor %})
+    {% endfor %}
     {% endif %}
 
-    db_{{ class.name | lower}} = {{ class.name }}(**{{ class.name | lower}}.dict())
     database.add(db_{{ class.name | lower}})
     database.commit()
     database.refresh(db_{{ class.name | lower}})
@@ -117,24 +127,17 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name 
     {% if ns.end_name_multiple %}
     {% for x in ns.end_name_multiple %}
     {#% set end_name_multiple_lower = ns.end_name_multiple.lower() %#}
-    for {{x[0] | lower}}_data in {{ class.name | lower}}.{{x[0] | lower}}s:
-        if {{x[0] | lower}}_data.id:
-            db_{{x[0] | lower}}= database.query({{x[0]}}).filter({{x[0]}}.id == {{ x[0]|lower }}_data.id).first()
-            if not db_{{ x[0]|lower }}:
-                raise HTTPException(status_code=404, detail=f"{{x[0]}} with ID {{ x[0]|lower }}_data.id not found")
-        else:
-            db_{{ x[0]|lower }} = {{x[0]}}(**{{ x[0] }}.dict())
-            database.add(db_{{ x[0]|lower }})
+    if {{ class.name | lower}}.{{x[0] | lower}}s_id and len({{ class.name | lower}}.{{x[0] | lower}}s_id) != []:
+        for x in {{ class.name | lower}}.{{x[0] | lower}}s_id:
+            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == x).first()
+            if not db_{{x[0] | lower}}:
+                raise HTTPException(status_code=404, detail=f"{{x[0]}} with ID {x} not found")
+            # Create the association
+            association = {{x[1]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.id, {{ x[0]|lower }}_id=db_{{ x[0]|lower }}.id)
+            database.execute(association)
             database.commit()
-            database.refresh(db_{{ x[0]|lower }})
-
-        # Create the association
-        association = {{x[1]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.id, {{ x[0]|lower }}_id=db_{{ x[0]|lower }}.id)
-        database.execute(association)
-        database.commit()
-    {% endfor %}
+    {% endfor -%}
     {% endif %}
-
     return db_{{ class.name | lower}}
 
 {% endif %}

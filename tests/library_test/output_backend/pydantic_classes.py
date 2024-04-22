@@ -8,28 +8,25 @@ from pydantic import BaseModel
 #
 ############################################
 
+class LibraryCreate(BaseModel):
+    address: str
+    name: str
+
+ 
+
 class BookCreate(BaseModel):
-    pages: int
     title: str
+    pages: int
     release: datetime
-    id: int  # id created
+    authors_id: List[int]
     library_id: int
-    authors: Set["AuthorCreate"]  # N:M Relationship
 
  
 
 class AuthorCreate(BaseModel):
     name: str
     email: str
-    id: int  # id created
-    books: Set["BookCreate"]  # N:M Relationship
-
- 
-
-class LibraryCreate(BaseModel):
-    address: str
-    name: str
-    id: int  # id created
+    books_id: List[int]
 
  
 

@@ -7,3 +7,4 @@ See the following examples where we define B-UML models and implement some code 
 
    examples/library_example
    examples/dpp
+   examples/full_backend

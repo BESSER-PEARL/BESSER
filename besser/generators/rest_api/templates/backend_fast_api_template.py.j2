@@ -1,0 +1,185 @@
+import uvicorn
+import os, json
+from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+from pydantic_classes import *
+from sql_alchemy import *
+
+############################################
+#
+#   Initialize the database
+#
+############################################
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///./database.db"
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base.metadata.create_all(bind=engine)
+
+
+app = FastAPI()
+
+# Initialize database session
+def get_db():
+    database = SessionLocal()
+    yield database
+    database.close()
+
+{% for class in classes %}
+############################################
+#
+#   {{ class.name }} functions
+#
+############################################
+
+{% if "GET" in http_methods %}
+@app.get("/{{ class.name | lower}}/", response_model=None)
+def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list[{{ class.name }}]:
+    {{ class.name | lower}}_list = database.query({{ class.name }}).all()
+    return {{ class.name | lower}}_list
+
+
+@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
+async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)) -> {{ class.name }}:
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    return db_{{ class.name | lower}}
+
+{% endif %}
+
+{% set ns = namespace(end_name_one=[], end_name_multiple=[], manytomany_associations=[], processed_associations=[]) %}
+{% for association in class.associations %}
+    {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
+        {% set lns = namespace(end1=None, end2=None) %}
+        {% for end in association.ends %}
+            {% set lns.end1 = end if end.type.name == class.name else lns.end1 %}
+            {% set lns.end2 = end if end.type.name != class.name else lns.end2 %}
+        {% endfor %}
+        {% set class1_name = lns.end1.type.name %}
+        {% set class2_name = lns.end2.type.name %}
+        {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
+            {% do ns.end_name_multiple.append((class2_name,association.name.lower())) %}
+        {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append(class2_name) %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+
+
+{% if "POST" in http_methods %}
+@app.post("/{{ class.name | lower}}/", response_model=None)
+async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+
+    {% if ns.end_name_one %}
+    {% for x in ns.end_name_one %}
+    if {{ class.name | lower}}.{{x|lower}}_id:
+        db_{{x|lower}} = database.query({{x}}).filter({{x}}.id == {{ class.name | lower}}.{{x|lower}}_id).first()
+        if not db_{{x|lower}}:
+            raise HTTPException(status_code=400, detail="{{x}} not found")
+    {% endfor -%}
+    {%- endif %}
+
+    {%if class.attributes%}
+    db_{{ class.name | lower}} = {{ class.name }}({% for attribute in class.attributes %}{{attribute.name}}={{ class.name | lower}}.{{attribute.name}}{% if not loop.last %}, {% endif %}{% endfor %}{% if ns.end_name_one %}{% for x in ns.end_name_one %}, {{x|lower}}_id={{ class.name | lower}}.{{x|lower}}_id{% endfor %}{% endif %})
+    {% else %}
+    {% for parent in class.parents()  %}
+    db_{{ class.name | lower}} = {{ class.name }}({%for attrparent in parent.attributes %}{{attrparent.name}}={{ class.name | lower}}.{{attrparent.name}}{% if not loop.last %}, {% endif %}{% endfor %}{% if ns.end_name_one %}{% for x in ns.end_name_one %}, {{x|lower}}_id={{ class.name | lower}}.{{x|lower}}_id{% endfor %}{% endif %})
+    {% endfor %}
+    {% endif %}
+
+    database.add(db_{{ class.name | lower}})
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
+
+    {% if ns.end_name_multiple and by_id %}
+    {% for x in ns.end_name_multiple %}
+    if {{ class.name | lower}}.{{x[0] | lower}}s_id and len({{ class.name | lower}}.{{x[0] | lower}}s_id) != []:
+        for x in {{ class.name | lower}}.{{x[0] | lower}}s_id:
+            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == x).first()
+            if not db_{{x[0] | lower}}:
+                raise HTTPException(status_code=404, detail=f"{{x[0]}} with ID {x} not found")
+            # Create the association
+            association = {{x[1]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.id, {{ x[0]|lower }}_id=db_{{ x[0]|lower }}.id)
+            database.execute(association)
+            database.commit()
+    {% endfor -%}
+    {% endif %}
+
+    {%if not by_id%}
+    {% for x in ns.end_name_multiple %}
+    if {{ class.name | lower}}.{{x[0] | lower}}s and len({{ class.name | lower}}.{{x[0] | lower}}s) != [] and {{ class.name | lower}}.{{x[0] | lower}}s != ["string"]:
+        for x in {{ class.name | lower}}.{{x[0] | lower}}s:
+            {%for lk_class in classes%}
+                {% if lk_class.name == x[0] %}
+
+            db_{{x[0] | lower}} = {{x[0]}}({%for attr in lk_class.attributes%}{{attr.name}}=x.{{attr.name}}{% if not loop.last %}, {% endif %}{%endfor%})
+            database.add(db_{{x[0] | lower}})
+            database.commit()
+            # Create the association
+            association = {{x[1]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.id, {{ x[0]|lower }}_id=db_{{ x[0]|lower }}.id)
+            database.execute(association)
+            database.commit()
+            {% endif %}
+            {%endfor%}
+    {% endfor %}
+    {% endif %}
+    
+    return db_{{ class.name | lower}}
+
+{% endif %}
+
+{% if class.is_read_only == False %}
+{% if "PUT" in http_methods %}
+@app.put("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
+async def update_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{ class.name | lower}}: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    for key, value in {{ class.name | lower}}.dict().items():
+        setattr(db_{{ class.name | lower}}, key, value)
+
+    database.commit()
+    database.refresh(db_{{ class.name | lower}})
+    return db_{{ class.name | lower}}
+{% endif %}
+
+{% if "DELETE" in http_methods %}
+@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
+async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    database.delete(db_{{ class.name | lower}})
+    database.commit()
+    return db_{{ class.name | lower}}
+{% endif %}
+
+{% endif %}
+
+
+{# Two newlines are added here unconditionally #}
+{% endfor %}
+
+
+############################################
+# Maintaining the server
+############################################
+if __name__ == "__main__":
+    import uvicorn
+    openapi_schema = app.openapi()
+    output_dir = os.path.join(os.getcwd(), 'output_backend')
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, 'openapi_specs.json')
+    print(f"Writing OpenAPI schema to {output_file}")
+    with open(output_file, 'w') as file:
+        json.dump(openapi_schema, file)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+
+

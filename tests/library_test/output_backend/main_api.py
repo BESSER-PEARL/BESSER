@@ -30,66 +30,6 @@ def get_db():
 
 ############################################
 #
-#   Library functions
-#
-############################################
-
-@app.get("/library/", response_model=None)
-def get_all_library(database: Session = Depends(get_db)) -> list[Library]:
-    library_list = database.query(Library).all()
-    return library_list
-
-
-@app.get("/library/{library_id}/", response_model=None)
-async def get_library(library_id: int, database: Session = Depends(get_db)) -> Library:
-    db_library = database.query(Library).filter(Library.id == library_id).first()
-    if db_library is None:
-        raise HTTPException(status_code=404, detail="Library not found")
-    return db_library
-
-
-
-
-@app.post("/library/", response_model=None)
-async def create_library(library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
-
-    
-    excluded_fields = {k: v for k, v in library.dict().items() if k not in ['']}
-
-    db_library = Library(**excluded_fields)
-    database.add(db_library)
-    database.commit()
-    database.refresh(db_library)
-
-    return db_library
-
-
-@app.put("/library/{library_id}/", response_model=None)
-async def update_library(library_id: int, library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
-    db_library = database.query(Library).filter(Library.id == library_id).first()
-    if db_library is None:
-        raise HTTPException(status_code=404, detail="Library not found")
-
-    for key, value in library.dict().items():
-        setattr(db_library, key, value)
-
-    database.commit()
-    database.refresh(db_library)
-    return db_library
-
-@app.delete("/library/{library_id}/", response_model=None)
-async def delete_library(library_id: int, database: Session = Depends(get_db)):
-    db_library = database.query(Library).filter(Library.id == library_id).first()
-    if db_library is None:
-        raise HTTPException(status_code=404, detail="Library not found")
-    database.delete(db_library)
-    database.commit()
-    return db_library
-
-
-
-############################################
-#
 #   Book functions
 #
 ############################################
@@ -116,15 +56,13 @@ async def create_book(book: BookCreate, database: Session = Depends(get_db)) -> 
     db_library = database.query(Library).filter(Library.id == book.library_id).first()
     if not db_library:
         raise HTTPException(status_code=400, detail="Library not found")
-    
-    excluded_fields = {k: v for k, v in book.dict().items() if k not in ['authors_id']}
+    db_book = Book(release=book.release, pages=book.pages, title=book.title)
 
-    db_book = Book(**excluded_fields)
     database.add(db_book)
     database.commit()
     database.refresh(db_book)
 
-    if book.authors_id and len(book.authors_id) > 0:
+    if book.authors_id and len(book.authors_id) != []:
         for x in book.authors_id:
             db_author = database.query(Author).filter(Author.id == x).first()
             if not db_author:
@@ -162,6 +100,64 @@ async def delete_book(book_id: int, database: Session = Depends(get_db)):
 
 ############################################
 #
+#   Library functions
+#
+############################################
+
+@app.get("/library/", response_model=None)
+def get_all_library(database: Session = Depends(get_db)) -> list[Library]:
+    library_list = database.query(Library).all()
+    return library_list
+
+
+@app.get("/library/{library_id}/", response_model=None)
+async def get_library(library_id: int, database: Session = Depends(get_db)) -> Library:
+    db_library = database.query(Library).filter(Library.id == library_id).first()
+    if db_library is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+    return db_library
+
+
+
+
+@app.post("/library/", response_model=None)
+async def create_library(library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
+
+    db_library = Library(address=library.address, name=library.name)
+
+    database.add(db_library)
+    database.commit()
+    database.refresh(db_library)
+
+    return db_library
+
+
+@app.put("/library/{library_id}/", response_model=None)
+async def update_library(library_id: int, library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
+    db_library = database.query(Library).filter(Library.id == library_id).first()
+    if db_library is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+
+    for key, value in library.dict().items():
+        setattr(db_library, key, value)
+
+    database.commit()
+    database.refresh(db_library)
+    return db_library
+
+@app.delete("/library/{library_id}/", response_model=None)
+async def delete_library(library_id: int, database: Session = Depends(get_db)):
+    db_library = database.query(Library).filter(Library.id == library_id).first()
+    if db_library is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+    database.delete(db_library)
+    database.commit()
+    return db_library
+
+
+
+############################################
+#
 #   Author functions
 #
 ############################################
@@ -185,15 +181,13 @@ async def get_author(author_id: int, database: Session = Depends(get_db)) -> Aut
 @app.post("/author/", response_model=None)
 async def create_author(author: AuthorCreate, database: Session = Depends(get_db)) -> Author:
 
-    
-    excluded_fields = {k: v for k, v in author.dict().items() if k not in ['books_id']}
+    db_author = Author(email=author.email, name=author.name)
 
-    db_author = Author(**excluded_fields)
     database.add(db_author)
     database.commit()
     database.refresh(db_author)
 
-    if author.books_id and len(author.books_id) > 0:
+    if author.books_id and len(author.books_id) != []:
         for x in author.books_id:
             db_book = database.query(Book).filter(Book.id == x).first()
             if not db_book:

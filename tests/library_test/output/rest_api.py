@@ -10,58 +10,10 @@ app = FastAPI()
 #
 ############################################
 
-library_list = []
 book_list = []
+library_list = []
 author_list = []
 
-
-############################################
-#
-#   Library functions
-#
-############################################
-@app.get("/library/", response_model=List[Library], tags=["library"])
-def get_library():
-    return library_list
-
-@app.get("/library/{attribute_id}/", response_model=Library, tags=["library"])
-def get_library(attribute_id : str):   
-    for library in library_list:
-        if library.id_to_change== attribute_id:
-            return library
-    raise HTTPException(status_code=404, detail="Library not found")
-
-@app.post("/library/", response_model=Library, tags=["library"])
-def create_library(library: Library):
-    library_list.append(library)
-    return library
-
-@app.put("/library/{attribute_id}/", response_model=Library, tags=["library"]) 
-def change_library(attribute_id : str, updated_library: Library): 
-    for index, library in enumerate(library_list): 
-        if library.id_to_change == attribute_id:
-            library_list[index] = updated_library
-            return updated_library
-    raise HTTPException(status_code=404, detail="Library not found")
-
-@app.patch("/library/{attribute_id}/{attribute_to_change}", response_model=Library, tags=["library"])
-def update_library(attribute_id : str,  attribute_to_change: str, updated_data: str):
-    for library in library_list:
-        if library.id_to_change == attribute_id:
-            if hasattr(library, attribute_to_change):
-                setattr(library, attribute_to_change, updated_data)
-                return library
-            else:
-                raise HTTPException(status_code=400, detail=f"Attribute '{attribute_to_change}' does not exist")
-    raise HTTPException(status_code=404, detail="Library not found")
-
-@app.delete("/library/{attribute_id}/", tags=["library"])
-def delete_library(attribute_id : str):   
-    for index, library in enumerate(library_list):
-        if library.id_to_change == attribute_id:
-            library_list.pop(index)
-            return {"message": "Item deleted successfully"}
-    raise HTTPException(status_code=404, detail="Library not found") 
 
 ############################################
 #
@@ -110,6 +62,54 @@ def delete_book(attribute_id : str):
             book_list.pop(index)
             return {"message": "Item deleted successfully"}
     raise HTTPException(status_code=404, detail="Book not found") 
+
+############################################
+#
+#   Library functions
+#
+############################################
+@app.get("/library/", response_model=List[Library], tags=["library"])
+def get_library():
+    return library_list
+
+@app.get("/library/{attribute_id}/", response_model=Library, tags=["library"])
+def get_library(attribute_id : str):   
+    for library in library_list:
+        if library.id_to_change== attribute_id:
+            return library
+    raise HTTPException(status_code=404, detail="Library not found")
+
+@app.post("/library/", response_model=Library, tags=["library"])
+def create_library(library: Library):
+    library_list.append(library)
+    return library
+
+@app.put("/library/{attribute_id}/", response_model=Library, tags=["library"]) 
+def change_library(attribute_id : str, updated_library: Library): 
+    for index, library in enumerate(library_list): 
+        if library.id_to_change == attribute_id:
+            library_list[index] = updated_library
+            return updated_library
+    raise HTTPException(status_code=404, detail="Library not found")
+
+@app.patch("/library/{attribute_id}/{attribute_to_change}", response_model=Library, tags=["library"])
+def update_library(attribute_id : str,  attribute_to_change: str, updated_data: str):
+    for library in library_list:
+        if library.id_to_change == attribute_id:
+            if hasattr(library, attribute_to_change):
+                setattr(library, attribute_to_change, updated_data)
+                return library
+            else:
+                raise HTTPException(status_code=400, detail=f"Attribute '{attribute_to_change}' does not exist")
+    raise HTTPException(status_code=404, detail="Library not found")
+
+@app.delete("/library/{attribute_id}/", tags=["library"])
+def delete_library(attribute_id : str):   
+    for index, library in enumerate(library_list):
+        if library.id_to_change == attribute_id:
+            library_list.pop(index)
+            return {"message": "Item deleted successfully"}
+    raise HTTPException(status_code=404, detail="Library not found") 
 
 ############################################
 #

@@ -9,3 +9,4 @@ Generators
    generators/api_alchemy
    generators/api_sql
    generators/api_rest_api
+   generators/api_backend

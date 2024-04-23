@@ -48,8 +48,12 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
             {% set class1_name = ns.end1.type.name %}
             {% set class2_name = ns.end2.type.name %}
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
-            {% if not backend %}
+            {% if not by_id %}
+            {% if backend %}
+    {{ class2_name.lower() }}s: List["{{ class2_name }}Create"]  # N:M Relationship
+            {% else %}
     {{ class2_name.lower() }}s: Set["{{ class2_name }}"]  # N:M Relationship
+            {% endif %}
             {% else %}
     {{ class2_name.lower() }}s_id: List[int]
             {% endif %}

@@ -10,58 +10,10 @@ app = FastAPI()
 #
 ############################################
 
-book_list = []
 library_list = []
+book_list = []
 author_list = []
 
-
-############################################
-#
-#   Book functions
-#
-############################################
-@app.get("/book/", response_model=List[Book], tags=["book"])
-def get_book():
-    return book_list
-
-@app.get("/book/{attribute_id}/", response_model=Book, tags=["book"])
-def get_book(attribute_id : str):   
-    for book in book_list:
-        if book.id_to_change== attribute_id:
-            return book
-    raise HTTPException(status_code=404, detail="Book not found")
-
-@app.post("/book/", response_model=Book, tags=["book"])
-def create_book(book: Book):
-    book_list.append(book)
-    return book
-
-@app.put("/book/{attribute_id}/", response_model=Book, tags=["book"]) 
-def change_book(attribute_id : str, updated_book: Book): 
-    for index, book in enumerate(book_list): 
-        if book.id_to_change == attribute_id:
-            book_list[index] = updated_book
-            return updated_book
-    raise HTTPException(status_code=404, detail="Book not found")
-
-@app.patch("/book/{attribute_id}/{attribute_to_change}", response_model=Book, tags=["book"])
-def update_book(attribute_id : str,  attribute_to_change: str, updated_data: str):
-    for book in book_list:
-        if book.id_to_change == attribute_id:
-            if hasattr(book, attribute_to_change):
-                setattr(book, attribute_to_change, updated_data)
-                return book
-            else:
-                raise HTTPException(status_code=400, detail=f"Attribute '{attribute_to_change}' does not exist")
-    raise HTTPException(status_code=404, detail="Book not found")
-
-@app.delete("/book/{attribute_id}/", tags=["book"])
-def delete_book(attribute_id : str):   
-    for index, book in enumerate(book_list):
-        if book.id_to_change == attribute_id:
-            book_list.pop(index)
-            return {"message": "Item deleted successfully"}
-    raise HTTPException(status_code=404, detail="Book not found") 
 
 ############################################
 #
@@ -110,6 +62,54 @@ def delete_library(attribute_id : str):
             library_list.pop(index)
             return {"message": "Item deleted successfully"}
     raise HTTPException(status_code=404, detail="Library not found") 
+
+############################################
+#
+#   Book functions
+#
+############################################
+@app.get("/book/", response_model=List[Book], tags=["book"])
+def get_book():
+    return book_list
+
+@app.get("/book/{attribute_id}/", response_model=Book, tags=["book"])
+def get_book(attribute_id : str):   
+    for book in book_list:
+        if book.id_to_change== attribute_id:
+            return book
+    raise HTTPException(status_code=404, detail="Book not found")
+
+@app.post("/book/", response_model=Book, tags=["book"])
+def create_book(book: Book):
+    book_list.append(book)
+    return book
+
+@app.put("/book/{attribute_id}/", response_model=Book, tags=["book"]) 
+def change_book(attribute_id : str, updated_book: Book): 
+    for index, book in enumerate(book_list): 
+        if book.id_to_change == attribute_id:
+            book_list[index] = updated_book
+            return updated_book
+    raise HTTPException(status_code=404, detail="Book not found")
+
+@app.patch("/book/{attribute_id}/{attribute_to_change}", response_model=Book, tags=["book"])
+def update_book(attribute_id : str,  attribute_to_change: str, updated_data: str):
+    for book in book_list:
+        if book.id_to_change == attribute_id:
+            if hasattr(book, attribute_to_change):
+                setattr(book, attribute_to_change, updated_data)
+                return book
+            else:
+                raise HTTPException(status_code=400, detail=f"Attribute '{attribute_to_change}' does not exist")
+    raise HTTPException(status_code=404, detail="Book not found")
+
+@app.delete("/book/{attribute_id}/", tags=["book"])
+def delete_book(attribute_id : str):   
+    for index, book in enumerate(book_list):
+        if book.id_to_change == attribute_id:
+            book_list.pop(index)
+            return {"message": "Item deleted successfully"}
+    raise HTTPException(status_code=404, detail="Book not found") 
 
 ############################################
 #

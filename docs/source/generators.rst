@@ -16,4 +16,5 @@ own generator).
    generators/alchemy
    generators/sql
    generators/rest_api
+   generators/backend
    generators/build_generator

@@ -143,7 +143,8 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
     {% for attribute in class.attributes %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}.{{ attribute.name }})
     {% endfor %}
-    
+    {% if ns.end_name_multiple  %}
+    {% for x in ns.end_name_multiple %}
     existing_{{x[0] | lower}}_ids = [assoc.{{x[0]|lower}}_id for assoc in database.execute(
         {{x[1]}}.select().where({{x[1]}}.c.{{ class.name | lower }}_id == db_{{ class.name | lower }}.id))]
     
@@ -165,9 +166,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
     database.commit()
     database.refresh(db_{{ class.name | lower }})
     return db_{{ class.name | lower }}
-
 {% endif %}
-
 
 
 {% if "DELETE" in http_methods %}

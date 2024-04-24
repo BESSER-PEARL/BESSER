@@ -11,15 +11,16 @@ class Pydantic_Generator(GeneratorInterface):
     Args:
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
         backend (bool, optional): A boolean flag indicating whether the generator should generate code for a backend API.
-        by_id (bool, optional): This parameter specifies how entities are linked in the API request. If set to True, the API expects
-                                identifiers and links entities based on these IDs. If set to False, the API handles the creation of
-                                new entities based on the data provided in the request. Defaults to True
+        nested_creations (bool, optional): This parameter determines how entities are linked in the API request. 
+                                            If set to True, both nested creations and linking by the ID of the entity 
+                                            are enabled. If set to False, only the ID of the linked entity will be used.
+                                            The default value is False.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
-    def __init__(self, model: DomainModel, backend: bool = False, by_id: bool = True, output_dir: str = None):
+    def __init__(self, model: DomainModel, backend: bool = False, nested_creations: bool = False, output_dir: str = None):
         super().__init__(model, output_dir)
         self.backend = backend
-        self.by_id = by_id
+        self.nested_creations = nested_creations
 
     def generate(self):
         """
@@ -37,6 +38,6 @@ class Pydantic_Generator(GeneratorInterface):
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
         template = env.get_template('pydantic_classes_template.py.j2')
         with open(file_path, mode="w") as f:
-            generated_code = template.render(classes=self.model.classes_sorted_by_inheritance(), backend=self.backend, by_id=self.by_id)
+            generated_code = template.render(classes=self.model.classes_sorted_by_inheritance(), backend=self.backend, nested_creations=self.nested_creations)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

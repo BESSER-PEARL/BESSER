@@ -2,43 +2,13 @@
 from datetime import datetime, date, time
 
 
-class Library:
-    def __init__(self, name: str, address: str, has: set["Book"]):
-        self.name = name
-        self.address = address
-        self.has = has 
-        
-    @property
-    def name(self) -> str:
-        return self.__name
-    
-    @name.setter
-    def name(self, name: str):
-        self.__name = name
-    
-    @property
-    def address(self) -> str:
-        return self.__address
-    
-    @address.setter
-    def address(self, address: str):
-        self.__address = address
-    
-    @property
-    def has(self):
-        return self.__has
-    
-    @has.setter
-    def has(self, has):
-        self.__has = has
-    
 class Book:
-    def __init__(self, pages: int, release: datetime, title: str, writedBy: set["Author"], locatedIn: "Library"):
+    def __init__(self, pages: int, title: str, release: datetime, locatedIn: "Library", writedBy: set["Author"]):
         self.pages = pages
-        self.release = release
         self.title = title
-        self.writedBy = writedBy 
+        self.release = release
         self.locatedIn = locatedIn 
+        self.writedBy = writedBy 
         
     @property
     def pages(self) -> int:
@@ -49,14 +19,6 @@ class Book:
         self.__pages = pages
     
     @property
-    def release(self) -> datetime:
-        return self.__release
-    
-    @release.setter
-    def release(self, release: datetime):
-        self.__release = release
-    
-    @property
     def title(self) -> str:
         return self.__title
     
@@ -65,12 +27,12 @@ class Book:
         self.__title = title
     
     @property
-    def writedBy(self):
-        return self.__writedBy
+    def release(self) -> datetime:
+        return self.__release
     
-    @writedBy.setter
-    def writedBy(self, writedBy):
-        self.__writedBy = writedBy
+    @release.setter
+    def release(self, release: datetime):
+        self.__release = release
     
     @property
     def locatedIn(self):
@@ -80,12 +42,28 @@ class Book:
     def locatedIn(self, locatedIn):
         self.__locatedIn = locatedIn
     
-class Author:
-    def __init__(self, name: str, email: str, publishes: set["Book"]):
+    @property
+    def writedBy(self):
+        return self.__writedBy
+    
+    @writedBy.setter
+    def writedBy(self, writedBy):
+        self.__writedBy = writedBy
+    
+class Library:
+    def __init__(self, address: str, name: str, has: set["Book"]):
+        self.address = address
         self.name = name
-        self.email = email
-        self.publishes = publishes 
+        self.has = has 
         
+    @property
+    def address(self) -> str:
+        return self.__address
+    
+    @address.setter
+    def address(self, address: str):
+        self.__address = address
+    
     @property
     def name(self) -> str:
         return self.__name
@@ -95,12 +73,34 @@ class Author:
         self.__name = name
     
     @property
+    def has(self):
+        return self.__has
+    
+    @has.setter
+    def has(self, has):
+        self.__has = has
+    
+class Author:
+    def __init__(self, email: str, name: str, publishes: set["Book"]):
+        self.email = email
+        self.name = name
+        self.publishes = publishes 
+        
+    @property
     def email(self) -> str:
         return self.__email
     
     @email.setter
     def email(self, email: str):
         self.__email = email
+    
+    @property
+    def name(self) -> str:
+        return self.__name
+    
+    @name.setter
+    def name(self, name: str):
+        self.__name = name
     
     @property
     def publishes(self):

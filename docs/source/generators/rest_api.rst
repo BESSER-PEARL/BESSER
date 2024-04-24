@@ -12,9 +12,10 @@ You should create a ``RESTAPIGenerator`` object, provide the B-UML model, and us
     
     from besser.generators.rest_api import RESTAPIGenerator
     
-    rest_api = RESTAPIGenerator(model=library_model)
+    rest_api = RESTAPIGenerator(model=library_model, https_methods=["GET", "POST", "PUT","PATCH", "DELETE"], backend = False)
     rest_api.generate()
 
+The ``https_methods`` parameter is optional and can be used to specify the HTTP methods that will be generated for the REST API.
 Upon executing this code, a ``rest_api.py`` file and ``pydantic_classes.py`` using the ``Pydantic_Generator`` containing the Pydantic models will be generated.  in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 

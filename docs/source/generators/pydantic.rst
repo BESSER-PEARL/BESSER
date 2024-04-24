@@ -1,8 +1,9 @@
 Pydantic Classes Generator
 ============================
 
-This code generator produces the Pydantic classes, i.e. the set of Pydantic classes that represent the entities and 
-relationships of the B-UML model.
+This code generator produces Pydantic classes, which represent the entities and relationships of a B-UML model.
+These Pydantic classes can be utilized by other code generators to generate code that uses Pydantic classes, 
+such as :doc:`rest_api` and :doc:`backend`.
 
 Let's generate the code for the Pydantic classes of our :doc:`../examples/library_example` B-UML model example. 
 You should create a ``Pydantic_Generator`` object, provide the B-UML model, and use the ``generate`` method as follows:

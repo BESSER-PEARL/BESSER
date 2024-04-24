@@ -17,12 +17,13 @@ class RESTAPIGenerator(GeneratorInterface):
                          Each element should be one of "GET", "POST", "PUT","PATCH","DELETE". This allows generating
                          only the parts of the API that are needed.
         backend (bool, optional): A boolean flag indicating whether the generator should generate code for a backend API.
-        by_id (bool, optional): This parameter specifies how entities are linked in the API request. If set to True, the API expects 
-                                identifiers and links entities based on these IDs. If set to False, the API handles the creation of 
-                                new entities based on the data provided in the request. Defaults to True
+        nested_creations (bool, optional): This parameter determines how entities are linked in the API request. 
+                                            If set to True, both nested creations and linking by the ID of the entity 
+                                            are enabled. If set to False, only the ID of the linked entity will be used.
+                                            The default value is False.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
-    def __init__(self, model: DomainModel, http_methods: list = None, by_id: bool = True, backend: bool = False, output_dir: str = None):
+    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, backend: bool = False, output_dir: str = None):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "PATCH", "DELETE"]
         if not http_methods:
@@ -31,7 +32,7 @@ class RESTAPIGenerator(GeneratorInterface):
             http_methods = [method for method in http_methods if method in allowed_methods]
         self.http_methods = http_methods
         self.backend = backend
-        self.by_id = by_id
+        self.nested_creations = nested_creations
 
     def generate(self):
         """
@@ -43,8 +44,6 @@ class RESTAPIGenerator(GeneratorInterface):
             None, but store the generated code as a file named rest_api.py and uses the Pydantic_Generator to generate
             the Pydantic classes
         """
-        pydantic_model = Pydantic_Generator(model=self.model, backend=self.backend, by_id=self.by_id, output_dir=self.output_dir)
-        pydantic_model.generate()
 
         if self.backend:
             file_path = self.build_generation_path(file_name="main_api.py")
@@ -54,12 +53,15 @@ class RESTAPIGenerator(GeneratorInterface):
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
             template = env.get_template('backend_fast_api_template.py.j2')
             with open(file_path, mode="w") as f:
-                generated_code = template.render(classes=self.model.classes_sorted_by_inheritance(),
-                                             http_methods=self.http_methods, by_id=self.by_id)
+                generated_code = template.render(name=self.model.name, classes=self.model.classes_sorted_by_inheritance(),
+                                             http_methods=self.http_methods, nested_creations=self.nested_creations)
                 f.write(generated_code)
             print("Code generated in the location: " + file_path)
 
         else:
+            pydantic_model = Pydantic_Generator(model=self.model, backend=self.backend, nested_creations=self.nested_creations, output_dir=self.output_dir)
+            pydantic_model.generate()
+            
             file_path = self.build_generation_path(file_name="rest_api.py")
             templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")

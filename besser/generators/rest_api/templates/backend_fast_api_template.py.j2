@@ -71,8 +71,10 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
     {% endfor %}
     {% endif %}
     response_data = {
-        "{{class.name | lower}}": db_{{ class.name | lower}}{% for x in ns.end_name_multiple %},
-        "{{x[0] | lower}}_ids": [x[0] for x in {{x[0] | lower}}_ids]{% if not loop.last %},{% endif %}{% endfor -%}
+        "{{class.name | lower}}": db_{{ class.name | lower}},
+        {% for x in ns.end_name_multiple %}
+        "{{x[0] | lower}}_ids": [x[0] for x in {{x[0] | lower}}_ids]{% if not loop.last %},{% endif %}
+        {% endfor -%}
     }
     return response_data
 

@@ -86,19 +86,17 @@ class DataType(Type):
         return f"DataType({self.name})"
     
 class PrimitiveDataType(DataType):
-    """Class representing an enumeration literal.
+    """Class representing a primitive data type.
 
-    This class is a subclass of NamedElement and is used to represent individual
-    literals within an enumeration.
+    This class is a subclass of DataType and is used to represent primitive data types
+    with a specified name.
 
     Args:
-        name (str): the name of the enumeration literal.
-        owner (DataType): the owner data type of the enumeration literal.
+        name (str): the name of the primitive data type.
 
     Attributes:
-        name (str): Inherited from NamedElement, represents the name of the enumeration literal.
-        owner (DataType): Represents the owner data type of the enumeration literal.
-    """    
+        name (str): Inherited from NamedElement, represents the name of the primitive data type.
+    """
 
     def __init__(self, name: str):
         super().__init__(name)
@@ -120,20 +118,20 @@ class PrimitiveDataType(DataType):
         return f"PrimitiveDataType({self.name})"
     
 class EnumerationLiteral(NamedElement):
-    """Class representing a primitive data type.
+    """Class representing an enumeration literal.
 
-    This class is a subclass of DataType and is used to represent primitive data types
-    with a specified name.
+    This class is a subclass of NamedElement and is used to represent individual
+    literals within an enumeration.
 
     Args:
-        name (str): the name of the primitive data type.
-        owner (DataType): the owner data type (Enumeration) of the enumeration literal.
+        name (str): the name of the enumeration literal.
+        owner (DataType): the owner data type of the enumeration literal.
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the enumeration literal.
-        owner (DataType): Represents the owner data type (Enumeration) of the enumeration literal.
+        owner (DataType): Represents the owner data type of the enumeration literal.
     """
-    
+
     def __init__(self, name: str, owner: DataType):
         super().__init__(name)
         self.owner: DataType = owner

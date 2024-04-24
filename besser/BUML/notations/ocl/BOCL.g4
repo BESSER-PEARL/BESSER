@@ -1,4 +1,10 @@
-grammar OCLs;
+grammar BOCL;
+
+//oclFile: contextDeclaration;
+
+//contextDeclaration: CONTEXT ID;
+
+
 
 // Top-level constructs
 oclFile: contextDeclaration (expression  )* ;
@@ -19,20 +25,23 @@ userDefinedType: ID ;
 expression:
           (AND | OR )? binaryExpression expression? #binary
           | unaryExpression expression? #unary
-          | IF expression THEN expression ELSE expression ENDIF  #if
+          | IF expression  #ifExp
+          | THEN expression #thenExp
+          | ELSE expression #elseExp
+          | ENDIF  expression? #endIfExp
           | primaryExpression  (DOT ID)* DOT OCLISTYPEOF LPAREN type RPAREN expression? #OCLISTYPEOF
           | primaryExpression  (DOT ID)* DOT OCLASTYPE LPAREN type RPAREN expression? #OCLASTYPE
           | primaryExpression  (DOT ID)* DOT OCLISKINDOF LPAREN type RPAREN expression? #OCLISKINDOF
 
           | primaryExpression?  (DOT ID)* Arrow ISEMPTY LPAREN RPAREN expression? RPAREN* #ISEMPTY
-          | primaryExpression?  (DOT ID)* Arrow SUM LPAREN RPAREN expression? RPAREN* #SUM
-          | primaryExpression?  (DOT ID)* Arrow SIZE   LPAREN RPAREN expression? RPAREN* #SIZE
+          | primaryExpression?  (DOT ID)* Arrow SUM LPAREN RPAREN  binaryFunctionCall? expression? RPAREN* #SUM
+          | primaryExpression?  (DOT ID)* Arrow SIZE   LPAREN RPAREN binaryFunctionCall? expression? RPAREN* #SIZE
 
           |  Arrow? INCLUDES LPAREN expression RPAREN expression? RPAREN* #INCLUDES
           |  Arrow? EXCLUDES LPAREN expression RPAREN  expression? RPAREN* #EXCLUDES
           |  Arrow? LPAREN* SEQUENCE LBRACE* LPAREN* (SingleQuote? expression SingleQuote? COMMA?)* RBRACE* RPAREN* expression? #SEQUENCE
           |  Arrow? LPAREN* SUBSEQUENCE LBRACE* LPAREN* (SingleQuote? expression SingleQuote? COMMA?)* RPAREN* RBRACE*  expression? #SUBSEQUENCE
-          | Arrow? ALLINSTANCES LPAREN+ expression RPAREN+ expression?  #ALLINSTANCES
+          |  Arrow? ALLINSTANCES LPAREN+ expression? RPAREN+ expression?  #ALLINSTANCES
 
           | Arrow? LPAREN* ORDEREDSET LBRACE (SingleQuote? expression SingleQuote? COMMA?)* RBRACE RPAREN* expression?  #ORDEREDSET
           | Arrow? LPAREN* SUBORDEREDSET LBRACE* LPAREN* (SingleQuote? expression SingleQuote? COMMA?)* RBRACE* RPAREN* expression? RPAREN  #SUBORDEREDSET
@@ -43,8 +52,10 @@ expression:
           | Arrow PREPEND LPAREN+ (SingleQuote? expression SingleQuote? COMMA?)* RPAREN+ expression? #PREPEND
           | Arrow LAST LPAREN RPAREN+ expression? #LAST
           | Arrow APPEND LPAREN (SingleQuote? expression SingleQuote? COMMA?)*  RPAREN+ expression?   #APPEND
-          | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN (ID (COLON ID)? COMMA?)+ PIPE expression RPAREN expression? #COLLECTION
-          | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN expression RPAREN expression? #CollectionExpressionVariable
+
+          | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN (ID (COLON ID)? COMMA?)+ PIPE expression RPAREN endExpression? #COLLECTION
+
+          | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN expression RPAREN endExpression? #CollectionExpressionVariable
 //
 //
           | Arrow SYMMETRICDIFFERENCE LPAREN expression RPAREN+ expression? #SYMMETRICDIFFERENCE
@@ -55,23 +66,26 @@ expression:
           | ID COLON ID EQUAL expression #defIDAssignmentexpression
           | LPAREN*  primaryExpression?  (DOT ID)* operator? primaryExpression?  (DOT ID)+ expression? #PrimaryExp
           | primaryExpression  (DOT)* ID* functionCall operator? expression?  #funcCall
-        | operator numberORUserDefined?  #op
+//          | operator expression #operatorExp
           | Arrow expression #arrowexp
           | NUMBER expression?  #number
           | Arrow? functionCall expression? #PredefinedfunctionCall
-          | primaryExpression expression? #ID
+
           | SingleQuote expression DOT? SingleQuote DOT? expression? #SingleQuoteExp
           | DoubleDots expression #doubleDots
+          | AND? OR? ID? DoubleCOLON expression #doubleCOLONs
+          | operator numberORUserDefined?  #op
+          | primaryExpression expression? #ID
 
 
 ;
-
-
+endExpression:  (AND | OR)? expression;
+binaryFunctionCall: operator ((primaryExpression (DOT ID)*) | NUMBER)  ;
 
 binaryExpression:  ((primaryExpression (DOT ID)*) | NUMBER)   (DOT ID)* operator ((primaryExpression (DOT ID)*) | NUMBER) ;
-unaryExpression: (NOT | MINUS) expression ;
+unaryExpression: (NOT | MINUS|PLUS|Divide|'*') expression ;
 //
-operator: EQUAL | NOTEQUAL| LT | LE | GT | GE | PLUS | MINUS | EMPTYSTRING | Divide | AND | OR | XOR | IMPLIES ; // Added 'xor' and 'implies'
+operator: EQUAL | NOTEQUAL| LT | LE | GT | GE | PLUS|'*' | MINUS | EMPTYSTRING | Divide | AND | OR | XOR | IMPLIES ; // Added 'xor' and 'implies'
 //
 numberORUserDefined: NUMBER |SingleQuote? ID LPAREN? RPAREN? SingleQuote?  ;
 
@@ -94,6 +108,7 @@ COLLECT: 'collect' ;
 OCLANY: 'OclAny' ;
 OCLVOID: 'OclVoid' ;
 WS: [ \t\r\n]+ -> skip ;
+
 
 
 // Symbols
@@ -163,10 +178,11 @@ Arrow: '->' | '→';
 Def: 'def';
 
 // Basic tokens
-ID: [a-zA-Z_][a-zA-Z0-9_]* ;
+ID: [a-zA-Z_][a-zA-Z0-9@_]* ;
 
 NUMBER: [0-9]+ ('.' [0-9]+)? ;
-STRING_LITERAL: '"' ( ~["\\] | '\\' . )* '"' ;
+STRING_LITERAL: '"' ( ~["\\] | '\\' . )* ID? '"'
+| SingleQuote ID SingleQuote;
 BOOLEAN_LITERAL: 'true' | 'false';
 COMMENT: '/*' .*? '*/' -> skip ;
 LINE_COMMENT: '//' ~[\r\n]* -> skip ;

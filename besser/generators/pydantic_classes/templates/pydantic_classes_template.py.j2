@@ -1,5 +1,5 @@
 from datetime import datetime, date
-from typing import List, Set
+from typing import List, Optional, Union,Set
 from pydantic import BaseModel
 
 ############################################
@@ -50,7 +50,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
             {% if not by_id %}
             {% if backend %}
-    {{ class2_name.lower() }}s: List["{{ class2_name }}Create"]  # N:M Relationship
+    {{ class2_name.lower() }}s: Optional[List[Union["{{ class2_name }}Create", int]]] = None  # N:M Relationship
             {% else %}
     {{ class2_name.lower() }}s: Set["{{ class2_name }}"]  # N:M Relationship
             {% endif %}

@@ -34,23 +34,6 @@ def get_db():
 #   {{ class.name }} functions
 #
 ############################################
-
-{% if "GET" in http_methods %}
-@app.get("/{{ class.name | lower}}/", response_model=None)
-def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list[{{ class.name }}]:
-    {{ class.name | lower}}_list = database.query({{ class.name }}).all()
-    return {{ class.name | lower}}_list
-
-
-@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
-async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)) -> {{ class.name }}:
-    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
-    if db_{{ class.name | lower}} is None:
-        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
-    return db_{{ class.name | lower}}
-
-{% endif %}
-
 {% set ns = namespace(end_name_one=[], end_name_multiple=[], manytomany_associations=[], processed_associations=[]) %}
 {% for association in class.associations %}
     {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
@@ -68,6 +51,22 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
         {% endif %}
     {% endif %}
 {% endfor %}
+
+{% if "GET" in http_methods %}
+@app.get("/{{ class.name | lower}}/", response_model=None)
+def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list[{{ class.name }}]:
+    {{ class.name | lower}}_list = database.query({{ class.name }}).all()
+    return {{ class.name | lower}}_list
+
+
+@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
+async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)) -> {{ class.name }}:
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    return db_{{ class.name | lower}}
+
+{% endif %}
 
 
 {% if "POST" in http_methods %}
@@ -97,11 +96,11 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name 
 
     {% if ns.end_name_multiple and by_id %}
     {% for x in ns.end_name_multiple %}
-    if {{ class.name | lower}}.{{x[0] | lower}}s_id and len({{ class.name | lower}}.{{x[0] | lower}}s_id) != []:
-        for x in {{ class.name | lower}}.{{x[0] | lower}}s_id:
-            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == x).first()
+    if {{ class.name | lower}}.{{x[0] | lower}}s_id: ### add a print here to test with nothing
+        for id in {{ class.name | lower}}.{{x[0] | lower}}s_id:
+            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == id).first()
             if not db_{{x[0] | lower}}:
-                raise HTTPException(status_code=404, detail=f"{{x[0]}} with ID {x} not found")
+                raise HTTPException(status_code=404, detail=f"{{x[0]}} with ID {id} not found")
             # Create the association
             association = {{x[1]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.id, {{ x[0]|lower }}_id=db_{{ x[0]|lower }}.id)
             database.execute(association)
@@ -109,9 +108,9 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name 
     {% endfor -%}
     {% endif %}
 
-    {%if not by_id%}
+    {%if ns.end_name_multiple and not by_id%}
     {% for x in ns.end_name_multiple %}
-    if {{ class.name | lower}}.{{x[0] | lower}}s and len({{ class.name | lower}}.{{x[0] | lower}}s) != [] and {{ class.name | lower}}.{{x[0] | lower}}s != ["string"]:
+    if {{ class.name | lower}}.{{x[0] | lower}}s:
         for x in {{ class.name | lower}}.{{x[0] | lower}}s:
             {%for lk_class in classes%}
                 {% if lk_class.name == x[0] %}
@@ -134,19 +133,42 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name 
 
 {% if class.is_read_only == False %}
 {% if "PUT" in http_methods %}
-@app.put("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
-async def update_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{ class.name | lower}}: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
-    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
-    if db_{{ class.name | lower}} is None:
+@app.put("/{{ class.name | lower }}/{{ class.name | lower }}_id/", response_model=None)
+async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ class.name | lower }}: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
+    db_{{ class.name | lower }} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower }}_id).first()
+    if db_{{ class.name | lower }} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 
-    for key, value in {{ class.name | lower}}.dict().items():
-        setattr(db_{{ class.name | lower}}, key, value)
+    {# Update attributes of the model -#}
+    {% for attribute in class.attributes %}
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}.{{ attribute.name }})
+    {% endfor %}
+    
+    existing_{{x[0] | lower}}_ids = [assoc.{{x[0]|lower}}_id for assoc in database.execute(
+        {{x[1]}}.select().where({{x[1]}}.c.{{ class.name | lower }}_id == db_{{ class.name | lower }}.id))]
+    
+    {{x[0]|lower}}s_to_remove = set(existing_{{x[0]|lower}}_ids) - set({{ class.name | lower }}.{{x[0]|lower}}s{%if by_id %}_id{%endif%})
+    for {{x[0]|lower}}_id in {{x[0]|lower}}s_to_remove:
+        association = {{x[1]}}.delete().where(
+            {{x[1]}}.c.{{ class.name | lower }}_id == db_{{ class.name | lower }}.id and {{x[1]}}.c.{{x[0]|lower}}_id == {{x[0]|lower}}_id)
+        database.execute(association)
 
+    new_{{x[0]|lower}}_ids = set({{ class.name | lower }}.{{x[0]|lower}}s{%if by_id %}_id{%endif%}) - set(existing_{{x[0]|lower}}_ids)
+    for {{x[0]|lower}}_id in new_{{x[0]|lower}}_ids:
+        db_{{x[0]|lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{x[0]|lower}}_id).first()
+        if db_{{x[0]|lower}} is None:
+            raise HTTPException(status_code=404, detail="{{x[0]}} with ID {{x[0]|lower}}_id not found")
+        association = {{x[1]}}.insert().values({{ class.name | lower }}_id=db_{{ class.name | lower }}.id, {{x[0]|lower}}_id=db_{{x[0]|lower}}.id)
+        database.execute(association)
+    {% endfor %}
+    {% endif %}
     database.commit()
-    database.refresh(db_{{ class.name | lower}})
-    return db_{{ class.name | lower}}
+    database.refresh(db_{{ class.name | lower }})
+    return db_{{ class.name | lower }}
+
 {% endif %}
+
+
 
 {% if "DELETE" in http_methods %}
 @app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)

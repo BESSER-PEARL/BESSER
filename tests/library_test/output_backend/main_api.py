@@ -30,6 +30,70 @@ def get_db():
 
 ############################################
 #
+#   Library functions
+#
+############################################
+
+@app.get("/library/", response_model=None)
+def get_all_library(database: Session = Depends(get_db)) -> list[Library]:
+    library_list = database.query(Library).all()
+    return library_list
+
+
+@app.get("/library/{library_id}/", response_model=None)
+async def get_library(library_id: int, database: Session = Depends(get_db)) -> Library:
+    db_library = database.query(Library).filter(Library.id == library_id).first()
+    if db_library is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+
+    response_data = {
+        "library": db_library
+    }
+    return response_data
+
+
+
+@app.post("/library/", response_model=None)
+async def create_library(library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
+
+
+    db_library = Library(address=library.address, name=library.name)
+
+    database.add(db_library)
+    database.commit()
+    database.refresh(db_library)
+
+
+    
+    return db_library
+
+
+@app.put("/library/library_id/", response_model=None)
+async def update_library(library_id: int, library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
+    db_library = database.query(Library).filter(Library.id == library_id).first()
+    if db_library is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+
+    setattr(db_library, 'address', library.address)
+    setattr(db_library, 'name', library.name)
+    database.commit()
+    database.refresh(db_library)
+    return db_library
+
+
+@app.delete("/library/{library_id}/", response_model=None)
+async def delete_library(library_id: int, database: Session = Depends(get_db)):
+    db_library = database.query(Library).filter(Library.id == library_id).first()
+    if db_library is None:
+        raise HTTPException(status_code=404, detail="Library not found")
+    database.delete(db_library)
+    database.commit()
+    return db_library
+
+
+
+############################################
+#
 #   Book functions
 #
 ############################################
@@ -45,7 +109,13 @@ async def get_book(book_id: int, database: Session = Depends(get_db)) -> Book:
     db_book = database.query(Book).filter(Book.id == book_id).first()
     if db_book is None:
         raise HTTPException(status_code=404, detail="Book not found")
-    return db_book
+
+    author_ids = database.query(book_author_assoc.c.author_id).filter(book_author_assoc.c.book_id == db_book.id).all()
+    response_data = {
+        "book": db_book
+        ,"author_ids": [id[0] for id in author_ids]
+    }
+    return response_data
 
 
 
@@ -57,13 +127,13 @@ async def create_book(book: BookCreate, database: Session = Depends(get_db)) -> 
         if not db_library:
             raise HTTPException(status_code=400, detail="Library not found")
 
-    db_book = Book(title=book.title, release=book.release, pages=book.pages, library_id=book.library_id)
+    db_book = Book(title=book.title, pages=book.pages, release=book.release, library_id=book.library_id)
 
     database.add(db_book)
     database.commit()
     database.refresh(db_book)
 
-    if book.authors_id: ### add a print here to test with nothing
+    if book.authors_id:
         for id in book.authors_id:
             db_author = database.query(Author).filter(Author.id == id).first()
             if not db_author:
@@ -84,13 +154,8 @@ async def update_book(book_id: int, book: BookCreate, database: Session = Depend
         raise HTTPException(status_code=404, detail="Book not found")
 
     setattr(db_book, 'title', book.title)
-    setattr(db_book, 'release', book.release)
     setattr(db_book, 'pages', book.pages)
-
-
-    if not (isinstance(book.authors_id, list) and all(isinstance(x, int) for x in book.authors_id)):
-        raise ValueError("book.authors_id must be a list of integers")
-    
+    setattr(db_book, 'release', book.release)
     existing_author_ids = [assoc.author_id for assoc in database.execute(
         book_author_assoc.select().where(book_author_assoc.c.book_id == db_book.id))]
     
@@ -110,8 +175,6 @@ async def update_book(book_id: int, book: BookCreate, database: Session = Depend
     database.commit()
     database.refresh(db_book)
     return db_book
-
-
 
 
 @app.delete("/book/{book_id}/", response_model=None)
@@ -142,7 +205,13 @@ async def get_author(author_id: int, database: Session = Depends(get_db)) -> Aut
     db_author = database.query(Author).filter(Author.id == author_id).first()
     if db_author is None:
         raise HTTPException(status_code=404, detail="Author not found")
-    return db_author
+
+    book_ids = database.query(book_author_assoc.c.book_id).filter(book_author_assoc.c.author_id == db_author.id).all()
+    response_data = {
+        "author": db_author
+        ,"book_ids": [id[0] for id in book_ids]
+    }
+    return response_data
 
 
 
@@ -156,7 +225,7 @@ async def create_author(author: AuthorCreate, database: Session = Depends(get_db
     database.commit()
     database.refresh(db_author)
 
-    if author.books_id: ### add a print here to test with nothing
+    if author.books_id:
         for id in author.books_id:
             db_book = database.query(Book).filter(Book.id == id).first()
             if not db_book:
@@ -178,11 +247,6 @@ async def update_author(author_id: int, author: AuthorCreate, database: Session 
 
     setattr(db_author, 'email', author.email)
     setattr(db_author, 'name', author.name)
-
-
-    if not (isinstance(author.books_id, list) and all(isinstance(x, int) for x in author.books_id)):
-        raise ValueError("author.books_id must be a list of integers")
-    
     existing_book_ids = [assoc.book_id for assoc in database.execute(
         book_author_assoc.select().where(book_author_assoc.c.author_id == db_author.id))]
     
@@ -204,8 +268,6 @@ async def update_author(author_id: int, author: AuthorCreate, database: Session 
     return db_author
 
 
-
-
 @app.delete("/author/{author_id}/", response_model=None)
 async def delete_author(author_id: int, database: Session = Depends(get_db)):
     db_author = database.query(Author).filter(Author.id == author_id).first()
@@ -214,70 +276,6 @@ async def delete_author(author_id: int, database: Session = Depends(get_db)):
     database.delete(db_author)
     database.commit()
     return db_author
-
-
-
-############################################
-#
-#   Library functions
-#
-############################################
-
-@app.get("/library/", response_model=None)
-def get_all_library(database: Session = Depends(get_db)) -> list[Library]:
-    library_list = database.query(Library).all()
-    return library_list
-
-
-@app.get("/library/{library_id}/", response_model=None)
-async def get_library(library_id: int, database: Session = Depends(get_db)) -> Library:
-    db_library = database.query(Library).filter(Library.id == library_id).first()
-    if db_library is None:
-        raise HTTPException(status_code=404, detail="Library not found")
-    return db_library
-
-
-
-@app.post("/library/", response_model=None)
-async def create_library(library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
-
-
-    db_library = Library(name=library.name, address=library.address)
-
-    database.add(db_library)
-    database.commit()
-    database.refresh(db_library)
-
-
-    
-    return db_library
-
-
-@app.put("/library/library_id/", response_model=None)
-async def update_library(library_id: int, library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
-    db_library = database.query(Library).filter(Library.id == library_id).first()
-    if db_library is None:
-        raise HTTPException(status_code=404, detail="Library not found")
-
-    setattr(db_library, 'name', library.name)
-    setattr(db_library, 'address', library.address)
-
-
-    database.commit()
-    database.refresh(db_library)
-    return db_library
-
-
-
-
-@app.delete("/library/{library_id}/", response_model=None)
-async def delete_library(library_id: int, database: Session = Depends(get_db)):
-    db_library = database.query(Library).filter(Library.id == library_id).first()
-    if db_library is None:
-        raise HTTPException(status_code=404, detail="Library not found")
-    database.delete(db_library)
-    database.commit()
-    return db_library
 
 
 

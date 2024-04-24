@@ -64,7 +64,19 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
-    return db_{{ class.name | lower}}
+
+    {% if ns.end_name_multiple  %}
+    {% for x in ns.end_name_multiple %}
+    {{x[0] | lower}}_ids = database.query({{x[1]}}.c.{{x[0]|lower}}_id).filter({{x[1]}}.c.{{ class.name | lower}}_id == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    {% endif %}
+    response_data = {
+        "{{class.name | lower}}": db_{{ class.name | lower}}
+        {% for x in ns.end_name_multiple %}
+        ,"{{x[0] | lower}}_ids": [id[0] for id in {{x[0] | lower}}_ids]
+        {% endfor %}
+    }
+    return response_data
 
 {% endif %}
 
@@ -96,7 +108,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name 
 
     {% if ns.end_name_multiple and by_id %}
     {% for x in ns.end_name_multiple %}
-    if {{ class.name | lower}}.{{x[0] | lower}}s_id: ### add a print here to test with nothing
+    if {{ class.name | lower}}.{{x[0] | lower}}s_id:
         for id in {{ class.name | lower}}.{{x[0] | lower}}s_id:
             db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == id).first()
             if not db_{{x[0] | lower}}:

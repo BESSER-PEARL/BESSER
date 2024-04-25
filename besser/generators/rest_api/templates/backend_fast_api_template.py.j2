@@ -12,21 +12,24 @@ from sql_alchemy import *
 #
 ############################################
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./{{name}}.db"
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base.metadata.create_all(bind=engine)
-
+def init_db():
+    SQLALCHEMY_DATABASE_URL = "sqlite:///./{{name}}.db"
+    engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+    return SessionLocal
 
 app = FastAPI()
 
 # Initialize database session
+SessionLocal = init_db()
+# Dependency to get DB session
 def get_db():
-    database = SessionLocal()
-    yield database
-    database.close()
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 {% for class in classes %}
 ############################################

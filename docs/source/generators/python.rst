@@ -9,9 +9,9 @@ You should create a ``PythonGenerator`` object, provide the B-UML model, and use
 
 .. code-block:: python
     
-    from besser.generators.python_classes import Python_Generator
+    from besser.generators.python_classes import PythonGenerator
     
-    generator: Python_Generator = Python_Generator(model=library_model)
+    generator: Python_Generator = PythonGenerator(model=library_model)
     generator.generate()
 
 The ``classes.py`` file with the Django domain model (i.e., the set of classes) will be generated in the ``<<current_directory>>/output`` 

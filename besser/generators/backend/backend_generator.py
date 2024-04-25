@@ -4,12 +4,12 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
-from besser.generators.pydantic_classes import Pydantic_Generator
+from besser.generators.pydantic_classes import PydanticGenerator
 
 
-class Backend_Generator(GeneratorInterface):
+class BackendGenerator(GeneratorInterface):
     """
-    Backend_Generator is a class that implements the GeneratorInterface and is responsible for generating
+    BackendGenerator is a class that implements the GeneratorInterface and is responsible for generating
     a Backend model code with a REST API using FAST API framework, SQLAlchemy and a Pydantic model based on the input B-UML model .
 
     Args:
@@ -52,5 +52,5 @@ class Backend_Generator(GeneratorInterface):
         sql_alchemy = SQLAlchemyGenerator(model=self.model, output_dir=backend_folder_path)
         sql_alchemy.generate()
 
-        pydantic_model = Pydantic_Generator(model=self.model, output_dir=backend_folder_path, backend=True, nested_creations=self.nested_creations)
+        pydantic_model = PydanticGenerator(model=self.model, output_dir=backend_folder_path, backend=True, nested_creations=self.nested_creations)
         pydantic_model.generate()

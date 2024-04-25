@@ -2,7 +2,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
-from besser.generators.pydantic_classes import Pydantic_Generator
+from besser.generators.pydantic_classes import PydanticGenerator
 
 class RESTAPIGenerator(GeneratorInterface):
     """
@@ -59,7 +59,7 @@ class RESTAPIGenerator(GeneratorInterface):
             print("Code generated in the location: " + file_path)
 
         else:
-            pydantic_model = Pydantic_Generator(model=self.model, backend=self.backend, nested_creations=self.nested_creations, output_dir=self.output_dir)
+            pydantic_model = PydanticGenerator(model=self.model, backend=self.backend, nested_creations=self.nested_creations, output_dir=self.output_dir)
             pydantic_model.generate()
             
             file_path = self.build_generation_path(file_name="rest_api.py")

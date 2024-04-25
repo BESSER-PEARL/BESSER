@@ -16,9 +16,9 @@ To generate the complete backend for a B-UML model, follow the steps below. The 
 
 .. code-block:: python
     
-    from besser.generators.backend import Backend_Generator
+    from besser.generators.backend import BackendGenerator
     
-    backend = Backend_Generator(model=library_model, http_methods=['GET', 'POST', 'PUT', 'DELETE'], nested_creations = True)
+    backend = BackendGenerator(model=library_model, http_methods=['GET', 'POST', 'PUT', 'DELETE'], nested_creations = True)
     backend.generate()
 
 You can customize the code generation patterns by selecting specific HTTP methods such as ``GET``, ``POST``, ``PUT``, and ``DELETE``.

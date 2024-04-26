@@ -5,6 +5,24 @@ from besser.BUML.metamodel.structural import Class, NamedElement, TypedElement, 
 class OCLExpression(TypedElement):
     def __init__(self, name: str, type: Type):
         super().__init__(name, type)
+        self._source = None
+        self._referredOperation = None
+
+    @property
+    def source(self) ->Any:
+        return self._source
+    @source.setter
+    def source(self, source)->Any:
+        self._source = source
+    @property
+    def referredOperation(self)->Any:
+        return self._referredOperation
+
+    @referredOperation.setter
+    def referredOperation(self, op):
+        self._referredOperation = op
+
+
 
     def __str__(self) -> str:
         pass
@@ -83,7 +101,8 @@ class OperationCallExpression(OCLExpression):
     @arguments.setter
     def arguments(self, arguments: list[OCLExpression]):
         self.__arguments = arguments
-
+    def add(self,item):
+        self.arguments.append(item)
     def __str__(self) -> str:
         toRet= ""
         for arg in self.arguments:
@@ -103,31 +122,31 @@ class IfExp(OCLExpression):
         # self.ifOwner = null
         super().__init__(name, type)
 
-        self.ifCondition = ifcond
-        self.else_expression = elseExp
-        self.then_expression = thenExp
+        self._ifCondition = None
+        self._else_expression = None
+        self._then_expression = None
 
     @property
-    def get_if_Condition (self):
-        return self.ifCondition
+    def ifCondition (self) -> OCLExpression:
+        return self._ifCondition
 
     @property
-    def get_else_condition(self):
-        return self.else_expression
+    def elseCondition(self) -> OCLExpression:
+        return self._else_expression
     @property
-    def get_then_expression(self):
-        return self.then_expression
+    def thenExpression(self) ->OCLExpression:
+        return self._then_expression
 
-    @property
-    def set_if_Condition (self,if_cond):
-        self.ifCondition = if_cond
+    @ifCondition.setter
+    def ifCondition (self,if_cond):
+        self._ifCondition = if_cond
 
-    @property
-    def set_else_condition(self,else_cond):
-        self.else_expression = else_cond
-    @property
-    def set_then_expression(self, then_expression):
-        self.then_expression = then_expression
+    @elseCondition.setter
+    def elseCondition(self,else_cond):
+        self._else_expression = else_cond
+    @thenExpression.setter
+    def thenExpression(self, then_expression):
+        self._then_expression = then_expression
 class VariableExp(OCLExpression):
     def __init__(self,name: str, type: Type):
         super().__init__(name, type)
@@ -152,16 +171,16 @@ class Variable(OCLExpression):
     def get_value(self):
         return self.representatedParameter.get_value()
 
-class Property:
-    def __init__(self):
-        self.referringExp = []
-        self.val = None
+# class Property:
+#     def __init__(self):
+#         self.referringExp = []
+#         self.val = None
 
 class TypeExp(OCLExpression):
         def __init__(self,name: str, type: Type):
             super().__init__(name, type)
 
-            self.referedType = Classifier()
+            self.referedType = Classifier(name)
 class Parameter:
     def __init__(self,val):
         self.value =val
@@ -188,6 +207,8 @@ class RealLiteralExpression(LiteralExpression):
 
 
 class Classifier:
+    def __init__(self, name= None):
+        self.name = name
     pass
 class CallExp(OCLExpression):
     pass
@@ -263,13 +284,13 @@ class LetExp(OCLExpression):
         self.variable = None
 class BooleanLiteralExpression(LiteralExpression):
     def __init__(self, name: str, value: bool):
-        super().__init__(name, type=PrimitiveDataType(name="Boolean"), value=value)
+        super().__init__(name, type=PrimitiveDataType(name="bool"), value=value)
 
     def __repr__(self):
         return f'BooleanLiteralExpression({self.value})'
 class StringLiteralExpression(LiteralExpression):
     def __init__(self, name: str, value: str):
-        super().__init__(name, type=PrimitiveDataType(name="String"), value=value)
+        super().__init__(name, type=PrimitiveDataType(name="str"), value=value)
 
     def __repr__(self):
         return f'StringLiteralExpression({self.value})'
@@ -317,7 +338,7 @@ class CollectionLiteralExp(LiteralExp):
         for item in self.collectionItems:
             toRet = toRet + str(item)
         return toRet
-    def add_to_collection_items(self,item):
+    def add(self, item):
         self.collectionItems.append(item)
 
 class CollectionLiteralPart(TypedElement):

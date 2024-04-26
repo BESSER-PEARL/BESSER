@@ -34,7 +34,7 @@ class AttributeLink():
         """Property: Get the attribute."""
         return self.__attribute
 
-    @value.setter
+    @attribute.setter
     def attribute(self, attribute: Property):
         """Property: Set the attribute."""
         self.__attribute = attribute

@@ -31,6 +31,9 @@ You can check the installation of the *besser* package.
 
     $ pip list
 
+## Examples
+If you want to try examples, check out the [BESSER-examples](https://github.com/BESSER-PEARL/BESSER-examples) repository!
+
 ## Contributing
 
 We encourage contributions from the community and any comment is welcome!

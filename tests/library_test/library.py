@@ -1,12 +1,12 @@
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
     PrimitiveDataType, Multiplicity, BinaryAssociation
-from besser.generators.python_classes import Python_Generator
+from besser.generators.python_classes import PythonGenerator
 from besser.generators.django import DjangoGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.rest_api import RESTAPIGenerator
-from besser.generators.pydantic_classes import Pydantic_Generator
-from besser.generators.backend import Backend_Generator
+from besser.generators.pydantic_classes import PydanticGenerator
+from besser.generators.backend import BackendGenerator
 
 # Primitive DataTypes
 t_int: PrimitiveDataType = PrimitiveDataType("int")
@@ -52,7 +52,7 @@ for attribute in book.attributes:
 
 # Code Generation
 
-python_model = Python_Generator(model=library_model)
+python_model = PythonGenerator(model=library_model)
 python_model.generate()
 
 django = DjangoGenerator(model=library_model)
@@ -67,8 +67,8 @@ sql.generate()
 rest_api = RESTAPIGenerator(model=library_model)
 rest_api.generate()
 
-pydantic_model = Pydantic_Generator(model=library_model, backend=True)
+pydantic_model = PydanticGenerator(model=library_model, backend=True)
 pydantic_model.generate()
 
-backend = Backend_Generator(model=library_model, http_methods=["GET", "POST", "PUT", "DELETE"], nested_creations = True)
+backend = BackendGenerator(model=library_model, http_methods=["GET", "POST", "PUT", "DELETE"], nested_creations=True)
 backend.generate()

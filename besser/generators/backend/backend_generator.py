@@ -42,9 +42,12 @@ class BackendGenerator(GeneratorInterface):
         Returns:
             None, but store the generated code as files main_api.py, sql_alchemy.py and pydantic_classes.py
         """
-        backend_folder_path = os.path.join(self.output_dir, "output_backend")
-        os.makedirs(backend_folder_path, exist_ok=True)
-        print(f"Backend folder created at {backend_folder_path}")
+        if self.output_dir is ".":
+            backend_folder_path = "."
+        else:
+            backend_folder_path = os.path.join(self.output_dir, "output_backend")
+            os.makedirs(backend_folder_path, exist_ok=True)
+            print(f"Backend folder created at {backend_folder_path}")
 
         rest_api = RESTAPIGenerator(model=self.model, http_methods=self.http_methods, nested_creations=self.nested_creations, output_dir=backend_folder_path, backend=True)
         rest_api.generate()

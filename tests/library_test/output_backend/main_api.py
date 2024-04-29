@@ -12,21 +12,24 @@ from sql_alchemy import *
 #
 ############################################
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./Library model.db"
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base.metadata.create_all(bind=engine)
-
+def init_db():
+    SQLALCHEMY_DATABASE_URL = "sqlite:///./Library model.db"
+    engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+    return SessionLocal
 
 app = FastAPI()
 
 # Initialize database session
+SessionLocal = init_db()
+# Dependency to get DB session
 def get_db():
-    database = SessionLocal()
-    yield database
-    database.close()
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 ############################################
 #
@@ -55,16 +58,16 @@ async def get_book(book_id: int, database: Session = Depends(get_db)) -> Book:
 
 
 @app.post("/book/", response_model=None)
-async def create_book(book: BookCreate, database: Session = Depends(get_db)) -> Book:
+async def create_book(book_data: BookCreate, database: Session = Depends(get_db)) -> Book:
 
-    if book.library_id is not None:
-        db_library = database.query(Library).filter(Library.id == book.library_id).first()
+    if book_data.library_id is not None:
+        db_library = database.query(Library).filter(Library.id == book_data.library_id).first()
         if not db_library:
             raise HTTPException(status_code=400, detail="Library not found")
     else:
         raise HTTPException(status_code=400, detail="Library ID is required")
 
-    db_book = Book(pages=book.pages, title=book.title, release=book.release, library_id=book.library_id)
+    db_book = Book(title=book_data.title, pages=book_data.pages, release=book_data.release, library_id=book_data.library_id)
 
     database.add(db_book)
     database.commit()
@@ -78,7 +81,7 @@ async def create_book(book: BookCreate, database: Session = Depends(get_db)) -> 
                 if db_author is None:
                     raise HTTPException(status_code=404, detail=f"Author with ID {x} not found")
             else:
-                db_author = Author(email=x.email, name=x.name)
+                db_author = Author(name=x.name, email=x.email)
             database.add(db_author)
             database.commit()
             # Create the association
@@ -89,25 +92,25 @@ async def create_book(book: BookCreate, database: Session = Depends(get_db)) -> 
     return db_book
 
 
-@app.put("/book/book_id/", response_model=None)
-async def update_book(book_id: int, book: BookCreate, database: Session = Depends(get_db)) -> Book:
+@app.put("/book/{book_id}/", response_model=None)
+async def update_book(book_id: int, book_data: BookCreate, database: Session = Depends(get_db)) -> Book:
     db_book = database.query(Book).filter(Book.id == book_id).first()
     if db_book is None:
         raise HTTPException(status_code=404, detail="Book not found")
 
-    setattr(db_book, 'pages', book.pages)
-    setattr(db_book, 'title', book.title)
-    setattr(db_book, 'release', book.release)
+    setattr(db_book, 'title', book_data.title)
+    setattr(db_book, 'pages', book_data.pages)
+    setattr(db_book, 'release', book_data.release)
     existing_author_ids = [assoc.author_id for assoc in database.execute(
         book_author_assoc.select().where(book_author_assoc.c.book_id == db_book.id))]
     
-    authors_to_remove = set(existing_author_ids) - set(book.authors)
+    authors_to_remove = set(existing_author_ids) - set(book_data.authors)
     for author_id in authors_to_remove:
         association = book_author_assoc.delete().where(
             book_author_assoc.c.book_id == db_book.id and book_author_assoc.c.author_id == author_id)
         database.execute(association)
 
-    new_author_ids = set(book.authors) - set(existing_author_ids)
+    new_author_ids = set(book_data.authors) - set(existing_author_ids)
     for author_id in new_author_ids:
         db_author = database.query(Author).filter(Author.id == author_id).first()
         if db_author is None:
@@ -149,16 +152,17 @@ async def get_library(library_id: int, database: Session = Depends(get_db)) -> L
         raise HTTPException(status_code=404, detail="Library not found")
 
     response_data = {
-        "library": db_library}
+        "library": db_library,
+}
     return response_data
 
 
 
 @app.post("/library/", response_model=None)
-async def create_library(library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
+async def create_library(library_data: LibraryCreate, database: Session = Depends(get_db)) -> Library:
 
 
-    db_library = Library(address=library.address, name=library.name)
+    db_library = Library(address=library_data.address, name=library_data.name)
 
     database.add(db_library)
     database.commit()
@@ -169,14 +173,14 @@ async def create_library(library: LibraryCreate, database: Session = Depends(get
     return db_library
 
 
-@app.put("/library/library_id/", response_model=None)
-async def update_library(library_id: int, library: LibraryCreate, database: Session = Depends(get_db)) -> Library:
+@app.put("/library/{library_id}/", response_model=None)
+async def update_library(library_id: int, library_data: LibraryCreate, database: Session = Depends(get_db)) -> Library:
     db_library = database.query(Library).filter(Library.id == library_id).first()
     if db_library is None:
         raise HTTPException(status_code=404, detail="Library not found")
 
-    setattr(db_library, 'address', library.address)
-    setattr(db_library, 'name', library.name)
+    setattr(db_library, 'address', library_data.address)
+    setattr(db_library, 'name', library_data.name)
     database.commit()
     database.refresh(db_library)
     return db_library
@@ -220,10 +224,10 @@ async def get_author(author_id: int, database: Session = Depends(get_db)) -> Aut
 
 
 @app.post("/author/", response_model=None)
-async def create_author(author: AuthorCreate, database: Session = Depends(get_db)) -> Author:
+async def create_author(author_data: AuthorCreate, database: Session = Depends(get_db)) -> Author:
 
 
-    db_author = Author(email=author.email, name=author.name)
+    db_author = Author(name=author_data.name, email=author_data.email)
 
     database.add(db_author)
     database.commit()
@@ -237,7 +241,7 @@ async def create_author(author: AuthorCreate, database: Session = Depends(get_db
                 if db_book is None:
                     raise HTTPException(status_code=404, detail=f"Book with ID {x} not found")
             else:
-                db_book = Book(pages=x.pages, title=x.title, release=x.release)
+                db_book = Book(title=x.title, pages=x.pages, release=x.release)
             database.add(db_book)
             database.commit()
             # Create the association
@@ -248,24 +252,24 @@ async def create_author(author: AuthorCreate, database: Session = Depends(get_db
     return db_author
 
 
-@app.put("/author/author_id/", response_model=None)
-async def update_author(author_id: int, author: AuthorCreate, database: Session = Depends(get_db)) -> Author:
+@app.put("/author/{author_id}/", response_model=None)
+async def update_author(author_id: int, author_data: AuthorCreate, database: Session = Depends(get_db)) -> Author:
     db_author = database.query(Author).filter(Author.id == author_id).first()
     if db_author is None:
         raise HTTPException(status_code=404, detail="Author not found")
 
-    setattr(db_author, 'email', author.email)
-    setattr(db_author, 'name', author.name)
+    setattr(db_author, 'name', author_data.name)
+    setattr(db_author, 'email', author_data.email)
     existing_book_ids = [assoc.book_id for assoc in database.execute(
         book_author_assoc.select().where(book_author_assoc.c.author_id == db_author.id))]
     
-    books_to_remove = set(existing_book_ids) - set(author.books)
+    books_to_remove = set(existing_book_ids) - set(author_data.books)
     for book_id in books_to_remove:
         association = book_author_assoc.delete().where(
             book_author_assoc.c.author_id == db_author.id and book_author_assoc.c.book_id == book_id)
         database.execute(association)
 
-    new_book_ids = set(author.books) - set(existing_book_ids)
+    new_book_ids = set(author_data.books) - set(existing_book_ids)
     for book_id in new_book_ids:
         db_book = database.query(Book).filter(Book.id == book_id).first()
         if db_book is None:

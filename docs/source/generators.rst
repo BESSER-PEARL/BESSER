@@ -16,11 +16,9 @@ own generator).
    generators/alchemy
    generators/sql
    generators/rest_api
-<<<<<<< HEAD
    generators/backend
    generators/build_generator
-=======
-   generators/build_generator
+
 
 .. warning::
    

@@ -15,18 +15,10 @@ class BookCreate(BaseModel):
     authors_id: List[int]
     library_id: int
 
- 
-
 class LibraryCreate(BaseModel):
     address: str
     name: str
-
- 
-
 class AuthorCreate(BaseModel):
     email: str
     name: str
     books_id: List[int]
-
- 
-

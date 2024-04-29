@@ -1,7 +1,13 @@
-Build a model using B-UML
-=========================
+Build a model using the B-UML meta-classes
+==========================================
 
-The following guide shows how to define the classic Library model (see following image) using the B-UML language.
+.. note::
+    
+    This guide shows the definition of a :doc:`../model_types/structural` using the B-UML library in Python. However, any B-UML model can 
+    be created using the B-UML libraries. More examples are available :doc:`here <../../examples>`.
+
+
+The following guide shows how to define the classic Library model (see following image) using the B-UML library in Python.
 
 .. image:: ../../img/library_uml_model.jpg
   :width: 600
@@ -75,4 +81,9 @@ You should get output like this:
     For a detailed description of metamodel elements such as classes, attributes, generalizations and others, 
     please refer to the :doc:`API documentation <../../api>`.
 
+
+
+
+
 Now that you have a model defined with B-UML, you can use our :doc:`../../generators`, or even build your own for a target technology.
+

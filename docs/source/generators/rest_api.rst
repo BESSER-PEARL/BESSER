@@ -1,12 +1,11 @@
 REST API Generator
-=====================
+==================
 
-BESSER offers a code generator for `REST API <https://www.redhat.com/en/topics/api/what-is-a-rest-api>`_ utilizing the FastAPI framework. 
-This tool automatically transforms classes and relationships defined in a B-UML model into a RESTful service.
+BESSER offers a code generator for `REST API <https://www.redhat.com/en/topics/api/what-is-a-rest-api>`_ utilizing the `FastAPI framework <https://fastapi.tiangolo.com/>`_. 
+This tool automatically transforms classes and relationships defined in a :doc:`../buml_language/model_types/structural` into a RESTful service.
 
-
-Let's generate the code for the REST model of our :doc:`../examples/library_example` B-UML model example. 
-You should create a ``RESTAPIGenerator`` object, provide the B-UML model, and use the ``generate`` method as follows:
+Let's generate the code for the REST model of our :doc:`../examples/library_example` structural model example. 
+You should create a ``RESTAPIGenerator`` object, provide the :doc:`../buml_language/model_types/structural`, and use the ``generate`` method as follows:
 
 .. code-block:: python
     
@@ -19,7 +18,7 @@ The ``https_methods`` parameter is optional and can be used to specify the HTTP 
 Upon executing this code, a ``rest_api.py`` file and ``pydantic_classes.py`` using the ``Pydantic_Generator`` containing the Pydantic models will be generated.  in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../tests/library_test/output/rest_api.py
+.. literalinclude:: ../../../tests/structural/library/output/rest_api.py
    :language: python
    :linenos:
 

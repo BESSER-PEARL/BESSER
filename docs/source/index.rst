@@ -35,5 +35,6 @@ Contents
    utilities
    examples
    api
+   releases
    contributing
    about

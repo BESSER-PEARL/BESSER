@@ -1,4 +1,4 @@
-from besser.BUML.metamodel.structural import NamedElement, Class, Property
+from besser.BUML.metamodel.structural import NamedElement, Class, Property, Model
 
 
 # FileSourceType
@@ -631,7 +631,7 @@ class Menu(ViewComponent):
      return f'Menu({self.name},{self.description}, {self.menuItems})'
 
 #Application
-class Application(NamedElement):
+class Application(Model):
     """It is a subclass of the NamedElement class and encapsulates the properties and behavior of an application, including its name, 
        package, version code, version name, modules, description, and screen compatibility.
 
@@ -653,8 +653,8 @@ class Application(NamedElement):
         description (str): The description of the application.
         screenCompatibility (bool): Indicates whether the application has screen compatibility.
     """
-    def __init__(self, name: str, package: str, versionCode: str, versionName: str, modules: set[Module], description: str, screenCompatibility: bool = False, visibility: str = "public"):
-        super().__init__(name, visibility)
+    def __init__(self, name: str, package: str, versionCode: str, versionName: str, modules: set[Module], description: str, screenCompatibility: bool = False):
+        super().__init__(name)
         self.package: str = package
         self.versionCode: str = versionCode
         self.versionName: str = versionName

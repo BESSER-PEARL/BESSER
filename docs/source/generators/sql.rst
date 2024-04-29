@@ -4,8 +4,8 @@ SQL Schema Generator
 The SQL generator produces the code or set of SQL statements used to define and modify the structure of the tables 
 in a database.
 
-Let's generate the SQL code of our :doc:`../examples/library_example` B-UML model example. You should create a 
-``SQLGenerator`` object, provide the B-UML model, and use the ``generate`` method as follows:
+Let's generate the SQL code of our :doc:`../examples/library_example` structural model example. You should create a 
+``SQLGenerator`` object, provide the :doc:`../buml_language/model_types/structural`, and use the ``generate`` method as follows:
 
 .. code-block:: python
     
@@ -17,7 +17,7 @@ Let's generate the SQL code of our :doc:`../examples/library_example` B-UML mode
 The ``tables.sql`` file with the SQL statements will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../tests/library_test/output/tables.sql
+.. literalinclude:: ../../../tests/structural/library/output/tables.sql
    :language: sql
    :linenos:
 

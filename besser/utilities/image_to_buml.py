@@ -49,7 +49,10 @@ def image_to_plantuml(image_path: str, openai_token: str):
 
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
     response_data = json.loads(response.text)
-
+    if ('error' in response_data):
+        print("An error took place during the request to transform your given image:")
+        print(response_data['error']['message'])
+        return
     # Extracting the message
     messages = [choice['message'] for choice in response_data.get('choices', {})]
     message = messages[0]["content"]

@@ -9,10 +9,10 @@ domain of libraries, books and authors. The UML diagram is depicted in the follo
   :alt: Library model
   :align: center
 
-The Python code to specify the :doc:`B-UML structural model <../buml_language/model_types/structural>`, including its classes, attributes, and relationships, 
-is presented in the following code (lines 1-44). Additionally, the ``Python_Generator``, ``DjangoGenerator``, ``SQLAlchemyGenerator``, ``SQLGenerator`` 
-and ``REST API Generator`` code generators are implemented in this example (lines 50-61). Running this script will generate the ``output/`` folder with the
-``classes.py``, ``models.py``, ``sql_alchemy.py``, ``tables.sql`` and ``rest_api.py`` files produced by each of the Generators respectively.
+The Python code to specify the B-UML model, including its classes, attributes, and relationships, is presented in the following
+code (lines 1-44). Additionally, the ``Python_Generator``, ``DjangoGenerator``, ``SQLAlchemyGenerator``, ``SQLGenerator``, ``RESTAPIGenerator``, ``Pydantic_Generator`` and ``BackendGenerator``
+code generators are implemented in this example (lines 50-61). Running this script will generate the ``output/`` folder with the
+``classes.py``, ``models.py``, ``sql_alchemy.py``, ``tables.sql``, ``rest_api.py`` and ``pydantic_classes.py`` files produced by each of the Generators respectively.
 
 .. literalinclude:: ../../../tests/structural/library/library.py
    :language: python

@@ -1,34 +1,6 @@
 import os, json
 from fastapi import FastAPI, HTTPException
-from datetime import datetime
-from typing import List, Set
-from pydantic import BaseModel
-############################################
-#
-# The classes are defined here
-#
-############################################
-
-class Author(BaseModel):
-    name: str
-    email: str
-    id: int  # the id created
-    book_author_assoc: Set["Book"]  # N:M Relationship
- 
-
-class Library(BaseModel):
-    address: str
-    name: str
-    id: int  # the id created
- 
-
-class Book(BaseModel):
-    pages: int
-    release: datetime
-    title: str
-    id: int  # the id created
- 
-
+from pydantic_classes import *
 
 app = FastAPI()
 
@@ -38,58 +10,58 @@ app = FastAPI()
 #
 ############################################
 
-author_list = []
-library_list = []
 book_list = []
+library_list = []
+author_list = []
 
 
 ############################################
 #
-#   Author functions
+#   Book functions
 #
 ############################################
-@app.get("/author/", response_model=List[Author], tags=["author"])
-def get_author():
-    return author_list
+@app.get("/book/", response_model=List[Book], tags=["book"])
+def get_book():
+    return book_list
 
-@app.get("/author/{attribute_id}/", response_model=Author, tags=["author"])
-def get_author(attribute_id : str):   
-    for author in author_list:
-        if author.id_to_change== attribute_id:
-            return author
-    raise HTTPException(status_code=404, detail="Author not found")
+@app.get("/book/{attribute_id}/", response_model=Book, tags=["book"])
+def get_book(attribute_id : str):   
+    for book in book_list:
+        if book.id_to_change== attribute_id:
+            return book
+    raise HTTPException(status_code=404, detail="Book not found")
 
-@app.post("/author/", response_model=Author, tags=["author"])
-def create_author(author: Author):
-    author_list.append(author)
-    return author
+@app.post("/book/", response_model=Book, tags=["book"])
+def create_book(book: Book):
+    book_list.append(book)
+    return book
 
-@app.put("/author/{attribute_id}/", response_model=Author, tags=["author"]) 
-def change_author(attribute_id : str, updated_author: Author): 
-    for index, author in enumerate(author_list): 
-        if author.id_to_change == attribute_id:
-            author_list[index] = updated_author
-            return updated_author
-    raise HTTPException(status_code=404, detail="Author not found")
+@app.put("/book/{attribute_id}/", response_model=Book, tags=["book"]) 
+def change_book(attribute_id : str, updated_book: Book): 
+    for index, book in enumerate(book_list): 
+        if book.id_to_change == attribute_id:
+            book_list[index] = updated_book
+            return updated_book
+    raise HTTPException(status_code=404, detail="Book not found")
 
-@app.patch("/author/{attribute_id}/{attribute_to_change}", response_model=Author, tags=["author"])
-def update_author(attribute_id : str,  attribute_to_change: str, updated_data: str):
-    for author in author_list:
-        if author.id_to_change == attribute_id:
-            if hasattr(author, attribute_to_change):
-                setattr(author, attribute_to_change, updated_data)
-                return author
+@app.patch("/book/{attribute_id}/{attribute_to_change}", response_model=Book, tags=["book"])
+def update_book(attribute_id : str,  attribute_to_change: str, updated_data: str):
+    for book in book_list:
+        if book.id_to_change == attribute_id:
+            if hasattr(book, attribute_to_change):
+                setattr(book, attribute_to_change, updated_data)
+                return book
             else:
                 raise HTTPException(status_code=400, detail=f"Attribute '{attribute_to_change}' does not exist")
-    raise HTTPException(status_code=404, detail="Author not found")
+    raise HTTPException(status_code=404, detail="Book not found")
 
-@app.delete("/author/{attribute_id}/", tags=["author"])
-def delete_author(attribute_id : str):   
-    for index, author in enumerate(author_list):
-        if author.id_to_change == attribute_id:
-            author_list.pop(index)
+@app.delete("/book/{attribute_id}/", tags=["book"])
+def delete_book(attribute_id : str):   
+    for index, book in enumerate(book_list):
+        if book.id_to_change == attribute_id:
+            book_list.pop(index)
             return {"message": "Item deleted successfully"}
-    raise HTTPException(status_code=404, detail="Author not found") 
+    raise HTTPException(status_code=404, detail="Book not found") 
 
 ############################################
 #
@@ -141,51 +113,51 @@ def delete_library(attribute_id : str):
 
 ############################################
 #
-#   Book functions
+#   Author functions
 #
 ############################################
-@app.get("/book/", response_model=List[Book], tags=["book"])
-def get_book():
-    return book_list
+@app.get("/author/", response_model=List[Author], tags=["author"])
+def get_author():
+    return author_list
 
-@app.get("/book/{attribute_id}/", response_model=Book, tags=["book"])
-def get_book(attribute_id : str):   
-    for book in book_list:
-        if book.id_to_change== attribute_id:
-            return book
-    raise HTTPException(status_code=404, detail="Book not found")
+@app.get("/author/{attribute_id}/", response_model=Author, tags=["author"])
+def get_author(attribute_id : str):   
+    for author in author_list:
+        if author.id_to_change== attribute_id:
+            return author
+    raise HTTPException(status_code=404, detail="Author not found")
 
-@app.post("/book/", response_model=Book, tags=["book"])
-def create_book(book: Book):
-    book_list.append(book)
-    return book
+@app.post("/author/", response_model=Author, tags=["author"])
+def create_author(author: Author):
+    author_list.append(author)
+    return author
 
-@app.put("/book/{attribute_id}/", response_model=Book, tags=["book"]) 
-def change_book(attribute_id : str, updated_book: Book): 
-    for index, book in enumerate(book_list): 
-        if book.id_to_change == attribute_id:
-            book_list[index] = updated_book
-            return updated_book
-    raise HTTPException(status_code=404, detail="Book not found")
+@app.put("/author/{attribute_id}/", response_model=Author, tags=["author"]) 
+def change_author(attribute_id : str, updated_author: Author): 
+    for index, author in enumerate(author_list): 
+        if author.id_to_change == attribute_id:
+            author_list[index] = updated_author
+            return updated_author
+    raise HTTPException(status_code=404, detail="Author not found")
 
-@app.patch("/book/{attribute_id}/{attribute_to_change}", response_model=Book, tags=["book"])
-def update_book(attribute_id : str,  attribute_to_change: str, updated_data: str):
-    for book in book_list:
-        if book.id_to_change == attribute_id:
-            if hasattr(book, attribute_to_change):
-                setattr(book, attribute_to_change, updated_data)
-                return book
+@app.patch("/author/{attribute_id}/{attribute_to_change}", response_model=Author, tags=["author"])
+def update_author(attribute_id : str,  attribute_to_change: str, updated_data: str):
+    for author in author_list:
+        if author.id_to_change == attribute_id:
+            if hasattr(author, attribute_to_change):
+                setattr(author, attribute_to_change, updated_data)
+                return author
             else:
                 raise HTTPException(status_code=400, detail=f"Attribute '{attribute_to_change}' does not exist")
-    raise HTTPException(status_code=404, detail="Book not found")
+    raise HTTPException(status_code=404, detail="Author not found")
 
-@app.delete("/book/{attribute_id}/", tags=["book"])
-def delete_book(attribute_id : str):   
-    for index, book in enumerate(book_list):
-        if book.id_to_change == attribute_id:
-            book_list.pop(index)
+@app.delete("/author/{attribute_id}/", tags=["author"])
+def delete_author(attribute_id : str):   
+    for index, author in enumerate(author_list):
+        if author.id_to_change == attribute_id:
+            author_list.pop(index)
             return {"message": "Item deleted successfully"}
-    raise HTTPException(status_code=404, detail="Book not found") 
+    raise HTTPException(status_code=404, detail="Author not found") 
 
 
 

@@ -1,7 +1,7 @@
 
 from besser.BUML.metamodel.gui import *
 from besser.BUML.metamodel.structural import *
-from besser.generators.python_classes import Python_Generator
+from besser.generators.python_classes import PythonGenerator
 from besser.generators.django import DjangoGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator

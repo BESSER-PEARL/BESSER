@@ -9,35 +9,17 @@ from pydantic import BaseModel
 ############################################
 
 class BookCreate(BaseModel):
-    title: str
     pages: int
     release: datetime
-
+    title: str
     authors: Optional[List[Union["AuthorCreate", int]]] = None  # N:M Relationship
-
-            
-
     library_id: int
-
-            
-
- 
-
-class LibraryCreate(BaseModel):
-    address: str
-    name: str
-
-            
-
- 
 
 class AuthorCreate(BaseModel):
     name: str
     email: str
-
     books: Optional[List[Union["BookCreate", int]]] = None  # N:M Relationship
 
-            
-
- 
-
+class LibraryCreate(BaseModel):
+    address: str
+    name: str

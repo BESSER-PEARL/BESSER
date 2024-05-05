@@ -3,12 +3,12 @@ from datetime import datetime, date, time
 
 
 class Book:
-    def __init__(self, pages: int, title: str, release: datetime, locatedIn: "Library", writedBy: set["Author"]):
+    def __init__(self, pages: int, release: datetime, title: str, writedBy: set["Author"], locatedIn: "Library"):
         self.pages = pages
-        self.title = title
         self.release = release
-        self.locatedIn = locatedIn 
+        self.title = title
         self.writedBy = writedBy 
+        self.locatedIn = locatedIn 
         
     @property
     def pages(self) -> int:
@@ -19,6 +19,14 @@ class Book:
         self.__pages = pages
     
     @property
+    def release(self) -> datetime:
+        return self.__release
+    
+    @release.setter
+    def release(self, release: datetime):
+        self.__release = release
+    
+    @property
     def title(self) -> str:
         return self.__title
     
@@ -27,12 +35,12 @@ class Book:
         self.__title = title
     
     @property
-    def release(self) -> datetime:
-        return self.__release
+    def writedBy(self):
+        return self.__writedBy
     
-    @release.setter
-    def release(self, release: datetime):
-        self.__release = release
+    @writedBy.setter
+    def writedBy(self, writedBy):
+        self.__writedBy = writedBy
     
     @property
     def locatedIn(self):
@@ -42,13 +50,35 @@ class Book:
     def locatedIn(self, locatedIn):
         self.__locatedIn = locatedIn
     
+class Author:
+    def __init__(self, name: str, email: str, publishes: set["Book"]):
+        self.name = name
+        self.email = email
+        self.publishes = publishes 
+        
     @property
-    def writedBy(self):
-        return self.__writedBy
+    def name(self) -> str:
+        return self.__name
     
-    @writedBy.setter
-    def writedBy(self, writedBy):
-        self.__writedBy = writedBy
+    @name.setter
+    def name(self, name: str):
+        self.__name = name
+    
+    @property
+    def email(self) -> str:
+        return self.__email
+    
+    @email.setter
+    def email(self, email: str):
+        self.__email = email
+    
+    @property
+    def publishes(self):
+        return self.__publishes
+    
+    @publishes.setter
+    def publishes(self, publishes):
+        self.__publishes = publishes
     
 class Library:
     def __init__(self, address: str, name: str, has: set["Book"]):
@@ -79,34 +109,4 @@ class Library:
     @has.setter
     def has(self, has):
         self.__has = has
-    
-class Author:
-    def __init__(self, email: str, name: str, publishes: set["Book"]):
-        self.email = email
-        self.name = name
-        self.publishes = publishes 
-        
-    @property
-    def email(self) -> str:
-        return self.__email
-    
-    @email.setter
-    def email(self, email: str):
-        self.__email = email
-    
-    @property
-    def name(self) -> str:
-        return self.__name
-    
-    @name.setter
-    def name(self, name: str):
-        self.__name = name
-    
-    @property
-    def publishes(self):
-        return self.__publishes
-    
-    @publishes.setter
-    def publishes(self, publishes):
-        self.__publishes = publishes
     

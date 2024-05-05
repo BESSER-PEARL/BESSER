@@ -28,9 +28,9 @@ of the *Book* class including its attributes.
 .. code-block:: python
 
     # Book attributes definition
-    title: Property = Property(name="title", owner=None, property_type=PrimitiveDataType("str"))
-    pages: Property = Property(name="pages", owner=None, property_type=PrimitiveDataType("int"))
-    release: Property = Property(name="release", owner=None, property_type=PrimitiveDataType("date"))
+    title: Property = Property(name="title", owner=None, type=PrimitiveDataType("str"))
+    pages: Property = Property(name="pages", owner=None, type=PrimitiveDataType("int"))
+    release: Property = Property(name="release", owner=None, type=PrimitiveDataType("date"))
 
     # Book class definition
     book: Class = Class (name="Book", attributes={title, pages, release})
@@ -42,8 +42,8 @@ and *Book* as follows.
 .. code-block:: python
 
     # Library-Book association definition
-    located_in: Property = Property(name="locatedIn", owner=None, property_type=library, multiplicity=Multiplicity(1, 1))
-    has: Property = Property(name="has", owner=None, property_type=book, multiplicity=Multiplicity(0, "*"))
+    located_in: Property = Property(name="locatedIn", owner=None, type=library, multiplicity=Multiplicity(1, 1))
+    has: Property = Property(name="has", owner=None, type=book, multiplicity=Multiplicity(0, "*"))
     lib_book_association: BinaryAssociation = BinaryAssociation(name="lib_book_assoc", ends={located_in, has})
 
 Finally, create the domain model and add the classes, relationships and other elements of the model.

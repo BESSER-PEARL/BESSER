@@ -5,12 +5,12 @@ from besser.BUML.metamodel.structural import *
 #   Structural model   #
 ########################
 
-attribute1: Property = Property(name="A1", property_type=PrimitiveDataType("int"))
-attribute2: Property = Property(name="A2", property_type=PrimitiveDataType("str"))
+attribute1: Property = Property(name="A1", type=PrimitiveDataType("int"))
+attribute2: Property = Property(name="A2", type=PrimitiveDataType("str"))
 class1: Class = Class(name="class1", attributes={attribute1, attribute2})
 class2: Class = Class(name="class2", attributes=set())
-aend1: Property = Property(name="end1", property_type=class1, multiplicity=Multiplicity(0, 1))
-aend2: Property = Property(name="end2", property_type=class2, multiplicity=Multiplicity(0, "*"))
+aend1: Property = Property(name="end1", type=class1, multiplicity=Multiplicity(0, 1))
+aend2: Property = Property(name="end2", type=class2, multiplicity=Multiplicity(0, "*"))
 association1: BinaryAssociation = BinaryAssociation(name="association1", ends={aend1, aend2})
 
 ##########################

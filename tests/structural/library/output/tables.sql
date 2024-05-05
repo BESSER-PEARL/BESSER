@@ -1,8 +1,14 @@
 CREATE TABLE IF NOT EXISTS Book (
     Book_id SERIAL PRIMARY KEY,
     pages int,      
-    title varchar(100),      
-    release timestamp
+    release timestamp,      
+    title varchar(100)
+);
+
+CREATE TABLE IF NOT EXISTS Author (
+    Author_id SERIAL PRIMARY KEY,
+    name varchar(100),      
+    email varchar(100)
 );
 
 CREATE TABLE IF NOT EXISTS Library (
@@ -11,16 +17,10 @@ CREATE TABLE IF NOT EXISTS Library (
     name varchar(100)
 );
 
-CREATE TABLE IF NOT EXISTS Author (
-    Author_id SERIAL PRIMARY KEY,
-    email varchar(100),      
-    name varchar(100)
-);
-
-CREATE TABLE IF NOT EXISTS Book_Author (
-    Book_id INT REFERENCES Book(Book_id),
+CREATE TABLE IF NOT EXISTS Author_Book (
     Author_id INT REFERENCES Author(Author_id),
-    PRIMARY KEY (Book_id, Author_id)
+    Book_id INT REFERENCES Book(Book_id),
+    PRIMARY KEY (Author_id, Book_id)
 );
 
 ALTER TABLE Book

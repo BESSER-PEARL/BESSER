@@ -3,11 +3,11 @@ from datetime import datetime, date, time
 
 
 class Book:
-    def __init__(self, pages: int, release: datetime, title: str, writedBy: set["Author"], locatedIn: "Library"):
+    def __init__(self, pages: int, release: datetime, title: str, writtenBy: set["Author"], locatedIn: "Library"):
         self.pages = pages
         self.release = release
         self.title = title
-        self.writedBy = writedBy 
+        self.writtenBy = writtenBy 
         self.locatedIn = locatedIn 
         
     @property
@@ -35,12 +35,12 @@ class Book:
         self.__title = title
     
     @property
-    def writedBy(self):
-        return self.__writedBy
+    def writtenBy(self):
+        return self.__writtenBy
     
-    @writedBy.setter
-    def writedBy(self, writedBy):
-        self.__writedBy = writedBy
+    @writtenBy.setter
+    def writtenBy(self, writtenBy):
+        self.__writtenBy = writtenBy
     
     @property
     def locatedIn(self):

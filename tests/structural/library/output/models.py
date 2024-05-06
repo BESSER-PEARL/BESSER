@@ -4,7 +4,7 @@ class Book(models.Model):
     pages = models.IntegerField()
     release = models.DateTimeField()
     title = models.CharField(max_length=255)
-    writedBy = models.ManyToManyField('Author')
+    writtenBy = models.ManyToManyField('Author')
     locatedIn = models.ForeignKey('Library')
 
     def __str__(self):

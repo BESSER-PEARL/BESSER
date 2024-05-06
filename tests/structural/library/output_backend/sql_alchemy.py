@@ -50,12 +50,12 @@ class Library(Base):
 
 
 #--- Foreign keys and relationships of the book table
-Book.writedBy: Mapped[List["Author"]] = relationship("Author", secondary=book_author_assoc, back_populates="publishes")
+Book.writtenBy: Mapped[List["Author"]] = relationship("Author", secondary=book_author_assoc, back_populates="publishes")
 Book.library_id: Mapped["Library"] = mapped_column(ForeignKey("library.id"), nullable=False)
 Book.locatedIn: Mapped["Library"] = relationship("Library", back_populates="has")
 
 #--- Foreign keys and relationships of the author table
-Author.publishes: Mapped[List["Book"]] = relationship("Book", secondary=book_author_assoc, back_populates="writedBy")
+Author.publishes: Mapped[List["Book"]] = relationship("Book", secondary=book_author_assoc, back_populates="writtenBy")
 
 #--- Foreign keys and relationships of the library table
 Library.has: Mapped[List["Book"]] = relationship("Book", back_populates="locatedIn")

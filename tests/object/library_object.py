@@ -39,8 +39,8 @@ lib_book_association: BinaryAssociation = BinaryAssociation(name="lib_book_assoc
 
 # Book-Author association definition
 publishes: Property = Property(name="publishes", type=book, multiplicity=Multiplicity(0, "*"))
-writed_by: Property = Property(name="writedBy", type=author, multiplicity=Multiplicity(1, "*"))
-book_author_association: BinaryAssociation = BinaryAssociation(name="book_author_assoc", ends={writed_by, publishes})
+written_by: Property = Property(name="writtenBy", type=author, multiplicity=Multiplicity(1, "*"))
+book_author_association: BinaryAssociation = BinaryAssociation(name="book_author_assoc", ends={written_by, publishes})
 
 constraintPageNumber: Constraint = Constraint(name = "libraryPageNumber",context=library,expression="context Library inv inv1: self.has ->forAll(b:Book|b.pages>0)",language="OCL")
 
@@ -137,7 +137,7 @@ author_obj: Object = Object(name="Author Object", classifier=author, slots=[auth
 
 # Book object and Author object link
 book_link_end1: LinkEnd = LinkEnd(name="book_end1", association_end=publishes, object=book_obj)
-author_link_end: LinkEnd = LinkEnd(name="author_end", association_end=writed_by, object=author_obj)
+author_link_end: LinkEnd = LinkEnd(name="author_end", association_end=written_by, object=author_obj)
 author_book_link: Link = Link(name="author_book_link", association=book_author_association, connections=[book_link_end1,author_link_end])
 
 # Book Library and Book object link
@@ -147,7 +147,7 @@ library_book_link: Link = Link(name="library_book_link", association=book_author
 
 # Book object and Author object link
 book_link_end2: LinkEnd = LinkEnd(name="book_end3", association_end=publishes, object=book_obj_2)
-author_link_end2: LinkEnd = LinkEnd(name="author_end2", association_end=writed_by, object=author_obj)
+author_link_end2: LinkEnd = LinkEnd(name="author_end2", association_end=written_by, object=author_obj)
 author_book_link2: Link = Link(name="author_book_link2", association=book_author_association, connections=[book_link_end2,author_link_end2])
 
 # Book Library and Book object link

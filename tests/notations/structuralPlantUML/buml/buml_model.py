@@ -33,9 +33,9 @@ Author_email: Property = Property(name="email", type=str_type, visibility="publi
 Author: Class = Class(name="Author", attributes={Author_name, Author_email})
 
 # Relationships
-writedBy: BinaryAssociation = BinaryAssociation(name="writedBy", ends={
-        Property(name="writedBy", type=Book, multiplicity=Multiplicity(0, "*")),
-        Property(name="writedBy", type=Author, multiplicity=Multiplicity(1, "*"))})
+writtenBy: BinaryAssociation = BinaryAssociation(name="writtenBy", ends={
+        Property(name="writtenBy", type=Book, multiplicity=Multiplicity(0, "*")),
+        Property(name="writtenBy", type=Author, multiplicity=Multiplicity(1, "*"))})
 has: BinaryAssociation = BinaryAssociation(name="has", ends={
         Property(name="has", type=Library, multiplicity=Multiplicity(1, 1)),
         Property(name="has", type=Book, multiplicity=Multiplicity(1, 1))})
@@ -47,4 +47,4 @@ gen_Book_Fantasy: Generalization = Generalization(general=Book, specific=Fantasy
 
 
 # Domain Model
-domain: DomainModel = DomainModel(name="Domain Model", types={Library, Book, Literature, Science, Fantasy, Author}, associations={writedBy, has}, generalizations={gen_Book_Literature, gen_Book_Science, gen_Book_Fantasy})
+domain: DomainModel = DomainModel(name="Domain Model", types={Library, Book, Literature, Science, Fantasy, Author}, associations={writtenBy, has}, generalizations={gen_Book_Literature, gen_Book_Science, gen_Book_Fantasy})

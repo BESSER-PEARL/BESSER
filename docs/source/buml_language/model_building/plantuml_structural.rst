@@ -7,7 +7,7 @@ based model, including the source code to build the model, in case you want to m
 that is not possible with PlantUML.
 
 Let's see an example with the classic `library model <https://besser.readthedocs.io/en/latest/_images/library_uml_model.jpg>`_.
-The textual model writed in PlantUML is shown below.
+The textual model written in PlantUML is shown below.
 
 .. literalinclude:: ../../../../tests/notations/structuralPlantUML/library.plantuml
    :language: console

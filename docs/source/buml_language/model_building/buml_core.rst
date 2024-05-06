@@ -9,7 +9,7 @@ Build a model using the B-UML meta-classes
 
 The following guide shows how to define the classic Library model (see following image) using the B-UML library in Python.
 
-.. image:: ../../img/library_uml_model.jpg
+.. image:: ../../img/library_uml_model.png
   :width: 600
   :alt: Library model
   :align: center

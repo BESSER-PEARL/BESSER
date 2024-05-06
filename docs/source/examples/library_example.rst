@@ -4,7 +4,7 @@ Structural model example
 This example present the Python code of a basic model (designed with the :doc:`../buml_language`) that describes the typical 
 domain of libraries, books and authors. The UML diagram is depicted in the following figure.
 
-.. image:: ../img/library_uml_model.jpg
+.. image:: ../img/library_uml_model.png
   :width: 600
   :alt: Library model
   :align: center
@@ -20,5 +20,5 @@ code generators are implemented in this example (lines 50-61). Running this scri
 
 .. note::
     
-    This structural model can also be created :doc:`from a model designed with PlantUML <../buml_language/model_building/plantuml>` or even 
+    This structural model can also be created :doc:`from a model designed with PlantUML <../buml_language/model_building/plantuml_structural>` or even 
     :doc:`from an image <../buml_language/model_building/image_to_buml>`.

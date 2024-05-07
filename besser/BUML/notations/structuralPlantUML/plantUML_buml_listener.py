@@ -38,7 +38,7 @@ class BUMLGenerationListener(PlantUMLListener):
     def enterAttribute(self, ctx: PlantUMLParser.AttributeContext):
         attribute_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID().getText()
         text = attribute_name + ": Property = Property(name=\"" + ctx.ID().getText() + \
-            "\", property_type="+ ctx.primitiveData().getText() +"_type"
+            "\", type="+ ctx.primitiveData().getText() +"_type"
         if ctx.visibility():
             text += ", visibility=\"" + self.visibility[ctx.visibility().getText()] + "\""
         text += ")\n"
@@ -61,8 +61,8 @@ class BUMLGenerationListener(PlantUMLListener):
         if assoc_name in self.__relations:
             raise ValueError("The model cannot have two associations with the same name")
         text = assoc_name + ": BinaryAssociation = BinaryAssociation(name=\"" + assoc_name + "\", ends={\n\
-        Property(name=\"" + assoc_name + "\", property_type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.c_left) + self.__ends[0] + "),\n\
-        Property(name=\"" + assoc_name + "\", property_type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.c_right) + self.__ends[1] + ")})\n"
+        Property(name=\"" + assoc_name + "\", type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.c_left) + self.__ends[0] + "),\n\
+        Property(name=\"" + assoc_name + "\", type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.c_right) + self.__ends[1] + ")})\n"
         self.__relations[assoc_name] = text
         self.__relation_classes.append(cl_name_1)
         self.__relation_classes.append(cl_name_2)

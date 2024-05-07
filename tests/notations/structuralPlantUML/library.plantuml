@@ -15,6 +15,6 @@ class Author {
 + email: str 
 }
 
-Book "*" -- "1..*" Author: writedBy
+Book "*" -- "1..*" Author: writtenBy
 Library "1" -- "*" Book: has
 @enduml

@@ -22,14 +22,14 @@ def run_tests():
 
 def test_file_generation():
     class1 = Class(name="name1", attributes={
-        Property(name="attr1", property_type=PrimitiveDataType("int")),
+        Property(name="attr1", type=PrimitiveDataType("int")),
     })
     class2 = Class(name="name2", attributes={
-        Property(name="attr2", property_type=PrimitiveDataType("int"))
+        Property(name="attr2", type=PrimitiveDataType("int"))
     })
     association = BinaryAssociation(name="name_assoc", ends={
-        Property(name="attr_assoc1", owner=class2, property_type=class1, multiplicity=Multiplicity(1, "*")),
-        Property(name="attr_assoc2", owner=class1, property_type=class2, multiplicity=Multiplicity(1, "*"))
+        Property(name="attr_assoc1", owner=class2, type=class1, multiplicity=Multiplicity(1, "*")),
+        Property(name="attr_assoc2", owner=class1, type=class2, multiplicity=Multiplicity(1, "*"))
     })
 
     domain_model = DomainModel(name="Name", types={class1, class2}, associations={association})

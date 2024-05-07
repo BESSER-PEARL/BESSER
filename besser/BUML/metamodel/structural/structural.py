@@ -296,7 +296,7 @@ class Property(TypedElement):
 
     Args:
         name (str): The name of the property.
-        property_type (Type): The type of the property.
+        type (Type): The type of the property.
         owner (Type): The type that owns the property.
         multiplicity (Multiplicity): The multiplicity of the property.
         visibility (str): The visibility of the property ('public', 'private', etc.).
@@ -307,7 +307,7 @@ class Property(TypedElement):
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the property.
-        property_type (Type): Inherited from TypedElement, represents the type of the property.
+        type (Type): Inherited from TypedElement, represents the type of the property.
         owner (Type): The type that owns the property.
         multiplicity (Multiplicity): The multiplicity of the property.
         visibility (str): Inherited from TypedElement, represents the visibility of the property.
@@ -317,9 +317,9 @@ class Property(TypedElement):
         is_read_only (bool): Indicates whether the property is read only.
     """
     
-    def __init__(self, name: str, property_type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1), 
+    def __init__(self, name: str, type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1), 
                  visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_id: bool = False, is_read_only: bool = False):
-        super().__init__(name, property_type, visibility)
+        super().__init__(name, type, visibility)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite

@@ -8,7 +8,7 @@ such as :doc:`rest_api` and :doc:`backend`.
 Let's generate the code for the Pydantic classes of our :doc:`../examples/library_example` B-UML model example. 
 You should create a ``PydanticGenerator`` object, provide the B-UML model, and use the ``generate`` method as follows:
 
-.. code-block:: Pydantic
+.. code-block:: Python
     
     from besser.generators.Pydantic_classes import PydanticGenerator
     
@@ -18,6 +18,6 @@ You should create a ``PydanticGenerator`` object, provide the B-UML model, and u
 Upon executing this code, a ``pydantic_classes.py`` file containing the Pydantic models will be generated.  in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../tests/library_test/output/pydantic_classes.py
+.. literalinclude:: ../../../tests/structural/library/output_backend/pydantic_classes.py
    :language: Python
    :linenos:

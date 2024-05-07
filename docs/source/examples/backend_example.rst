@@ -1,4 +1,4 @@
-Backend Example
+Backend example
 ==================
 
 This example showcases the BESSER backend generator's capability to produce essential components for a backend service, based on the Library example B-UML model.

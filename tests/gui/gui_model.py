@@ -1,7 +1,7 @@
 
 from besser.BUML.metamodel.gui import *
 from besser.BUML.metamodel.structural import *
-from besser.generators.python_classes import Python_Generator
+from besser.generators.python_classes import PythonGenerator
 from besser.generators.django import DjangoGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
@@ -15,8 +15,8 @@ from besser.generators.sql import SQLGenerator
 t_str: PrimitiveDataType = PrimitiveDataType("str")
 
 # Library definition
-library_name: Property = Property(name="name", property_type=t_str)
-address: Property = Property(name="address", property_type=t_str)
+library_name: Property = Property(name="name", type=t_str)
+address: Property = Property(name="address", type=t_str)
 library: Class = Class (name="Library", attributes={library_name, address})
 
 ##################################

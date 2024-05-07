@@ -8,8 +8,8 @@ from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
 def test_file_generation():
     # Define the model to be generated
     class1 = Class(name="name1", attributes={
-        Property(name="attr1", property_type=PrimitiveDataType("int")),
-        Property(name="attr2", property_type=PrimitiveDataType("str"))
+        Property(name="attr1", type=PrimitiveDataType("int")),
+        Property(name="attr2", type=PrimitiveDataType("str"))
     })
 
     domain_model: DomainModel = DomainModel(name="mymodel", types={class1})
@@ -37,12 +37,12 @@ def test_file_generation():
 def test_multiple_class_generation():
     # Define multiple classes in the model
     class1 = Class(name="name1", attributes={
-        Property(name="attr1", property_type=PrimitiveDataType("int")),
-        Property(name="attr2", property_type=PrimitiveDataType("str"))
+        Property(name="attr1", type=PrimitiveDataType("int")),
+        Property(name="attr2", type=PrimitiveDataType("str"))
     })
     class2 = Class(name="name2", attributes={
-        Property(name="attr1", property_type=PrimitiveDataType("str")),
-        Property(name="attr2", property_type=PrimitiveDataType("str"))
+        Property(name="attr1", type=PrimitiveDataType("str")),
+        Property(name="attr2", type=PrimitiveDataType("str"))
     })
 
     domain_model = DomainModel(name="CompanyModel", types={class1, class2}, associations=None, packages=None, constraints=None)
@@ -63,14 +63,14 @@ def test_multiple_class_generation():
 
 def test_association_handling():
     class1 = Class(name="name1", attributes={
-        Property(name="attr1", property_type=PrimitiveDataType("int")),
+        Property(name="attr1", type=PrimitiveDataType("int")),
     })
     class2 = Class(name="name2", attributes={
-        Property(name="attr2", property_type=PrimitiveDataType("int"))
+        Property(name="attr2", type=PrimitiveDataType("int"))
     })
     association = BinaryAssociation(name="name_assoc", ends={
-        Property(name="attr_assoc1", owner=class2, property_type=class1, multiplicity=Multiplicity(1, "*")),
-        Property(name="attr_assoc2", owner=class1, property_type=class2, multiplicity=Multiplicity(1, "*"))
+        Property(name="attr_assoc1", owner=class2, type=class1, multiplicity=Multiplicity(1, "*")),
+        Property(name="attr_assoc2", owner=class1, type=class2, multiplicity=Multiplicity(1, "*"))
     })
 
     domain_model = DomainModel(name="AssociationModel", types={class1, class2}, associations={association})

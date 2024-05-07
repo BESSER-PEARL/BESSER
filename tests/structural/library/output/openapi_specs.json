@@ -5,260 +5,6 @@
         "version": "0.1.0"
     },
     "paths": {
-        "/author/": {
-            "get": {
-                "tags": [
-                    "author"
-                ],
-                "summary": "Get Author",
-                "operationId": "get_author_author__get",
-                "responses": {
-                    "200": {
-                        "description": "Successful Response",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "items": {
-                                        "$ref": "#/components/schemas/Author"
-                                    },
-                                    "type": "array",
-                                    "title": "Response Get Author Author  Get"
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "post": {
-                "tags": [
-                    "author"
-                ],
-                "summary": "Create Author",
-                "operationId": "create_author_author__post",
-                "requestBody": {
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/Author"
-                            }
-                        }
-                    },
-                    "required": true
-                },
-                "responses": {
-                    "200": {
-                        "description": "Successful Response",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/Author"
-                                }
-                            }
-                        }
-                    },
-                    "422": {
-                        "description": "Validation Error",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/HTTPValidationError"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/author/{attribute_id}/": {
-            "get": {
-                "tags": [
-                    "author"
-                ],
-                "summary": "Get Author",
-                "operationId": "get_author_author__attribute_id___get",
-                "parameters": [
-                    {
-                        "name": "attribute_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "title": "Attribute Id"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Successful Response",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/Author"
-                                }
-                            }
-                        }
-                    },
-                    "422": {
-                        "description": "Validation Error",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/HTTPValidationError"
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "put": {
-                "tags": [
-                    "author"
-                ],
-                "summary": "Change Author",
-                "operationId": "change_author_author__attribute_id___put",
-                "parameters": [
-                    {
-                        "name": "attribute_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "title": "Attribute Id"
-                        }
-                    }
-                ],
-                "requestBody": {
-                    "required": true,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "$ref": "#/components/schemas/Author"
-                            }
-                        }
-                    }
-                },
-                "responses": {
-                    "200": {
-                        "description": "Successful Response",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/Author"
-                                }
-                            }
-                        }
-                    },
-                    "422": {
-                        "description": "Validation Error",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/HTTPValidationError"
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "delete": {
-                "tags": [
-                    "author"
-                ],
-                "summary": "Delete Author",
-                "operationId": "delete_author_author__attribute_id___delete",
-                "parameters": [
-                    {
-                        "name": "attribute_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "title": "Attribute Id"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Successful Response",
-                        "content": {
-                            "application/json": {
-                                "schema": {}
-                            }
-                        }
-                    },
-                    "422": {
-                        "description": "Validation Error",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/HTTPValidationError"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/author/{attribute_id}/{attribute_to_change}": {
-            "patch": {
-                "tags": [
-                    "author"
-                ],
-                "summary": "Update Author",
-                "operationId": "update_author_author__attribute_id___attribute_to_change__patch",
-                "parameters": [
-                    {
-                        "name": "attribute_id",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "title": "Attribute Id"
-                        }
-                    },
-                    {
-                        "name": "attribute_to_change",
-                        "in": "path",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "title": "Attribute To Change"
-                        }
-                    },
-                    {
-                        "name": "updated_data",
-                        "in": "query",
-                        "required": true,
-                        "schema": {
-                            "type": "string",
-                            "title": "Updated Data"
-                        }
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "Successful Response",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/Author"
-                                }
-                            }
-                        }
-                    },
-                    "422": {
-                        "description": "Validation Error",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "$ref": "#/components/schemas/HTTPValidationError"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/library/": {
             "get": {
                 "tags": [
@@ -766,6 +512,260 @@
                     }
                 }
             }
+        },
+        "/author/": {
+            "get": {
+                "tags": [
+                    "author"
+                ],
+                "summary": "Get Author",
+                "operationId": "get_author_author__get",
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "items": {
+                                        "$ref": "#/components/schemas/Author"
+                                    },
+                                    "type": "array",
+                                    "title": "Response Get Author Author  Get"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "post": {
+                "tags": [
+                    "author"
+                ],
+                "summary": "Create Author",
+                "operationId": "create_author_author__post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Author"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Author"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/author/{attribute_id}/": {
+            "get": {
+                "tags": [
+                    "author"
+                ],
+                "summary": "Get Author",
+                "operationId": "get_author_author__attribute_id___get",
+                "parameters": [
+                    {
+                        "name": "attribute_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "title": "Attribute Id"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Author"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "tags": [
+                    "author"
+                ],
+                "summary": "Change Author",
+                "operationId": "change_author_author__attribute_id___put",
+                "parameters": [
+                    {
+                        "name": "attribute_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "title": "Attribute Id"
+                        }
+                    }
+                ],
+                "requestBody": {
+                    "required": true,
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/Author"
+                            }
+                        }
+                    }
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Author"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "tags": [
+                    "author"
+                ],
+                "summary": "Delete Author",
+                "operationId": "delete_author_author__attribute_id___delete",
+                "parameters": [
+                    {
+                        "name": "attribute_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "title": "Attribute Id"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {}
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/author/{attribute_id}/{attribute_to_change}": {
+            "patch": {
+                "tags": [
+                    "author"
+                ],
+                "summary": "Update Author",
+                "operationId": "update_author_author__attribute_id___attribute_to_change__patch",
+                "parameters": [
+                    {
+                        "name": "attribute_id",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "title": "Attribute Id"
+                        }
+                    },
+                    {
+                        "name": "attribute_to_change",
+                        "in": "path",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "title": "Attribute To Change"
+                        }
+                    },
+                    {
+                        "name": "updated_data",
+                        "in": "query",
+                        "required": true,
+                        "schema": {
+                            "type": "string",
+                            "title": "Updated Data"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/Author"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "components": {
@@ -783,34 +783,25 @@
                     "id": {
                         "type": "integer",
                         "title": "Id"
-                    },
-                    "book_author_assoc": {
-                        "items": {
-                            "$ref": "#/components/schemas/Book"
-                        },
-                        "type": "array",
-                        "uniqueItems": true,
-                        "title": "Book Author Assoc"
                     }
                 },
                 "type": "object",
                 "required": [
                     "name",
                     "email",
-                    "id",
-                    "book_author_assoc"
+                    "id"
                 ],
                 "title": "Author"
             },
             "Book": {
                 "properties": {
-                    "pages": {
-                        "type": "integer",
-                        "title": "Pages"
-                    },
                     "title": {
                         "type": "string",
                         "title": "Title"
+                    },
+                    "pages": {
+                        "type": "integer",
+                        "title": "Pages"
                     },
                     "release": {
                         "type": "string",
@@ -820,14 +811,23 @@
                     "id": {
                         "type": "integer",
                         "title": "Id"
+                    },
+                    "book_author_assoc": {
+                        "items": {
+                            "$ref": "#/components/schemas/Author"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "title": "Book Author Assoc"
                     }
                 },
                 "type": "object",
                 "required": [
-                    "pages",
                     "title",
+                    "pages",
                     "release",
-                    "id"
+                    "id",
+                    "book_author_assoc"
                 ],
                 "title": "Book"
             },
@@ -846,13 +846,13 @@
             },
             "Library": {
                 "properties": {
-                    "name": {
-                        "type": "string",
-                        "title": "Name"
-                    },
                     "address": {
                         "type": "string",
                         "title": "Address"
+                    },
+                    "name": {
+                        "type": "string",
+                        "title": "Name"
                     },
                     "id": {
                         "type": "integer",
@@ -861,8 +861,8 @@
                 },
                 "type": "object",
                 "required": [
-                    "name",
                     "address",
+                    "name",
                     "id"
                 ],
                 "title": "Library"

@@ -2,43 +2,13 @@
 from datetime import datetime, date, time
 
 
-class Library:
-    def __init__(self, address: str, name: str, has: set["Book"]):
-        self.address = address
-        self.name = name
-        self.has = has 
-        
-    @property
-    def address(self) -> str:
-        return self.__address
-    
-    @address.setter
-    def address(self, address: str):
-        self.__address = address
-    
-    @property
-    def name(self) -> str:
-        return self.__name
-    
-    @name.setter
-    def name(self, name: str):
-        self.__name = name
-    
-    @property
-    def has(self):
-        return self.__has
-    
-    @has.setter
-    def has(self, has):
-        self.__has = has
-    
 class Book:
-    def __init__(self, pages: int, release: datetime, title: str, locatedIn: "Library", writedBy: set["Author"]):
+    def __init__(self, pages: int, release: datetime, title: str, writtenBy: set["Author"], locatedIn: "Library"):
         self.pages = pages
         self.release = release
         self.title = title
+        self.writtenBy = writtenBy 
         self.locatedIn = locatedIn 
-        self.writedBy = writedBy 
         
     @property
     def pages(self) -> int:
@@ -65,20 +35,20 @@ class Book:
         self.__title = title
     
     @property
+    def writtenBy(self):
+        return self.__writtenBy
+    
+    @writtenBy.setter
+    def writtenBy(self, writtenBy):
+        self.__writtenBy = writtenBy
+    
+    @property
     def locatedIn(self):
         return self.__locatedIn
     
     @locatedIn.setter
     def locatedIn(self, locatedIn):
         self.__locatedIn = locatedIn
-    
-    @property
-    def writedBy(self):
-        return self.__writedBy
-    
-    @writedBy.setter
-    def writedBy(self, writedBy):
-        self.__writedBy = writedBy
     
 class Author:
     def __init__(self, name: str, email: str, publishes: set["Book"]):
@@ -109,4 +79,34 @@ class Author:
     @publishes.setter
     def publishes(self, publishes):
         self.__publishes = publishes
+    
+class Library:
+    def __init__(self, address: str, name: str, has: set["Book"]):
+        self.address = address
+        self.name = name
+        self.has = has 
+        
+    @property
+    def address(self) -> str:
+        return self.__address
+    
+    @address.setter
+    def address(self, address: str):
+        self.__address = address
+    
+    @property
+    def name(self) -> str:
+        return self.__name
+    
+    @name.setter
+    def name(self, name: str):
+        self.__name = name
+    
+    @property
+    def has(self):
+        return self.__has
+    
+    @has.setter
+    def has(self, has):
+        self.__has = has
     

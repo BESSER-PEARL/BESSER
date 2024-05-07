@@ -296,38 +296,34 @@ class Property(TypedElement):
 
     Args:
         name (str): The name of the property.
-        property_type (Type): The type of the property.
+        type (Type): The type of the property.
         owner (Type): The type that owns the property.
         multiplicity (Multiplicity): The multiplicity of the property.
         visibility (str): The visibility of the property ('public', 'private', etc.).
         is_composite (bool): Indicates whether the property is a composite.
         is_navigable (bool): Indicates whether the property is navigable in a relationship.
-        is_aggregation (bool): Indicates whether the property represents an aggregation.
         is_id (bool): Indicates whether the property is an id.
         is_read_only (bool): Indicates whether the property is read only.
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the property.
-        property_type (Type): Inherited from TypedElement, represents the type of the property.
+        type (Type): Inherited from TypedElement, represents the type of the property.
         owner (Type): The type that owns the property.
         multiplicity (Multiplicity): The multiplicity of the property.
         visibility (str): Inherited from TypedElement, represents the visibility of the property.
         is_composite (bool): Indicates whether the property is a composite.
         is_navigable (bool): Indicates whether the property is navigable in a relationship.
-        is_aggregation (bool): Indicates whether the property represents an aggregation.
         is_id (bool): Indicates whether the property is an id.
         is_read_only (bool): Indicates whether the property is read only.
     """
     
-    def __init__(self, name: str, property_type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1), 
-                 visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False,
-                 is_id: bool = False, is_read_only: bool = False):
-        super().__init__(name, property_type, visibility)
+    def __init__(self, name: str, type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1), 
+                 visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_id: bool = False, is_read_only: bool = False):
+        super().__init__(name, type, visibility)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
         self.is_navigable: bool = is_navigable
-        self.is_aggregation: bool = is_aggregation
         self.is_id: bool = is_id
         self.is_read_only: bool = is_read_only
 
@@ -377,16 +373,6 @@ class Property(TypedElement):
     def is_navigable(self, is_navigable: bool):
         """bool: Set wheter the property is navigable."""
         self.__is_navigable = is_navigable
-
-    @property
-    def is_aggregation(self) -> bool:
-        """bool: Get wheter the property represents an aggregation."""
-        return self.__is_aggregation
-
-    @is_aggregation.setter
-    def is_aggregation(self, is_aggregation: bool):
-        """bool: Set wheter the property represents an aggregation."""
-        self.__is_aggregation = is_aggregation
     
     @property
     def is_id(self) -> bool:
@@ -675,8 +661,6 @@ class BinaryAssociation(Association):
         """
         if len(ends) != 2:
             raise ValueError("A binary must have exactly two ends")
-        if list(ends)[0].is_aggregation == True and list(ends)[1].is_aggregation == True:
-            raise ValueError("The aggregation attribute cannot be tagged at both ends")
         if list(ends)[0].is_composite == True and list(ends)[1].is_composite == True:
             raise ValueError("The composition attribute cannot be tagged at both ends")
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)

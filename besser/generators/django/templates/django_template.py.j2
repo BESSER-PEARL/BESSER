@@ -25,15 +25,17 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
             {% set class2_name = ns.end2.type.name %}
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
             {# N:M Relationship: Use ManyToManyField in Django #}
-    {{ class2_name.lower() }} = models.ManyToManyField('{{ class2_name }}')
+    {{ ns.end2.name.replace(' ', '_') }} = models.ManyToManyField('{{ class2_name }}'{% if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{% endif %})
                 {% do processed_associations.append(association.name) %}
             {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
             {# N:1 Relationship: Use ForeignKey in Django #}
-    {{ class2_name.lower() }} = models.ForeignKey('{{ class2_name }}', on_delete=models.CASCADE)
+    {{ ns.end2.name.replace(' ', '_') }} = models.ForeignKey('{{ class2_name }}'{% if ns.end2.is_composite %}, on_delete=models.CASCADE{% endif %}
+                {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{% endif %})
                 {% do processed_associations.append(association.name) %}
             {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
             {# 1:1 Relationship: Use OneToOneField in Django #}
-    {{ class2_name.lower() }} = models.OneToOneField('{{ class2_name }}', on_delete=models.CASCADE)
+    {{ ns.end2.name.replace(' ', '_') }} = models.OneToOneField('{{ class2_name }}'{% if ns.end2.is_composite %}, on_delete=models.CASCADE{% endif %}
+                {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{% endif %})
                 {% do processed_associations.append(association.name) %}
             {% endif %}
         {% endif %}

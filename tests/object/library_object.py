@@ -14,33 +14,33 @@ t_str: PrimitiveDataType = PrimitiveDataType("str")
 t_date: PrimitiveDataType = PrimitiveDataType("date")
 
 # Library attributes definition
-library_name: Property = Property(name="name", property_type=t_str)
-address: Property = Property(name="address", property_type=t_str)
+library_name: Property = Property(name="name", type=t_str)
+address: Property = Property(name="address", type=t_str)
 # Library class definition
 library: Class = Class (name="Library", attributes={library_name, address})
 
 # Book attributes definition
-title: Property = Property(name="title", property_type=t_str)
-pages: Property = Property(name="pages", property_type=t_int)
-release: Property = Property(name="release", property_type=t_date)
+title: Property = Property(name="title", type=t_str)
+pages: Property = Property(name="pages", type=t_int)
+release: Property = Property(name="release", type=t_date)
 # Book class definition
 book: Class = Class (name="Book", attributes={title, pages, release})
 
 # Author attributes definition
-author_name: Property = Property(name="name", property_type=t_str)
-email: Property = Property(name="email", property_type=t_str)
+author_name: Property = Property(name="name", type=t_str)
+email: Property = Property(name="email", type=t_str)
 # Author class definition
 author: Class = Class (name="Author", attributes={author_name, email})
 
 # Library-Book association definition
-located_in: Property = Property(name="locatedIn",property_type=library, multiplicity=Multiplicity(1, 1))
-has: Property = Property(name="has", property_type=book, multiplicity=Multiplicity(0, "*"))
+located_in: Property = Property(name="locatedIn",type=library, multiplicity=Multiplicity(1, 1))
+has: Property = Property(name="has", type=book, multiplicity=Multiplicity(0, "*"))
 lib_book_association: BinaryAssociation = BinaryAssociation(name="lib_book_assoc", ends={located_in, has})
 
 # Book-Author association definition
-publishes: Property = Property(name="publishes", property_type=book, multiplicity=Multiplicity(0, "*"))
-writed_by: Property = Property(name="writedBy", property_type=author, multiplicity=Multiplicity(1, "*"))
-book_author_association: BinaryAssociation = BinaryAssociation(name="book_author_assoc", ends={writed_by, publishes})
+publishes: Property = Property(name="publishes", type=book, multiplicity=Multiplicity(0, "*"))
+written_by: Property = Property(name="writtenBy", type=author, multiplicity=Multiplicity(1, "*"))
+book_author_association: BinaryAssociation = BinaryAssociation(name="book_author_assoc", ends={written_by, publishes})
 
 constraintPageNumber: Constraint = Constraint(name = "libraryPageNumber",context=library,expression="context Library inv inv1: self.has ->forAll(b:Book|b.pages>0)",language="OCL")
 
@@ -137,7 +137,7 @@ author_obj: Object = Object(name="Author Object", classifier=author, slots=[auth
 
 # Book object and Author object link
 book_link_end1: LinkEnd = LinkEnd(name="book_end1", association_end=publishes, object=book_obj)
-author_link_end: LinkEnd = LinkEnd(name="author_end", association_end=writed_by, object=author_obj)
+author_link_end: LinkEnd = LinkEnd(name="author_end", association_end=written_by, object=author_obj)
 author_book_link: Link = Link(name="author_book_link", association=book_author_association, connections=[book_link_end1,author_link_end])
 
 # Book Library and Book object link
@@ -147,7 +147,7 @@ library_book_link: Link = Link(name="library_book_link", association=book_author
 
 # Book object and Author object link
 book_link_end2: LinkEnd = LinkEnd(name="book_end3", association_end=publishes, object=book_obj_2)
-author_link_end2: LinkEnd = LinkEnd(name="author_end2", association_end=writed_by, object=author_obj)
+author_link_end2: LinkEnd = LinkEnd(name="author_end2", association_end=written_by, object=author_obj)
 author_book_link2: Link = Link(name="author_book_link2", association=book_author_association, connections=[book_link_end2,author_link_end2])
 
 # Book Library and Book object link

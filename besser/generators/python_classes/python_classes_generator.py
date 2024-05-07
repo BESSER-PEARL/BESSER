@@ -3,9 +3,9 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 
-class Python_Generator(GeneratorInterface):
+class PythonGenerator(GeneratorInterface):
     """
-    Python_Generator is a class that implements the GeneratorInterface and is responsible for generating
+    PythonGenerator is a class that implements the GeneratorInterface and is responsible for generating
     the Python domain model code based on the input B-UML model.
 
     Args:

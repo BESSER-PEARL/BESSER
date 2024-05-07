@@ -10,3 +10,4 @@ See the following examples where we define B-UML models and implement some code 
    examples/gui_example
    examples/dpp
    examples/ocl
+   examples/backend_example

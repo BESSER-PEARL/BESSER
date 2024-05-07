@@ -77,7 +77,7 @@ class ODListener(ParseTreeListener):
 
     # Enter a parse tree produced by ODParser#propertyName.
     def enterPropertyName(self, ctx:ODParser.PropertyNameContext):
-        self.property = Property(name = ctx.getText(),property_type='NP')
+        self.property = Property(name = ctx.getText(),type='NP')
         pass
 
     # Exit a parse tree produced by ODParser#propertyName.
@@ -108,7 +108,7 @@ class ODListener(ParseTreeListener):
         linkName = ctx.getText().split(":")[1]
         obj1 = self.getObject(linkParts[0])
         obj2 = self.getObject(linkParts[1])
-        prop = Property(name = linkName, property_type= 'NF')
+        prop = Property(name = linkName, type= 'NF')
         linkEndLeft = LinkEnd(linkName,prop, obj1)
         linkEndRight = LinkEnd(linkName,prop, obj2)
         link = Link(linkName, None, [linkEndLeft,linkEndRight])

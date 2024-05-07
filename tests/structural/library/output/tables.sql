@@ -1,9 +1,3 @@
-CREATE TABLE IF NOT EXISTS Library (
-    Library_id SERIAL PRIMARY KEY,
-    address varchar(100),      
-    name varchar(100)
-);
-
 CREATE TABLE IF NOT EXISTS Book (
     Book_id SERIAL PRIMARY KEY,
     pages int,      
@@ -15,6 +9,12 @@ CREATE TABLE IF NOT EXISTS Author (
     Author_id SERIAL PRIMARY KEY,
     name varchar(100),      
     email varchar(100)
+);
+
+CREATE TABLE IF NOT EXISTS Library (
+    Library_id SERIAL PRIMARY KEY,
+    address varchar(100),      
+    name varchar(100)
 );
 
 CREATE TABLE IF NOT EXISTS Author_Book (

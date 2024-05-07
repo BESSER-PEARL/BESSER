@@ -53,12 +53,12 @@ def test_unique_list_names():
 
 # Test: Do not have two fields with the same name in a list item.
 def test_unique_field_names():
-    field1: Property = Property(name="field1", property_type="")
-    field2: Property = Property(name="field2", property_type="")
+    field1: Property = Property(name="field1", type="")
+    field2: Property = Property(name="field2", type="")
     modelElement: ModelElement = ModelElement(name="item1", dataSourceClass="", fields={field1, field2})
     with pytest.raises(ValueError) as excinfo:
         # Try to create a field with the same name as field1
-        field_duplicate: Property = Property(name="field1", property_type="")
+        field_duplicate: Property = Property(name="field1", type="")
         modelElement.fields={field1, field2, field_duplicate}
         assert "A list item cannot have two fields with the same name" in str(excinfo.value)
 

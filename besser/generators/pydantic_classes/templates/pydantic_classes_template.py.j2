@@ -1,0 +1,84 @@
+from datetime import datetime, date
+from typing import List, Optional, Union,Set
+from pydantic import BaseModel
+
+############################################
+#
+# The classes are defined here
+#
+############################################
+{% set ns = namespace(abstract_found=false, id_found = false, same_name_found = false )-%}
+{% set processed_associations = [] %}
+
+{% for class in classes -%}
+    {% if class.is_abstract -%}
+        {% set ns.abstract_found = true -%}
+    {% endif -%}    
+{% endfor -%}
+{% if ns.abstract_found -%}
+    from abc import ABC, abstractmethod
+{% endif -%}
+{# Two newlines are added here unconditionally #}
+{% for class in classes %}
+class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{% if backend %}Create{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC, BaseModel){% else %}(BaseModel){% endif %}:
+    {% set ns.id_found = false %}
+    {% for attribute in class.attributes %}
+        {% if attribute.is_id %}
+    {{ attribute.name }}: {{ attribute.type.name }}  # the id
+            {% set ns.id_found = true %}
+        {% else %}
+    {{ attribute.name }}: {{ attribute.type.name }}
+            {% if attribute.name|lower == "id" %}
+                {% set ns.same_name_found = true %}
+            {% endif %}
+        {% endif %}
+    {% endfor -%}
+
+    {% if not ns.id_found and not ns.same_name_found and not backend %}
+    id: int  # id created
+    {% endif -%}
+
+    {% for association in class.associations %}
+        {% if association.ends|length == 2 and association.name not in processed_associations %}
+            {% set ns = namespace(end1=None, end2=None) %}
+            {% for end in association.ends %}
+                {% set ns.end1 = end if end.type.name == class.name else ns.end1 %}
+                {% set ns.end2 = end if end.type.name != class.name else ns.end2 %}
+            {% endfor %}
+            {% set class1_name = ns.end1.type.name %}
+            {% set class2_name = ns.end2.type.name %}
+
+            {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
+            {% if nested_creations %}
+            {% if backend %}
+    {{ class2_name.lower() }}s: Optional[List[Union["{{ class2_name }}Create", int]]] = None  # N:M Relationship
+            {% else %}
+    {{ class2_name.lower() }}s: Set["{{ class2_name }}"]  # N:M Relationship
+            {% endif %}
+            {% else %}
+    {{ class2_name.lower() }}s_id: List[int]
+            {% endif %}
+
+            {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+            {% if not backend %}
+    {{ class2_name.lower() }}: "{{ class2_name }}"  # N:1 Relationship
+            {% else %}
+    {{ class2_name.lower() }}_id: int
+            {% endif %}
+
+            {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 and not backend %}
+    {{ class2_name.lower() }}: "{{ class2_name }}"  # 1:1 Relationship
+            {% endif %}
+            
+        {% if not backend %}
+                    {% do processed_associations.append(association.name) %}
+        {% endif %}
+        {% endif %}
+    {% endfor %}
+
+    {% if not class.attributes %}
+    pass
+    {% endif %} 
+{# Two newlines are added here unconditionally #}
+
+{% endfor %}

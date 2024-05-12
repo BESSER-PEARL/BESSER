@@ -1,37 +1,37 @@
 grammar ll_arch;
 
-architecture        : 'low-level-architecture'
-                      cluster+
-                      application+
-                      container+
+architecture        : 'LLA' '{'
+                      'clusters' '{' cluster+ '}'
+                      'apps' '{' application+ '}'
+                      'containers' '{' container+ '}'
+                      '}'
                       ;
 
 cluster             : privateCluster | publicCluster ;
 
-privateCluster      : 'public_cluster' '(' 'name:' ID ')' ;
+privateCluster      : 'public_cluster' '{' 'name' ':' ID '}' ;
 
-publicCluster       : 'private_cluster' '(' 'name:' ID ')' ;
+publicCluster       : 'private_cluster' '{' 'name' ':' ID '}' ;
 
-application         : 'application' '(' 
-                      'name:' ID ','
+application         : 'application' '{' 
+                      'name' ':' ID ','
                       'cpu_required' ':' INT ','
                       'memory_required' ':' INT ','
-                      'image' ':' STRING
+                      'image' ':' STRING ','
                       'components' ':' component+
-                      ')'
+                      '}'
                       ;
 
-component           : '(' STRING (',' STRING)* ')' ;
+component           : '[' STRING (',' STRING)* ']' ;
 
-container           : 'container' '('
-                      'application' ':' STRING
-                      'cluster' ':' STRING
-                      'cpu_limit' ':' INT
-                      'memory_limit' ':' INT
-                      'quantity' ':' INT
-                      ')'
+container           : 'container' '{'
+                      'application' ':' STRING ','
+                      'cluster' ':' STRING ','
+                      'cpu_limit' ':' INT ','
+                      'memory_limit' ':' INT ','
+                      'instances' ':' INT
+                      '}'
                       ;
-
 
 WS                  : [ \t\r\n]+ -> skip ;
 

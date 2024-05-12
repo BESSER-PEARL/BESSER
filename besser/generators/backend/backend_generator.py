@@ -23,8 +23,6 @@ class BackendGenerator(GeneratorInterface):
     """
 
     def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool=False):
-        if output_dir is None:
-            output_dir = os.getcwd()  # set to current directory if output_dir is None
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "DELETE"]
         if not http_methods:
@@ -49,7 +47,7 @@ class BackendGenerator(GeneratorInterface):
             os.makedirs(backend_folder_path, exist_ok=True)
             print(f"Backend folder created at {backend_folder_path}")
         else:
-            backend_folder_path = os.path.join(self.output_dir, "output_backend")
+            backend_folder_path = os.path.join(os.path.abspath(''), "output_backend")
             os.makedirs(backend_folder_path, exist_ok=True)
             print(f"Backend folder created at {backend_folder_path}")
 

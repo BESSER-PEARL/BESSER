@@ -5,6 +5,7 @@ from besser.generators import GeneratorInterface
 from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
+from besser.generators.backend.docker_files import generate_docker_files
 
 
 class BackendGenerator(GeneratorInterface):
@@ -21,7 +22,7 @@ class BackendGenerator(GeneratorInterface):
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
 
-    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None):
+    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool=False):
         if output_dir is None:
             output_dir = os.getcwd()  # set to current directory if output_dir is None
         super().__init__(model, output_dir)
@@ -32,6 +33,7 @@ class BackendGenerator(GeneratorInterface):
             http_methods = [method for method in http_methods if method in allowed_methods]
         self.http_methods = http_methods
         self.nested_creations = nested_creations
+        self.docker_image = docker_image
 
     def generate(self):
         """
@@ -42,8 +44,10 @@ class BackendGenerator(GeneratorInterface):
         Returns:
             None, but store the generated code as files main_api.py, sql_alchemy.py and pydantic_classes.py
         """
-        if self.output_dir is ".":
-            backend_folder_path = "."
+        if self.output_dir is not None:
+            backend_folder_path = self.output_dir
+            os.makedirs(backend_folder_path, exist_ok=True)
+            print(f"Backend folder created at {backend_folder_path}")
         else:
             backend_folder_path = os.path.join(self.output_dir, "output_backend")
             os.makedirs(backend_folder_path, exist_ok=True)
@@ -57,3 +61,7 @@ class BackendGenerator(GeneratorInterface):
 
         pydantic_model = PydanticGenerator(model=self.model, output_dir=backend_folder_path, backend=True, nested_creations=self.nested_creations)
         pydantic_model.generate()
+        
+        # Generate files if Docker image is required
+        if self.docker_image == True:
+            generate_docker_files(backend_folder_path)

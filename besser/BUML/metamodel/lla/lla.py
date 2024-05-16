@@ -65,7 +65,7 @@ class Resources:
 
     """
 
-    def __init__(self, cpu: int, memory: int) -> None:
+    def __init__(self, cpu: int, memory: int):
         self.cpu: int = cpu
         self.memory: int = memory
 
@@ -208,7 +208,7 @@ class Container(NamedElement):
 
     """
 
-    def __init__(self, name: str, application: Application, resources_limit: Resources = None, volumes: set[Volume] = None):
+    def __init__(self, name: str, application: Application, resources_limit: Resources = None, volumes: set[Volume] = set()):
         super().__init__(name)
         self.application: Application = application
         self.resources_limit: Resources = resources_limit
@@ -364,6 +364,30 @@ class IPRange(NamedElement):
         return f'IPRange({self.name}, {self.cidr_range}, {self.type})' 
 
 
+class SecurityGroup(NamedElement):
+    """
+    Args:
+    
+    Attributes:
+
+    """
+
+    def __init__(self, name: str, rules: set[Service]):
+        super().__init__(name)
+        self.rules: set[Service] = rules
+    
+    @property
+    def rules(self) -> set[Service]:
+        return self.__rules
+
+    @rules.setter
+    def rules(self, rules: set[Service]):
+        self.__rules = rules
+
+    def __repr__(self) -> str:
+        return f'SecurityGroup({self.name}, {self.rules})'
+
+
 class Network(NamedElement):
     """
     Args:
@@ -372,8 +396,17 @@ class Network(NamedElement):
 
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, security_groups: set[SecurityGroup] = set()):
         super().__init__(name)
+        self.security_groups: set[SecurityGroup] = security_groups
+
+    @property
+    def security_groups(self) -> set[SecurityGroup]:
+        return self.__security_groups
+
+    @security_groups.setter
+    def security_groups(self, security_groups: set[SecurityGroup]):
+        self.__security_groups = security_groups
 
     def __repr__(self) -> str:
         return f'Network({self.name})' 
@@ -497,6 +530,7 @@ class Provider:
     def __init__(self):
         pass
 
+
 class AWS(Provider):
     """
     Args:
@@ -508,6 +542,7 @@ class AWS(Provider):
     def __init__(self):
         super().__init__()
 
+
 class Azure(Provider):
     """
     Args:
@@ -518,6 +553,7 @@ class Azure(Provider):
 
     def __init__(self):
         super().__init__()
+
 
 class GCP(Provider):
     """
@@ -537,7 +573,7 @@ class GCP(Provider):
         return self.__project_id
 
     @project_id.setter
-    def project_id(self, project_id: str) -> None:
+    def project_id(self, project_id: str):
         self.__project_id = project_id
 
     @property
@@ -545,13 +581,13 @@ class GCP(Provider):
         return self.__deletion_protection
 
     @deletion_protection.setter
-    def deletion_protection(self, deletion_protection: bool) -> None:
+    def deletion_protection(self, deletion_protection: bool):
         self.__deletion_protection = deletion_protection
 
     def __repr__(self) -> str:
         return f'GCP({self.project_id}, {self.deletion_protection})'
-    
 
+    
 class Cluster(NamedElement):
     """
     Args:
@@ -561,7 +597,7 @@ class Cluster(NamedElement):
     """
 
     def __init__(self, name: str, networks: set[Network], subnets: set[Subnetwork], services: set[Service], deployments: set[Deployment],
-                 regions: Region, nodes: set[Node] = None):
+                 regions: Region, nodes: set[Node] = set()):
         super().__init__(name)
         self.networks: set[Network] = networks
         self.subnets: set[Subnetwork] = subnets
@@ -575,7 +611,7 @@ class Cluster(NamedElement):
         return self.__networks
 
     @networks.setter
-    def networks(self, networks: set[Network]) -> None:
+    def networks(self, networks: set[Network]):
         self.__networks = networks
 
     @property
@@ -583,7 +619,7 @@ class Cluster(NamedElement):
         return self.__subnets
 
     @subnets.setter
-    def subnets(self, subnets: set[Subnetwork]) -> None:
+    def subnets(self, subnets: set[Subnetwork]):
         self.__subnets = subnets
 
     @property
@@ -591,7 +627,7 @@ class Cluster(NamedElement):
         return self.__services
 
     @services.setter
-    def services(self, services: set[Service]) -> None:
+    def services(self, services: set[Service]):
         self.__services = services
 
     @property
@@ -599,7 +635,7 @@ class Cluster(NamedElement):
         return self.__deployments
 
     @deployments.setter
-    def deployments(self, deployments: set[Deployment]) -> None:
+    def deployments(self, deployments: set[Deployment]):
         self.__deployments = deployments
 
     @property
@@ -607,7 +643,7 @@ class Cluster(NamedElement):
         return self.__regions
 
     @regions.setter
-    def regions(self, regions: set[Region]) -> None:
+    def regions(self, regions: set[Region]):
         self.__regions = regions
 
     @property
@@ -615,7 +651,7 @@ class Cluster(NamedElement):
         return self.__nodes
 
     @nodes.setter
-    def nodes(self, nodes: set[Node]) -> None:
+    def nodes(self, nodes: set[Node]):
         self.__nodes = nodes
 
     def __repr__(self) -> str:

@@ -14,7 +14,7 @@ a simplified version of the better known UML, the Unified Modeling Language).
 BESSER enables users to model, generate, perzonalize and deploy smart and complex software systems. BESSER is 
 based around our B-UML language and a number of generators built on top of it (See the high-level architecture below).
 
-.. image:: img/blc.jpg
+.. image:: img/blc.png
   :width: 800
   :alt: B-UML metamodel
   :align: center
@@ -35,4 +35,6 @@ Contents
    utilities
    examples
    api
+   releases
+   contributing
    about

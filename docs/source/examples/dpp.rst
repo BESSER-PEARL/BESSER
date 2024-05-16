@@ -13,7 +13,7 @@ the model layer code of a Django web application.
 The PlantUML model (code and graphic representation) that describes the domain is as follows. Copy this code into a new file and 
 store it as ``dpp.plantuml``. 
 
-.. literalinclude:: ../../../tests/dpp/dpp.plantuml
+.. literalinclude:: ../../../tests/structural/dpp/dpp.plantuml
    :language: console
    :linenos:
 
@@ -24,7 +24,7 @@ store it as ``dpp.plantuml``.
 
 To transform this PlantUML model to B-UML and use the Django code generator, you can run the following code.
 
-.. literalinclude:: ../../../tests/dpp/dpp.py
+.. literalinclude:: ../../../tests/structural/dpp/dpp.py
    :language: python
    :linenos:
 

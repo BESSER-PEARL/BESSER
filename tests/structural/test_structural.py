@@ -31,7 +31,7 @@ def test_model_duplicated_names():
 # Testing attributes initialization
 def test_attribute_initialization():
     class1: Type = Type(name="name1")
-    attribute1: Property = Property(name="attribute1", owner = class1, property_type=PrimitiveDataType("int"),
+    attribute1: Property = Property(name="attribute1", owner = class1, type=PrimitiveDataType("int"),
                                     multiplicity=Multiplicity(0, 1))
     # assert attributes has proper type and multiplicity
     assert attribute1.type.name == "int"
@@ -42,22 +42,22 @@ def test_attribute_initialization():
 # Testing attribute multiplicity and data type violations
 def test_attribute_type_and_multiplicity_violation():
     with pytest.raises(ValueError) as excinfo:
-        attribute1: Property = Property(name="attribute1", property_type=PrimitiveDataType("int"),
+        attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"),
                                         multiplicity=Multiplicity(0, -1))
         assert "Invalid max multiplicity" in str(excinfo.value)
 
     with pytest.raises(ValueError) as excinfo:
-        attribute1: Property = Property(name="attribute1", property_type=PrimitiveDataType("int"),
+        attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"),
                                         multiplicity=Multiplicity(-1, 1))
         assert "Invalid min multiplicity" in str(excinfo.value)
 
     with pytest.raises(ValueError) as excinfo:
-        attribute1: Property = Property(name="attribute1", property_type=PrimitiveDataType("int"),
+        attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"),
                                         multiplicity=Multiplicity(2, 1))
         assert "Invalid max multiplicity" in str(excinfo.value)
 
     with pytest.raises(ValueError) as excinfo:
-        attribute1: Property = Property(name="attribute1", property_type=PrimitiveDataType("invented_type"),
+        attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("invented_type"),
                                         multiplicity=Multiplicity(2, 1))
         assert "Invalid primitive data type" in str(excinfo.value)
 
@@ -66,9 +66,9 @@ def test_attribute_type_and_multiplicity_violation():
 def test_class_initialization():
     class1: Class = Class(name="classA", attributes=set())
     class2: Class
-    attribute1: Property = Property(name="attribute1", owner=None, property_type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
-    attribute2: Property = Property(name="attribute2", owner=None, property_type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
-    reference1: Property = Property(name="reference1", owner=None, property_type=class1, multiplicity=Multiplicity(0, 1))
+    attribute1: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
+    attribute2: Property = Property(name="attribute2", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
+    reference1: Property = Property(name="reference1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
     class2: Class = Class(name="classB", attributes={attribute1, attribute2})
     assert len(class2.attributes) == 2
     print(class2)
@@ -78,8 +78,8 @@ def test_class_initialization():
 def test_duplicated_name_class():
     with pytest.raises(ValueError) as excinfo:
         class1 : Class
-        attribute1: Property = Property(name="attribute1", owner=None, property_type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
-        attribute2: Property = Property(name="attribute1", owner=None, property_type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
+        attribute1: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
+        attribute2: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
         class1 = Class(name="name1", attributes={attribute1, attribute2})
         assert "A class cannot have two attributes with the same name" in str(excinfo.value)
 
@@ -87,16 +87,16 @@ def test_duplicated_name_class():
 def test_more_than_one_id_class():
     with pytest.raises(ValueError) as excinfo:
         class1 : Class
-        attribute1: Property = Property(name="attribute1", property_type=PrimitiveDataType("int"), is_id=True)
-        attribute2: Property = Property(name="attribute2", property_type=PrimitiveDataType("int"), is_id=True)
+        attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"), is_id=True)
+        attribute2: Property = Property(name="attribute2", type=PrimitiveDataType("int"), is_id=True)
         class1 = Class(name="name1", attributes={attribute1, attribute2})
         assert "A class cannot have two id attributes" in str(excinfo.value)
 
 def test_association_initialization():
     class1: Class = Class(name="name1", attributes=set())
     class2: Class = Class(name="name2", attributes=set())
-    aend1: Property = Property(name="end1", owner=None, property_type=class1, multiplicity=Multiplicity(0, 1))
-    aend2: Property = Property(name="end2", owner=None, property_type=class2, multiplicity=Multiplicity(0, 1))
+    aend1: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
+    aend2: Property = Property(name="end2", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
     association: BinaryAssociation = BinaryAssociation(name="association1", ends={aend1, aend2})
     assert len(association.ends) == 2
     assert aend1 in association.ends
@@ -108,7 +108,7 @@ def test_association_initialization():
 def test_binary_association():
     with pytest.raises(ValueError) as excinfo:
         class1: Type = Type(name="name1")
-        aend: Property = Property(name="end1", owner=None, property_type=class1, multiplicity=Multiplicity(0, 1))
+        aend: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
         association: BinaryAssociation = BinaryAssociation(name="association1", ends={aend})
         assert "A binary association should have two ends" in str(excinfo.value)
 
@@ -117,10 +117,10 @@ def test_binary_association():
 def test_association_class():
     class1: Class = Class(name="name1", attributes=None)
     class2: Class = Class(name="name2", attributes=None)
-    aend1: Property = Property(name="end1", owner=None, property_type=class1, multiplicity=Multiplicity(0, 1))
-    aend2: Property = Property(name="end2", owner=None, property_type=class2, multiplicity=Multiplicity(0, 1))
+    aend1: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
+    aend2: Property = Property(name="end2", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
     association: BinaryAssociation = BinaryAssociation(name="association1", ends={aend1, aend2})
-    attribute1: Property = Property(name="attribute1", owner=None, property_type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
+    attribute1: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
     association_class: AssociationClass = AssociationClass(name="association_class1", attributes={attribute1}, association=association)
     assert len(association_class.attributes) == 1
     assert attribute1 in association_class.attributes
@@ -128,7 +128,7 @@ def test_association_class():
 
 
 def test_generalization_initialization():
-    attribute1: Property = Property(name="attribute1", owner = None, property_type=PrimitiveDataType("int"),
+    attribute1: Property = Property(name="attribute1", owner = None, type=PrimitiveDataType("int"),
                                     multiplicity=Multiplicity(0, 1))
     class1: Class = Class(name="name1", attributes={attribute1})
     class2: Class = Class(name="name2", attributes=None)

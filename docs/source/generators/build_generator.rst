@@ -2,8 +2,7 @@ Build Your Own Generator
 ========================
 
 At BESSER, you can also build your own code generator. Code generators consist of M2T model-to-text transformations
-to automatically generate software artifacts from an input model that describes the domain or problem. In this case,
-the input to the generator is a B-UML model.
+to automatically generate software artifacts from an input model (could be any :doc:`type of model <../buml_language/model_types>`).
 
 BESSER provides an interface (abstract class) called ``GeneratorInterface`` that you can inherit to build your code
 generator. This way, we standardize the use of BESSER code generators, improve maintainability, and usability (you can
@@ -25,7 +24,8 @@ As an example, let's look at our Python class code generator below. Notice how t
    :language: python
    :linenos:
 
-Remember that in BESSER, B-UML models have a set of methods to facilitate their traversal. For example, the ``class.attributes`` 
-method gets the list of attributes of the class, ``class.all_attributes`` gets the list of attributes including the inherited 
-ones (if the class inherits from another one), ``model.classes_sorted_by_inheritance()`` gets the classes of the model sorted
-according to the inheritance hierarchy, and so on. You can consult the :doc:`API documentation <../api>` for more information.
+Remember that in BESSER, B-UML models have a set of methods to facilitate their traversal. For example, for structural models,
+the ``class.attributes`` method gets the list of attributes of the class, ``class.all_attributes`` gets the list of attributes 
+including the inherited ones (if the class inherits from another one), ``model.classes_sorted_by_inheritance()`` gets the classes 
+of the model sorted according to the inheritance hierarchy, and so on. You can consult the :doc:`API documentation <../api>` for 
+more information.

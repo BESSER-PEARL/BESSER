@@ -47,9 +47,12 @@ html_title = f"{project} {release}"
 
 # -- Options for HTML output
 
-html_logo = "img/besser_logo.png"
+html_theme_options = {
+    "light_logo": "besser_logo_light.png",
+    "dark_logo": "besser_logo_dark.png"
+}
 html_theme = 'furo'
-#html_static_path = ['_static']
+html_static_path = ['_static']
 
 # -- Options for EPUB output
 #epub_show_urls = 'footnote'
@@ -80,4 +83,4 @@ def linkcode_resolve(domain, info):
         return None
     start, end = lines[1], lines[1] + len(lines[0]) - 1
     filename = info['module'].replace('.', '/')
-    return f"https://github.com/BESSER-PEARL/bot-framework/blob/Documentation/{filename}.py#L{start}-L{end}"
+    return f"https://github.com/BESSER-PEARL/BESSER/blob/master/{filename}.py#L{start}-L{end}"

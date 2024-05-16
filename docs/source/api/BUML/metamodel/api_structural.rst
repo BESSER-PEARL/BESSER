@@ -1,5 +1,5 @@
-BUML structure
-==============
+Structural model
+================
 
 .. automodule:: besser.BUML.metamodel.structural.structural
    :members:

@@ -86,19 +86,17 @@ class DataType(Type):
         return f"DataType({self.name})"
     
 class PrimitiveDataType(DataType):
-    """Class representing an enumeration literal.
+    """Class representing a primitive data type.
 
-    This class is a subclass of NamedElement and is used to represent individual
-    literals within an enumeration.
+    This class is a subclass of DataType and is used to represent primitive data types
+    with a specified name.
 
     Args:
-        name (str): the name of the enumeration literal.
-        owner (DataType): the owner data type of the enumeration literal.
+        name (str): the name of the primitive data type.
 
     Attributes:
-        name (str): Inherited from NamedElement, represents the name of the enumeration literal.
-        owner (DataType): Represents the owner data type of the enumeration literal.
-    """    
+        name (str): Inherited from NamedElement, represents the name of the primitive data type.
+    """
 
     def __init__(self, name: str):
         super().__init__(name)
@@ -120,20 +118,20 @@ class PrimitiveDataType(DataType):
         return f"PrimitiveDataType({self.name})"
     
 class EnumerationLiteral(NamedElement):
-    """Class representing a primitive data type.
+    """Class representing an enumeration literal.
 
-    This class is a subclass of DataType and is used to represent primitive data types
-    with a specified name.
+    This class is a subclass of NamedElement and is used to represent individual
+    literals within an enumeration.
 
     Args:
-        name (str): the name of the primitive data type.
-        owner (DataType): the owner data type (Enumeration) of the enumeration literal.
+        name (str): the name of the enumeration literal.
+        owner (DataType): the owner data type of the enumeration literal.
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the enumeration literal.
-        owner (DataType): Represents the owner data type (Enumeration) of the enumeration literal.
+        owner (DataType): Represents the owner data type of the enumeration literal.
     """
-    
+
     def __init__(self, name: str, owner: DataType):
         super().__init__(name)
         self.owner: DataType = owner
@@ -298,37 +296,36 @@ class Property(TypedElement):
 
     Args:
         name (str): The name of the property.
-        property_type (Type): The type of the property.
+        type (Type): The type of the property.
         owner (Type): The type that owns the property.
         multiplicity (Multiplicity): The multiplicity of the property.
         visibility (str): The visibility of the property ('public', 'private', etc.).
         is_composite (bool): Indicates whether the property is a composite.
         is_navigable (bool): Indicates whether the property is navigable in a relationship.
-        is_aggregation (bool): Indicates whether the property represents an aggregation.
         is_id (bool): Indicates whether the property is an id.
+        is_read_only (bool): Indicates whether the property is read only.
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the property.
-        property_type (Type): Inherited from TypedElement, represents the type of the property.
+        type (Type): Inherited from TypedElement, represents the type of the property.
         owner (Type): The type that owns the property.
         multiplicity (Multiplicity): The multiplicity of the property.
         visibility (str): Inherited from TypedElement, represents the visibility of the property.
         is_composite (bool): Indicates whether the property is a composite.
         is_navigable (bool): Indicates whether the property is navigable in a relationship.
-        is_aggregation (bool): Indicates whether the property represents an aggregation.
         is_id (bool): Indicates whether the property is an id.
+        is_read_only (bool): Indicates whether the property is read only.
     """
     
-    def __init__(self, name: str, property_type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1), 
-                 visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_aggregation: bool = False,
-                 is_id: bool = False):
-        super().__init__(name, property_type, visibility)
+    def __init__(self, name: str, type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1), 
+                 visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True, is_id: bool = False, is_read_only: bool = False):
+        super().__init__(name, type, visibility)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
         self.is_navigable: bool = is_navigable
-        self.is_aggregation: bool = is_aggregation
         self.is_id: bool = is_id
+        self.is_read_only: bool = is_read_only
 
     @property
     def owner(self) -> Type:
@@ -376,16 +373,6 @@ class Property(TypedElement):
     def is_navigable(self, is_navigable: bool):
         """bool: Set wheter the property is navigable."""
         self.__is_navigable = is_navigable
-
-    @property
-    def is_aggregation(self) -> bool:
-        """bool: Get wheter the property represents an aggregation."""
-        return self.__is_aggregation
-
-    @is_aggregation.setter
-    def is_aggregation(self, is_aggregation: bool):
-        """bool: Set wheter the property represents an aggregation."""
-        self.__is_aggregation = is_aggregation
     
     @property
     def is_id(self) -> bool:
@@ -396,9 +383,19 @@ class Property(TypedElement):
     def is_id(self, is_id: bool):
         """bool: Set wheter the property is an id."""
         self.__is_id = is_id
+    
+    @property
+    def is_read_only(self) -> bool:
+        """bool: Get wheter the property is read only."""
+        return self.__is_read_only
+    
+    @is_read_only.setter
+    def is_read_only(self, is_read_only: bool):
+        """bool: Set wheter the property is read only."""
+        self.__is_read_only = is_read_only
 
     def __repr__(self):
-        return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite}, is_id={self.is_id})'
+        return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite}, is_id={self.is_id}, is_read_only={self.is_read_only})'
 
 class Class(Type):
     """Represents a class in a modeling context.
@@ -410,18 +407,21 @@ class Class(Type):
         name (str): The name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
         is_abstract (bool): Indicates whether the class is abstract.
+        is_read_only (bool): Indicates whether the class is read only.
 
     Attributes:
         name (str): Inherited from Type, represents the name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
         is_abstract (bool): Indicates whether the class is abstract.
+        is_read_only (bool): Indicates whether the class is read only.
         __associations (set[Association]): Set of associations involving the class.
         __generalizations (set[Generalization]): Set of generalizations involving the class.
     """
 
-    def __init__(self, name: str, attributes: set[Property], is_abstract: bool= False):
+    def __init__(self, name: str, attributes: set[Property], is_abstract: bool= False, is_read_only: bool= False):
         super().__init__(name)
         self.is_abstract: bool = is_abstract
+        self.is_read_only: bool = is_read_only
         self.attributes: set[Property] = attributes
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
@@ -480,6 +480,16 @@ class Class(Type):
     def is_abstract(self, is_abstract: bool):
         """bool: Set wheter the class is abstract."""
         self.__is_abstract = is_abstract
+
+    @property
+    def is_read_only(self) -> bool:
+        """bool: Get wheter the class is read only."""
+        return self.__is_read_only
+    
+    @is_read_only.setter
+    def is_read_only(self, is_read_only: bool):
+        """bool: Set wheter the class is read only."""
+        self.__is_read_only = is_read_only
 
     @property
     def associations(self) -> set:
@@ -651,8 +661,6 @@ class BinaryAssociation(Association):
         """
         if len(ends) != 2:
             raise ValueError("A binary must have exactly two ends")
-        if list(ends)[0].is_aggregation == True and list(ends)[1].is_aggregation == True:
-            raise ValueError("The aggregation attribute cannot be tagged at both ends")
         if list(ends)[0].is_composite == True and list(ends)[1].is_composite == True:
             raise ValueError("The composition attribute cannot be tagged at both ends")
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
@@ -888,8 +896,21 @@ class Constraint(NamedElement):
     def __repr__(self):
         return f'Constraint({self.name},{self.context.name},{self.language},{self.expression})'
 
-class DomainModel(NamedElement):
-    """A domain model is the root element that comprises a number of types, associations, 
+class Model(NamedElement):
+    """A model is the root element. A model is the root element. There are different types of models
+    that inherit from this class. For example, DomainModel, ObjectModel, or GUIModel.
+
+    Args:
+        name (str): The name of the model.
+        
+    Attributes:
+        name (str): Inherited from NamedElement, represents the name of the model.
+    """
+    def __init__(self, name: str):
+        super().__init__(name)
+
+class DomainModel(Model):
+    """A domain model comprises a number of types, associations, 
     generalizations, packages, constraints, and others.
 
     Args:

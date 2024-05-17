@@ -339,10 +339,11 @@ class IPRange(NamedElement):
 
     """
 
-    def __init__(self, name: str, cidr_range: str, type: IPRangeType):
+    def __init__(self, name: str, cidr_range: str, type: IPRangeType, public: bool):
         super().__init__(name)
         self.cidr_range: str = cidr_range
         self.type: IPRangeType = type
+        self.public: bool = public
 
     @property
     def cidr_range(self) -> str:
@@ -360,8 +361,16 @@ class IPRange(NamedElement):
     def type(self, type: IPRangeType):
         self.__type = type
 
+    @property
+    def public(self) -> bool:
+        return self.__public
+
+    @public.setter
+    def public(self, public: bool):
+        self.__public = public
+
     def __repr__(self) -> str:
-        return f'IPRange({self.name}, {self.cidr_range}, {self.type})' 
+        return f'IPRange({self.name}, {self.cidr_range}, {self.type}, {self.public})' 
 
 
 class SecurityGroup(NamedElement):

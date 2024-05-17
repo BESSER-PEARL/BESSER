@@ -605,31 +605,15 @@ class Cluster(NamedElement):
 
     """
 
-    def __init__(self, name: str, networks: set[Network], subnets: set[Subnetwork], services: set[Service], deployments: set[Deployment],
-                 regions: Region, nodes: set[Node] = set()):
+    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: Region, nodes: set[Node] = set(),
+                 networks: set[Network] = set(), subnets: set[Subnetwork] = set()):
         super().__init__(name)
-        self.networks: set[Network] = networks
-        self.subnets: set[Subnetwork] = subnets
         self.services: set[Service] = services
         self.deployments: set[Deployment] = deployments
         self.regions: set[Region] = regions
         self.nodes: set[Node] = nodes
-
-    @property
-    def networks(self) -> set[Network]:
-        return self.__networks
-
-    @networks.setter
-    def networks(self, networks: set[Network]):
-        self.__networks = networks
-
-    @property
-    def subnets(self) -> set[Subnetwork]:
-        return self.__subnets
-
-    @subnets.setter
-    def subnets(self, subnets: set[Subnetwork]):
-        self.__subnets = subnets
+        self.networks: set[Network] = networks
+        self.subnets: set[Subnetwork] = subnets
 
     @property
     def services(self) -> set[Service]:
@@ -663,8 +647,24 @@ class Cluster(NamedElement):
     def nodes(self, nodes: set[Node]):
         self.__nodes = nodes
 
+    @property
+    def networks(self) -> set[Network]:
+        return self.__networks
+
+    @networks.setter
+    def networks(self, networks: set[Network]):
+        self.__networks = networks
+
+    @property
+    def subnets(self) -> set[Subnetwork]:
+        return self.__subnets
+
+    @subnets.setter
+    def subnets(self, subnets: set[Subnetwork]):
+        self.__subnets = subnets
+
     def __repr__(self) -> str:
-        return f'Cluster({self.name}, {self.networks}, {self.subnets}, {self.services}, {self.deployments}, {self.regions}, {self.nodes})'
+        return f'Cluster({self.name}, {self.services}, {self.deployments}, {self.regions}, {self.nodes}, {self.networks}, {self.subnets})'
 
 
 class PublicCluster(Cluster):
@@ -675,9 +675,9 @@ class PublicCluster(Cluster):
 
     """
 
-    def __init__(self, name: str, networks: set[Network], subnets: set[Subnetwork], services: set[Service], deployments: set[Deployment], 
-                 regions: Region, user: str, password: str, num_nodes: int, provider: Provider):
-        super().__init__(name, networks, subnets, services, deployments, regions)
+    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: Region, user: str, password: str, 
+                 num_nodes: int, provider: Provider, networks: set[Network] = set(), subnets: set[Subnetwork] = set()):
+        super().__init__(name, services, deployments, regions, networks, subnets)
         self.user : str = user
         self.password: str = password
         self.num_nodes: int = num_nodes
@@ -716,7 +716,7 @@ class PublicCluster(Cluster):
         self.__provider = provider
 
     def __repr__(self) -> str:
-        return f'PublicCluster({self.name}, {self.networks}, {self.subnets}, {self.services},{self.deployments}, {self.regions}, {self.user}, {self.password}, {self.provider})'
+        return f'PublicCluster({self.name}, {self.services},{self.deployments}, {self.regions}, {self.user}, {self.password}, {self.provider}, {self.networks}, {self.subnets})'
 
 class OnPremises(Cluster):
     """
@@ -726,9 +726,9 @@ class OnPremises(Cluster):
 
     """
 
-    def __init__(self, name: str, networks: set[Network], subnets: set[Subnetwork], services: set[Service], deployments: set[Deployment], 
-                 regions: Region, nodes: set[Node], hypervisor: Hypervisor):
-        super().__init__(name, networks, subnets, services, deployments, regions, nodes)
+    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: Region, nodes: set[Node], 
+                 hypervisor: Hypervisor, networks: set[Network], subnets: set[Subnetwork]):
+        super().__init__(name, services, deployments, regions, nodes, networks, subnets)
         self.hypervisor: str = hypervisor
 
     @property
@@ -742,4 +742,4 @@ class OnPremises(Cluster):
         self.__hypervisor = hypervisor
 
     def __repr__(self) -> str:
-        return f'Cluster({self.name}, {self.networks}, {self.subnets}, {self.services},{self.deployments}, {self.regions}, {self.nodes}, {self.hypervisor})'
+        return f'Cluster({self.name}, {self.services},{self.deployments}, {self.regions}, {self.nodes}, {self.hypervisor}, {self.networks}, {self.subnets})'

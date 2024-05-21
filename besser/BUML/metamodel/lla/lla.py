@@ -116,11 +116,10 @@ class Application(NamedElement):
 
     """
 
-    def __init__(self, name: str, image_repo: str, port: int,components: set[Component], required_resources: Resources, domain_model: DomainModel):
+    def __init__(self, name: str, image_repo: str, port: int, required_resources: Resources, domain_model: DomainModel):
         super().__init__(name)
         self.image_repo: str = image_repo
         self.port: str = port
-        self.components: set[Component] = components
         self.required_resources: Resources = required_resources
         self.domain_model: DomainModel = domain_model
 
@@ -145,16 +144,6 @@ class Application(NamedElement):
         self.__port = port
 
     @property
-    def components(self) -> set[Component]:
-        """set[Component]: Get the components."""
-        return self.__components
-
-    @components.setter
-    def components(self, components: set[Component]):
-        """set[Component]: Set the components."""
-        self.__components = components
-
-    @property
     def required_resources(self) -> Resources:
         """Resource: Get the required resources."""
         return self.__required_resources
@@ -175,7 +164,7 @@ class Application(NamedElement):
         self.__domain_model = domain_model
 
     def __repr__(self) -> str:
-        return f'Application({self.name}, {self.components}, {self.required_resources}, {self.image_repo}, {self.domain_model})'
+        return f'Application({self.name}, {self.required_resources}, {self.image_repo}, {self.domain_model})'
 
 
 class Volume(NamedElement):
@@ -628,7 +617,7 @@ class Cluster(NamedElement):
         self.__subnets = subnets
 
     def __repr__(self) -> str:
-        return f'Cluster({self.name}, {self.services}, {self.deployments}, {self.regions}, {self.nodes}, {self.networks}, {self.subnets})'
+        return f'Cluster({self.name}, {self.services}, {self.deployments}, {self.regions}, {self.net_config}, {self.nodes}, {self.networks}, {self.subnets})'
 
 
 class PublicCluster(Cluster):
@@ -671,7 +660,7 @@ class PublicCluster(Cluster):
         self.__provider = provider
 
     def __repr__(self) -> str:
-        return f'PublicCluster({self.name}, {self.services},{self.deployments}, {self.regions}, {self.config_file}, {self.provider}, {self.networks}, {self.subnets})'
+        return f'PublicCluster({self.name}, {self.services},{self.deployments}, {self.regions}, {self.config_file}, {self.provider}, {self.networks}, {self.subnets}, {self.net_config})'
 
 class OnPremises(Cluster):
     """

@@ -57,6 +57,21 @@ class ServiceType(Enum):
     egress = "Egress"
 
 
+class Provider(Enum):
+    google = "Google"
+    aws = "AWS"
+    azure = "Azure"
+    other = "Other"
+
+
+class Protocol(Enum):
+    http = "HTTP"
+    https = "HTTPS"
+    tcp = "TCP"
+    udp = "UPD"
+    all = "ALL"
+
+
 class Resources:
     """
     Args:
@@ -289,11 +304,12 @@ class Service(NamedElement):
 
     """
 
-    def __init__(self, name: str, port: int, target_port: int, type: ServiceType, application: Application):
+    def __init__(self, name: str, port: int, target_port: int, type: ServiceType, protocol: Protocol, application: Application):
         super().__init__(name)
         self.port: int = port
         self.target_port: int = target_port
         self.type: ServiceType = type
+        self.protocol: Protocol = protocol
         self.application: Application = application
 
     @property
@@ -321,6 +337,14 @@ class Service(NamedElement):
         self.__type = type
 
     @property
+    def protocol(self) -> Protocol:
+        return self.__protocol
+
+    @protocol.setter
+    def protocol(self, protocol: Protocol):
+        self.__protocol = protocol
+
+    @property
     def application(self) -> Application:
         return self.__application
 
@@ -329,7 +353,7 @@ class Service(NamedElement):
         self.__application = application
     
     def __repr__(self) -> str:
-        return f'Service({self.name}, {self.port}, {self.target_port}, {self.type}, {self.application})'
+        return f'Service({self.name}, {self.port}, {self.target_port}, {self.type}, {self.protocol}, {self.application})'
     
 class IPRange(NamedElement):
     """
@@ -528,75 +552,6 @@ class CloudNode(Node):
         super().__init__(name, public_ip, private_ip, os, resources, storage, processor)
 
 
-class Provider:
-    """
-    Args:
-    
-    Attributes:
-
-    """
-
-    def __init__(self):
-        pass
-
-
-class AWS(Provider):
-    """
-    Args:
-    
-    Attributes:
-
-    """
-
-    def __init__(self):
-        super().__init__()
-
-
-class Azure(Provider):
-    """
-    Args:
-    
-    Attributes:
-
-    """
-
-    def __init__(self):
-        super().__init__()
-
-
-class GCP(Provider):
-    """
-    Args:
-    
-    Attributes:
-
-    """
-
-    def __init__(self, project_id: str, deletion_protection: bool):
-        super().__init__()
-        self.project_id: str = project_id
-        self.deletion_protection: bool = deletion_protection
-
-    @property
-    def project_id(self) -> str:
-        return self.__project_id
-
-    @project_id.setter
-    def project_id(self, project_id: str):
-        self.__project_id = project_id
-
-    @property
-    def deletion_protection(self) -> bool:
-        return self.__deletion_protection
-
-    @deletion_protection.setter
-    def deletion_protection(self, deletion_protection: bool):
-        self.__deletion_protection = deletion_protection
-
-    def __repr__(self) -> str:
-        return f'GCP({self.project_id}, {self.deletion_protection})'
-
-    
 class Cluster(NamedElement):
     """
     Args:
@@ -605,12 +560,13 @@ class Cluster(NamedElement):
 
     """
 
-    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: Region, nodes: set[Node] = set(),
+    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: Region, net_config: bool = True, nodes: set[Node] = set(),
                  networks: set[Network] = set(), subnets: set[Subnetwork] = set()):
         super().__init__(name)
         self.services: set[Service] = services
         self.deployments: set[Deployment] = deployments
         self.regions: set[Region] = regions
+        self.net_config: bool = net_config
         self.nodes: set[Node] = nodes
         self.networks: set[Network] = networks
         self.subnets: set[Subnetwork] = subnets
@@ -638,6 +594,14 @@ class Cluster(NamedElement):
     @regions.setter
     def regions(self, regions: set[Region]):
         self.__regions = regions
+
+    @property
+    def net_config(self) -> bool:
+        return self.__net_config
+
+    @net_config.setter
+    def net_config(self, net_config: bool):
+        self.__net_config = net_config
 
     @property
     def nodes(self) -> set[Node]:
@@ -675,29 +639,20 @@ class PublicCluster(Cluster):
 
     """
 
-    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: Region, user: str, password: str, 
-                 num_nodes: int, provider: Provider, networks: set[Network] = set(), subnets: set[Subnetwork] = set()):
-        super().__init__(name, services, deployments, regions, networks, subnets)
-        self.user : str = user
-        self.password: str = password
+    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: Region, num_nodes: int, provider: Provider, 
+                 config_file: str, networks: set[Network] = set(), subnets: set[Subnetwork] = set(), net_config: bool = True):
+        super().__init__(name, services, deployments, regions, networks, subnets, net_config)
+        self.config_file: str = config_file
         self.num_nodes: int = num_nodes
         self.provider: Provider = provider
 
     @property
-    def user(self) -> str:
-        return self.__user
+    def config_file(self) -> str:
+        return self.__config_file
 
-    @user.setter
-    def user(self, user: str):
-        self.__user = user
-
-    @property
-    def password(self) -> str:
-        return self.__password
-
-    @password.setter
-    def password(self, password: str):
-        self.__password = password
+    @config_file.setter
+    def config_file(self, config_file: str):
+        self.__config_file = config_file
 
     @property
     def num_nodes(self) -> int:
@@ -716,7 +671,7 @@ class PublicCluster(Cluster):
         self.__provider = provider
 
     def __repr__(self) -> str:
-        return f'PublicCluster({self.name}, {self.services},{self.deployments}, {self.regions}, {self.user}, {self.password}, {self.provider}, {self.networks}, {self.subnets})'
+        return f'PublicCluster({self.name}, {self.services},{self.deployments}, {self.regions}, {self.config_file}, {self.provider}, {self.networks}, {self.subnets})'
 
 class OnPremises(Cluster):
     """

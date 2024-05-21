@@ -549,7 +549,7 @@ class Cluster(NamedElement):
 
     """
 
-    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: Region, net_config: bool = True, nodes: set[Node] = set(),
+    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: set[Region], net_config: bool = True, nodes: set[Node] = set(),
                  networks: set[Network] = set(), subnets: set[Subnetwork] = set()):
         super().__init__(name)
         self.services: set[Service] = services

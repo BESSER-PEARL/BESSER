@@ -55,61 +55,86 @@ class DeploymentGenerator(GeneratorInterface):
         if isinstance(value, (IPRangeType, ServiceType, Protocol)):
             return value.value
         return str(value)
-    
-    def build_generation_path(self, file_name: str) -> str:
-        return os.path.join(self.output_dir, file_name)
 
     def generate(self):
         """
         Generates deployment models code based on the provided B-UML model and saves it to the specified output directory.
-        If the output directory was not specified, the code generated will be stored in the <current directory>/output
+        If the output directory is not specified, the generated code will be stored in the <current directory>/output
         folder.
 
         Returns:
             None, but stores the generated code as files with specified names.
         """
+        output_base_dir = os.path.join(os.getcwd(), 'output')
+
         for public_cluster in self.deployment_model.clusters:
-            # Read the configuration file .conf line by line
-            with open(public_cluster.config_file, 'r') as file:
-                config_lines = file.readlines()
+            try:
+                # Read the configuration file .conf line by line
+                with open(public_cluster.config_file, 'r') as file:
+                    config_lines = file.readlines()
+            except IOError as e:
+                print(f"Error reading configuration file {public_cluster.config_file}: {e}")
+                continue
+
             # Dictionary mapping template file names to output file names
-            # Create the "gcp" directory if it doesn't exist
-            gcp_dir = os.path.join(self.output_dir, "gcp")
-            os.makedirs(gcp_dir, exist_ok=True)
+            template_to_file_map = self.get_template_to_file_map(public_cluster.provider.value)
 
-            if public_cluster.provider.value == 'Google':
-                gcp_dir = os.path.join(self.output_dir, "gcp")
-                os.makedirs(gcp_dir, exist_ok=True)
-                template_to_file_map = {
-                    'gcp/version.tf.j2': 'gcp/version.tf',
-                    'gcp/cluster.tf.j2': 'gcp/cluster.tf',
-                    'gcp/app.tf.j2': 'gcp/app.tf',
-                    'gcp/api.tf.j2': 'gcp/api.tf',
-                    'gcp/setup.bat.j2': 'gcp/setup.bat',
-                }   
-            elif public_cluster.provider.value == 'AWS':
-                aws_dir = os.path.join(self.output_dir, "aws")
-                os.makedirs(aws_dir, exist_ok=True)
-                template_to_file_map = {
-                    'aws/eks.tf.j2': 'aws/eks.tf',
-                    'aws/iam-oidc.tf.j2': 'aws/iam-oidc.tf',
-                    'aws/provider.tf.j2': 'aws/provider.tf',
-                    'aws/igw.tf.j2': 'aws/igw.tf',
-                    'aws/nat.tf.j2': 'aws/nat.tf',
-                    'aws/routes.tf.j2': 'aws/routes.tf',
-                    'aws/vpc.tf.j2': 'aws/vpc.tf',
-                    'aws/nodes.tf.j2': 'aws/nodes.tf',
-                    'aws/subnets.tf.j2': 'aws/subnets.tf',
-                    'aws/setup.bat.j2': 'aws/setup.bat',
+            if not template_to_file_map:
+                print(f"Unsupported provider: {public_cluster.provider.value}")
+                continue
 
-                }
+            # Create a directory path with the provider and cluster name
+            cluster_dir = os.path.join(output_base_dir,
+                                       f"{public_cluster.provider.value.lower()}_{public_cluster.name}")
+            os.makedirs(cluster_dir, exist_ok=True)
 
             for template_name, output_file_name in template_to_file_map.items():
-                file_path = self.build_generation_path(file_name=output_file_name)
-                template = self.env.get_template(template_name)
+                file_path = os.path.join(cluster_dir, output_file_name)
+                try:
+                    template = self.env.get_template(template_name)
+                except Exception as e:
+                    print(f"Error loading template {template_name}: {e}")
+                    continue
 
-                with open(file_path, mode="w") as f:
-                    generated_code = template.render(public_cluster=public_cluster, config_lines=config_lines)
-                    f.write(generated_code)
-                    print(f"Code generated in the location: {file_path}")
+                try:
+                    with open(file_path, mode="w") as f:
+                        generated_code = template.render(public_cluster=public_cluster, config_lines=config_lines)
+                        f.write(generated_code)
+                        print(f"Code generated in the location: {file_path}")
+                except IOError as e:
+                    print(f"Error writing to file {file_path}: {e}")
 
+    @staticmethod
+    def get_template_to_file_map(provider):
+        """
+        Returns the template to file map based on the provider.
+
+        Args:
+            provider (str): The cloud provider (e.g., 'Google', 'AWS').
+
+        Returns:
+            dict: Mapping of template file names to output file names.
+        """
+        if provider == 'Google':
+            return {
+                'gcp/version.tf.j2': 'version.tf',
+                'gcp/cluster.tf.j2': 'cluster.tf',
+                'gcp/app.tf.j2': 'app.tf',
+                'gcp/api.tf.j2': 'api.tf',
+                'gcp/setup.bat.j2': 'setup.bat',
+            }
+        elif provider == 'AWS':
+            return {
+                'aws/eks.tf.j2': 'eks.tf',
+                'aws/iam-oidc.tf.j2': 'iam-oidc.tf',
+                'aws/provider.tf.j2': 'provider.tf',
+                'aws/igw.tf.j2': 'igw.tf',
+                'aws/nat.tf.j2': 'nat.tf',
+                'aws/routes.tf.j2': 'routes.tf',
+                'aws/vpc.tf.j2': 'vpc.tf',
+                'aws/nodes.tf.j2': 'nodes.tf',
+                'aws/subnets.tf.j2': 'subnets.tf',
+                'aws/setup.bat.j2': 'setup.bat',
+            }
+        else:
+            return None

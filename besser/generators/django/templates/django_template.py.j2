@@ -29,7 +29,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
                 {% do processed_associations.append(association.name) %}
             {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
             {# N:1 Relationship: Use ForeignKey in Django #}
-    {{ ns.end2.name.replace(' ', '_') }} = models.ForeignKey('{{ class2_name }}'{% if ns.end2.is_composite %}, on_delete=models.CASCADE{% endif %}
+    {{ ns.end2.name.replace(' ', '_') }} = models.ForeignKey('{{ class2_name }}', on_delete=models.CASCADE
                 {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{% endif %})
                 {% do processed_associations.append(association.name) %}
             {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}

@@ -1,4 +1,4 @@
-import os, yaml
+import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.deployment import DeploymentModel, IPRangeType, ServiceType, Protocol
 from besser.generators import GeneratorInterface

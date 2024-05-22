@@ -1,4 +1,4 @@
-from besser.BUML.metamodel.structural import NamedElement, DomainModel
+from besser.BUML.metamodel.structural import NamedElement, DomainModel, Model
 from enum import Enum
 
 class Component(NamedElement):
@@ -293,7 +293,7 @@ class Service(NamedElement):
 
     """
 
-    def __init__(self, name: str, port: int, target_port: int, type: ServiceType, protocol: Protocol, application: Application):
+    def __init__(self, name: str, port: int, target_port: int, type: ServiceType, protocol: Protocol, application: Application = None):
         super().__init__(name)
         self.port: int = port
         self.target_port: int = target_port
@@ -687,3 +687,29 @@ class OnPremises(Cluster):
 
     def __repr__(self) -> str:
         return f'Cluster({self.name}, {self.services},{self.deployments}, {self.regions}, {self.nodes}, {self.hypervisor}, {self.networks}, {self.subnets})'
+    
+
+class DeploymentModel(Model):
+    """
+    Args:
+    
+    Attributes:
+
+    """
+
+    def __init__(self, name: str, clusters: set[Cluster]):
+        super().__init__(name)
+        self.clusters: set[Cluster] = clusters
+
+    @property
+    def clusters(self) -> set[Cluster]:
+        """str: Get the set of clusters."""
+        return self.__clusters
+
+    @clusters.setter
+    def clusters(self, clusters: set[Cluster]):
+        """str: Set the set of clusters."""
+        self.__clusters = clusters
+
+    def __repr__(self) -> str:
+        return f'Cluster({self.name}, {self.clusters})'

@@ -48,7 +48,7 @@ region              : '->'
 
 cluster             : privateCluster | publicCluster ;
 
-publicCluster       : '->' 
+publicCluster       : '->' 'public_cluster' 
                       'name' ':' ID ','
                       'number_of_nodes' ':' INT ','
                       'provider' ':' provider ','

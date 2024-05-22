@@ -1,9 +1,9 @@
 Deployment architecture model
 =============================
 
-This kind of models enables the specification of the deployment architecture of your applicaiton including the description of the infrastructure 
-(clusters, services, nodes, etc) and the deployment of your application using software containers. Also On-premises and multi-cloud environments can be 
-modeled for your deployments.
+This type of models enables the specification of the deployment architecture of your application, including the description of the infrastructure 
+(such as clusters, services, and nodes) and the deployment of your application using software containers. Additionally, it allows for modeling both
+On-premises and multi-cloud environments for your deployments.
 
 .. image:: ../../img/deployment_mm.png
   :width: 800

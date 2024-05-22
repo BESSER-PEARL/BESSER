@@ -36,7 +36,7 @@ Then, load and process the model using our grammar and apply the transformation 
 
 .. note::
     
-    The ``model_path`` parameter contains the path and name of the ``.plantuml`` model to be transformed
+    The ``plantUML_model_path`` parameter contains the path and name of the ``.plantuml`` model to be transformed
 
 ``library_buml`` is the BUML model containing the domain specification. You can look up the classes, attributes, relationships, 
 etc. For example, the following is the way to get the class names.

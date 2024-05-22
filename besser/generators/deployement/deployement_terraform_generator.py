@@ -84,7 +84,8 @@ class DeploymentGenerator(GeneratorInterface):
                     'gcp/version.tf.j2': 'gcp/version.tf',
                     'gcp/cluster.tf.j2': 'gcp/cluster.tf',
                     'gcp/app.tf.j2': 'gcp/app.tf',
-                    'gcp/api.tf.j2': 'gcp/api.tf'
+                    'gcp/api.tf.j2': 'gcp/api.tf',
+                    'gcp/setup.bat.j2': 'gcp/setup.bat',
                 }   
             elif public_cluster.provider.value == 'AWS':
                 aws_dir = os.path.join(self.output_dir, "aws")
@@ -99,6 +100,7 @@ class DeploymentGenerator(GeneratorInterface):
                     'aws/vpc.tf.j2': 'aws/vpc.tf',
                     'aws/nodes.tf.j2': 'aws/nodes.tf',
                     'aws/subnets.tf.j2': 'aws/subnets.tf',
+                    'aws/setup.bat.j2': 'aws/setup.bat',
 
                 }
 

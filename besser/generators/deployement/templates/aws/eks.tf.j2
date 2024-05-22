@@ -2,7 +2,7 @@ resource "aws_iam_role" "demo" {
     name = "eks-cluster-demo"
   
     assume_role_policy = <<POLICY
-  {
+{
     "Version": "2012-10-17",
     "Statement": [
       {
@@ -15,7 +15,7 @@ resource "aws_iam_role" "demo" {
     ]
   }
   POLICY
-  }
+}
   
   resource "aws_iam_role_policy_attachment" "demo-AmazonEKSClusterPolicy" {
     policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
@@ -44,8 +44,8 @@ resource "aws_iam_role" "demo" {
         {%for subnet in subnets%}
         "???"{%if not loop.last%},{%endif%}
         {%endfor%}
+        {%endif%}
       ]
-      {%endif%}
     }
   
     depends_on = [aws_iam_role_policy_attachment.demo-AmazonEKSClusterPolicy]
@@ -148,7 +148,7 @@ resource "kubernetes_deployment_v1" "default-{{default_net}}" {
             path = "/*"
             backend {
               service {
-                name = kubernetes_service_v1.example.metadata.0.name
+                name = kubernetes_service_v1.default-1.metadata.0.name
                 port {
                   number = {{service.port}}
                 }

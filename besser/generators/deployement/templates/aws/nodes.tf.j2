@@ -41,8 +41,8 @@ resource "aws_iam_role" "nodes" {
       {%for subnet in subnets%}
       "???"{%if not loop.last%},{%endif%}
       {%endfor%}
+      {%endif%}
     ]
-    {%endif%}
   
     capacity_type  = "ON_DEMAND"
     instance_types = ["t3.small"]

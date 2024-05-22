@@ -72,30 +72,36 @@ class DeploymentGenerator(GeneratorInterface):
             # Read the configuration file .conf line by line
             with open(public_cluster.config_file, 'r') as file:
                 config_lines = file.readlines()
-            print(public_cluster.provider.value)
             # Dictionary mapping template file names to output file names
+            # Create the "gcp" directory if it doesn't exist
+            gcp_dir = os.path.join(self.output_dir, "gcp")
+            os.makedirs(gcp_dir, exist_ok=True)
+
             if public_cluster.provider.value == 'Google':
+                gcp_dir = os.path.join(self.output_dir, "gcp")
+                os.makedirs(gcp_dir, exist_ok=True)
                 template_to_file_map = {
-                    'gcp/version.tf.j2': 'version.tf',
-                    'gcp/cluster.tf.j2': 'cluster.tf',
-                    'gcp/app.tf.j2': 'app.tf',
-                    'gcp/api.tf.j2': 'api.tf'
-                }
+                    'gcp/version.tf.j2': 'gcp/version.tf',
+                    'gcp/cluster.tf.j2': 'gcp/cluster.tf',
+                    'gcp/app.tf.j2': 'gcp/app.tf',
+                    'gcp/api.tf.j2': 'gcp/api.tf'
+                }   
             elif public_cluster.provider.value == 'AWS':
+                aws_dir = os.path.join(self.output_dir, "aws")
+                os.makedirs(aws_dir, exist_ok=True)
                 template_to_file_map = {
-                    'aws/eks.tf.j2': 'eks.tf',
-                    'aws/iam-oidc.tf.j2': 'iam-oidc.tf',
-                    'aws/provider.tf.j2': 'provider.tf',
-                    'aws/igw.tf.j2': 'igw.tf',
-                    'aws/nat.tf.j2': 'nat.tf',
-                    'aws/routes.tf.j2': 'routes.tf',
-                    'aws/vpc.tf.j2': 'vpc.tf',
-                    'aws/nodes.tf.j2': 'nodes.tf',
-                    'aws/subnets.tf.j2': 'subnets.tf',
+                    'aws/eks.tf.j2': 'aws/eks.tf',
+                    'aws/iam-oidc.tf.j2': 'aws/iam-oidc.tf',
+                    'aws/provider.tf.j2': 'aws/provider.tf',
+                    'aws/igw.tf.j2': 'aws/igw.tf',
+                    'aws/nat.tf.j2': 'aws/nat.tf',
+                    'aws/routes.tf.j2': 'aws/routes.tf',
+                    'aws/vpc.tf.j2': 'aws/vpc.tf',
+                    'aws/nodes.tf.j2': 'aws/nodes.tf',
+                    'aws/subnets.tf.j2': 'aws/subnets.tf',
 
                 }
-                print(public_cluster)
-            print(public_cluster.net_config)
+
             for template_name, output_file_name in template_to_file_map.items():
                 file_path = self.build_generation_path(file_name=output_file_name)
                 template = self.env.get_template(template_name)

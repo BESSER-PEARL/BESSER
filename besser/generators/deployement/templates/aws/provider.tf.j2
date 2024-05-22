@@ -1,0 +1,15 @@
+provider "aws" {
+  {% for line in config_lines %}
+  {{ line }}
+  {% endfor %}
+  }
+  
+  terraform {
+    required_providers {
+      aws = {
+        source  = "hashicorp/aws"
+        version = "~> 3.0"
+      }
+    }
+  }
+  

@@ -1,0 +1,72 @@
+###################################################################################
+# This file describes the vpc, internet gateway, nat gateway and route tables
+###################################################################################
+
+resource "aws_vpc" "vpc" {
+    cidr_block              = var.vpc_cidr
+    enable_dns_hostnames    = true
+    enable_dns_support      = true
+}
+
+resource "aws_internet_gateway" "igw" {
+    vpc_id                  = aws_vpc.vpc.id
+}
+
+resource "aws_nat_gateway" "ngw" {
+    allocation_id           = aws_eip.nateip.id
+    subnet_id               = aws_subnet.public_subnet_1.id  ## Maybe not static
+    depends_on              = [ aws_internet_gateway.igw ]
+}
+
+resource "aws_eip" "nateip" {
+    domain                  = "vpc"
+}
+
+{% set default_subnet = 1 %}
+{%for public_cluster.subnets%}
+resource "aws_subnet" "private_subnet_{{x}}" {
+    vpc_id                  = aws_vpc.vpc.id
+    cidr_block              = var.private_subnet_{{x}}
+    availability_zone       = var.availibilty_zone_{{x}}   ## How much zone one for each subnets?
+}
+resource "aws_subnet" "public_subnet_{{x}}" {
+    vpc_id                  = aws_vpc.vpc.id
+    cidr_block              = var.public_subnet_{{x}}
+    availability_zone       = var.availibilty_zone_{{x}}   ## How much zone one for each subnets?
+    map_public_ip_on_launch = true
+}
+
+resource "aws_route_table_association" "public{{x}}" {
+    subnet_id               = aws_subnet.public_subnet_{{x}}.id
+    route_table_id          = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "private{{x}}" {
+    subnet_id               = aws_subnet.private_subnet_{{x}}.id
+    route_table_id          = aws_route_table.private.id
+}
+{%set x = x+1%}
+{%endfor%}
+
+
+## maybe this on the top
+resource "aws_route_table" "public" {
+    vpc_id                  = aws_vpc.vpc.id
+}
+
+resource "aws_route" "public" {
+    route_table_id          = aws_route_table.public.id
+    destination_cidr_block  = "0.0.0.0/0"
+    gateway_id              = aws_internet_gateway.igw.id
+}
+
+resource "aws_route_table" "private" {
+    vpc_id                  = aws_vpc.vpc.id
+}
+  
+resource "aws_route" "private" {
+    route_table_id          = aws_route_table.private.id
+    destination_cidr_block  = "0.0.0.0/0"
+    nat_gateway_id          = aws_nat_gateway.ngw.id
+}
+

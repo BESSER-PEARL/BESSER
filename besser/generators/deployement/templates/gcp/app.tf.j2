@@ -15,16 +15,8 @@
 */
 
 # [START gke_quickstart_autopilot_app]
-{% set ns = namespace(gcp=false, aws=false) %}
-{% if (public_cluster.provider | class_name) == 'GCP' %}
-    {% set ns.gcp = true %}
-{% elif (public_cluster.provider | class_name) == 'AWS' %}
-    {% set ns.aws = true %}
-{% endif %}
 
-{% if ns.gcp %}
 data "google_client_config" "default" {}
-
 
 provider "kubernetes" {
   host                   = "https://${google_container_cluster.default.endpoint}"
@@ -36,7 +28,7 @@ provider "kubernetes" {
     "^cloud\\.google\\.com\\/.*"
   ]
 }
-{% endif %}
+
 
 {% set default_dep = 1 %}
 {% for dep in public_cluster.deployments%}
@@ -45,23 +37,23 @@ resource "kubernetes_deployment_v1" "default-{{default_net}}" {
   metadata {
     name = "{{dep.name}}" 
     labels = {
-      app = "{#{{dep.containers[0].application.name}}#}"   ##CHANGE THIS
+      app = "{%for cont in dep.containers%}{{cont.application.name}}{%if not loop.last%},{%endif%}{%endfor%}"   {###Only One APP#}
     }
   }
 
   spec {
-    replicas = 1
+    replicas = {{dep.replicas}}
 
     selector {
       match_labels = {
-        app = "{#{{dep.containers[0].application.name}}#}"   ##CHANGE THIS
+        app = "{%for cont in dep.containers%}{{cont.application.name}}{%if not loop.last%},{%endif%}{%endfor%}"   {###Only One APP#}
       }
     }
 
     template {
       metadata {
         labels = {
-          app = "{#{{dep.containers[0].application.name}}#}"   ##CHANGE THIS
+          app = "{%for cont in dep.containers%}{{cont.application.name}}{%if not loop.last%},{%endif%}{%endfor%}"   {###Only One APP#}
         }
       }
 
@@ -102,8 +94,8 @@ resource "kubernetes_service_v1" "default-{{default_service}}" {
       app = "{{service.application.name}}"
     }
     port {
-      port        = 80
-      target_port = 8000
+      port        = {{service.port}}
+      target_port = {{service.target_port}}
     }
 
     type = "{{service.type | to_str}}"
@@ -120,4 +112,8 @@ resource "time_sleep" "wait_service_cleanup" {
 
   destroy_duration = "180s"
 }
+output "load_balancer_ip" {
+  value = kubernetes_service_v1.default-1.status.0.load_balancer.0.ingress.0.ip
+}
+
 # [END gke_quickstart_autopilot_app]

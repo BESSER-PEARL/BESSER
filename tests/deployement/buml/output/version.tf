@@ -14,27 +14,16 @@
  * limitations under the License.
  */
 
- {% set ns = namespace(gcp=false, aws=false) %}
- {% if (public_cluster.provider | class_name) == 'GCP' %}
-     {% set ns.gcp = true %}
- {% elif (public_cluster.provider | class_name) == 'AWS' %}
-     {% set ns.aws = true %}
- {% endif %}
+
  
  terraform {
    required_providers {
-     {% if ns.gcp %}
      google = {
        source = "hashicorp/google"
      }
      kubernetes = {
        source = "hashicorp/kubernetes"
      }
-     {% elif ns.aws %}
-     aws = {
-       source = "hashicorp/aws"
-     }
-     {% endif %}
    }
    required_version = ">= 0.13"
  }

@@ -1,6 +1,6 @@
-import os
+import os, yaml
 from jinja2 import Environment, FileSystemLoader
-from besser.BUML.metamodel.lla import PublicCluster, IPRangeType, ServiceType
+from besser.BUML.metamodel.deployment import DeploymentModel, IPRangeType, ServiceType, Protocol
 from besser.generators import GeneratorInterface
 
 class DeploymentGenerator(GeneratorInterface):
@@ -8,13 +8,13 @@ class DeploymentGenerator(GeneratorInterface):
     DeploymentGenerator is a class that implements the GeneratorInterface and is responsible for generating
     the deployment models code based on the input B-UML model.
     Args:
-        public_cluster (PublicCluster): The cluster object containing deployment information.
+        deployement_model (DeployementModel): The deployment model containing multiple public clusters..
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
 
-    def __init__(self, public_cluster: PublicCluster, output_dir: str = None):
-        super().__init__(public_cluster, output_dir)
-        self.public_cluster = public_cluster
+    def __init__(self, deployment_model: DeploymentModel, output_dir: str = None):
+        super().__init__(deployment_model, output_dir)
+        self.deployment_model = deployment_model
         self.output_dir = output_dir or os.path.join(os.getcwd(), 'output')
         os.makedirs(self.output_dir, exist_ok=True)
         self.env = self.setup_environment()
@@ -52,21 +52,11 @@ class DeploymentGenerator(GeneratorInterface):
         Returns:
             The underlying value if an enum instance, or the string representation of the value.
         """
-        # Handle enum instances by returning their associated value
-        if isinstance(value, (IPRangeType, ServiceType)):
+        if isinstance(value, (IPRangeType, ServiceType, Protocol)):
             return value.value
-        # Convert other types to their string representation
         return str(value)
+    
     def build_generation_path(self, file_name: str) -> str:
-        """
-        Constructs the file path for the generated file in the output directory.
-
-        Args:
-            file_name (str): The name of the file to be generated.
-
-        Returns:
-            str: The full file path for the generated file.
-        """
         return os.path.join(self.output_dir, file_name)
 
     def generate(self):
@@ -78,18 +68,40 @@ class DeploymentGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as files with specified names.
         """
-        # Dictionary mapping template file names to output file names
-        template_to_file_map = {
-            'version.py.j2': 'version.tf',
-            'variables.py.j2': 'variables.tf',
-            'cluster.py.j2': 'cluster.tf',
-            'app.py.j2': 'app.tf'
-        }
+        for public_cluster in self.deployment_model.clusters:
+            # Read the configuration file .conf line by line
+            with open(public_cluster.config_file, 'r') as file:
+                config_lines = file.readlines()
+            print(public_cluster.provider.value)
+            # Dictionary mapping template file names to output file names
+            if public_cluster.provider.value == 'Google':
+                template_to_file_map = {
+                    'gcp/version.tf.j2': 'version.tf',
+                    'gcp/cluster.tf.j2': 'cluster.tf',
+                    'gcp/app.tf.j2': 'app.tf',
+                    'gcp/api.tf.j2': 'api.tf'
+                }
+            elif public_cluster.provider.value == 'AWS':
+                template_to_file_map = {
+                    'aws/eks.tf.j2': 'eks.tf',
+                    'aws/iam-oidc.tf.j2': 'iam-oidc.tf',
+                    'aws/provider.tf.j2': 'provider.tf',
+                    'aws/igw.tf.j2': 'igw.tf',
+                    'aws/nat.tf.j2': 'nat.tf',
+                    'aws/routes.tf.j2': 'routes.tf',
+                    'aws/vpc.tf.j2': 'vpc.tf',
+                    'aws/nodes.tf.j2': 'nodes.tf',
+                    'aws/subnets.tf.j2': 'subnets.tf',
 
-        for template_name, output_file_name in template_to_file_map.items():
-            file_path = self.build_generation_path(file_name=output_file_name)
-            template = self.env.get_template(template_name)
-            with open(file_path, mode="w") as f:
-                generated_code = template.render(public_cluster=self.public_cluster)
-                f.write(generated_code)
-                print(f"Code generated in the location: {file_path}")
+                }
+                print(public_cluster)
+            print(public_cluster.net_config)
+            for template_name, output_file_name in template_to_file_map.items():
+                file_path = self.build_generation_path(file_name=output_file_name)
+                template = self.env.get_template(template_name)
+
+                with open(file_path, mode="w") as f:
+                    generated_code = template.render(public_cluster=public_cluster, config_lines=config_lines)
+                    f.write(generated_code)
+                    print(f"Code generated in the location: {file_path}")
+

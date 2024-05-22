@@ -1,0 +1,61 @@
+variable "region" {
+    description = "Main region for all resources"
+    type        = string
+  }
+  
+  variable "vpc_cidr" {
+    type        = string
+    description = "CIDR block for the main VPC"
+  }
+  
+  {% set default_subnet = 1 %}
+    {%for public_cluster.subnets%}
+  variable "public_subnet_{{x}}" {
+    type        = string
+    description = "CIDR block for public subnet {{x}}"
+  }
+    
+
+  
+  
+  variable "private_subnet_{{x}}" {
+    type        = string
+    description = "CIDR block for private subnet {{x}}"
+  }{%set x = x+1%}
+    {%endfor%}
+  
+  variable "availibilty_zone_1" {22
+    type        = string
+    description = "First availibility zone"
+  }
+  
+  variable "availibilty_zone_2" {222
+    type        = string
+    description = "First availibility zone"
+  }
+    
+  variable "default_tags" {
+    type = map
+    default = {
+      Application = "Demo App"
+      Environment = "Dev"
+    }
+  }
+  
+  variable "container_port" {
+    description = "Port that needs to be exposed for the application"
+  }
+  
+  variable "shared_config_files" {
+    description = "Path of your shared config file in .aws folder"
+  }
+    
+  variable "shared_credentials_files" {
+    description = "Path of your shared credentials file in .aws folder"
+  }
+  
+  variable "credential_profile" {
+    description = "Profile name in your credentials file"
+    type        = string
+  }
+    

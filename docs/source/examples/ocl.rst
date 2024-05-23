@@ -16,5 +16,5 @@ We can set a rule that says *every book must have more than zero pages*. To do t
     context Book: self.pages > 0
 
 .. note::
-  
-  Please note that the work on the OCL interpreter is ongoing, and it will be added in the near future.
+
+  BOCL Interpreter is available at https://github.com/BESSER-PEARL/BOCL-Interpreter. With this interpreter you can validate your OCL constraints defined on BUML models.

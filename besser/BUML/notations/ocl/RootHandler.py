@@ -14,6 +14,7 @@ class Root_Handler:
         self.pre = False
         self.post = False
         self.if_else_roots = []
+        self.context_name=""
 
     def get_root(self):
         return self.root
@@ -202,12 +203,14 @@ class Root_Handler:
         if 'or' in item[0:2]:
             item = item[2:]
             referredOP = 'OR'
-        prop = self.factory.create_property_Call_Expression(item, 'NI')
+        if 'allInstances' in item[0:12]:
+            return
         if referredOP is None:
+            prop = self.factory.create_property_Call_Expression(item, 'NI')
             # prop= self.factory.create_property_Call_Expression(item,'NI')
             self.add_to_root(prop)
         else:
-            opCallExp = self.factory.create_operation_call_expression(name="and")
+            opCallExp = self.factory.create_operation_call_expression(name=referredOP)
             opCallExp.referredOperation = self.factory.create_infix_operator(referredOP)
             self.add_to_root(opCallExp)
         pass
@@ -253,7 +256,7 @@ class Root_Handler:
         elif "real" in leftside:
             leftPart = self.factory.create_real_literal_expression("NP", float(expressionParts[0]))
         elif "bool" in leftside:
-            leftPart = self.factory.create_boolean_literal_expression("NP", bool(expressionParts[0]))
+            leftPart = self.factory.create_boolean_literal_expression("NP", (expressionParts[0]))
         elif "str" in leftside:
             leftPart = self.factory.create_string_literal_expression("str", expressionParts[0].replace("'",""))
 
@@ -264,7 +267,7 @@ class Root_Handler:
         elif "real" in rightside:
             rightPart = self.factory.create_real_literal_expression("NP", float(expressionParts[1]))
         elif "bool" in rightside:
-            rightPart = self.factory.create_boolean_literal_expression("NP", bool(expressionParts[1]))
+            rightPart = self.factory.create_boolean_literal_expression("NP", (expressionParts[1]))
         elif "str" in rightside:
             rightPart = self.factory.create_string_literal_expression("str", expressionParts[1].replace("'",""))
 

@@ -10,3 +10,4 @@ Generators
    generators/api_sql
    generators/api_rest_api
    generators/api_backend
+   generators/api_deployment

@@ -1,0 +1,7 @@
+Version 1.1.1
+=============
+
+Fixes
+-----
+
+* Bug fixed: updated the name of the (inherited) relationship between Property and Type.

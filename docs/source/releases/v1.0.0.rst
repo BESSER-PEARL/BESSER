@@ -3,6 +3,7 @@ Version 1.0.0
 
 New features
 ------------
+
 * B-UML provides support for specification of object models
 * New grammar for the object model specification based on the `PlantUML <https://plantuml.com/>`_ notation
 * B-UML provides support for specification of Graphical User Interface (GUI) models

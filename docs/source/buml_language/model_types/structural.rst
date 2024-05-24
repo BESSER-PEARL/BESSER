@@ -24,5 +24,5 @@ Supported notations
 To create a structural model, you can use any of these notations:
 
 * :doc:`Coding in Python Using the B-UML python library <../model_building/buml_core>`
-* :doc:`Using PlantUML to design you structural model <../model_building/plantuml>`
+* :doc:`Using PlantUML to design you structural model <../model_building/plantuml_structural>`
 * :doc:`Providing an image (e.g., a photo of yor class diagram model) <../model_building/buml_core>`

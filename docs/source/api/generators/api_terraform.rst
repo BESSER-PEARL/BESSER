@@ -1,7 +1,7 @@
-Deployment Generator
+Terraform Generator
 ===================
 
-.. automodule:: besser.generators.deployment.deployment_generator
+.. automodule:: besser.generators.terraform.terraform_generator
    :members:
    :private-members:
    :undoc-members:

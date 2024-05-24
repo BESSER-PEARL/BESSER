@@ -1,5 +1,5 @@
-from besser.BUML.metamodel.lla import *
-from besser.generators.deployement import DeploymentGenerator
+from besser.BUML.metamodel.deployment import *
+from besser.generators.terraform import TerraformGenerator
 
 # network
 #network1: Network = Network(name="example-network")

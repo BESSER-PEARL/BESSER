@@ -3,12 +3,12 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.deployment import DeploymentModel, IPRangeType, ServiceType, Protocol
 from besser.generators import GeneratorInterface
 
-class DeploymentGenerator(GeneratorInterface):
+class TerraformGenerator(GeneratorInterface):
     """
-    DeploymentGenerator is a class that implements the GeneratorInterface and is responsible for generating
-    the deployment models code based on the input B-UML model.
+    TerraformGenerator is a class that implements the GeneratorInterface and is responsible for generating
+    the Terraform models code based on the input B-UML model.
     Args:
-        deployement_model (DeployementModel): The deployment model containing multiple public clusters..
+        deployement_model (DeployementModel): The deployment model containing multiple public clusters.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
 
@@ -58,7 +58,7 @@ class DeploymentGenerator(GeneratorInterface):
 
     def generate(self):
         """
-        Generates deployment models code based on the provided B-UML model and saves it to the specified output directory.
+        Generates Terraform code based on the provided B-UML model and saves it to the specified output directory.
         If the output directory is not specified, the generated code will be stored in the <current directory>/output
         folder.
 

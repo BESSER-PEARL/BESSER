@@ -69,4 +69,4 @@ Once the deployment textual model is defined, you can parse it and obtain the B-
     deployment_model: DeploymentModel = buml_deployment_model(deployment_textfile="deployment.txt")
 
 This ``deployment_model`` is a B-UML model that you can use in BESSER, for example, to generate the `Terraform <https://www.terraform.io/>`_
-code to automate the deployment using our :doc:`../../generators/deployment`
+code to automate the deployment using our :doc:`../../generators/terraform`

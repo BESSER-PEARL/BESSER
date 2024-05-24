@@ -17,7 +17,7 @@ own generator).
    generators/sql
    generators/rest_api
    generators/backend
-   generators/deployment
+   generators/terraform
    generators/build_generator
 
 

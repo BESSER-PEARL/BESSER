@@ -1,4 +1,4 @@
-Deployment Generator
+Terraform Generator
 ====================
 
 BESSER provides a code generator that creates a deployment for a specific application. This generator produces Terraform files from either the :doc:`BUML language <../buml_language/model_types/deployment>`.
@@ -12,10 +12,10 @@ Basic Usage Example
 
 .. code-block:: python
 
-    from besser.generators.deployment import DeploymentGenerator
+    from besser.generators.terraform import TerraformGenerator
 
-    deployment_generator = DeploymentGenerator(deployment_model=deployment_model)
-    deployment_generator.generate()
+    terraform_generator = TerraformGenerator(deployment_model=deployment_model)
+    terraform_generator.generate()
 
 The generator currently supports the creation of Terraform files for AWS and Google Cloud Platform (GCP).
 

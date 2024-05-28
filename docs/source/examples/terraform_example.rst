@@ -22,7 +22,8 @@ First, define your deployment model using the provided :doc:`grammar <../buml_la
         }
         
         services {
-            ->  name: service1, port: 80,
+            ->  name: service1,
+                port: 80,
                 target_port: 8000,
                 protocol: HTTP,
                 type: lb,
@@ -39,7 +40,7 @@ First, define your deployment model using the provided :doc:`grammar <../buml_la
         deployments {
             ->  name: deployment1,
                 replicas: 2,
-                containers: [container1, container1]
+                containers: [container1]
         }
 
         regions {

@@ -18,7 +18,7 @@ To generate the complete backend for a B-UML model, follow the steps below. The 
     
     from besser.generators.backend import BackendGenerator
     
-    backend = BackendGenerator(model=library_model, http_methods=['GET', 'POST', 'PUT', 'DELETE'], nested_creations = True)
+    backend = BackendGenerator(model=library_model, http_methods=['GET', 'POST', 'PUT', 'DELETE'], nested_creations = True, docker_image = True)
     backend.generate()
 
 You can customize the code generation patterns by selecting specific HTTP methods such as ``GET``, ``POST``, ``PUT``, and ``DELETE``.
@@ -50,4 +50,27 @@ When you run the code generated, a SqlLite database and the OpenAPI specificatio
 We have an example demonstrating how this generator works, which you can find here: :doc:`../examples/backend_example`.
 This example showcases the usage of the Backend Generator with our :doc:`../examples/library_example` Example, illustrating its application in generating a fully functional backend from a B-UML model.
 
-        
+Docker Image
+-------------------
+The Backend Generator has a parameter that facilitates the creation and uploading of Docker images for the generated backend. You can either:
+
+- Allow the generator to create Docker-related files that the user can manually call with their credentials.
+- Provide a configuration file through the docker_config_file parameter, which enables the generator to automatically create and upload the Docker image using the provided configurations.
+
+To create the configuration file, use the following template and save it as a .conf file:
+
+.. code-block:: ini
+    
+    [DOCKER]
+    docker_username = dockerhub_username
+    docker_password = dockerhub_password
+    docker_image_name = image_name
+    docker_repository = dockerhub_repository
+    docker_tag = image_tag
+
+If you opt to manually manage the process, the generator will create two files:
+
+- Dockerfile: Contains the necessary instructions to build the Docker image.
+- create_docker_image.py: A Python script that automates the process of building and uploading the Docker image.
+
+By providing this script and the Dockerfile, users can build and upload their Docker images by executing the script with their DockerHub credentials.

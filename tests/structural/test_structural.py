@@ -110,7 +110,7 @@ def test_binary_association():
         class1: Type = Type(name="name1")
         aend: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
         association: BinaryAssociation = BinaryAssociation(name="association1", ends={aend})
-    assert "A binary association should have two ends" in str(excinfo.value)
+    assert "A binary association must have exactly two ends" in str(excinfo.value)
 
 
 # Testing the creation of an association class with an attribute

@@ -660,7 +660,7 @@ class BinaryAssociation(Association):
             if both ends are tagged as composition.
         """
         if len(ends) != 2:
-            raise ValueError("A binary must have exactly two ends")
+            raise ValueError("A binary association must have exactly two ends")
         if list(ends)[0].is_composite == True and list(ends)[1].is_composite == True:
             raise ValueError("The composition attribute cannot be tagged at both ends")
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
@@ -747,7 +747,7 @@ class Generalization(Element):
             ValueError: if the general class is equal to the specific class
         """
         if specific == self.general:
-            raise ValueError("you cannot have your own parent")
+            raise ValueError("A class cannot be a generalization of itself")
         if hasattr(self, "specific"):
             self.specific._delete_generalization(generalization=self)
         specific._add_generalization(generalization=self)

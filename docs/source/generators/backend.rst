@@ -24,9 +24,10 @@ To generate the complete backend for a B-UML model, follow the steps below. The 
 You can customize the code generation patterns by selecting specific HTTP methods such as ``GET``, ``POST``, ``PUT``, and ``DELETE``.
 This selection allows for targeted code generation tailored to only the necessary components of the API.
 If specified in the B-UML model with read_only attributes, the generator will automatically exclude the ``PUT`` and ``DELETE`` methods.
-Additionally, the nested_creations parameter configures how the API manages entity relationships in requests. If set to True, the API allows both 
+Additionally, the ``nested_creations`` parameter configures how the API manages entity relationships in requests. If set to True, the API allows both 
 the linking of existing entities via identifiers and the nested creation of new entities. If set to False, the API only permits linking existing 
-entities using their identifiers. The default setting is False, which restricts the functionality to linking by identifiers.
+entities using their identifiers. The default setting is False, which restricts the functionality to linking by identifiers. Finally, the 
+``docker_image`` parameter is there to assist you in `creating a Docker image <#docker-image-generation>`_ for your application.
 
 
 Invoke the generate method to produce the backend code.The generated files will be placed in the ``<<current_directory>>/output_backend``.
@@ -50,12 +51,15 @@ When you run the code generated, a SqlLite database and the OpenAPI specificatio
 We have an example demonstrating how this generator works, which you can find here: :doc:`../examples/backend_example`.
 This example showcases the usage of the Backend Generator with our :doc:`../examples/library_example` Example, illustrating its application in generating a fully functional backend from a B-UML model.
 
-Docker Image
--------------------
-The Backend Generator has a parameter that facilitates the creation and uploading of Docker images for the generated backend. You can either:
+Docker Image Generation
+-----------------------
+The Backend Generator offers the ``docker_image`` boolean parameter, designed to streamline the creation and uploading of Docker images for the generated backend. When 
+you set this parameter to *True*, you have two options for creating your image:
 
-- Allow the generator to create Docker-related files that the user can manually call with their credentials.
-- Provide a configuration file through the docker_config_file parameter, which enables the generator to automatically create and upload the Docker image using the provided configurations.
+1. Automated DockerHub Integration
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Our code generator can create and upload the Docker image to your `DockerHub <https://hub.docker.com>`_ in one step. Provide a configuration file through the ``docker_config_file`` parameter, which 
+enables the generator to automatically create and upload the image in your DockerHub accout using the provided configurations.
 
 To create the configuration file, use the following template and save it as a .conf file:
 
@@ -68,9 +72,20 @@ To create the configuration file, use the following template and save it as a .c
     docker_repository = dockerhub_repository
     docker_tag = image_tag
 
-If you opt to manually manage the process, the generator will create two files:
+2. Custom Dockerfile Generation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+The second option is to generate the Dockerfile with the instructions to create your Docker image and then run it yourself to build the image and upload it to 
+your repository. To follow this option, just don't use the ``docker_image_file`` parameter in the code generator. BESSER will then assume that you will handle 
+running the Dockerfile and uploading the image to the repository yourself.
 
-- Dockerfile: Contains the necessary instructions to build the Docker image.
-- create_docker_image.py: A Python script that automates the process of building and uploading the Docker image.
+The generator will create two files:
+
+- ``Dockerfile``: Contains the necessary instructions to build the Docker image.
+- ``create_docker_image.py``: A Python script that automates the process of building and uploading the Docker image.
 
 By providing this script and the Dockerfile, users can build and upload their Docker images by executing the script with their DockerHub credentials.
+
+.. warning::
+   
+   If you use the generator to generate and load the Docker image in DockerHub, you must make sure you have a Docker engine installed on your computer. 
+   For example `Docker desktop <https://www.docker.com/products/docker-desktop>`_.

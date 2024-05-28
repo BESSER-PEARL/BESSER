@@ -25,7 +25,7 @@ def test_model_duplicated_names():
         class1: Type = Type(name="name1")
         class2: Type = Type(name="name1")
         model: DomainModel = DomainModel(name="mymodel", types={class1, class2}, associations = None, packages = None, constraints = None)
-        assert "same name" in str(excinfo.value)
+    assert "same name" in str(excinfo.value)
 
 
 # Testing attributes initialization
@@ -44,22 +44,22 @@ def test_attribute_type_and_multiplicity_violation():
     with pytest.raises(ValueError) as excinfo:
         attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"),
                                         multiplicity=Multiplicity(0, -1))
-        assert "Invalid max multiplicity" in str(excinfo.value)
+    assert "Invalid max multiplicity" in str(excinfo.value)
 
     with pytest.raises(ValueError) as excinfo:
         attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"),
                                         multiplicity=Multiplicity(-1, 1))
-        assert "Invalid min multiplicity" in str(excinfo.value)
+    assert "Invalid min multiplicity" in str(excinfo.value)
 
     with pytest.raises(ValueError) as excinfo:
         attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"),
                                         multiplicity=Multiplicity(2, 1))
-        assert "Invalid max multiplicity" in str(excinfo.value)
+    assert "Invalid max multiplicity" in str(excinfo.value)
 
     with pytest.raises(ValueError) as excinfo:
         attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("invented_type"),
                                         multiplicity=Multiplicity(2, 1))
-        assert "Invalid primitive data type" in str(excinfo.value)
+    assert "Invalid primitive data type" in str(excinfo.value)
 
 
 # Testing class initialization
@@ -81,7 +81,7 @@ def test_duplicated_name_class():
         attribute1: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
         attribute2: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
         class1 = Class(name="name1", attributes={attribute1, attribute2})
-        assert "A class cannot have two attributes with the same name" in str(excinfo.value)
+    assert "A class cannot have two attributes with the same name" in str(excinfo.value)
 
 # Testing for no more than one id attribute in class
 def test_more_than_one_id_class():
@@ -90,7 +90,7 @@ def test_more_than_one_id_class():
         attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"), is_id=True)
         attribute2: Property = Property(name="attribute2", type=PrimitiveDataType("int"), is_id=True)
         class1 = Class(name="name1", attributes={attribute1, attribute2})
-        assert "A class cannot have two id attributes" in str(excinfo.value)
+    assert "A class cannot have two id attributes" in str(excinfo.value)
 
 def test_association_initialization():
     class1: Class = Class(name="name1", attributes=set())
@@ -110,7 +110,7 @@ def test_binary_association():
         class1: Type = Type(name="name1")
         aend: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
         association: BinaryAssociation = BinaryAssociation(name="association1", ends={aend})
-        assert "A binary association should have two ends" in str(excinfo.value)
+    assert "A binary association should have two ends" in str(excinfo.value)
 
 
 # Testing the creation of an association class with an attribute
@@ -146,7 +146,7 @@ def test_no_generalization_loop():
     with pytest.raises(ValueError) as excinfo:
         class1: Class = Class(name="name1", attributes=None)
         generalization: Generalization = Generalization(general=class1, specific=class1)
-        assert "A class cannot be a generalization of itself" in str(excinfo.value)
+    assert "A class cannot be a generalization of itself" in str(excinfo.value)
 
 def test_generalization_set_initialization():
     class1: Class = Class(name="name1", attributes=None)
@@ -179,4 +179,4 @@ def test_duplicated_name_literal():
         literal1: EnumerationLiteral = EnumerationLiteral(name="duplicated_name", owner=None)
         literal2: EnumerationLiteral = EnumerationLiteral(name="duplicated_name", owner=None)
         enum1: Enumeration = Enumeration(name="Enumeration", literals={literal1,literal2})
-        assert "An enumeration cannot have two literals with the same name" in str(excinfo.value)
+    assert "An enumeration cannot have two literals with the same name" in str(excinfo.value)

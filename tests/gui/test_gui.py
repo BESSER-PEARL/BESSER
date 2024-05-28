@@ -14,7 +14,7 @@ def test_model_duplicated_names():
         class1: Type = Type(name="name1")
         class2: Type = Type(name="name1")
         model: DomainModel = DomainModel(name="mymodel", types={class1, class2}, associations = None, packages = None, constraints = None)
-        assert "same name" in str(excinfo.value)
+    assert "same name" in str(excinfo.value)
 
 # Test: Do not have two modules with the same name in an application.
 def test_unique_module_names():
@@ -25,7 +25,7 @@ def test_unique_module_names():
         # Try to create a module with the same name as module1
         module_duplicate: Module = Module(name="module1", screens=[])
         my_app.modules = {module1, module2, module_duplicate}
-        assert "An app cannot have two modules with the same name" in str(excinfo.value)
+    assert "An app cannot have two modules with the same name" in str(excinfo.value)
 
 # Test: Do not have two screens with the same name in an application.
 def test_unique_screen_names():
@@ -37,7 +37,7 @@ def test_unique_screen_names():
         # Try to create a screen with the same name as screen1
         screen_duplicate: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", components={})
         module1.screens = {screen1, screen2, screen_duplicate}
-        assert "A module cannot have two screens with the same name" in str(excinfo.value)
+    assert "A module cannot have two screens with the same name" in str(excinfo.value)
 
 # Test: Do not have two lists with the same name on the same screen.
 def test_unique_list_names():
@@ -49,7 +49,7 @@ def test_unique_list_names():
         list_duplicate: List = List(name="list1", description="", list_sources={})
         screen1.components={list1, list2, list_duplicate}
         module1.screens = {screen1}
-        assert "A screen cannot have two lists with the same name" in str(excinfo.value)
+    assert "A screen cannot have two lists with the same name" in str(excinfo.value)
 
 # Test: Do not have two fields with the same name in a list item.
 def test_unique_field_names():
@@ -60,7 +60,7 @@ def test_unique_field_names():
         # Try to create a field with the same name as field1
         field_duplicate: Property = Property(name="field1", type="")
         modelElement.fields={field1, field2, field_duplicate}
-        assert "A list item cannot have two fields with the same name" in str(excinfo.value)
+    assert "A list item cannot have two fields with the same name" in str(excinfo.value)
 
 # Test: Do not have two items with the same name in a list.
 def test_unique_item_names():
@@ -71,7 +71,7 @@ def test_unique_item_names():
         # Try to create a item with the same name as item1
         item_duplicate: ModelElement = ModelElement(name="item1", dataSourceClass="", fields={})
         list1.list_sources={item1, item2, item_duplicate}
-        assert "A list cannot have two items with the same name" in str(excinfo.value)
+    assert "A list cannot have two items with the same name" in str(excinfo.value)
 
 # Test: There should not be two buttons with the same name on the same screen.
 def test_unique_button_names():
@@ -82,4 +82,4 @@ def test_unique_button_names():
         # Try to create a button with the same name as button1
         button_duplicate: Button=Button(name="button1", Label="View List", description="")
         screen1.components={button1, button2, button_duplicate}
-        assert "A screen cannot have two buttons with the same name" in str(excinfo.value)
+    assert "A screen cannot have two buttons with the same name" in str(excinfo.value)

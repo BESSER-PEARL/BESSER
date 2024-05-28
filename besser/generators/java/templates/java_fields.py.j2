@@ -6,9 +6,11 @@ int
     {%- elif attr_type == "float" -%}
 float
     {%- elif attr_type == "date" -%}
-Date
+LocalDate
     {%- elif attr_type == "datetime" -%}
-Date
+LocalDateTime
+    {%- elif attr_type == "time" -%}
+LocalTime
     {%- elif attr_type == "bool" -%}
 boolean
     {%- elif attr_type == "text" -%}

@@ -30,7 +30,7 @@ Deployment model{
     }
 
     regions {
-        ->  name: us-east1
+        ->  name: us-east
     }
 
     clusters {
@@ -41,7 +41,7 @@ Deployment model{
             config_file: "config_google.conf",
             services: [service1],
             deployments: [deployment1],
-            regions: [us-east1],
+            regions: [us-east],
             net_config: True
         
         ->  public_cluster
@@ -51,7 +51,7 @@ Deployment model{
             config_file: "config_aws.conf",
             services: [service1],
             deployments: [deployment1],
-            regions: [us-east1],
+            regions: [us-east],
             net_config: True
     }
 }

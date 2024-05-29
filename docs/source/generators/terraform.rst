@@ -33,7 +33,6 @@ Your configuration file should have the following format:
 
 .. code-block:: python
 
-    region = ""  # Your desired AWS region
     access_key = ""  # Enter AWS IAM access key
     secret_key = ""  # Enter AWS IAM secret key
 

@@ -49,11 +49,11 @@ class BackendGenerator(GeneratorInterface):
             config = configparser.ConfigParser()
             config.read(self.docker_config_path)
             return {
-                "docker_username": config.get("DOCKER", "docker_username"),
-                "docker_password": config.get("DOCKER", "docker_password"),
-                "docker_image_name": config.get("DOCKER", "docker_image_name"),
-                "docker_repository": config.get("DOCKER", "docker_repository"),
-                "docker_tag": config.get("DOCKER", "docker_tag")
+                "docker_username": config.get("DEFAULT", "docker_username"),
+                "docker_password": config.get("DEFAULT", "docker_password"),
+                "docker_image_name": config.get("DEFAULT", "docker_image_name"),
+                "docker_repository": config.get("DEFAULT", "docker_repository"),
+                "docker_tag": config.get("DEFAULT", "docker_tag")
             }
         else:
             raise FileNotFoundError(f"Configuration file not found at path: {self.docker_config_path}")

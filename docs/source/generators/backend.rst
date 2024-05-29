@@ -65,11 +65,13 @@ To create the configuration file, use the following template and save it as a .c
 
 .. code-block:: ini
     
+    [DEFAULT]
     docker_username = dockerhub_username
     docker_password = dockerhub_password
     docker_image_name = image_name
     docker_repository = dockerhub_repository
     docker_tag = image_tag
+    docker_port = port
 
 2. Custom Dockerfile Generation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

@@ -121,7 +121,7 @@ class TerraformGenerator(GeneratorInterface):
                 'gcp/cluster.tf.j2': 'cluster.tf',
                 'gcp/app.tf.j2': 'app.tf',
                 'gcp/api.tf.j2': 'api.tf',
-                'gcp/setup.bat.j2.j2': 'setup.bat'
+                'gcp/setup.bat.j2': 'setup.bat'
             }
         elif provider == 'AWS':
             return {
@@ -134,7 +134,7 @@ class TerraformGenerator(GeneratorInterface):
                 'aws/vpc.tf.j2': 'vpc.tf',
                 'aws/nodes.tf.j2': 'nodes.tf',
                 'aws/subnets.tf.j2': 'subnets.tf',
-                'aws/setup.bat.j2.j2': 'setup.bat'
+                'aws/setup.bat.j2': 'setup.bat'
             }
         else:
             return None

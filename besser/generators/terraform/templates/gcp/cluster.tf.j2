@@ -19,7 +19,7 @@ provider "google" {
   {% for line in config_lines %}
   {{ line }}
   {% endfor %}
-  region      = "{% for x in public_cluster.regions %}{{ x.name }}{% if not loop.last %}, {% endif %}{% endfor %}"
+  region      = "{% for x in public_cluster.regions %}{{ x.name }}1{% if not loop.last %}, {% endif %}{% endfor %}"
 }
 
 {%if public_cluster.net_config == False %}
@@ -101,7 +101,7 @@ resource "google_compute_subnetwork" "default" {
 resource "google_container_cluster" "default" {
     name = "{{ public_cluster.name }}"
   
-    location                 = "{% for x in public_cluster.regions %}{{ x.name }}{% if not loop.last %}, {% endif %}{% endfor %}"
+    location                 = "{% for x in public_cluster.regions %}{{ x.name }}1{% if not loop.last %}, {% endif %}{% endfor %}"
     enable_autopilot         = true
     enable_l4_ilb_subsetting = true
 

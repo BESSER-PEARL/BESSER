@@ -53,7 +53,8 @@ class BackendGenerator(GeneratorInterface):
                 "docker_password": config.get("DEFAULT", "docker_password"),
                 "docker_image_name": config.get("DEFAULT", "docker_image_name"),
                 "docker_repository": config.get("DEFAULT", "docker_repository"),
-                "docker_tag": config.get("DEFAULT", "docker_tag")
+                "docker_tag": config.get("DEFAULT", "docker_tag"),
+                "docker_port": config.get("DEFAULT", "docker_port"),
             }
         else:
             raise FileNotFoundError(f"Configuration file not found at path: {self.docker_config_path}")
@@ -75,7 +76,9 @@ class BackendGenerator(GeneratorInterface):
             os.makedirs(backend_folder_path, exist_ok=True)
             print(f"Backend folder created at {backend_folder_path}")
 
-        rest_api = RESTAPIGenerator(model=self.model, http_methods=self.http_methods, nested_creations=self.nested_creations, output_dir=backend_folder_path, backend=True)
+        docker_port = self.config["docker_port"]
+
+        rest_api = RESTAPIGenerator(model=self.model, http_methods=self.http_methods, nested_creations=self.nested_creations, output_dir=backend_folder_path, backend=True, port=docker_port)
         rest_api.generate()
 
         sql_alchemy = SQLAlchemyGenerator(model=self.model, output_dir=backend_folder_path)
@@ -95,11 +98,13 @@ class BackendGenerator(GeneratorInterface):
 
         Args:
             backend_folder_path (str): The path to the backend folder containing the generated code.
-        
+
         Returns:
             None
         """
-        dockerfile_content = """
+        docker_port = self.config["docker_port"]
+
+        dockerfile_content = f"""
         FROM python:3.9-slim
         WORKDIR /app
 
@@ -114,9 +119,10 @@ class BackendGenerator(GeneratorInterface):
         RUN pip install SQLAlchemy==2.0.29
         RUN pip install httpx==0.27.0
 
-        EXPOSE 8000
+        EXPOSE {docker_port}
         CMD ["python", "main_api.py"]
         """
+
         with open(os.path.join(backend_folder_path, 'Dockerfile'), 'w') as dockerfile:
             dockerfile.write(dockerfile_content)
 
@@ -147,4 +153,5 @@ class BackendGenerator(GeneratorInterface):
         resp = client.api.push(full_image_name, stream=True, decode=True)
         for line in resp:
             print(line)
+
 

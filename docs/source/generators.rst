@@ -17,6 +17,7 @@ own generator).
    generators/sql
    generators/rest_api
    generators/backend
+   generators/flutter
    generators/build_generator
 
 

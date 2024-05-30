@@ -343,12 +343,12 @@ class ViewContainer(ViewElement):
 
     @property
     def view_elements(self) -> set[ViewElement]:
-        """set[ViewComponent]: Get the set of view components on the screen."""
+        """set[ViewComponent]: Get the set of view elements on the screen."""
         return self.__view_elements
 
     @view_elements.setter
     def view_elements(self, view_elements: set[ViewElement]):
-       """set[ViewElement]: Set the set of view components on the screen."""
+       """set[ViewElement]: Set the set of view elements on the screen."""
        if view_elements is not None:
             names = [view_element.name for view_element in view_elements]
             if len(names) != len(set(names)):
@@ -364,14 +364,14 @@ class Screen(ViewContainer):
 
     Args:
         name (str): The name of the screen.
-        components (set[ViewComponent]): The set of view components on the screen.
+        view_elements (set[ViewElement]): The set of view elements on the screen.
         x_dpi (str): The X DPI (dots per inch) of the screen.
         y_dpi (str): The Y DPI (dots per inch) of the screen.
         size (str): The size of the screen.
 
     Attributes:
         name (str): The name of the screen.
-        components (set[ViewComponent]): The set of view components on the screen.
+        view_elements (set[ViewElement]): The set of view elements on the screen.
         x_dpi (str): The X DPI (dots per inch) of the screen.
         y_dpi (str): The Y DPI (dots per inch) of the screen.
         size (str): The size of the screen.

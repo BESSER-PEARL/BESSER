@@ -78,6 +78,7 @@ resource "kubernetes_deployment_v1" "default-{{default_net}}" {
       }
     }
   }
+depends_on = [google_project_service.compute]
 }
 {%endfor%}
 

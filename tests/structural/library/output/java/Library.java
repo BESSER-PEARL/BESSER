@@ -7,11 +7,18 @@ public class Library {
     private String name;
     private String address;
     private List<Book> books;
+  
 
     public Library (String name, String address) {
         this.name = name;
         this.address = address;
         this.books = new ArrayList<>();
+    }
+
+    public Library (String name, String address, ArrayList<Book> books) {
+        this.name = name;
+        this.address = address;
+        this.books = books;
     }
 
     public String getName() {

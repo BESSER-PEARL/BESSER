@@ -5,24 +5,24 @@ import java.util.List;
 import java.util.ArrayList;
 
 public class Book {
-    private String title;
     private int pages;
     private LocalDate release;
+    private String title;
     private List<Author> authors;
+              
 
-    public Book (String title, int pages, LocalDate release) {
-        this.title = title;
+    public Book (int pages, LocalDate release, String title) {
         this.pages = pages;
         this.release = release;
+        this.title = title;
         this.authors = new ArrayList<>();
     }
 
-    public String getTitle() {
-        return this.title;
-    }
-
-    public void setTitle(String title) {
+    public Book (int pages, LocalDate release, String title, ArrayList<Author> authors) {
+        this.pages = pages;
+        this.release = release;
         this.title = title;
+        this.authors = authors;
     }
 
     public int getPages() {
@@ -39,6 +39,14 @@ public class Book {
 
     public void setRelease(LocalDate release) {
         this.release = release;
+    }
+
+    public String getTitle() {
+        return this.title;
+    }
+
+    public void setTitle(String title) {
+        this.title = title;
     }
 
     public List<Author> getAuthors() {

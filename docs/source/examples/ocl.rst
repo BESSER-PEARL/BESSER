@@ -17,4 +17,4 @@ We can set a rule that says *every book must have more than zero pages*. To do t
 
 .. note::
 
-  BOCL Interpreter is available at https://github.com/BESSER-PEARL/BOCL-Interpreter. With this interpreter you can validate your OCL constraints defined on BUML models.
+  B-OCL Interpreter is available at https://github.com/BESSER-PEARL/B-OCL-Interpreter. With this interpreter you can validate your OCL constraints defined on BUML models.

@@ -36,7 +36,7 @@ Note that in case the output_dir is set to a specific name, the Java classes wil
     
     from besser.generators.java_classes import JavaGenerator
     
-    generator: Java_Generator = JavaGenerator(model=library_model, output_dir='my_java_project')
+    generator: Java_Generator = JavaGenerator(model=library_model, output_dir="my_java_project")
     generator.generate()
 
 Will result in the following line being added to the beginning of the classes:

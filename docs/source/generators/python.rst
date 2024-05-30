@@ -15,7 +15,7 @@ the ``generate`` method as follows:
     generator: Python_Generator = PythonGenerator(model=library_model)
     generator.generate()
 
-The ``classes.py`` file with the Django domain model (i.e., the set of classes) will be generated in the ``<<current_directory>>/output`` 
+The ``classes.py`` file with the Python domain model (i.e., the set of classes) will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
 .. literalinclude:: ../../../tests/structural/library/output/classes.py

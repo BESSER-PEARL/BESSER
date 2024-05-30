@@ -217,7 +217,9 @@ static Future<void> createTables(sql.Database database) async {
               {%- if not attribute.type.name == 'datetime' %}
     {{ types[attribute.type.name] }} {{ attribute.name }}
                 {%- if not loop.last %}
-                  {%- if not loop.nextitem.type.name == 'datetime' %},
+                  {%- if not loop.nextitem.type.name == 'datetime' %}
+                  {%- if not loop.nextitem.last %},
+                {%- endif %}
                 {%- endif %}
               {%- endif %}
             {%- endif %}

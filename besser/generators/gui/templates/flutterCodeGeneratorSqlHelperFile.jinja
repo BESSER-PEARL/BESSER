@@ -1,3 +1,4 @@
+ 
  {# import packages #}
 import 'package:sqflite/sqflite.dart' as sql;
 import 'package:logger/logger.dart';
@@ -216,11 +217,10 @@ static Future<void> createTables(sql.Database database) async {
             {%- for attribute in class.attributes %}
               {%- if not attribute.type.name == 'datetime' %}
     {{ types[attribute.type.name] }} {{ attribute.name }}
-                {%- if not loop.last %}
-                  {%- if not loop.nextitem.type.name == 'datetime' %}
-                  {%- if not loop.nextitem.last %},
-                {%- endif %}
-                {%- endif %}
+              {%- if not loop.last %}
+                  {%- if not loop.nextitem.type.name == 'datetime' %},
+                  {%- elif not loop.nextitem.last %},
+                  {%- endif %}
               {%- endif %}
             {%- endif %}
       {%- endfor%}
@@ -451,11 +451,12 @@ static Future<void> createTables(sql.Database database) async {
             {%- for attribute in class.attributes %}
               {%- if not attribute.type.name == 'datetime' %}
     {{ types[attribute.type.name] }} {{ attribute.name }}
-                {%- if not loop.last %}
+              {%- if not loop.last %}
                   {%- if not loop.nextitem.type.name == 'datetime' %},
+                  {%- elif not loop.nextitem.last %},
                   {%- endif %}
-                {%- endif %}
               {%- endif %}
+            {%- endif %}
             {%- endfor%}
             {%- for foreignKey in foreignKeylists %}
                {%- set foreignKey_name = foreignKey[0] %}

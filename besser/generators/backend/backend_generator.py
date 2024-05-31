@@ -40,10 +40,10 @@ class BackendGenerator(GeneratorInterface):
 
     def load_config(self):
         """
-        Loads the configuration from the specified config file path.
+        Loads the configuration from the specified config file path if provided.
 
         Returns:
-            dict: A dictionary containing the Docker configuration.
+            dict: A dictionary containing the Docker configuration, or None if the config file path is not provided or file not found.
         """
         if self.docker_config_path and os.path.exists(self.docker_config_path):
             config = configparser.ConfigParser()
@@ -57,7 +57,11 @@ class BackendGenerator(GeneratorInterface):
                 "docker_port": config.get("DEFAULT", "docker_port"),
             }
         else:
-            raise FileNotFoundError(f"Configuration file not found at path: {self.docker_config_path}")
+            if not self.docker_config_path:
+                print("No configuration docker file.")
+            else:
+                print(f"Configuration file not found at path: {self.docker_config_path}")
+            return None
 
     def generate(self):
         """
@@ -65,7 +69,7 @@ class BackendGenerator(GeneratorInterface):
         If the output directory was not specified, the code generated will be stored in the <current directory>/output_backend folder.
 
         Returns:
-            None, but store the generated code as files main_api.py, sql_alchemy.py and pydantic_classes.py
+            None, but stores the generated code as files main_api.py, sql_alchemy.py and pydantic_classes.py
         """
         if self.output_dir is not None:
             backend_folder_path = self.output_dir
@@ -76,7 +80,7 @@ class BackendGenerator(GeneratorInterface):
             os.makedirs(backend_folder_path, exist_ok=True)
             print(f"Backend folder created at {backend_folder_path}")
 
-        docker_port = self.config["docker_port"]
+        docker_port = self.config["docker_port"] if self.config else 8000  # Use default port if config not provided
 
         rest_api = RESTAPIGenerator(model=self.model, http_methods=self.http_methods, nested_creations=self.nested_creations, output_dir=backend_folder_path, backend=True, port=docker_port)
         rest_api.generate()
@@ -86,11 +90,12 @@ class BackendGenerator(GeneratorInterface):
 
         pydantic_model = PydanticGenerator(model=self.model, output_dir=backend_folder_path, backend=True, nested_creations=self.nested_creations)
         pydantic_model.generate()
-        
-        if self.docker_image and self.docker_config_path:
-            self.build_and_push_docker_image(backend_folder_path)
-        elif self.docker_image and not self.docker_config_path:  
-            generate_docker_files(backend_folder_path)
+
+        if self.docker_image:
+            if self.config:
+                self.build_and_push_docker_image(backend_folder_path)
+            else:
+                generate_docker_files(backend_folder_path)
 
     def build_and_push_docker_image(self, backend_folder_path):
         """
@@ -153,5 +158,3 @@ class BackendGenerator(GeneratorInterface):
         resp = client.api.push(full_image_name, stream=True, decode=True)
         for line in resp:
             print(line)
-
-

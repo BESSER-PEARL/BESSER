@@ -4,14 +4,7 @@ from besser.BUML.metamodel.structural import *
 from jinja2 import Template, Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
 
-
-
-##############################
-#    SQL_Helper Generator
-##############################
-
 class FlutterSQLHelperGenerator(GeneratorInterface):
-
     """
     FlutterSQLHelperGenerator is a class that implements the GeneratorInterface and is responsible for generating
     the Flutter SQL helper code based on the input B-UML model.
@@ -71,14 +64,7 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
             print("Code generated in the location: " + file_path)
         
 
-
-
-##############################
-#    Main Dart Generator
-##############################
-
 class FlutterMainDartGenerator(GeneratorInterface):
-
     """
     FlutterMainDartGenerator is a class that implements the GeneratorInterface and is responsible for generating
     the main Dart code for a Flutter application based on the input B-UML and GUI models.
@@ -168,15 +154,9 @@ class FlutterMainDartGenerator(GeneratorInterface):
             )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)
-       
-
-##############################
-#    pubspec Generator
-##############################
 
 
 class FlutterPubspecGenerator(GeneratorInterface):
-
     """
     FlutterPubspecGenerator is a class that implements the GeneratorInterface and is responsible for generating
     the pubspec.yaml file for a Flutter application based on the input GUI model.
@@ -198,9 +178,6 @@ class FlutterPubspecGenerator(GeneratorInterface):
     @application.setter
     def application(self, application: Application):
         self.__application = application
-
-
-
 
     def generate(self):
 
@@ -224,3 +201,10 @@ class FlutterPubspecGenerator(GeneratorInterface):
             f.write(generated_code)
             print("Code generated in the location: " + file_path)
 
+
+class FlutterGenerator(GeneratorInterface):
+    """
+    
+    """
+
+    

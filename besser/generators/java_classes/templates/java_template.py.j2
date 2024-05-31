@@ -71,7 +71,6 @@ public class {{ class_obj.name }} {{ extends }}{
     private {{ class2_name }} {{ class2_name.lower() }};
             {% do assocs.append(class2_name) %}
             {% do assocs.append(class2_name.lower()) %}
-            {% do assocs.append("false") %}
             {% do processed_associations.append(association.name) %}
         {% endif %}
     {% endif %}

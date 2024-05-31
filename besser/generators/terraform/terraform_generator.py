@@ -15,7 +15,6 @@ class TerraformGenerator(GeneratorInterface):
     def __init__(self, deployment_model: DeploymentModel, output_dir: str = None):
         super().__init__(deployment_model, output_dir)
         self.deployment_model = deployment_model
-        self.output_dir = output_dir or os.path.join(os.getcwd(), 'output')
         os.makedirs(self.output_dir, exist_ok=True)
         self.env = self.setup_environment()
 
@@ -65,7 +64,7 @@ class TerraformGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as files with specified names.
         """
-        output_base_dir = os.path.join(os.getcwd(), 'output')
+        output_base_dir = self.build_generation_dir()
 
         for public_cluster in self.deployment_model.clusters:
             try:

@@ -23,7 +23,7 @@ resource "aws_iam_role" "demo" {
   }
   
   variable "cluster_name" {
-    default = "demo"
+    default = "{{public_cluster.name}}"
     type = string
     description = "AWS EKS CLuster Name"
     nullable = false
@@ -103,55 +103,55 @@ resource "kubernetes_deployment_v1" "default-{{default_net}}" {
               requests = {
                 cpu    = "{{container.application.required_resources.cpu}}m"
                 memory = "{{container.application.required_resources.memory}}Mi"
-              }  {%endfor%}
+              }
+        {%endfor%}
             }
           }
         }
       }
     }
-  # depends_on = ["aws_eks_node_group.private-nodes]
+    depends_on = ["aws_eks_node_group.private-nodes"]
   }
   {%endfor%}
 
   {% set default_service = 1 %}
   {% for service in public_cluster.services%}
-  resource "kubernetes_service_v1" "default-{{default_service}}" {
-    {% set default_service = default_service + 1 %}
-    metadata {
-      name = "{{service.name}}"
-  #    namespace = kubernetes_namespace.app_namespace.metadata[0].name
-    }
-    spec {
-      selector = {
-        app = "{{service.application.name}}"
-      }
-      port {
-        protocol    = "{{service.protocol | to_str}}"
-        port        = {{service.port}}
-        target_port = {{service.target_port}}
-      }
-      type = "{{service.type | to_str}}"
-    }
+resource "kubernetes_service_v1" "default-{{default_service}}" {
+  {% set default_service = default_service + 1 %}
+  metadata {
+    name = "{{service.name}}"
+#    namespace = kubernetes_namespace.app_namespace.metadata[0].name
   }
-  {%endfor%}
-
-  {% for service in public_cluster.services%}
-  resource "kubernetes_ingress_v1" "example" {
-    wait_for_load_balancer = true
-    metadata {
-      name = "example"
+  spec {
+    selector = {
+      app = "{{service.application.name}}"
     }
-    spec {
-      rule {
-        http {
-          path {
-            path = "/*"
-            backend {
-              service {
-                name = kubernetes_service_v1.default-1.metadata.0.name
-                port {
-                  number = {{service.port}}
-                }
+    port {
+      protocol    = "{{service.protocol | to_str}}"
+      port        = {{service.port}}
+      target_port = {{service.target_port}}
+    }
+    type = "{{service.type | to_str}}"
+  }
+}
+{%endfor%}
+
+{% for service in public_cluster.services%}
+{% if "Ingress" in service.type | to_str %}
+resource "kubernetes_ingress_v1" "example" {
+  metadata {
+    name = "example"
+  }
+  spec {
+    rule {
+      http {
+        path {
+          path = "/*"
+          backend {
+            service {
+              name = kubernetes_service_v1.default-1.metadata.0.name
+              port {
+                number = {{service.port}}
               }
             }
           }
@@ -159,4 +159,6 @@ resource "kubernetes_deployment_v1" "default-{{default_net}}" {
       }
     }
   }
-  {%endfor%}
+}
+        {% endif %}
+{%endfor%}

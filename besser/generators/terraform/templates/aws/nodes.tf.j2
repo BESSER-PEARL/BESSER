@@ -70,5 +70,5 @@ resource "aws_iam_role" "nodes" {
   }
 
 output "load_balancer_ip" {
-  value = kubernetes_service_v1.default-1.status.0.load_balancer.0.ingress.0.ip
+  value = kubernetes_service_v1.default-1.status.0.load_balancer.0.ingress.0.hostname
 }

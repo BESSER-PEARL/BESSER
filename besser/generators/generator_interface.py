@@ -32,10 +32,8 @@ class GeneratorInterface(ABC):
 
     def build_generation_path(self, file_name:str) -> str:
         if self.output_dir != None:
-            if os.path.isdir(self.output_dir):
-                file_path = os.path.join(self.output_dir, file_name)
-            else:
-                raise ValueError("The output_dir provided does not exist or is inaccessible")
+            os.makedirs(self.output_dir, exist_ok=True)
+            file_path = os.path.join(self.output_dir, file_name)
         else:
             working_path = os.path.abspath('')
             os.makedirs(os.path.join(working_path, "output"), exist_ok=True)

@@ -1,0 +1,126 @@
+/**
+* Copyright 2024 Google LLC
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*      http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
+{%set ns = namespace(netname={})%}
+# [START gke_quickstart_autopilot_cluster]
+provider "google" {
+  {% for line in config_lines %}
+  {{ line }}
+  {% endfor %}
+  region      = "{% for x in public_cluster.regions %}{{ x.name }}1{% if not loop.last %}, {% endif %}{% endfor %}"
+}
+
+{%if public_cluster.net_config == False %}
+{% set default_net = 1 %}
+{%for x in public_cluster.networks%}
+
+{{ ns.netname | set_dict_item(x.name, default_net) }}
+resource "google_compute_network" "default-{{default_net}}" {
+    {% set default_net = default_net + 1 %}
+  name = "{{ x.name }}"
+    
+  auto_create_subnetworks  = false
+  enable_ula_internal_ipv6 = true
+}
+{%endfor%}
+
+
+{#{% for key, value in ns.netname.items() %}
+  {{ key }} = {{ value }}
+{% endfor %}#}
+
+{% set default_subnet = 1 %}
+{%for x in public_cluster.subnets%}
+resource "google_compute_subnetwork" "default-{{default_subnet}}" {
+  name = "{{ x.name }}"
+    {% set default_subnet = default_subnet + 1 %}
+  ip_cidr_range = "{% for tp in x.ip_ranges %}{% if tp.type | to_str == 'Subnetwork' %}{{ tp.cidr_range }}{% endif %}{% endfor %}"
+
+  stack_type       = "IPV4_IPV6"
+  ipv6_access_type = "EXTERNAL" # Change to "EXTERNAL" if creating an external loadbalancer
+
+  {% for key, value in ns.netname.items() %}
+  {%if x.network.name == key%}
+  network = google_compute_network.{{ value }}.id
+  {%endif%}
+ {% endfor %}
+
+  {% for z in x.ip_ranges %}
+    {%if z.type | to_str != 'Subnetwork'%}
+  secondary_ip_range {
+    range_name    = "{{z.name}}"
+    ip_cidr_range = "{{z.cidr_range}}"
+  }
+  {%endif%}
+  {%endfor%}
+
+}
+{%endfor%}
+{%else%} {#Auto Network#}
+resource "google_compute_network" "default" {
+  name = "example-network"
+
+
+  auto_create_subnetworks  = false
+  enable_ula_internal_ipv6 = true
+}
+
+resource "google_compute_subnetwork" "default" {
+  name = "example-subnetwork"
+
+  ip_cidr_range = "10.0.0.0/16"
+
+  stack_type       = "IPV4_IPV6"
+  ipv6_access_type = "EXTERNAL" # Change to "EXTERNAL" if creating an external loadbalancer
+
+  network = google_compute_network.default.id
+  secondary_ip_range {
+    range_name    = "services-range"
+    ip_cidr_range = "192.168.0.0/24"
+  }
+
+  secondary_ip_range {
+    range_name    = "pod-ranges"
+    ip_cidr_range = "192.168.1.0/24"
+  }
+}
+{%endif%}
+
+resource "google_container_cluster" "default" {
+    name = "{{ public_cluster.name }}"
+  
+    location                 = "{% for x in public_cluster.regions %}{{ x.name }}1{% if not loop.last %}, {% endif %}{% endfor %}"
+    enable_autopilot         = true
+    enable_l4_ilb_subsetting = true
+
+    {%if public_cluster.net_config == False %}
+    network    = google_compute_network.default-1.id {#Todo with multiple network#}
+    subnetwork = google_compute_subnetwork.default-1.id {#Todo with multiple subnets#}
+    {%else%}
+    network    = google_compute_network.default.id
+    subnetwork = google_compute_subnetwork.default.id
+    {%endif%}
+
+    ip_allocation_policy {
+      stack_type                    = "IPV4_IPV6"
+      services_secondary_range_name = google_compute_subnetwork.default.secondary_ip_range[0].range_name
+      cluster_secondary_range_name  = google_compute_subnetwork.default.secondary_ip_range[1].range_name
+    }
+  
+    deletion_protection = false
+  }
+
+
+# [END gke_quickstart_autopilot_cluster]

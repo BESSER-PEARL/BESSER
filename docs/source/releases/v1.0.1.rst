@@ -1,0 +1,11 @@
+Version 1.0.1
+=============
+
+Improvements
+------------
+* BOCL Metamodel updated: source and referred operation included
+* BOCL Parser Integration with BESSER backend complete
+
+Fixes
+------
+* Bug fix in Object diagram

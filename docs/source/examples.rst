@@ -11,3 +11,4 @@ See the following examples where we define B-UML models and implement some code 
    examples/dpp
    examples/ocl
    examples/backend_example
+   examples/terraform_example

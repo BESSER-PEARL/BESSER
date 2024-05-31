@@ -1,0 +1,60 @@
+Deployment model{
+    applications {
+        ->  name: app1,
+            image: "image/latest",
+            port: 8000,
+            cpu_required: 10m, 
+            memory_required: 100Mi, 
+            domain_model: "library_model"
+    }
+    
+    services {
+        ->  name: service1, 
+            port: 80,
+            target_port: 8000,
+            protocol: HTTP,
+            type: lb,
+            app_name: app1
+    }
+    
+    containers {
+        ->  name: container1,
+            app_name: app1,
+            cpu_limit: 500 m,
+            memory_limit: 512Mi
+    }
+
+    deployments {
+        ->  name: deployment1,
+            replicas: 2,
+            containers: [container1]
+    }
+
+    regions {
+        ->  name: us-east1
+        ->  name: us-east2
+    }
+
+    clusters {
+        ->  public_cluster
+            name: cluster1,
+            number_of_nodes: 3,
+            provider: google,
+            config_file: "file",
+            services: [service1],
+            deployments: [deployment1],
+            regions: [us-east1],
+            net_config: True
+        
+        ->  public_cluster
+            name: cluster2,
+            number_of_nodes: 3,
+            provider: aws,
+            config_file: "file",
+            services: [service1],
+            deployments: [deployment1],
+            regions: [us-east1],
+            net_config: True
+    }
+}
+

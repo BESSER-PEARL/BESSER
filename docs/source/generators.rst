@@ -13,6 +13,7 @@ own generator).
 
    generators/django
    generators/python
+   generators/java
    generators/pydantic
    generators/alchemy
    generators/sql

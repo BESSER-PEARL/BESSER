@@ -1,5 +1,5 @@
-resource "aws_iam_role" "demo" {
-    name = "eks-cluster-demo"
+resource "aws_iam_role" "{{public_cluster.name}}" {
+    name = "eks-cluster-{{public_cluster.name}}"
   
     assume_role_policy = <<POLICY
 {
@@ -17,9 +17,9 @@ resource "aws_iam_role" "demo" {
   POLICY
 }
   
-  resource "aws_iam_role_policy_attachment" "demo-AmazonEKSClusterPolicy" {
+  resource "aws_iam_role_policy_attachment" "{{public_cluster.name}}-AmazonEKSClusterPolicy" {
     policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
-    role       = aws_iam_role.demo.name
+    role       = aws_iam_role.{{public_cluster.name}}.name
   }
   
   variable "cluster_name" {
@@ -29,9 +29,9 @@ resource "aws_iam_role" "demo" {
     nullable = false
   }
   
-  resource "aws_eks_cluster" "demo" {
+  resource "aws_eks_cluster" "{{public_cluster.name}}" {
     name     = var.cluster_name
-    role_arn = aws_iam_role.demo.arn
+    role_arn = aws_iam_role.{{public_cluster.name}}.arn
   
     vpc_config {
       subnet_ids = [
@@ -48,15 +48,15 @@ resource "aws_iam_role" "demo" {
       ]
     }
   
-    depends_on = [aws_iam_role_policy_attachment.demo-AmazonEKSClusterPolicy]
+    depends_on = [aws_iam_role_policy_attachment.{{public_cluster.name}}-AmazonEKSClusterPolicy]
   }
   
   data "aws_eks_cluster_auth" "cluster" {
-    name = aws_eks_cluster.demo.id
+    name = aws_eks_cluster.{{public_cluster.name}}.id
   }
   provider "kubernetes" {
-    host                   = aws_eks_cluster.demo.endpoint
-    cluster_ca_certificate = base64decode(aws_eks_cluster.demo.certificate_authority.0.data)
+    host                   = aws_eks_cluster.{{public_cluster.name}}.endpoint
+    cluster_ca_certificate = base64decode(aws_eks_cluster.{{public_cluster.name}}.certificate_authority.0.data)
     token                  = data.aws_eks_cluster_auth.cluster.token
   }
   

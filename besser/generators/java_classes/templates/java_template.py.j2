@@ -31,6 +31,7 @@ import java.util.List;
 import java.util.ArrayList;
 
 {% set assocs = [] %}
+{% set assocs_card_over_1 = [] %}
 {% set inheritance = generals.names | join(', ') %}
 {% if inheritance|length > 1 %}
     {% set extends = "extends " + inheritance %}
@@ -57,12 +58,14 @@ public class {{ class_obj.name }} {{ extends }}{
     private List<{{ class2_name }}> {{ class2_name.lower() }}s;
                 {% do assocs.append('List<'+class2_name+'>') %}
                 {% do assocs.append(class2_name.lower()) %}
+                {% do assocs_card_over_1.append(class2_name) %}              
                 {% do processed_associations.append(association.name) %}
             {% endif %}
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
     private List<{{ class2_name }}> {{ class2_name.lower() }}s;
             {% do assocs.append('List<'+class2_name+'>') %}
             {% do assocs.append(class2_name.lower()) %}
+            {% do assocs_card_over_1.append(class2_name) %}  
             {% do processed_associations.append(association.name) %}
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
     private {{ class2_name }} {{ class2_name.lower() }};
@@ -116,6 +119,61 @@ public class {{ class_obj.name }} {{ extends }}{
     {% endif %}
 {% endfor %}
     }
+
+{% if assocs_card_over_1 != [] %}
+    public {{ class_obj.name }} (
+{%- for i in range(attribs|length) -%}
+    {%- if i == attribs|length - 1 -%}
+    {{ attribs[i]}}
+    {%- else -%}
+        {%- if i % 2 == 0 -%}
+    {{ attribs[i]}} {% else -%}
+    {{ attribs[i] }}, {% endif -%}
+    {%- endif -%}
+{%- endfor -%}
+{%- if inheritance|length > 1 -%}
+    {%- for i in range(parent_attribs|length) -%}
+        {%- if i == parent_attribs|length - 1 -%}
+    {{ parent_attribs[i]}}
+        {%- else -%}
+            {%- if i % 2 == 0 -%}
+    , {{ parent_attribs[i]}} {% else -%}
+    {{ parent_attribs[i] }}{% endif -%}
+        {%- endif -%}
+    {%- endfor -%}
+{% endif %}
+{%- for i in range(0, assocs_card_over_1|length) -%}
+    {%- if i < assocs_card_over_1 |length -%}
+    ,{{" "}}
+    {%- endif -%}
+    ArrayList<{{ assocs_card_over_1[i] }}> {{ assocs_card_over_1[i]| lower }}s
+
+{%- endfor -%}
+) {
+{% if inheritance|length > 1 %}
+        super(
+    {%- for i in range(parent_attribs|length) %}
+        {%- if i == parent_attribs|length - 1 -%}
+    {{ parent_attribs[i]}});
+        {% else -%}
+            {%- if i % 2 == 1 -%}
+    {{ parent_attribs[i]}}, {% endif %}
+        {% endif %}
+    {% endfor %}
+{% endif %}
+{% for i in range(attribs|length) %}
+    {% if i % 2 == 1 %}
+        this.{{ attribs[i] }} = {{ attribs[i] }};
+    {% endif %}
+{% endfor %}
+{% for i in range(1, assocs|length) %}
+    {% if i % 2 == 1 and assocs[i-1][:4] == "List" %}
+        this.{{ assocs[i] }}s = {{ assocs[i] }}s;
+    {% endif %}
+{% endfor %}
+    }
+{%- endif %}
+
 {% for i in range(0, attribs|length, 2) %}
 
     public {{ attribs[i] }} get{{ attribs[i+1].capitalize() }}() {

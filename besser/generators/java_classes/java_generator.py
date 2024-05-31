@@ -21,6 +21,8 @@ class JavaGenerator(GeneratorInterface):
             package_name = ""
             if self.output_dir is not None:
                 package_name = self.output_dir
+            else:
+                package_name = "output"
             with open(file_path, mode="w") as f:
                 generated_code = template.render(class_obj=class_obj,
                                                  processed_associations=processed_associations,

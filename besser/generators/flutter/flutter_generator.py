@@ -4,7 +4,14 @@ from besser.BUML.metamodel.structural import *
 from jinja2 import Template, Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
 
+
+
+##############################
+#    SQL_Helper Generator
+##############################
+
 class FlutterSQLHelperGenerator(GeneratorInterface):
+
     """
     FlutterSQLHelperGenerator is a class that implements the GeneratorInterface and is responsible for generating
     the Flutter SQL helper code based on the input B-UML model.
@@ -64,7 +71,14 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
             print("Code generated in the location: " + file_path)
         
 
+
+
+##############################
+#    Main Dart Generator
+##############################
+
 class FlutterMainDartGenerator(GeneratorInterface):
+
     """
     FlutterMainDartGenerator is a class that implements the GeneratorInterface and is responsible for generating
     the main Dart code for a Flutter application based on the input B-UML and GUI models.
@@ -154,9 +168,15 @@ class FlutterMainDartGenerator(GeneratorInterface):
             )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)
+       
+
+##############################
+#    pubspec Generator
+##############################
 
 
 class FlutterPubspecGenerator(GeneratorInterface):
+
     """
     FlutterPubspecGenerator is a class that implements the GeneratorInterface and is responsible for generating
     the pubspec.yaml file for a Flutter application based on the input GUI model.
@@ -178,6 +198,7 @@ class FlutterPubspecGenerator(GeneratorInterface):
     @application.setter
     def application(self, application: Application):
         self.__application = application
+
 
     def generate(self):
 
@@ -202,9 +223,55 @@ class FlutterPubspecGenerator(GeneratorInterface):
             print("Code generated in the location: " + file_path)
 
 
-class FlutterGenerator(GeneratorInterface):
-    """
-    
-    """
 
-    
+##############################
+#    Flutter Generator
+##############################
+
+class FlutterGenerator(GeneratorInterface):
+        
+    """
+        A class that represents a Flutter code generator.
+
+        This class extends the GeneratorInterface, which is an interface or base class for code generators.
+
+        Args:
+            model: An object representing the B-UML model.
+            application: An object representing the GUI model.
+            mainPage: An object representing the main page of the Flutter application.
+            module: An object representing the module of the Flutter application.
+            dataSourceClass: A list of Class objects representing the data source classes.
+            output_dir: The output directory where the generated code will be saved. (optional)
+     """
+    def __init__(self, model, application, mainPage, module, dataSourceClass, output_dir=None):
+        super().__init__(model, output_dir)
+
+        self.application = application
+        self.mainPage = mainPage
+        self.module = module
+        self.dataSourceClass = dataSourceClass
+
+
+    def generate(self):
+
+        """
+        Generates the Flutter code based on the provided models and data source classes.
+
+        This method creates instances of the FlutterSQLHelperGenerator, FlutterMainDartGenerator,
+        and FlutterPubspecGenerator classes. It then calls the generate() method on each of them
+        to generate the SQL helper code, main Dart code, and pubspec.yaml file, respectively.
+
+        Returns:
+            None
+            None, but store the generated code as files main.dart, sql_helper.dart, and pubspec.yaml.
+        """
+
+
+        sql_helper_generator = FlutterSQLHelperGenerator(model=self.model, dataSourceClass=self.dataSourceClass, output_dir=self.output_dir)
+        sql_helper_generator.generate()
+
+        main_dart_generator = FlutterMainDartGenerator(model=self.model, application=self.application, mainPage=self.mainPage, module=self.module, output_dir=self.output_dir)
+        main_dart_generator.generate()
+
+        pubspec_generator = FlutterPubspecGenerator(application=self.application, output_dir=self.output_dir)
+        pubspec_generator.generate()

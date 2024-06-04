@@ -1,1 +1,1 @@
-from .FlutterCodeGeneration import *
+from .flutter_generator import *

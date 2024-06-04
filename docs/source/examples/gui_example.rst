@@ -6,9 +6,8 @@ To provide clarity on the capabilities of the Flutter Code Generator, we have in
 The example showcases a common domain involving libraries, books, and authors. The :doc:`../examples/library_example` presents a UML diagram illustrating the relationships between these entities. 
 Additionally, the Python code for specifying the B-UML model, including classes, attributes, and relationships, is provided in the same section.
 
-The Python code to specify the GUI model, including various elements such as lists, buttons, screens, and view components is presented in the following code. Additionally, the FlutterMainDartGenerator,
-FlutterSQLHelperGenerator, and FlutterPubspecGenerator
-code generators are implemented in this example (lines 95_102). Running this script will generate the output/ folder with the main.dart, sql_helper.dart, and pubspec.yaml files produced by each of the Generators respectively.
+The Python code to specify the GUI model, including various elements such as lists, buttons, screens, and view components is presented in the following code. Additionally, the "FlutterGenerator"
+code generator is implemented in this example. Running this script will generate the output/ folder with the main.dart, sql_helper.dart, and pubspec.yaml files produced by each of the Generators respectively.
 
 
 .. code-block:: python
@@ -82,7 +81,7 @@ code generators are implemented in this example (lines 95_102). Running this scr
 
 
   # Home page Screen definition
-  MyHomeScreen: Screen = Screen(name="Book Liibrary Manager", description="Effortlessly manage your books, libraries, and authors, with the ability to view and update their information.",
+  MyHomeScreen: Screen = Screen(name="Book Library Manager", description="Effortlessly manage your books, libraries, and authors, with the ability to view and update their information.",
                           x_dpi="x_dpi", y_dpi="y_dpi", size="SmallScreen", view_elements={libraryButton, authorButton, bookButton})
 
 
@@ -94,13 +93,7 @@ code generators are implemented in this example (lines 95_102). Running this scr
                                  versionName="1.0", description="This is a comprehensive Flutter application for managing a library.",
                                  screenCompatibility=True, modules={MyModule})
 
-  code_gen = FlutterSQLHelperGenerator(model=library_model, dataSourceClass=list[Class])
-  code_gen.generate()
-
-  code_gen = FlutterMainDartGenerator(model=library_model, application=MyApp, mainPage=MyHomeScreen, module=MyModule)
-  code_gen.generate()
-
-  code_gen = FlutterPubspecGenerator(application=MyApp)
+  code_gen = FlutterGenerator(model=library_model, dataSourceClass=list[Class], application=MyApp, mainPage=MyHomeScreen, module=MyModule)
   code_gen.generate()
 
 
@@ -119,7 +112,87 @@ After completing these steps, your Flutter application should have the following
 
 .. image:: ../img/app_structure.png
   :width: 300
-  :alt: Flutter aap structure
+  :alt: Flutter app structure
+  :align: center
+
+Upon running your Flutter code, the main page of your application should resemble the following figure:
+
+.. image:: ../img/main_page.png
+  :width: 300
+  :alt: main page of app
   :align: center
 
 
+According to the main page specifications, three buttons are present: "Library List," "Author List," and "Book List."
+For example, on the "Library Directory" page, you can enter multiple libraries along with their associated information based on the attributes specified in the B-UML model.
+The figure below demonstrates the required steps to enter a library with all its information:
+
+.. image:: ../img/library_list.png
+  :width: 800
+  :alt: add a new library
+  :align: center
+
+After entering three libraries, the "Library Directory" page would appear as shown below:
+
+.. image:: ../img/library_directory.png
+  :width: 300
+  :alt: add three libraries
+  :align: center
+
+Each library entry is accompanied by two icons: a pen icon for performing update operations and a delete icon for deletion operations.
+
+Similarly, on the "Author Directory" page, you can enter multiple authors along with their respective information. 
+The figure below showcases the content of this page after entering three authors:
+
+
+.. image:: ../img/author_directory.png
+  :width: 300
+  :alt: add three authors
+  :align: center
+
+On the "Book Directory" page, you can enter multiple books along with their corresponding information. 
+The figure below illustrates the steps required to enter a book with the following details: title = "The Great Gatsby", pages = "180", library = "New York Public Library", and author = "F. Scott Fitzgerald".
+
+.. image:: ../img/book_list.png
+  :width: 800
+  :alt: add a new book
+  :align: center
+
+Upon entering three books, the "Book Directory" page would appear as follows:
+
+.. image:: ../img/book_directory.png
+  :width: 300
+  :alt: add a new book
+  :align: center
+
+Additionally, you can view the entered elements in the database for the following tables:
+
+"Library" table: 
+
+.. image:: ../img/library_table.png
+  :width: 450
+  :alt: library table
+  :align: center
+
+
+"Author" table: 
+
+.. image:: ../img/author_table.png
+  :width: 450
+  :alt: author table
+  :align: center
+
+
+"Book" table: 
+
+.. image:: ../img/book_table.png
+  :width: 450
+  :alt: book table
+  :align: center
+
+"book_author_assoc" table: 
+
+.. image:: ../img/book_author_assoc_table.png
+  :width: 300
+  :alt: book_author_assoc table
+  :align: center

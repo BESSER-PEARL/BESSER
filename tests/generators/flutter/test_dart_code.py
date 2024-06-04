@@ -1,6 +1,6 @@
 import pytest
 import os
-from besser.generators.gui import FlutterSQLHelperGenerator, FlutterMainDartGenerator, FlutterPubspecGenerator
+from besser.generators.flutter import FlutterSQLHelperGenerator, FlutterMainDartGenerator, FlutterPubspecGenerator, FlutterGenerator
 from besser.BUML.metamodel.structural import *
 from besser.BUML.metamodel.gui import *
 import shutil

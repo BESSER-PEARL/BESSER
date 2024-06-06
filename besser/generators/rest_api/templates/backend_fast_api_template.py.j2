@@ -128,8 +128,8 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
 
     {%if ns.end_name_multiple and nested_creations%}
     {% for x in ns.end_name_multiple %}
-    if {{ class.name | lower}}.{{x[0] | lower}}s:
-        for x in {{ class.name | lower}}.{{x[0] | lower}}s:
+    if {{ class.name | lower}}_data.{{x[0] | lower}}s:
+        for x in {{ class.name | lower}}_data.{{x[0] | lower}}s:
             {%for lk_class in classes%}
             {% if lk_class.name == x[0] %}
             if isinstance(x, int):

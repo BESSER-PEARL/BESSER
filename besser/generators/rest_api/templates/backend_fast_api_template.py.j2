@@ -219,9 +219,10 @@ if __name__ == "__main__":
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'openapi_specs.json')
     print(f"Writing OpenAPI schema to {output_file}")
+    print("Swagger UI available at 127.0.0.1:8000/docs")
     with open(output_file, 'w') as file:
         json.dump(openapi_schema, file)
-    uvicorn.run(app, host="0.0.0.0", port= {% if port %}{{ port }}{%else%}8000{%endif%})
+    uvicorn.run(app, host="127.0.0.1", port= {% if port %}{{ port }}{%else%}8000{%endif%})
 
 
 

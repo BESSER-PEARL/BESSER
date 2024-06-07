@@ -18,7 +18,6 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
 
     Args:
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
-        dataSourceClass (list[Class]): A list of Class instances representing the data source classes.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
 
@@ -33,9 +32,8 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
         "timedelta": "interval",
     }
 
-    def __init__(self, model: DomainModel, dataSourceClass: list[Class], output_dir: str = None):
+    def __init__(self, model: DomainModel, output_dir: str = None):
        super().__init__(model, output_dir)
-       self.dataSourceClass: list[Class]= dataSourceClass
        
 
     def generate(self):
@@ -86,15 +84,15 @@ class FlutterMainDartGenerator(GeneratorInterface):
     Args:
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
         application (Application): An instance of the Application class representing the GUI model.
-        mainPage (Screen): An instance of the Screen class representing the main page of the Flutter application.
+        main_page (Screen): An instance of the Screen class representing the main page of the Flutter application.
         module (Module): An instance of the Module class representing the module of the Flutter application.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
 
-    def __init__(self, model: DomainModel, application: Application,  mainPage: Screen, module:Module, output_dir: str = None):
+    def __init__(self, model: DomainModel, application: Application,  main_page: Screen, module: Module = None, output_dir: str = None):
         super().__init__(model, output_dir)
         self.application: Application = application
-        self.mainPage: Screen = mainPage
+        self.main_page: Screen = main_page
         self.module: Module = module
 
     @property
@@ -106,12 +104,12 @@ class FlutterMainDartGenerator(GeneratorInterface):
         self.__application = application
 
     @property
-    def mainPage(self) -> Screen:
-        return self.__mainPage
+    def main_page(self) -> Screen:
+        return self.__main_page
 
-    @mainPage.setter
-    def mainPage(self, mainPage: Screen):
-        self.__mainPage = mainPage
+    @main_page.setter
+    def main_page(self, main_page: Screen):
+        self.__main_page = main_page
 
     @property
     def module(self) -> Module:
@@ -152,8 +150,12 @@ class FlutterMainDartGenerator(GeneratorInterface):
         env.tests['is_Button'] = self.is_Button
         env.tests['is_List'] = self.is_List
         env.tests['is_ModelElement'] = self.is_ModelElement
+        if self.module is None:
+          # User did not specify a module, so select the first module from the set of modules
+          self.module = next(iter(self.application.modules))
+
         screens = self.module.screens
-        screens.remove(self.mainPage)
+        screens.remove(self.main_page)
         for scr in screens:
               print(scr.name + " ::  ")
   
@@ -161,7 +163,7 @@ class FlutterMainDartGenerator(GeneratorInterface):
             generated_code = template.render(
                 app=self.application,
                 screens=screens,
-                screen=self.mainPage,
+                screen=self.main_page,
                 BUMLClasses=self.model.get_classes(),
                 model=self.model,
                 associations=self.model.associations
@@ -238,24 +240,22 @@ class FlutterGenerator(GeneratorInterface):
         Args:
             model: An object representing the B-UML model.
             application: An object representing the GUI model.
-            mainPage: An object representing the main page of the Flutter application.
+            main_page: An object representing the main page of the Flutter application.
             module: An object representing the module of the Flutter application.
-            dataSourceClass: A list of Class objects representing the data source classes.
             output_dir: The output directory where the generated code will be saved. (optional)
      """
-    def __init__(self, model, application, mainPage, module, dataSourceClass, output_dir=None):
+    def __init__(self, model, application, main_page, module=None, output_dir=None):
         super().__init__(model, output_dir)
 
         self.application = application
-        self.mainPage = mainPage
+        self.main_page = main_page
         self.module = module
-        self.dataSourceClass = dataSourceClass
 
 
     def generate(self):
 
         """
-        Generates the Flutter code based on the provided models and data source classes.
+        Generates the Flutter code based on the provided models.
 
         This method creates instances of the FlutterSQLHelperGenerator, FlutterMainDartGenerator,
         and FlutterPubspecGenerator classes. It then calls the generate() method on each of them
@@ -267,10 +267,10 @@ class FlutterGenerator(GeneratorInterface):
         """
 
 
-        sql_helper_generator = FlutterSQLHelperGenerator(model=self.model, dataSourceClass=self.dataSourceClass, output_dir=self.output_dir)
+        sql_helper_generator = FlutterSQLHelperGenerator(model=self.model, output_dir=self.output_dir)
         sql_helper_generator.generate()
 
-        main_dart_generator = FlutterMainDartGenerator(model=self.model, application=self.application, mainPage=self.mainPage, module=self.module, output_dir=self.output_dir)
+        main_dart_generator = FlutterMainDartGenerator(model=self.model, application=self.application, main_page=self.main_page, module=self.module, output_dir=self.output_dir)
         main_dart_generator.generate()
 
         pubspec_generator = FlutterPubspecGenerator(application=self.application, output_dir=self.output_dir)

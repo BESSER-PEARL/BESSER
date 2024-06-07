@@ -93,7 +93,7 @@ code generator is implemented in this example. Running this script will generate
                                  versionName="1.0", description="This is a comprehensive Flutter application for managing a library.",
                                  screenCompatibility=True, modules={MyModule})
 
-  code_gen = FlutterGenerator(model=library_model, dataSourceClass=list[Class], application=MyApp, mainPage=MyHomeScreen, module=MyModule)
+  code_gen = FlutterGenerator(model=library_model, application=MyApp, main_page=MyHomeScreen)
   code_gen.generate()
 
 

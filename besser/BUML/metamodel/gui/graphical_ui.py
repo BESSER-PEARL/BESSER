@@ -674,7 +674,7 @@ class Form(ViewComponent):
     @property
     def inputFields(self) -> set[InputField]:
         """set[Module]: Get the set of input Fields contained in the form."""
-        return self.inputFields
+        return self.__inputFields
 
     @inputFields.setter
     def inputFields(self, inputFields: set[InputField]):
@@ -818,7 +818,7 @@ class Application(Model):
     @property
     def modules(self) -> set[Module]:
         """set[Module]: Get the set of modules contained in the application."""
-        return self.modules
+        return self.__modules
 
     @modules.setter
     def modules(self, modules: set[Module]):

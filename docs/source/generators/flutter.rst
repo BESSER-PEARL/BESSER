@@ -31,7 +31,13 @@ To start using the Flutter Code Generator, follow these steps:
     
     from besser.generators.flutter import FlutterGenerator
 
-    code_gen = FlutterGenerator(model=library_model, dataSourceClass=list[Class], application=MyApp, mainPage=MyHomeScreen, module=MyModule)
+    # Create an instance of the FlutterGenerator class, providing the necessary parameters:
+    # - model: An object representing the B-UML model.
+    # - application: An object representing the GUI model.
+    # - main_page: An object representing the main page of the Flutter application.
+    code_gen = FlutterGenerator(model=library_model, application=MyApp, main_page=MyHomeScreen)
+
+    # Generate the code files for your Flutter application by calling the 'generate' method:
     code_gen.generate()
        
 

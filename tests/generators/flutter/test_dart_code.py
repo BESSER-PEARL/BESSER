@@ -58,7 +58,7 @@ def test_screen_generation():
 
     # Generate the file
     output_file = 'output/main.dart'
-    code_gen = FlutterMainDartGenerator(model=model, application=MyApp, mainPage=myHomeScreen, module=MyModule)
+    code_gen = FlutterMainDartGenerator(model=model, application=MyApp, main_page=myHomeScreen, module=MyModule)
     code_gen.generate()
 
     # Check if the file exists
@@ -147,7 +147,7 @@ def test_Error_Handling():
 
     # Generate the file
     output_file = 'output/main.dart'
-    code_gen = FlutterMainDartGenerator(model=model, application=MyApp, mainPage=myHomeScreen, module=MyModule)
+    code_gen = FlutterMainDartGenerator(model=model, application=MyApp, main_page=myHomeScreen, module=MyModule)
     code_gen.generate()
        
     # Check if the file exists
@@ -217,7 +217,7 @@ def test_CRUD_Operations():
     # Generate the file
     output_file = 'output/sql_helper.dart'
     
-    code_gen = FlutterSQLHelperGenerator(model = model, dataSourceClass=list[Class])
+    code_gen = FlutterSQLHelperGenerator(model = model)
     code_gen.generate()
 
     # Check if the file exists
@@ -301,7 +301,7 @@ def test_Operations_many_to_many():
     # Generate the file
     output_file = 'output/sql_helper.dart'
 
-    code_gen = FlutterSQLHelperGenerator(model = model, dataSourceClass=list[Class])
+    code_gen = FlutterSQLHelperGenerator(model = model)
     code_gen.generate()
 
     # Check if the file exists

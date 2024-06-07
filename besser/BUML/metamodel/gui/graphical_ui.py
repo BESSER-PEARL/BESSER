@@ -408,7 +408,6 @@ class Screen(ViewContainer):
       """str: Get the size of the screen."""
       return self.__size
 
-
     @size.setter
     def size(self, size: str):
         """str: Set the size of the screen.
@@ -640,13 +639,13 @@ class InputField(ViewComponent):
 
     @property
     def validationRules(self) -> str:
-        """set[MenuItem]: Get the validation rules of the input field."""
+        """str: Get the validation rules of the input field."""
         return self.__validationRules
 
     
     @validationRules.setter
     def validationRules(self, str):
-        """set[Property]: Set the validation rules of the input field."""
+        """str: Set the validation rules of the input field."""
         self.__validationRules = validationRules
 
     def __repr__(self):
@@ -673,12 +672,12 @@ class Form(ViewComponent):
      
     @property
     def inputFields(self) -> set[InputField]:
-        """set[Module]: Get the set of input Fields contained in the form."""
+        """set[InputField]: Get the set of input Fields contained in the form."""
         return self.__inputFields
 
     @inputFields.setter
     def inputFields(self, inputFields: set[InputField]):
-       """set[Module]: Set the set of input Fields contained in the form."""
+       """set[InputField]: Set the set of input Fields contained in the form."""
        self.__inputFields = inputFields
 
     def __repr__(self):
@@ -727,7 +726,7 @@ class Menu(ViewComponent):
 
     @menuItems.setter
     def menuItems(self, menuItems: set[MenuItem]):
-        """set[Property]: Set the set of menuItems."""
+        """set[MenuItem]: Set the set of menuItems."""
         self.__menuItems = menuItems
 
     def __repr__(self):

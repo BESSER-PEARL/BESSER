@@ -97,38 +97,47 @@ class FlutterMainDartGenerator(GeneratorInterface):
 
     @property
     def application(self) -> Application:
+        """Application: Get the instance of the Application class representing the GUI model."""
         return self.__application
 
     @application.setter
     def application(self, application: Application):
+        """Application: Set the instance of the Application class representing the GUI model."""
         self.__application = application
 
     @property
     def main_page(self) -> Screen:
+        """Screen: Get the instance of the Screen class representing the main page of the Flutter application."""
         return self.__main_page
 
     @main_page.setter
     def main_page(self, main_page: Screen):
+        """Screen: Set the instance of the Screen class representing the main page of the Flutter application."""
         self.__main_page = main_page
 
     @property
     def module(self) -> Module:
+        """Module: Get the instance of the Module class representing the module of the Flutter application."""
         return self.__module
 
     @module.setter
     def module(self, module: Module):
+        """Module: Set the instance of the Module class representing the module of the Flutter application."""
         self.__module = module
     
     @staticmethod
     def is_Button(value):
+        """Check if the given value is an instance of Button class."""
         return isinstance(value, Button)
 
     @staticmethod
     def is_List(value):
+        """Check if the given value is an instance of DataList class."""
         return isinstance(value, DataList)
 
     @staticmethod
     def is_ModelElement(value):
+        """Check if the given value is an instance of ModelElement class."""
         return isinstance(value, ModelElement)
 
     def generate(self):
@@ -195,10 +204,12 @@ class FlutterPubspecGenerator(GeneratorInterface):
 
     @property
     def application(self) -> Application:
+        """Application: Get the instance of the Application class representing the GUI model."""
         return self.__application
 
     @application.setter
     def application(self, application: Application):
+        """Application: Set the instance of the Application class representing the GUI model."""
         self.__application = application
 
 

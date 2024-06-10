@@ -1,0 +1,16 @@
+provider "aws" {
+    region = "{% for r in public_cluster.regions%}{{r.name}}-1{% if not loop.last %},{% endif %}{% endfor %}"
+  {% for line in config_lines %}
+  {{ line }}
+  {% endfor %}
+  }
+  
+  terraform {
+    required_providers {
+      aws = {
+        source  = "hashicorp/aws"
+        version = "~> 3.0"
+      }
+    }
+  }
+  

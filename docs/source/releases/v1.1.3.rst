@@ -1,0 +1,7 @@
+Version 1.1.3
+=============
+
+Fixes
+-----
+
+* Fixed handling of *BooleanLiteralExpression*

@@ -91,7 +91,6 @@ def test_list_sources_must_be_defined():
 
     assert "list_sources must be defined" in str(excinfo.value)
 
-
 def test_fields_synchronized_attributes():
     # Class1 attributes definition
     class1_name: Property = Property(name="name", type="int")
@@ -133,15 +132,3 @@ def test_associations():
             raise ValueError("All associations related to classes in 'types' must be considered in 'associations'")
 
     assert "All associations related to classes in 'types' must be considered in 'associations'" in str(excinfo.value)
-
-
-
-
-
-
-
-
-
-
-
-

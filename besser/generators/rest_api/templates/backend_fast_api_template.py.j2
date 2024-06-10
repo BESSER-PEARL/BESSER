@@ -128,8 +128,8 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
 
     {%if ns.end_name_multiple and nested_creations%}
     {% for x in ns.end_name_multiple %}
-    if {{ class.name | lower}}.{{x[0] | lower}}s:
-        for x in {{ class.name | lower}}.{{x[0] | lower}}s:
+    if {{ class.name | lower}}_data.{{x[0] | lower}}s:
+        for x in {{ class.name | lower}}_data.{{x[0] | lower}}s:
             {%for lk_class in classes%}
             {% if lk_class.name == x[0] %}
             if isinstance(x, int):
@@ -219,9 +219,10 @@ if __name__ == "__main__":
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'openapi_specs.json')
     print(f"Writing OpenAPI schema to {output_file}")
+    print("Swagger UI available at 127.0.0.1:8000/docs")
     with open(output_file, 'w') as file:
         json.dump(openapi_schema, file)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port= {% if port %}{{ port }}{%else%}8000{%endif%})
 
 
 

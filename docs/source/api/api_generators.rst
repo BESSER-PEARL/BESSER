@@ -11,3 +11,4 @@ Generators
    generators/api_rest_api
    generators/api_backend
    generators/api_flutter
+   generators/api_terraform

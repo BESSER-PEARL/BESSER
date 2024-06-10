@@ -23,7 +23,7 @@ class RESTAPIGenerator(GeneratorInterface):
                                             The default value is False.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
-    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, backend: bool = False, output_dir: str = None):
+    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, backend: bool = False, port: int = None, output_dir: str = None):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "PATCH", "DELETE"]
         if not http_methods:
@@ -33,6 +33,7 @@ class RESTAPIGenerator(GeneratorInterface):
         self.http_methods = http_methods
         self.backend = backend
         self.nested_creations = nested_creations
+        self.port = port
 
     def generate(self):
         """
@@ -54,7 +55,7 @@ class RESTAPIGenerator(GeneratorInterface):
             template = env.get_template('backend_fast_api_template.py.j2')
             with open(file_path, mode="w") as f:
                 generated_code = template.render(name=self.model.name, classes=self.model.classes_sorted_by_inheritance(),
-                                             http_methods=self.http_methods, nested_creations=self.nested_creations)
+                                             http_methods=self.http_methods, nested_creations=self.nested_creations, port=self.port)
                 f.write(generated_code)
             print("Code generated in the location: " + file_path)
 

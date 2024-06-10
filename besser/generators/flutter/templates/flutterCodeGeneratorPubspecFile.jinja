@@ -1,0 +1,25 @@
+name: {{ app.name|lower|replace(' ', '_') }}
+description: "{{ app.description }}"
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sqflite: ^2.3.3
+  logger: ^1.0.0
+  multi_select_flutter: ^4.0.0
+  multiselect: ^0.1.0
+  flutter_tagging: ^3.0.0
+   
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true

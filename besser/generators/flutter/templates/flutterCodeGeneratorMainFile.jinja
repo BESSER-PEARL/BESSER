@@ -1,0 +1,1405 @@
+{#- for create foreignKeylists list to contain tuples where each tuple consists of two parameters#}
+{%- set foreignKeylists = [] %}
+{%- for class in BUMLClasses %}
+    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+        {%- set ns = namespace(end_own=end) %}
+        {%- for a_end in end.owner.ends if a_end != end %}
+            {%- set ns.end_own = a_end %}
+        {%- endfor %}
+        {%- if end.multiplicity.max > 1 %}
+        {%- endif %}
+        {%- if end.multiplicity.max == 1 %}
+          {%- set foreignKey = (class.name ~ '.' ~ end.type.name.lower() ~ '_id', end.type.name.lower() + '_id') %}
+          {%- set _ = foreignKeylists.append(foreignKey) %}
+        {%- endif %}
+    {%- endfor %}
+{%- endfor %}
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:multiselect/multiselect.dart';
+import 'sql_helper.dart';
+
+
+void main() {
+runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: '{{ app.name}}',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: const MyHomePage(),
+    );
+  }
+}
+
+class MyHomePage extends StatefulWidget {
+  const MyHomePage({super.key});
+
+  @override
+  // ignore: clinic_private_types_in_public_api, library_private_types_in_public_api
+  _MyHomePageState createState() => _MyHomePageState();
+}
+
+class _MyHomePageState extends State<MyHomePage> {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('{{screen.name}}'),
+      ),      
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            {%- for component in screen.view_elements %}
+              {%- if component is is_Button %}
+                 {%- if component.buttonType.value == 'Raised Button' and component.actionType.value == 'Navigate'%}
+            ElevatedButton(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const {{component.targetScreen.name}}(),
+                  ),
+                ).then((value) {
+                  setState(() {});
+                });
+              },
+              child: const Text('{{component.label}}'),
+            ),
+            const SizedBox(height: 16),
+                {%- endif %}
+              {%- endif %}
+            {%- endfor %}
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+{%- for screen in screens%}
+  {%- set is_primary = false %}
+  {%- set name_of_the_column = ''%}
+
+//for {{screen.name}} screen
+class {{screen.name}} extends StatefulWidget {
+  const {{screen.name}}({super.key});
+
+  @override
+  State<{{screen.name}}> createState() => _{{screen.name}}State();
+}
+
+class _{{screen.name}}State extends State<{{screen.name}}> {
+      {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+              {%- if source is is_ModelElement%}
+                {%- set table= source.dataSourceClass%}
+    List<Map<String, dynamic>> _{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s = [];
+    bool _isLoading{{source.dataSourceClass.name}} = true;
+                    {%- for class in BUMLClasses%}
+                      {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+                         {%- for atr in class.attributes%}
+                             {%- if not atr.type.name=='datetime'%}
+    final TextEditingController _{{atr.name}}Controller = TextEditingController();
+                              {%- endif%}
+                          {%- endfor%}
+                          {%- for atr in class.attributes%}
+                            {%- if atr.type.name=='int'%}
+    int? _{{atr.name}};
+                            {%- endif%}
+                          {%- endfor%}
+                      {%- endif%}
+                    {%- endfor%} 
+                     {%- for class in BUMLClasses%}
+                        {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+                          {%- for foreignKey in foreignKeylists %}
+                            {%- set foreignKey_name = foreignKey[0] %}
+                            {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                               {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                                {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                                  {%- if loop.index == 1 %}
+                                  {%- endif %}
+                                     {%- set ns = namespace(end_own=end) %}
+                                      {%- for a_end in end.owner.ends if a_end != end %}
+                                       {%- set ns.end_own = a_end %}
+                                      {%- endfor %}
+                                        {%- if end.multiplicity.max == 1 %}
+                                          {%- set name_of_the_column = end.type.name.lower()%}
+                                          {%- set name_of_the_table = end.type.name%}
+    final TextEditingController _{{end.type.name[0].lower() + end.type.name[1:]}}Controller = TextEditingController();
+    List<String> _existing{{end.type.name[0].upper() + end.type.name[1:]}}s = [];
+                                           
+                                             {%- for association in model.associations if association.ends|length == 2 %}
+                                               {%- set ns = namespace(many_to_many = True) %}
+                                                {%- for end in association.ends %}
+                                                  {%- if end.multiplicity.max < 2 %} 
+                                                    {%- set ns.many_to_many = False %} 
+                                                  {%- endif %}
+                                                {%- endfor %}
+                                                {%- if ns.many_to_many == True %}
+                                                   {%- set lists = [] %}
+                                                    {%- for end in association.ends %}
+                                                      {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                                                        {%- set _ = lists.append(end.type.name) %}
+                                                    {%- endfor %}
+                                                      {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                                      {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                                        {%- for element in lists %}
+                                                          {%- if element == table.name %}
+                                                            {%- for specific_element in lists%}
+                                                               {%- if not specific_element == table.name%}
+    List<String> _existing{{specific_element}}s = [];
+    List<String> selected = [];
+    List<String> {{specific_element[0].lower() + specific_element[1:]}}Names = [];
+    List<int> selected{{specific_element}}Ids = [];
+    List<String> selected{{specific_element}}Names = [];
+        {%- set is_primary = true %}
+                                                              {%- endif%}
+                                                            {%- endfor%}
+                                                          {%- endif%}
+                                                        {%- endfor%}
+                                                {%- endif %}
+                                             {%- endfor %}
+                                         {%- endif%}
+                                       {%- endfor %}
+                                     {%- endif %}
+                                   {%- endfor %}
+                                 {%- endif%}
+                              {%- endfor%}
+                           
+// This function is used to fetch all data from the database
+  void _refresh{{source.dataSourceClass.name}}s() async {
+    final {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}data = await SQLHelper.get{{source.dataSourceClass.name}}s();
+        setState(() {
+          _{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s = {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}data;
+          _isLoading{{source.dataSourceClass.name}} = false;
+        });
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh{{source.dataSourceClass.name}}s(); // Loading the data when the app starts
+          {%- set specific_element = '' %}
+            {%- for class in BUMLClasses%}
+              {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+                {%- for foreignKey in foreignKeylists %}
+                  {%- set foreignKey_name = foreignKey[0] %}
+                    {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                       {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                         {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                            {%- if loop.index == 1 %}
+                            {%- endif %}
+                              {%- set ns = namespace(end_own=end) %}
+                              {%- for a_end in end.owner.ends if a_end != end %}
+                                {%- set ns.end_own = a_end %}
+                              {%- endfor %}
+                              {%- if end.multiplicity.max == 1 %}
+                                {%- set name_of_the_column = end.type.name.lower()%}
+                                {%- set name_of_the_table = end.type.name%}
+    _fetchExisting{{end.type.name[0].upper() + end.type.name[1:]}}s();
+
+                                  {%- for association in model.associations if association.ends|length == 2 %}
+                                    {%- set ns = namespace(many_to_many = True) %}
+                                       {%- for end in association.ends %}
+                                          {%- if end.multiplicity.max < 2 %} 
+                                            {%- set ns.many_to_many = False %} 
+                                          {%- endif %}
+                                        {%- endfor %}
+                                        {%- if ns.many_to_many == True %}
+                                          {%- set lists = [] %}
+                                            {%- for end in association.ends %}
+                                              {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                                              {%- set _ = lists.append(end.type.name) %}
+                                            {%- endfor %}
+                                              {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                              {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                                {%- for element in lists %}
+                                                    {%- if element == table.name %}
+                                                      {%- for specific_element in lists%}
+                                                         {%- if not specific_element == table.name%}
+    _fetchExisting{{specific_element}}s();
+          }
+  void _fetchExisting{{specific_element}}s() async {
+    final {{specific_element[0].lower() + specific_element[1:]}}s = await SQLHelper.getAll{{specific_element}}s();
+    setState(() {
+      _existing{{specific_element}}s = {{specific_element[0].lower() + specific_element[1:]}}s;
+    });
+  }
+
+
+  void _fetchExisting{{name_of_the_column[0].upper() + name_of_the_column[1:]}}s() async {
+    final {{name_of_the_column}}s = await SQLHelper.getAll{{name_of_the_column[0].upper() + name_of_the_column[1:]}}s();
+    setState(() {
+      _existing{{name_of_the_column[0].upper() + name_of_the_column[1:]}}s = {{name_of_the_column}}s;
+    });
+  }
+                                                       {%- endif%}
+                                                      {%- endfor%}
+                                                   {%- endif%}
+                                                 {%- endfor%}
+                                                {%- endif %}
+                                              {%- endfor %}
+                                            {%- endif%}
+                                          {%- endfor %}
+                                        {%- else%}
+}
+                                      {%- endif %}
+                                    {%- endfor %}
+                                  {%- endif%}
+                                {%- endfor%}
+                     
+  // This function will be triggered when the floating button is pressed
+  // It will also be triggered when you want to update an item
+  void _showForm(int? id) async {
+    if (id != null) {
+      final existing{{source.dataSourceClass.name}} = _{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s.firstWhere((element) => element['id'] == id);
+        {%- for class in BUMLClasses%}
+          {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+            {%- for atr in class.attributes%}
+           {%- if not atr.type.name=='datetime'%}
+             {%- if atr.type.name == 'int'%}
+      final {{atr.name}}Value = existing{{source.dataSourceClass.name}}['{{atr.name}}'];
+      _{{atr.name}}Controller.text = {{atr.name}}Value != null ? {{atr.name}}Value.toString() : '';
+             {%- else%}
+      _{{atr.name}}Controller.text = existing{{source.dataSourceClass.name}}['{{atr.name}}'];
+             {%- endif%}
+           {%- endif%}
+        {%- endfor %}
+      {%-endif%}
+    {%- endfor%}
+
+{%- for class in BUMLClasses%}
+  {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+    {%- for foreignKey in foreignKeylists %}
+      {%- set foreignKey_name = foreignKey[0] %}
+        {%- set class_name = class.name[0].upper() + class.name[1:] %}
+          {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+            {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+              {%- if loop.index == 1 %}
+              {%- endif %}
+                {%- set ns = namespace(end_own=end) %}
+              {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+              {%- endfor %}
+                {%- if end.multiplicity.max == 1 %}
+                  {%- set name_of_the_column = end.type.name.lower()%}
+                  {%- set name_of_the_table = end.type.name%}  
+                     
+        final {{name_of_the_column}}Id = existing{{table.name[0].upper() + table.name[1:]}}['{{name_of_the_column}}id'];
+
+        if ({{name_of_the_column}}Id != null) {
+        // Fetch the {{name_of_the_column}} name using the {{name_of_the_column}} ID
+        final {{name_of_the_column}}Name = await SQLHelper.get{{name_of_the_column[0].upper() + name_of_the_column[1:] }}({{name_of_the_column}}Id);
+        _{{name_of_the_column}}Controller.text = {{name_of_the_column}}Name!; 
+        }             
+                    {%- for association in model.associations if association.ends|length == 2 %}
+                      {%- set ns = namespace(many_to_many = True) %}
+                        {%- for end in association.ends %}
+                           {%- if end.multiplicity.max < 2 %} 
+                            {%- set ns.many_to_many = False %} 
+                           {%- endif %}
+                        {%- endfor %}
+                        {%- if ns.many_to_many == True %}
+                            {%- set lists = [] %}
+                              {%- for end in association.ends %}
+                               {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                               {%- set _ = lists.append(end.type.name) %}
+                              {%- endfor %}
+                                {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                  {%- for element in lists %}
+                                      {%- if element == table.name %}
+                                        {%- for specific_element in lists%}
+                                          {%- if not specific_element == table.name%}
+        
+        // Fetch the {{specific_element[0].lower() + specific_element[1:]}} names using the {{source.dataSourceClass.name}} ID
+        final {{specific_element[0].lower() + specific_element[1:]}}Names = await SQLHelper.get{{specific_element[0].upper() + specific_element[1:]}}NamesBy{{source.dataSourceClass.name}}Id(id);
+        setState(() {
+          selected = {{specific_element[0].lower() + specific_element[1:]}}Names;
+         });
+        
+                                                                 
+                                          {%- endif%}
+                                        {%- endfor%}
+                                      {%- endif%}
+                                    {%- endfor%}
+                                  {%- endif %}
+                                {%- endfor %}
+                              {%- endif%}
+                            {%- endfor %}
+                          {%- endif %}
+                        {%- endfor %}
+                      {%- endif%}
+                    {%- endfor%}
+    }
+    showModalBottomSheet(
+      // ignore: use_build_context_synchronously
+      context: context,
+      elevation: 5,
+      isScrollControlled: true,
+      builder: (_) => SingleChildScrollView(
+        padding: EdgeInsets.only(
+          top: 15,
+          left: 15,
+          right: 15,
+          // this will prevent the soft keyboard from covering the text fields
+          bottom: MediaQuery.of(context).viewInsets.bottom + 120,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+          {%- for class in BUMLClasses%}
+             {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+                {%- for atr in class.attributes%}  
+                   {%- if not atr.type.name=='datetime'%}
+                      {%- if atr.type.name =='int'%}
+            TextField(
+              controller: _{{atr.name}}Controller,
+              decoration: const InputDecoration(hintText: '{{atr.name[0].upper() + atr.name[1:]}}'),
+              keyboardType: TextInputType.number,
+              inputFormatters: <TextInputFormatter>[
+               FilteringTextInputFormatter.digitsOnly,
+              ],
+              onChanged: (value) {
+               if (value.isNotEmpty) {
+                  _{{atr.name}} = int.parse(value);
+                } else {
+                 //_{{atr.name}} = null;
+                }
+               },
+              ),
+             const SizedBox(
+              height: 10,
+             ),
+               {%- else%}
+            TextField(
+              controller: _{{atr.name}}Controller,
+              decoration: const InputDecoration(hintText: '{{atr.name[0].upper() + atr.name[1:]}}'),
+            ),
+            const SizedBox(
+              height: 10,
+            ),
+                    {%- endif%}
+                  {%- endif%}
+                {%- endfor%}
+              {%-endif%}
+            {%-endfor%}
+            {%- for class in BUMLClasses%}
+              {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+                 {%- for foreignKey in foreignKeylists %}
+                    {%- set foreignKey_name = foreignKey[0] %}
+                    {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                      {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                        {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                          {%- if loop.index == 1 %}
+                          {%- endif %}
+                          {%- set ns = namespace(end_own=end) %}
+                          {%- for a_end in end.owner.ends if a_end != end %}
+                            {%- set ns.end_own = a_end %}
+                          {%- endfor %}
+                          {%- if end.multiplicity.max == 1 %}
+                            {%- set name_of_the_column = end.type.name.lower()%}
+                            {%- set name_of_the_table = end.type.name%}
+            DropdownButtonFormField<String>(
+              value: _{{name_of_the_column}}Controller.text,
+              decoration: const InputDecoration(
+                hintText: '{{name_of_the_column[0].upper() + name_of_the_column[1:]}}',
+                labelText: '{{name_of_the_column[0].upper() + name_of_the_column[1:]}}',
+              ),
+              items: [
+                const DropdownMenuItem(
+                  value: '',
+                  child: Text('Select {{name_of_the_column[0].upper() + name_of_the_column[1:]}}'),
+                ),
+                for (var {{name_of_the_column}} in _existing{{name_of_the_column[0].upper() + name_of_the_column[1:]}}s)
+                  DropdownMenuItem(
+                    value: {{name_of_the_column}},
+                    child: Text({{name_of_the_column}}),
+                  ),
+              ],
+              onChanged: (value) {
+                setState(() {
+                 if (value == null || value.isEmpty) {
+                 _{{name_of_the_column}}Controller.text = '';
+                 } else {
+                  _{{name_of_the_column}}Controller.text = value;
+                 }
+                });
+               },
+            ),
+             const SizedBox(
+              height: 20,
+            ),
+                           {%- for association in model.associations if association.ends|length == 2 %}
+                           {%- set ns = namespace(many_to_many = True) %}
+                              {%- for end in association.ends %}
+                                {%- if end.multiplicity.max < 2 %} 
+                                    {%- set ns.many_to_many = False %} 
+                                {%- endif %}
+                              {%- endfor %}
+                              {%- if ns.many_to_many == True %}
+                                {%- set lists = [] %}
+                                  {%- for end in association.ends %}
+                                    {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                                    {%- set _ = lists.append(end.type.name) %}
+                                         {%- endfor %}
+                                          {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                          {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                           {%- for element in lists %}
+                                              {%- if element == table.name %}
+                                                 {%- for specific_element in lists%}
+                                                    {%- if not specific_element == table.name%}
+            DropDownMultiSelect(
+              onChanged: (List<String> x) {
+                setState(() {
+                  selected = x;
+                });
+              },
+              options: _existing{{specific_element}}s,
+              selectedValues: selected,
+              whenEmpty: 'Select {{specific_element}}s',
+            ),
+            const SizedBox(
+              height: 20,
+            ),       
+                                                    {%- endif%}
+                                                 {%- endfor%}
+                                                {%- endif%}
+                                              {%- endfor%}
+                                            {%- endif %}
+                                          {%- endfor %}
+                                        {%- endif%}
+                                      {%- endfor %}
+                                   {%- endif %}
+                                  {%- endfor %}
+                                {%- endif%}
+                              {%- endfor%}
+            ElevatedButton(
+              onPressed: () async {
+                // Save new memeber
+                if (id == null) {
+{%- set fks=[]%}
+{%- set ManyToManyList=[]%}
+{%- for class in BUMLClasses%}
+  {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+    {%- for foreignKey in foreignKeylists %}
+      {%- set foreignKey_name = foreignKey[0] %}
+        {%- set class_name = class.name[0].upper() + class.name[1:] %}
+          {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+            {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+              {%- if loop.index == 1 %}
+              {%- endif %}
+                {%- set ns = namespace(end_own=end) %}
+              {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+              {%- endfor %}
+                {%- if end.multiplicity.max == 1 %}
+                  {%- set name_of_the_column = end.type.name.lower()%}
+                  {%- set name_of_the_table = end.type.name%}  
+                     {%- for assoc in associations%}
+                        {%- for end in assoc.ends%}  
+                            {%- if end.type.name[0].lower() + end.type.name[1:] == table.name[0].lower() + table.name[1:]%}
+                                {%- for end in assoc.ends%} 
+                                   {%- if end.type.name[0].lower() + end.type.name[1:] == name_of_the_column[0].lower() + name_of_the_column[1:]%}
+                                      {%- if end.multiplicity.min == 1%}
+                                      {%- set _ = fks.append(name_of_the_column) %}
+                      if (_{{name_of_the_column}}Controller.text.isEmpty) {
+                      // {{name_of_the_column}} is not specified, show a message to the user
+                      ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                       content: Text('Please specify the {{name_of_the_column}}.'),
+                      ),
+                    );
+                  }   
+                                      {%- endif%}
+                                   {%- endif%}
+                                {%- endfor%}
+                            {%- endif%}
+                        {%- endfor%}
+                      {%- endfor%}
+                    {%- for association in model.associations if association.ends|length == 2 %}
+                      {%- set ns = namespace(many_to_many = True) %}
+                        {%- for end in association.ends %}
+                           {%- if end.multiplicity.max < 2 %} 
+                            {%- set ns.many_to_many = False %} 
+                           {%- endif %}
+                        {%- endfor %}
+                        {%- if ns.many_to_many == True %}
+                            {%- set lists = [] %}
+                              {%- for end in association.ends %}
+                               {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                               {%- set _ = lists.append(end.type.name) %}
+                              {%- endfor %}
+                                {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                  {%- for element in lists %}
+                                      {%- if element == table.name %}
+                                        {%- for specific_element in lists%}
+                                          {%- if not specific_element == table.name%}
+                                            {%- for assoc in associations%}
+                                              {%- for end in assoc.ends%}  
+                                                  {%- if end.type.name[0].lower() + end.type.name[1:] == table.name[0].lower() + table.name[1:]%}
+                                                     {%- for end in assoc.ends%} 
+                                                       {%- if end.type.name[0].lower() + end.type.name[1:] == specific_element[0].lower() + specific_element[1:]%}
+                                                          {%- if end.multiplicity.min == 1%} 
+                                                          {%- set _ = ManyToManyList.append(specific_element) %}          
+            if (selected.isEmpty) {
+                   // No {{specific_element}} selected, show a SnackBar message to the user
+                   ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                       content: Text('Please select at least one {{specific_element[0].lower() + specific_element[1:]}}.'),
+                    ),
+                  );
+            }
+            else {
+                                                           {%- else%}  
+                                                              {%- if fks|length > 0%} 
+                                                             
+            else {    
+                                                              {%- endif%}                                
+                                                          {%- endif%}
+                                                       {%- endif%}
+                                                     {%- endfor%}
+                                                  {%- endif%}
+                                              {%- endfor%}
+                                            {%- endfor%}
+                                          {%- endif%}
+                                        {%- endfor%}
+                                      {%- endif%}
+                                  {%- endfor%}
+                        {%- endif %}
+                   {%- endfor %}
+                  {%- endif%}
+                {%- endfor %}
+              {%- endif %}
+          {%- endfor %}
+      {%- endif%}
+  {%- endfor%} 
+                  await _add{{source.dataSourceClass.name}}();
+
+                // Clear the text fields
+          {%- for class in BUMLClasses%}
+              {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+                 {%- for atr in class.attributes%}
+                   {%- if not atr.type.name=='datetime'%}
+                _{{atr.name}}Controller.text = '';
+                   {%- endif%}
+                 {%- endfor%}
+                {%-endif%}
+              {%- endfor%}
+          {%- for class in BUMLClasses%}
+            {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+              {%- for foreignKey in foreignKeylists %}
+                {%- set foreignKey_name = foreignKey[0] %}
+                {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                        {%- if loop.index == 1 %}
+                        {%- endif %}
+                      {%- set ns = namespace(end_own=end) %}
+                          {%- for a_end in end.owner.ends if a_end != end %}
+                            {%- set ns.end_own = a_end %}
+                          {%- endfor %}
+                         {%- if end.multiplicity.max == 1 %}
+                           {%- set name_of_the_column = end.type.name.lower()%}
+                           {%- set name_of_the_table = end.type.name%}
+                _{{name_of_the_column}}Controller.text = '';
+                {%- for association in model.associations if association.ends|length == 2 %}
+                  {%- set ns = namespace(many_to_many = True) %}
+                   {%- for end in association.ends %}
+                      {%- if end.multiplicity.max < 2 %} 
+                        {%- set ns.many_to_many = False %} 
+                      {%- endif %}
+                    {%- endfor %}
+                    {%- if ns.many_to_many == True %}
+                      {%- set lists = [] %}
+                       {%- for end in association.ends %}
+                          {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                        {%- set _ = lists.append(end.type.name) %}
+                       {%- endfor %}
+                       {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                       {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                        {%- for element in lists %}
+                           {%- if element == table.name %}
+                              {%- for specific_element in lists%}
+                                 {%- if not specific_element == table.name%}
+                selected = [];  
+            
+                                {%- endif%}
+                              {%- endfor%}
+                            {%- endif%}
+                          {%- endfor%}
+                        {%- endif %}
+                      {%- endfor %}
+                    {%- endif%}
+                  {%- endfor %}
+                {%- endif %}
+              {%- endfor %}
+            {%- endif%}
+          {%- endfor%}
+              }
+            
+          {%- if fks|length > 0%}
+            }
+          {%-elif ManyToManyList|length > 0%}
+            }
+          {%- endif%}
+                else {   
+{%- set fks=[]%}
+{%- set ManyToManyList=[]%}
+{%- for class in BUMLClasses%}
+  {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+    {%- for foreignKey in foreignKeylists %}
+      {%- set foreignKey_name = foreignKey[0] %}
+        {%- set class_name = class.name[0].upper() + class.name[1:] %}
+          {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+            {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+              {%- if loop.index == 1 %}
+              {%- endif %}
+                {%- set ns = namespace(end_own=end) %}
+              {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+              {%- endfor %}
+                {%- if end.multiplicity.max == 1 %}
+                  {%- set name_of_the_column = end.type.name.lower()%}
+                  {%- set name_of_the_table = end.type.name%}  
+                     {%- for assoc in associations%}
+                        {%- for end in assoc.ends%}  
+                            {%- if end.type.name[0].lower() + end.type.name[1:] == table.name[0].lower() + table.name[1:]%}
+                                {%- for end in assoc.ends%} 
+                                   {%- if end.type.name[0].lower() + end.type.name[1:] == name_of_the_column[0].lower() + name_of_the_column[1:]%}
+                                      {%- if end.multiplicity.min == 1%}
+                                      {%- set _ = fks.append(name_of_the_column) %}
+                      if (_{{name_of_the_column}}Controller.text.isEmpty) {
+                      // {{name_of_the_column}} is not specified, show a message to the user
+                      ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                       content: Text('Please specify the {{name_of_the_column}}.'),
+                      ),
+                    );
+                  }   
+                                      {%- endif%}
+                                   {%- endif%}
+                                {%- endfor%}
+                            {%- endif%}
+                        {%- endfor%}
+                      {%- endfor%}
+                    {%- for association in model.associations if association.ends|length == 2 %}
+                      {%- set ns = namespace(many_to_many = True) %}
+                        {%- for end in association.ends %}
+                           {%- if end.multiplicity.max < 2 %} 
+                            {%- set ns.many_to_many = False %} 
+                           {%- endif %}
+                        {%- endfor %}
+                        {%- if ns.many_to_many == True %}
+                            {%- set lists = [] %}
+                              {%- for end in association.ends %}
+                               {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                               {%- set _ = lists.append(end.type.name) %}
+                              {%- endfor %}
+                                {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                  {%- for element in lists %}
+                                      {%- if element == table.name %}
+                                        {%- for specific_element in lists%}
+                                          {%- if not specific_element == table.name%}
+                                            {%- for assoc in associations%}
+                                              {%- for end in assoc.ends%}  
+                                                  {%- if end.type.name[0].lower() + end.type.name[1:] == table.name[0].lower() + table.name[1:]%}
+                                                     {%- for end in assoc.ends%} 
+                                                       {%- if end.type.name[0].lower() + end.type.name[1:] == specific_element[0].lower() + specific_element[1:]%}
+                                                          {%- if end.multiplicity.min == 1%} 
+                                                          {%- set _ = ManyToManyList.append(specific_element) %}          
+            if (selected.isEmpty) {
+                   // No {{specific_element}} selected, show a SnackBar message to the user
+                   ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                       content: Text('Please select at least one {{specific_element[0].lower() + specific_element[1:]}}.'),
+                    ),
+                  );
+            }
+            else {
+                                                           {%- else%}  
+                                                              {%- if fks|length > 0%} 
+                                                             
+            else {    
+                                                              {%- endif%}                                
+                                                          {%- endif%}
+                                                       {%- endif%}
+                                                     {%- endfor%}
+                                                  {%- endif%}
+                                              {%- endfor%}
+                                            {%- endfor%}
+                                          {%- endif%}
+                                        {%- endfor%}
+                                      {%- endif%}
+                                  {%- endfor%}
+                        {%- endif %}
+                   {%- endfor %}
+                  {%- endif%}
+                {%- endfor %}
+              {%- endif %}
+          {%- endfor %}
+      {%- endif%}
+  {%- endfor%} 
+                  await _update{{source.dataSourceClass.name}}(id);
+
+                // Clear the text fields
+          {%- for class in BUMLClasses%}
+              {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+                 {%- for atr in class.attributes%}
+                   {%- if not atr.type.name=='datetime'%}
+                _{{atr.name}}Controller.text = '';
+                   {%- endif%}
+                 {%- endfor%}
+                {%-endif%}
+              {%- endfor%}
+          {%- for class in BUMLClasses%}
+            {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+              {%- for foreignKey in foreignKeylists %}
+                {%- set foreignKey_name = foreignKey[0] %}
+                {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                        {%- if loop.index == 1 %}
+                        {%- endif %}
+                      {%- set ns = namespace(end_own=end) %}
+                          {%- for a_end in end.owner.ends if a_end != end %}
+                            {%- set ns.end_own = a_end %}
+                          {%- endfor %}
+                         {%- if end.multiplicity.max == 1 %}
+                           {%- set name_of_the_column = end.type.name.lower()%}
+                           {%- set name_of_the_table = end.type.name%}
+                _{{name_of_the_column}}Controller.text = '';
+                {%- for association in model.associations if association.ends|length == 2 %}
+                  {%- set ns = namespace(many_to_many = True) %}
+                   {%- for end in association.ends %}
+                      {%- if end.multiplicity.max < 2 %} 
+                        {%- set ns.many_to_many = False %} 
+                      {%- endif %}
+                    {%- endfor %}
+                    {%- if ns.many_to_many == True %}
+                      {%- set lists = [] %}
+                       {%- for end in association.ends %}
+                          {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                        {%- set _ = lists.append(end.type.name) %}
+                       {%- endfor %}
+                       {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                       {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                        {%- for element in lists %}
+                           {%- if element == table.name %}
+                              {%- for specific_element in lists%}
+                                 {%- if not specific_element == table.name%}
+                selected = [];  
+            
+                                {%- endif%}
+                              {%- endfor%}
+                            {%- endif%}
+                          {%- endfor%}
+                        {%- endif %}
+                      {%- endfor %}
+                    {%- endif%}
+                  {%- endfor %}
+                {%- endif %}
+              {%- endfor %}
+            {%- endif%}
+          {%- endfor%}
+              }
+          {%- if fks|length > 0%}
+            }
+          {%-elif ManyToManyList|length > 0%}
+            }
+          {%- endif%}
+               
+                // Close the bottom sheet
+                if (!mounted) return;
+                Navigator.of(context).pop();
+              },
+              child: Text(id == null ? 'Create New' : 'Update'),
+            ),
+            const SizedBox(
+            height: 80, // Adjust the height based on your needs
+          ),
+          ],
+        ),
+      ),
+    );
+  }
+
+// Insert a new {{source.dataSourceClass.name}} to the database
+  Future<void> _add{{source.dataSourceClass.name}}() async {  
+{%- for class in BUMLClasses%}
+  {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+    {%- for foreignKey in foreignKeylists %}
+      {%- set foreignKey_name = foreignKey[0] %}
+        {%- set class_name = class.name[0].upper() + class.name[1:] %}
+          {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+            {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+              {%- if loop.index == 1 %}
+              {%- endif %}
+                {%- set ns = namespace(end_own=end) %}
+              {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+              {%- endfor %}
+                {%- if end.multiplicity.max == 1 %}
+                  {%- set name_of_the_column = end.type.name.lower()%}
+                  {%- set name_of_the_table = end.type.name%}  
+                     {%- for assoc in associations%}
+                        {%- for end in assoc.ends%}  
+                            {%- if end.type.name[0].lower() + end.type.name[1:] == table.name[0].lower() + table.name[1:]%}
+                                {%- for end in assoc.ends%} 
+                                   {%- if end.type.name[0].lower() + end.type.name[1:] == name_of_the_column[0].lower() + name_of_the_column[1:]%}
+                                      {%- if end.multiplicity.min == 0%}
+        String? {{name_of_the_column}};
+        int? {{name_of_the_column}}Id;
+
+        if (_{{name_of_the_column}}Controller.text == '') {
+          {{name_of_the_column}} = null;
+          } else {
+           {{name_of_the_column}} = _{{name_of_the_column}}Controller.text;
+            {{name_of_the_column}}Id = await SQLHelper.get{{name_of_the_column[0].upper() + name_of_the_column[1:]}}IdByName({{name_of_the_column}});
+          }
+                                  {%-else%}
+          if (_{{name_of_the_column}}Controller.text.isEmpty) {
+            // {{name_of_the_column[0].upper() + name_of_the_column[1:]}} is not specified, show a message to the user
+             ScaffoldMessenger.of(context).showSnackBar(
+               const SnackBar(
+                 content: Text('Please specify the {{name_of_the_column}}.'),
+              ),
+            );
+            return;
+          }   
+         final {{name_of_the_column}} = _{{name_of_the_column}}Controller.text;
+         final {{name_of_the_column}}Id = await SQLHelper.get{{name_of_the_column[0].upper() + name_of_the_column[1:]}}IdByName({{name_of_the_column[0].lower() + name_of_the_column[1:]}});                   
+                                      {%- endif%}
+                                   {%- endif%}
+                                {%- endfor%}
+                            {%- endif%}
+                        {%- endfor%}
+                      {%- endfor%}
+                    {%- for association in model.associations if association.ends|length == 2 %}
+                      {%- set ns = namespace(many_to_many = True) %}
+                        {%- for end in association.ends %}
+                           {%- if end.multiplicity.max < 2 %} 
+                            {%- set ns.many_to_many = False %} 
+                           {%- endif %}
+                        {%- endfor %}
+                        {%- if ns.many_to_many == True %}
+                            {%- set lists = [] %}
+                              {%- for end in association.ends %}
+                               {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                               {%- set _ = lists.append(end.type.name) %}
+                              {%- endfor %}
+                                {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                  {%- for element in lists %}
+                                      {%- if element == table.name %}
+                                        {%- for specific_element in lists%}
+                                          {%- if not specific_element == table.name%}
+                                            {%- for assoc in associations%}
+                                              {%- for end in assoc.ends%}  
+                                                  {%- if end.type.name[0].lower() + end.type.name[1:] == table.name[0].lower() + table.name[1:]%}
+                                                     {%- for end in assoc.ends%} 
+                                                       {%- if end.type.name[0].lower() + end.type.name[1:] == specific_element[0].lower() + specific_element[1:]%}
+                                                          {%- if end.multiplicity.min == 1%}
+            if (selected.isEmpty) {
+             // No {{specific_element}} selected, show a SnackBar message to the user
+              ScaffoldMessenger.of(context).showSnackBar(
+                 const SnackBar(
+                   content: Text('Please select at least one {{specific_element[0].lower() + specific_element[1:]}}.'),
+                 ),
+              );
+               return;
+            }
+                                                          {%- endif%}
+                                                       {%- endif%}
+                                                     {%- endfor%}
+                                                  {%- endif%}
+                                              {%- endfor%}
+                                            {%- endfor%}
+        List<int> selected{{specific_element}}Ids = [];
+        for (String {{specific_element[0].lower() + specific_element[1:]}}Name in selected) {
+          final {{specific_element[0].lower() + specific_element[1:]}}Id = await SQLHelper.get{{specific_element}}IdByName({{specific_element[0].lower() + specific_element[1:]}}Name);
+          selected{{specific_element}}Ids.add({{specific_element[0].lower() + specific_element[1:]}}Id);
+        }
+                                          {%- endif%}
+                                        {%- endfor%}
+                                      {%- endif%}
+                                    {%- endfor%}
+                                 {%- endif %}
+                             {%- endfor %}
+                         {%- endif%}
+                    {%- endfor %}
+                  {%- endif %}
+          {%- endfor %}
+      {%- endif%}
+  {%- endfor%}
+      await SQLHelper.create{{source.dataSourceClass.name}}(
+        {%- for class in BUMLClasses%}
+          {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+            {%- for atr in class.attributes%}
+              {%- if not atr.type.name=='datetime'%}
+                {%- if atr.type.name=='int'%}
+          _{{atr.name}},
+               {%-else%}
+          _{{atr.name}}Controller.text,
+               {%-endif%}
+              {%- endif%}
+            {%- endfor%}
+        {%- endif%}
+       {%- endfor%} 
+{%- for class in BUMLClasses%}
+  {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+    {%- for foreignKey in foreignKeylists %}
+      {%- set foreignKey_name = foreignKey[0] %}
+        {%- set class_name = class.name[0].upper() + class.name[1:] %}
+          {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+            {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+              {%- if loop.index == 1 %}
+              {%- endif %}
+                {%- set ns = namespace(end_own=end) %}
+              {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+              {%- endfor %}
+                {%- if end.multiplicity.max == 1 %}
+                  {%- set name_of_the_column = end.type.name.lower()%}
+                  {%- set name_of_the_table = end.type.name%}             
+          
+                    {%- for association in model.associations if association.ends|length == 2 %}
+                      {%- set ns = namespace(many_to_many = True) %}
+                        {%- for end in association.ends %}
+                           {%- if end.multiplicity.max < 2 %} 
+                            {%- set ns.many_to_many = False %} 
+                           {%- endif %}
+                        {%- endfor %}
+                        {%- if ns.many_to_many == True %}
+                            {%- set lists = [] %}
+                              {%- for end in association.ends %}
+                               {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                               {%- set _ = lists.append(end.type.name) %}
+                              {%- endfor %}
+                                {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                  {%- for element in lists %}
+                                      {%- if element == table.name %}
+                                        {%- for specific_element in lists%}
+                                          {%- if not specific_element == table.name%}
+          selected{{specific_element}}Ids,{# name of many to many#}
+          {{name_of_the_column}}Id,{# name of fk column#}
+                                          {%- endif%}
+                                        {%- endfor%}
+                                      {%- endif%}
+                                  {%- endfor%}
+                                {%- endif %}
+                             {%- endfor %}
+                         {%- endif%}
+                    {%- endfor %}
+                  {%- endif %}
+          {%- endfor %}
+      {%- endif%}
+  {%- endfor%}
+      );
+      _refresh{{source.dataSourceClass.name}}s();
+    }
+
+// Update an existing {{source.dataSourceClass.name}}
+  Future<void> _update{{source.dataSourceClass.name}}(int id) async {  
+{%- for class in BUMLClasses%}
+  {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+    {%- for foreignKey in foreignKeylists %}
+      {%- set foreignKey_name = foreignKey[0] %}
+        {%- set class_name = class.name[0].upper() + class.name[1:] %}
+          {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+            {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+              {%- if loop.index == 1 %}
+              {%- endif %}
+                {%- set ns = namespace(end_own=end) %}
+              {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+              {%- endfor %}
+                {%- if end.multiplicity.max == 1 %}
+                  {%- set name_of_the_column = end.type.name.lower()%}
+                  {%- set name_of_the_table = end.type.name%} 
+                     {%- for assoc in associations%}
+                        {%- for end in assoc.ends%}  
+                            {%- if end.type.name[0].lower() + end.type.name[1:] == table.name[0].lower() + table.name[1:]%}
+                                {%- for end in assoc.ends%} 
+                                   {%- if end.type.name[0].lower() + end.type.name[1:] == name_of_the_column[0].lower() + name_of_the_column[1:]%}
+                                      {%- if end.multiplicity.min == 0%}
+        String? {{name_of_the_column}};
+        int? {{name_of_the_column}}Id;
+
+        if (_{{name_of_the_column}}Controller.text == '') {
+          {{name_of_the_column}} = null;
+          } else {
+           {{name_of_the_column}} = _{{name_of_the_column}}Controller.text;
+            {{name_of_the_column}}Id = await SQLHelper.get{{name_of_the_column[0].upper() + name_of_the_column[1:]}}IdByName({{name_of_the_column}});
+          }
+                                  {%-else%}
+          if (_{{name_of_the_column}}Controller.text.isEmpty) {
+            // {{name_of_the_column[0].upper() + name_of_the_column[1:]}} is not specified, show a message to the user
+             ScaffoldMessenger.of(context).showSnackBar(
+               const SnackBar(
+                 content: Text('Please specify the {{name_of_the_column}}.'),
+              ),
+            );
+            return;
+          }   
+         final {{name_of_the_column}} = _{{name_of_the_column}}Controller.text;
+         final {{name_of_the_column}}Id = await SQLHelper.get{{name_of_the_column[0].upper() + name_of_the_column[1:]}}IdByName({{name_of_the_column[0].lower() + name_of_the_column[1:]}});                   
+                                      {%- endif%}
+                                   {%- endif%}
+                                {%- endfor%}
+                            {%- endif%}
+                        {%- endfor%}
+                      {%- endfor%}
+                    {%- for association in model.associations if association.ends|length == 2 %}
+                      {%- set ns = namespace(many_to_many = True) %}
+                        {%- for end in association.ends %}
+                           {%- if end.multiplicity.max < 2 %} 
+                            {%- set ns.many_to_many = False %} 
+                           {%- endif %}
+                        {%- endfor %}
+                        {%- if ns.many_to_many == True %}
+                            {%- set lists = [] %}
+                              {%- for end in association.ends %}
+                               {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                               {%- set _ = lists.append(end.type.name) %}
+                              {%- endfor %}
+                                {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                  {%- for element in lists %}
+                                      {%- if element == table.name %}
+                                        {%- for specific_element in lists%}
+                                          {%- if not specific_element == table.name%}
+                                              {%- for assoc in associations%}
+                                              {%- for end in assoc.ends%}  
+                                                  {%- if end.type.name[0].lower() + end.type.name[1:] == table.name[0].lower() + table.name[1:]%}
+                                                     {%- for end in assoc.ends%} 
+                                                       {%- if end.type.name[0].lower() + end.type.name[1:] == specific_element[0].lower() + specific_element[1:]%}
+                                                          {%- if end.multiplicity.min == 1%}
+            if (selected.isEmpty) {
+             // No {{specific_element}} selected, show a SnackBar message to the user
+              ScaffoldMessenger.of(context).showSnackBar(
+                 const SnackBar(
+                   content: Text('Please select at least one {{specific_element[0].lower() + specific_element[1:]}}.'),
+                 ),
+              );
+               return;
+            }
+                                                          {%- endif%}
+                                                       {%- endif%}
+                                                     {%- endfor%}
+                                                  {%- endif%}
+                                              {%- endfor%}
+                                            {%- endfor%}
+        List<int> selected{{specific_element}}Ids = [];
+        for (String {{specific_element[0].lower() + specific_element[1:]}}Name in selected) {
+          final {{specific_element[0].lower() + specific_element[1:]}}Id = await SQLHelper.get{{specific_element}}IdByName({{specific_element[0].lower() + specific_element[1:]}}Name);
+          selected{{specific_element}}Ids.add({{specific_element[0].lower() + specific_element[1:]}}Id);
+        }
+                                          {%- endif%}
+                                        {%- endfor%}
+                                      {%- endif%}
+                                  {%- endfor%}
+                              {%- endif %}
+                           {%- endfor %}
+                         {%- endif%}
+                    {%- endfor %}
+                  {%- endif %}
+          {%- endfor %}
+      {%- endif%}
+  {%- endfor%}
+      await SQLHelper.update{{source.dataSourceClass.name}}(
+          id,
+        {%- for class in BUMLClasses%}
+          {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+            {%- for atr in class.attributes%}
+              {%- if not atr.type.name=='datetime'%}
+                {%- if atr.type.name=='int'%}
+          _{{atr.name}},
+               {%-else%}
+          _{{atr.name}}Controller.text,
+               {%-endif%}
+              {%- endif%}
+            {%- endfor%}
+        {%- endif%}
+       {%- endfor%} 
+{%- for class in BUMLClasses%}
+  {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+    {%- for foreignKey in foreignKeylists %}
+      {%- set foreignKey_name = foreignKey[0] %}
+        {%- set class_name = class.name[0].upper() + class.name[1:] %}
+          {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+            {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+              {%- if loop.index == 1 %}
+              {%- endif %}
+                {%- set ns = namespace(end_own=end) %}
+              {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+              {%- endfor %}
+                {%- if end.multiplicity.max == 1 %}
+                  {%- set name_of_the_column = end.type.name.lower()%}
+                  {%- set name_of_the_table = end.type.name%}             
+          
+                    {%- for association in model.associations if association.ends|length == 2 %}
+                      {%- set ns = namespace(many_to_many = True) %}
+                        {%- for end in association.ends %}
+                           {%- if end.multiplicity.max < 2 %} 
+                            {%- set ns.many_to_many = False %} 
+                           {%- endif %}
+                        {%- endfor %}
+                        {%- if ns.many_to_many == True %}
+                            {%- set lists = [] %}
+                              {%- for end in association.ends %}
+                               {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                               {%- set _ = lists.append(end.type.name) %}
+                              {%- endfor %}
+                                {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                  {%- for element in lists %}
+                                      {%- if element == table.name %}
+                                        {%- for specific_element in lists%}
+                                          {%- if not specific_element == table.name%}
+          selected{{specific_element}}Ids,{# name of many to many#}
+          {{name_of_the_column}}Id,{# name of fk column#}
+                                          {%- endif%}
+                                        {%- endfor%}
+                                      {%- endif%}
+                                  {%- endfor%}
+                              {%- endif %}
+                           {%- endfor %}
+                         {%- endif%}
+                    {%- endfor %}
+                  {%- endif %}
+          {%- endfor %}
+      {%- endif%}
+  {%- endfor%}
+      );
+      _refresh{{source.dataSourceClass.name}}s();
+    }
+
+// Delete an existing {{source.dataSourceClass.name}}
+  void _delete{{source.dataSourceClass.name}}(int id) async {
+    await SQLHelper.delete{{source.dataSourceClass.name}}(id);
+      
+    // ignore: use_build_context_synchronously
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Successfully deleted a {{source.dataSourceClass.name}}!'),
+      ),
+    );
+    _refresh{{source.dataSourceClass.name}}s();
+  }
+
+{%- for class in BUMLClasses%}
+    {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+    {%- for foreignKey in foreignKeylists %}
+      {%- set foreignKey_name = foreignKey[0] %}
+        {%- set class_name = class.name[0].upper() + class.name[1:] %}
+          {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+            {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+              {%- if loop.index == 1 %}
+              {%- endif %}
+                {%- set ns = namespace(end_own=end) %}
+              {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+              {%- endfor %}
+                {%- if end.multiplicity.max == 1 %}
+                  {%- set name_of_the_column = end.type.name.lower()%}
+                  {%- set name_of_the_table = end.type.name%}             
+         
+                    {%- for association in model.associations if association.ends|length == 2 %}
+                      {%- set ns = namespace(many_to_many = True) %}
+                        {%- for end in association.ends %}
+                           {%- if end.multiplicity.max < 2 %} 
+                            {%- set ns.many_to_many = False %} 
+                           {%- endif %}
+                        {%- endfor %}
+                        {%- if ns.many_to_many == True %}
+                            {%- set lists = [] %}
+                              {%- for end in association.ends %}
+                               {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                               {%- set _ = lists.append(end.type.name) %}
+                              {%- endfor %}
+                                {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                  {%- for element in lists %}
+                                      {%- if element == table.name %}
+                                        {%- for specific_element in lists%}
+                                          {%- if not specific_element == table.name%}
+  Future<String> _getSelected{{specific_element}}Names(int id) async {
+    selected{{specific_element}}Names = await SQLHelper.get{{specific_element}}NamesBy{{table.name}}Id(id);
+    return selected{{specific_element}}Names.isNotEmpty
+        ? selected{{specific_element}}Names.join(", ")
+        : "No {{specific_element[0].lower() + specific_element[1:]}} names found.";
+  }
+                                          {%- endif%}
+                                        {%- endfor%}
+                                      {%- endif%}
+                                  {%- endfor%}
+                               {%- endif %}
+                            {%- endfor %}
+                         {%- endif%}
+                    {%- endfor %}
+                  {%- endif %}
+          {%- endfor %}
+      {%- endif%}
+  {%- endfor%}
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('{{source.dataSourceClass.name}} Directory'),
+      ),
+      body: _isLoading{{source.dataSourceClass.name}}
+          ? const Center(
+              child: CircularProgressIndicator(),
+            )
+          : ListView.builder(
+              itemCount: _{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s.length,
+              itemBuilder: (context, index) => Card(
+                color: Colors.orange[200],
+                margin: const EdgeInsets.all(15),
+                child: ListTile(
+                  title: Text(_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s[index]['{%- set fieldsList = source.fields|list %}{%- set fieldsList = source.fields|rejectattr('type.name', 'equalto', 'datetime')|list %}{%- set firstProperty = fieldsList|first %}{{firstProperty.name}}']),
+              {%- if source.fields|length > 2 %}
+                  subtitle: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                    {%- for field in fieldsList[1:] %}
+                      {%- if field.type.name=='int'%}
+                    Text('{{field.name[0].upper() + field.name[1:]}}: ${_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s[index]['{{field.name}}']}'),
+                      {%-else%}
+                    Text(_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s[index]['{{field.name}}']),
+                      {%- endif%}
+                    {%- endfor%}
+              ],
+              ),
+              {%- else %}
+              {%- for field in fieldsList[1:] %}
+                  subtitle: 
+          {%- for class in BUMLClasses%}
+            {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+              {%- for foreignKey in foreignKeylists %}
+                {%- set foreignKey_name = foreignKey[0] %}
+                {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                        {%- if loop.index == 1 %}
+                        {%- endif %}
+                      {%- set ns = namespace(end_own=end) %}
+                          {%- for a_end in end.owner.ends if a_end != end %}
+                            {%- set ns.end_own = a_end %}
+                          {%- endfor %}
+                         {%- if end.multiplicity.max == 1 %}
+                           {%- set name_of_the_column = end.type.name.lower()%}
+                           {%- set name_of_the_table = end.type.name%}
+                                 {%- for association in model.associations if association.ends|length == 2 %}
+                                  {%- set ns = namespace(many_to_many = True) %}
+                                     {%- for end in association.ends %}
+                                          {%- if end.multiplicity.max < 2 %} 
+                                            {%- set ns.many_to_many = False %} 
+                                          {%- endif %}
+                                        {%- endfor %}
+                                        {%- if ns.many_to_many == True %}
+                                        {%- set lists = [] %}
+                                           {%- for end in association.ends %}
+                                             {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                                             {%- set _ = lists.append(end.type.name) %}
+                                            {%- endfor %}
+                                             {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+                                             {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+                                                {%- for element in lists %}
+                                                   {%- if element == table.name %}
+                                                     {%- for specific_element in lists%}
+                                                        {%- if not specific_element == table.name%}
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      FutureBuilder<String>(
+                        future: _getSelected{{specific_element}}Names(_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s[index]['id']),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return const Text('Loading...');
+                          } else if (snapshot.connectionState ==
+                              ConnectionState.done) {
+                            if (snapshot.hasError) {
+                              return Text('Error: ${snapshot.error}');
+                            }
+                            final String {{specific_element[0].lower() + specific_element[1:]}}Names = snapshot.data ?? '';
+                            return Text('{{specific_element}} Names: ${{specific_element[0].lower() + specific_element[1:]}}Names');
+                          } else {
+                            return Text(
+                                'Connection state: ${snapshot.connectionState}');
+                          }
+                        },
+                      ),
+                      Text(_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s[index]['{{name_of_the_column}}']),
+                    ],
+                  ),    
+                                                       {%- endif%}
+                                                      {%- endfor%}
+                                                    {%- endif%}
+                                                  {%- endfor%}%
+                                                {%- endif %}
+                                              {%- endfor %}                 
+                                            {%- endif%}
+                                          {%- endfor %}
+                                      {%- else%}
+              Text(_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s[index]['{{field.name}}']),
+                              {%- endif %}
+                            {%- endfor %}
+                          {%- endif%}
+                        {%- endfor%}
+                      {%- endfor%}
+                   {%- endif %}
+                  trailing: SizedBox(
+                    width: 100,
+                    child: Row(
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.edit),
+                          onPressed: () => _showForm(_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s[index]['id']),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.delete),
+                          onPressed: () => _delete{{source.dataSourceClass.name}}(_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s[index]['id']),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+      {%- for component in screen.view_elements %}
+         {%- if component is is_Button %}
+           {%- if component.buttonType.value == 'FloatingActionButton' and component.actionType.value == 'Add'%}
+        floatingActionButton: FloatingActionButton(
+          child: const Icon(Icons.add),
+          onPressed: () => _showForm(null),
+        ),
+          {%- endif%}
+        {%- endif%}
+      {%- endfor%}
+    );
+  }
+}
+       {%- endif %}
+     {%- endfor %}
+   {%- endif %}
+  {%- endfor %}
+{%- endfor %}

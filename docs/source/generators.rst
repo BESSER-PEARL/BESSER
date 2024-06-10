@@ -19,6 +19,7 @@ own generator).
    generators/sql
    generators/rest_api
    generators/backend
+   generators/flutter
    generators/terraform
    generators/build_generator
 

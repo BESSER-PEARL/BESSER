@@ -1,0 +1,796 @@
+ 
+ {# import packages #}
+import 'package:sqflite/sqflite.dart' as sql;
+import 'package:logger/logger.dart';
+
+final Logger logger = Logger();
+
+class SQLHelper {
+{####- start to define variables ####}
+{# variables for name of tables: #}
+{%- for class in BUMLClasses%}
+static const String table{{class.name[0].upper() + class.name[1:] }}s = '{{class.name[0].lower() + class.name[1:] }}s';
+{%- endfor %}
+{#- for many_to_many#}
+{%- for association in model.associations if association.ends|length == 2 %}
+    {%- set ns = namespace(many_to_many = True) %}
+    {%- for end in association.ends %}
+        {%- if end.multiplicity.max < 2 %} 
+            {%- set ns.many_to_many = False %} 
+        {%- endif %}
+    {%- endfor %}
+    {%- if ns.many_to_many == True %}
+    {%- set name_tbl=association.name.lower()[0].upper() + association.name.lower() [1:]%}
+static const String table{{name_tbl|replace('_', '') }} = '{{association.name.lower()}}';
+    {%- endif %}
+{%- endfor %}
+{%- for association in model.associations if association.ends|length == 2 %}
+    {%- set ns = namespace(many_to_many = True) %}
+    {%- for end in association.ends %}
+        {%- if end.multiplicity.max < 2 %} 
+            {%- set ns.many_to_many = False %} 
+        {%- endif %}
+    {%- endfor %}
+    {%- if ns.many_to_many == True %}
+      {%- for end in association.ends %}
+      {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+static const String column{{ end.type.name}}Id = '{{ end.type.name.lower()|replace(".", "") }}id';
+      {%- endfor %}
+    {%- endif %}
+{%- endfor %}
+{#- variables for name of attributes: #}
+static const String columnId = 'id';
+{%- set attributeList = [] %}
+{%- for type in model.types%}
+    {%- for atrr in type.attributes%}
+      {%- if atrr.name[0].upper() + atrr.name[1:] not in attributeList %}
+        {%- set _ = attributeList.append(atrr.name[0].upper() + atrr.name[1:]) %}
+static const String column{{atrr.name[0].upper() + atrr.name[1:]}} = '{{atrr.name}}';
+      {%- endif%}
+    {%- endfor%}
+{%- endfor%}
+{#- for foreignKeys#}
+{%- set foreignKeyNamelists = [] %}
+{%- for class in BUMLClasses %}
+    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+        {%- set ns = namespace(end_own=end) %}
+        {%- for a_end in end.owner.ends if a_end != end %}
+            {%- set ns.end_own = a_end %}
+        {%- endfor %}
+        {%- if end.multiplicity.max > 1 %}
+        {%- endif %}
+        {%- if end.multiplicity.max == 1 %}
+          {%- set _ = foreignKeyNamelists.append(end.type.name.lower() ~ '_id') %}
+        {%- endif %}
+    {%- endfor %}
+{%- endfor %}
+{%- for foreignKeyName in foreignKeyNamelists%}
+static const String column{{ foreignKeyName|replace("_", "") }} = '{{ foreignKeyName|replace("_", "") }}';
+{%- endfor%}
+{# end of define variables #}
+
+{#- start to define database #} 
+{#- for create foreignKeylists list to contain tuples where each tuple consists of two parameters#}
+{%- set foreignKeylists = [] %}
+{%- for class in BUMLClasses %}
+    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+        {%- set ns = namespace(end_own=end) %}
+        {%- for a_end in end.owner.ends if a_end != end %}
+            {%- set ns.end_own = a_end %}
+        {%- endfor %}
+        {%- if end.multiplicity.max > 1 %}
+        {%- endif %}
+        {%- if end.multiplicity.max == 1 %}
+          {%- set foreignKey = (class.name ~ '.' ~ end.type.name.lower() ~ '_id', end.type.name.lower() + '_id') %}
+          {%- set _ = foreignKeylists.append(foreignKey) %}
+        {%- endif %}
+    {%- endfor %}
+{%- endfor %}
+{# end of define variables #}
+static Future<void> createTables(sql.Database database) async {
+    {%- for table in BUMLClasses%}
+    await database.execute("""
+    CREATE TABLE $table{{table.name[0].upper() + table.name[1:] }}s(
+        $columnId INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+        {%- for class in BUMLClasses%}
+          {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+            {%- for attribute in class.attributes %}
+        $column{{attribute.name[0].upper()+ attribute.name[1:]}}{%- if attribute.type.name=='str'%} TEXT
+              {%- elif attribute.type.name=='int'%} INTEGER{%- elif attribute.type.name=='datetime'%} TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP 
+              {%- endif%}{%- if not loop.last %},{%- endif %}
+            {%- endfor%}
+            {%- for foreignKey in foreignKeylists %}
+               {%- set foreignKey_name = foreignKey[0] %}
+               {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                       {%- if loop.index == 1 %}
+                       {%- endif %}
+                      {%- set ns = namespace(end_own=end) %}
+                      {%- for a_end in end.owner.ends if a_end != end %}
+                       {%- set ns.end_own = a_end %}
+                      {%- endfor %}
+                      {%- if end.multiplicity.max == 1 %}
+                         {%- set name_of_the_column = end.type.name.lower()%}
+                         {%- set name_of_the_table = end.type.name%},
+        $column{{foreignKey[1]|replace("_", "")}} INTEGER,                 
+        FOREIGN KEY ($column{{foreignKey[1]|replace("_", "")}}) REFERENCES $table{{name_of_the_table}}s($columnId)
+                      {%- endif%}
+                    {%- endfor %}
+                  {%- endif %}
+          {%- endfor %}
+          {%- endif%}
+      {%- endfor%}
+    )
+    """);
+    {%- endfor%}
+
+{#- create tables for assoc #} 
+{%- for association in model.associations if association.ends|length == 2 %}
+    {%- set ns = namespace(many_to_many = True) %}
+    {%- for end in association.ends %}
+        {%- if end.multiplicity.max < 2 %} 
+            {%- set ns.many_to_many = False %} 
+        {%- endif %}
+    {%- endfor %}
+    {%- if ns.many_to_many == True %}
+    {%- set table_name = association.name.lower()%}
+    await database.execute("""
+      {%- set name_tbl= table_name[0].upper() + table_name[1:]%}
+      CREATE TABLE $table{{name_tbl|replace('_', '') }}(
+        {%- for association in model.associations if association.ends|length == 2 %}
+           {%- set ns = namespace(many_to_many = True) %}
+           {%- for end in association.ends %}
+              {%- if end.multiplicity.max < 2 %} 
+                {%- set ns.many_to_many = False %} 
+              {%- endif %}
+            {%- endfor %}
+            {%- if ns.many_to_many == True %}
+              {%- set lists = [] %}
+               {%- for end in association.ends %}
+                  {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+        $column{{ end.type.name}}Id INTEGER,
+        {%- set _ = lists.append(end.type.name) %}
+               {%- endfor %}
+        PRIMARY KEY ($column{{ lists[0] }}Id, $column{{ lists[1] }}Id)      
+            {%- endif %}
+         {%- endfor %}
+         {%- for association in model.associations if association.ends|length == 2 %}
+           {%- set ns = namespace(many_to_many = True) %}
+           {%- for end in association.ends %}
+              {%- if end.multiplicity.max < 2 %} 
+                {%- set ns.many_to_many = False %} 
+              {%- endif %}
+            {%- endfor %}
+            {%- if ns.many_to_many == True %}
+              {%- set lists = [] %}
+               {%- for end in association.ends %}
+                  {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%},
+        FOREIGN KEY ($column{{ end.type.name}}Id) REFERENCES $table{{ end.type.name}}s($columnId) ON DELETE CASCADE
+        {%- set _ = lists.append(end.type.name) %}
+               {%- endfor %}  
+            {%- endif %}
+         {%- endfor %}
+      )
+    """);
+    {%- endif %}
+    {%-endfor%}
+    } 
+ {# end of define database #} 
+  static Future<sql.Database> db() async {
+    return sql.openDatabase(
+      '{{model.name|replace(" ", "")}}.db',
+      version: 1,
+      onCreate: (sql.Database database, int version) async {
+        await createTables(database);
+      },
+    );
+  }
+        {%- for association in model.associations if association.ends|length == 2 %}
+           {%- set ns = namespace(many_to_many = True) %}
+           {%- for end in association.ends %}
+              {%- if end.multiplicity.max < 2 %} 
+                {%- set ns.many_to_many = False %} 
+              {%- endif %}
+            {%- endfor %}
+            {%- if ns.many_to_many == True %}
+              {%- set lists = [] %}
+               {%- for end in association.ends %}
+                  {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+        {%- set _ = lists.append(end.type.name) %}
+               {%- endfor %}
+               {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+               {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+  static List<String> {{first_element[0].lower() + first_element[1:]}}List = []; // Initialize an empty {{first_element[0].lower() + first_element[1:]}} list
+  static List<String> {{second_element[0].lower() + second_element[1:]}}List = []; // Initialize an empty {{second_element[0].lower() + second_element[1:]}} list
+            {%- endif %}
+         {%- endfor %}
+
+{# start to define create method for each table #} 
+{%- for table in BUMLClasses%} 
+{%- set has_foreignKey = False %}
+
+//for create operation on {{table.name[0].upper() + table.name[1:] }}s
+  static Future<int> create{{table.name[0].upper() + table.name[1:] }}(
+       {%- for class in BUMLClasses%}
+           {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}{%- set class_name = class.name%}
+            {%- for attribute in class.attributes %}
+              {%- if not attribute.type.name == 'datetime' %}
+    {{ types[attribute.type.name] }} {{ attribute.name }}
+              {%- if not loop.last %}
+                  {%- if not loop.nextitem.type.name == 'datetime' %},
+                  {%- elif not loop.nextitem.last %},
+                  {%- endif %}
+              {%- endif %}
+            {%- endif %}
+      {%- endfor%}
+            {%- for foreignKey in foreignKeylists %}
+               {%- set foreignKey_name = foreignKey[0] %}
+               {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+           {%- for association in model.associations if association.ends|length == 2 %}
+               {%- set ns = namespace(many_to_many = True) %}
+                    {%- for end in association.ends %}
+                        {%- if end.multiplicity.max < 2 %} 
+                           {%- set ns.many_to_many = False %} 
+                        {%- endif %}
+                    {%- endfor %}
+                    {%- if ns.many_to_many == True %}
+                       {%- set lists = [] %}
+                          {%- for end in association.ends %}
+                             {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                             {%- set _ = lists.append(end.type.name) %}
+                          {%- endfor %}
+                              {%- for element in lists %}
+                                {%- if element == table.name[0].upper() + table.name[1:] %}
+                                  {%- for element_name in lists %}
+                                      {%- if not element_name == table.name[0].upper() + table.name[1:] %},
+    List<int> {{element_name[0].lower() + element_name[1:]}}Ids,
+                                      {%- endif%}
+                                  {%- endfor%}
+                                {%- endif%} 
+                              {%- endfor%}      
+                      {%- endif %}
+         {%- endfor %}
+    {%- endif%}
+{%- endfor%}
+            {%- for foreignKey in foreignKeylists %}
+               {%- set foreignKey_name = foreignKey[0] %}
+               {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                    {%- set has_foreignKey = True %}
+                    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                       {%- if loop.index == 1 %}
+                       {%- endif %}
+                      {%- set ns = namespace(end_own=end) %}
+                      {%- for a_end in end.owner.ends if a_end != end %}
+                       {%- set ns.end_own = a_end %}
+                      {%- endfor %}
+                      {%- if end.multiplicity.max == 1 %}
+                         {%- set name_of_the_column = end.type.name.lower()%}
+                         {%- set name_of_the_table = end.type.name%}
+                         {%- set has_foreignKey = True %}{# do not work correct #} 
+    int? {{foreignKey[1]|replace("_", "")}}                 
+                      {%- endif%}
+                    {%- endfor %}
+                  {%- endif %}
+          {%- endfor %}
+  )
+    async {
+    final db = await SQLHelper.db();
+    {%- if has_foreignKey == False%}
+    await db.execute('PRAGMA foreign_keys = ON;');
+    {%- endif%}
+
+    final data = { 
+    {%- for attribute in class.attributes %}
+       {%- if not attribute.type.name=='datetime'%}
+    column{{ attribute.name[0].upper() + attribute.name[1:] }}: {{ attribute.name[0].lower() + attribute.name[1:] }},
+       {%- endif%}
+    {%- endfor %}
+    {%- for foreignKey in foreignKeylists %}
+               {%- set foreignKey_name = foreignKey[0] %}
+               {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                    {%- set has_foreignKey = True %}
+                    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                       {%- if loop.index == 1 %}
+                       {%- endif %}
+                      {%- set ns = namespace(end_own=end) %}
+                      {%- for a_end in end.owner.ends if a_end != end %}
+                       {%- set ns.end_own = a_end %}
+                      {%- endfor %}
+                      {%- if end.multiplicity.max == 1 %}
+                         {%- set name_of_the_column = end.type.name.lower()%}
+                         {%- set name_of_the_table = end.type.name%}
+                         {%- set has_foreignKey = True %}{# do not work correct #} 
+    column{{foreignKey[1]|replace("_", "")}}: {{foreignKey[1]|replace("_", "")}}                
+                      {%- endif%}
+                    {%- endfor %}
+                  {%- endif %}
+          {%- endfor %}
+    };
+
+    final id = await db.insert(
+      table{{table.name[0].upper() + table.name[1:] }}s, 
+      data,
+      conflictAlgorithm: sql.ConflictAlgorithm.replace,
+    );
+{# related to table many to many #} 
+{%- set loop_finished = false %}
+{%- set batch_loop_finished = false %}
+{%- for foreignKey in foreignKeylists %}
+    {%- set foreignKey_name = foreignKey[0] %}
+    {%- set class_name = class.name[0].upper() + class.name[1:] %}
+    {%- if foreignKey_name == class_name + '.' + foreignKey[1] %}
+        {%- set has_foreignKey = True %}
+        {%- if not loop_finished %}
+          {%- if not batch_loop_finished %}
+            {%- for end in class.association_ends() if end.owner.ends|length == 2 %} 
+                {%- if not loop_finished %}
+                  {%- if not batch_loop_finished %}
+                    {%- if loop.index == 1 %}
+                            {%- if not loop_finished %}
+                              {%- if not batch_loop_finished %}
+                                {%- for association in model.associations if association.ends|length == 2 %}
+                                    {%- if not loop_finished %}
+                                      {%- if not batch_loop_finished %}
+                                        {%- set ns = namespace(many_to_many = True) %}
+                                        {%- for end in association.ends %}
+                                            {%- if end.multiplicity.max < 2 %} 
+                                                {%- set ns.many_to_many = False %} 
+                                            {%- endif %}
+                                        {%- endfor %}
+                                        {%- set lists = [] %}
+                                        {%- if ns.many_to_many == True %}
+                                        {%- set many_to_many_table_name = association.name.lower()%}
+                                            {%- for end in association.ends %}
+                                                {%- if not loop_finished %}
+                                                  {%- if not batch_loop_finished %}
+                                                    {%- set end_type_name = end.type.name.upper()|replace(".id", "") %}
+                                                    {%- if end.type.name == table.name[0].upper() + table.name[1:] %}
+                                                    {%- endif %}
+                                                    {%- set _ = lists.append(end.type.name) %}
+                                                    {%- set batch_loop_finished = true %}
+                                                    {%- for fk_list in lists %}
+                                                        {%- set table_name = table.name[0].upper() + table.name[1:] %}
+                                                        {%- set table_name_lower = table.name[0].lower() + table.name[1:] %}
+                                                        {%- if not table_name == fk_list %}
+                                                            {%- set ref_table = fk_list %}
+                                                            {%- set fk_list_lower = fk_list[0].lower() + fk_list[1:] %} 
+                                                              {%- if not end.type.name[0].lower() + end.type.name[1:] == class.name[0].lower() + class.name[1:]%}
+                                                                 {%- for end in class.association_ends() if end.owner.ends|length == 2 %}  
+                                                                    {%- if end.type.name[0].lower() + end.type.name[1:] == fk_list_lower%}                                                
+      final batch = db.batch();
+      for (int {{fk_list_lower}}Id in {{fk_list_lower}}Ids) {
+        final {{fk_list_lower}}Data =
+          await db.query(table{{fk_list}}s, where: '$columnId = ?', whereArgs: [{{fk_list_lower}}Id]);
+            if ({{fk_list_lower}}Data.isNotEmpty) {
+               final {{table_name_lower}}{{fk_list}}Data = {
+                  column{{table_name}}Id: id,
+                  column{{fk_list}}Id: {{fk_list_lower}}Id,
+                };
+        batch.insert(
+          {%- set name_tbl=many_to_many_table_name[0].upper() + many_to_many_table_name[1:]%}
+          table{{name_tbl|replace('_', '')}},
+          {{table_name_lower}}{{fk_list}}Data,
+          conflictAlgorithm: sql.ConflictAlgorithm.ignore,
+          );
+        } else {
+          // If {{fk_list}} ID is not found in {{fk_list}}s table, delete the inserted row in {{table_name}}s table
+            await db.delete(table{{table_name}}s, where: '$columnId = ?', whereArgs: [id]);
+            throw Exception('{{fk_list}} ID ${{fk_list_lower}}Id does not exist in {{fk_list_lower}}s table');
+        }
+      }
+      await batch.commit();  
+                                                            {%- set loop_finished = true %}
+                                                                {%- endif%}
+                                                              {%- endfor%}
+                                                            {%- endif%}
+                                                        {%- endif %}
+                                                    {%- endfor %}
+                                                {%- endif %}
+                                              {%- endif%}
+                                            {%- endfor %}
+                                        {%- endif %}
+                                      {%- endif%}
+                                    {%- endif %}
+                                {%- endfor %}
+                              {%- endif%}
+                            {%- endif %}
+                    {%- endif %}
+                  {%- endif%}
+                {%- endif %}
+            {%- endfor %}
+          {%- endif%}
+        {%- endif %}
+    {%- endif %}
+{%- endfor %}
+    return id;
+    {%- endif%}
+  {%- endfor%}
+  } 
+{%- endfor%}
+{# enf of define create method for each table #} 
+
+{#- start to define gets method for each table #} 
+{%- for table in BUMLClasses%}
+
+  // Read all {{table.name[0].upper() + table.name[1:] }}s
+  static Future<List<Map<String, dynamic>>> get{{table.name[0].upper() + table.name[1:] }}s() async {
+    final db = await SQLHelper.db();
+    return db.query(table{{table.name[0].upper() + table.name[1:] }}s, orderBy: columnId);
+  }
+{%- endfor%}
+{# end to define gets method for each table #} 
+
+{#- start to define get method for each table #} 
+{%- for table in BUMLClasses%}
+
+  // Read a single {{table.name[0].upper() + table.name[1:] }} by id
+  static Future<String?> get{{table.name[0].upper() + table.name[1:] }}(int id) async {
+    final db = await SQLHelper.db();
+    final result = await db.query(table{{table.name[0].upper() + table.name[1:] }}s, where: "$columnId = ?", whereArgs: [id], limit: 1);
+    if (result.isNotEmpty) {
+    return result.first[columnName] as String?;
+  }
+  return null;  
+}
+  {%- endfor%}
+{# end to define get method for each table #} 
+
+{#- start to define update method for each table #} 
+{%- for table in BUMLClasses%}
+{%- set has_many_assoc = false%}
+
+//for Update operation on {{table.name[0].upper() + table.name[1:] }} by id
+  static Future<int> update{{table.name[0].upper() + table.name[1:] }}(
+    int id,
+           {%- for class in BUMLClasses%}
+           {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}{%- set class_name = class.name%}
+            {%- for attribute in class.attributes %}
+              {%- if not attribute.type.name == 'datetime' %}
+    {{ types[attribute.type.name] }} {{ attribute.name }}
+              {%- if not loop.last %}
+                  {%- if not loop.nextitem.type.name == 'datetime' %},
+                  {%- elif not loop.nextitem.last %},
+                  {%- endif %}
+              {%- endif %}
+            {%- endif %}
+            {%- endfor%}
+            {%- for foreignKey in foreignKeylists %}
+               {%- set foreignKey_name = foreignKey[0] %}
+               {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+           {%- for association in model.associations if association.ends|length == 2 %}
+               {%- set ns = namespace(many_to_many = True) %}
+                    {%- for end in association.ends %}
+                        {%- if end.multiplicity.max < 2 %} 
+                           {%- set ns.many_to_many = False %} 
+                        {%- endif %}
+                    {%- endfor %}
+                    {%- if ns.many_to_many == True %}
+                       {%- set lists = [] %}
+                          {%- for end in association.ends %}
+                             {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+                             {%- set _ = lists.append(end.type.name) %}
+                          {%- endfor %}
+                              {%- for element in lists %}
+                                {%- if element == table.name[0].upper() + table.name[1:] %}
+                                  {%- for element_name in lists %}
+                                      {%- if not element_name == table.name[0].upper() + table.name[1:] %},
+    List<int> {{element_name[0].lower() + element_name[1:]}}Ids,
+                                      {%- endif%}
+                                  {%- endfor%}
+                                {%- endif%} 
+                              {%- endfor%}      
+                      {%- endif %}
+         {%- endfor %}
+    {%- endif%}
+{%- endfor%}
+            {%- for foreignKey in foreignKeylists %}
+               {%- set foreignKey_name = foreignKey[0] %}
+               {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                    {%- set has_foreignKey = True %}
+                    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                       {%- if loop.index == 1 %}
+                       {%- endif %}
+                      {%- set ns = namespace(end_own=end) %}
+                      {%- for a_end in end.owner.ends if a_end != end %}
+                       {%- set ns.end_own = a_end %}
+                      {%- endfor %}
+                      {%- if end.multiplicity.max == 1 %}
+                         {%- set name_of_the_column = end.type.name.lower()%}
+                         {%- set name_of_the_table = end.type.name%}
+                         {%- set has_foreignKey = True %}{# do not work correct #} 
+    int? {{foreignKey[1]|replace("_", "")}}                 
+                      {%- endif%}
+                    {%- endfor %}
+                  {%- endif %}
+          {%- endfor %}
+    ) 
+    async {
+    final db = await SQLHelper.db();
+
+    final data = { 
+              {%- for attribute in class.attributes %}
+                {%- if attribute.type.name=='datetime'%}
+    column{{ attribute.name[0].upper() + attribute.name[1:] }}: DateTime.now().toString(),
+                {%- else%}
+    column{{ attribute.name[0].upper() + attribute.name[1:] }}: {{ attribute.name[0].lower() + attribute.name[1:] }},
+                 {%- endif %}
+              {%- endfor %}
+    {%- for foreignKey in foreignKeylists %}
+               {%- set foreignKey_name = foreignKey[0] %}
+               {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                    {%- set has_foreignKey = True %}
+                    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                       {%- if loop.index == 1 %}
+                       {%- endif %}
+                      {%- set ns = namespace(end_own=end) %}
+                      {%- for a_end in end.owner.ends if a_end != end %}
+                       {%- set ns.end_own = a_end %}
+                      {%- endfor %}
+                      {%- if end.multiplicity.max == 1 %}
+                         {%- set name_of_the_column = end.type.name.lower()%}
+                         {%- set name_of_the_table = end.type.name%}
+                         {%- set has_foreignKey = True %}{# do not work correct #} 
+    column{{foreignKey[1]|replace("_", "")}}: {{foreignKey[1]|replace("_", "")}}                
+                      {%- endif%}
+                    {%- endfor %}
+                  {%- endif %}
+          {%- endfor %}
+    };
+    final result = await db.transaction((txn) async {
+      // Update the {{table.name[0].upper() + table.name[1:] }} details
+      await txn.update(table{{table.name[0].upper() + table.name[1:] }}s, data, where: "$columnId = ?", whereArgs: [id]);
+    {%- set has_foreignKey = false %}
+    {%- for class in BUMLClasses%}
+          {%- if class.name[0].lower() + class.name[1:] == table.name[0].lower() + table.name[1:]%}
+            {%- for foreignKey in foreignKeylists %}
+               {%- set foreignKey_name = foreignKey[0] %}
+               {%- set class_name = class.name[0].upper() + class.name[1:] %}
+                  {%- if foreignKey_name == class_name + '.' + foreignKey[1]%}
+                    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+                       {%- if loop.index == 1 %}
+                       {%- endif %}
+                      {%- set ns = namespace(end_own=end) %}
+                      {%- for a_end in end.owner.ends if a_end != end %}
+                       {%- set ns.end_own = a_end %}
+                      {%- endfor %}
+                      {%- if end.multiplicity.max == 1 %}
+                         {%- set name_of_the_column = end.type.name.lower()%}
+                         {%- set name_of_the_table = end.type.name%}
+                         {%- set has_foreignKey = true %}
+                              {%- for association in model.associations if association.ends|length == 2 %}
+                                {%- set ns = namespace(many_to_many = True) %}
+                                  {%- for end in association.ends %}
+                                    {%- if end.multiplicity.max < 2 %} 
+                                    {%- set ns.many_to_many = False %} 
+                                    {%- endif %}
+                                  {%- endfor %}
+                                  {%- if ns.many_to_many == True %}
+                                  {%- set many_to_many_table_name = association.name.lower()%}
+                                  {%- set name_tbl=many_to_many_table_name[0].upper() + many_to_many_table_name[1:]%} 
+        // Update {{name_tbl|replace('_', '')}} table
+                                   {%- set lists = [] %}
+                                    {%- for end in association.ends %}
+                                       {%- set  end_type_name = end.type.name[0].upper() + end.type.name[1:]|replace(".id", "")%}
+                                      {%- if not end.type.name == table.name[0].upper() + table.name[1:]%}
+                                      {%- set isFk = True %}   
+          await txn.delete(table{{name_tbl|replace('_', '')}}, where: '$column{{ table.name[0].upper() + table.name[1:] }}Id = ?', whereArgs: [id]);
+            
+            for (final {{end_type_name[0].lower() + end.type.name[1:]}}Id in {{end_type_name[0].lower() + end.type.name[1:]}}Ids) {
+             final {{ table.name[0].lower() + table.name[1:] }}{{end_type_name}}Data = {column{{ table.name[0].upper() + table.name[1:] }}Id: id,column{{end_type_name}}Id: {{end_type_name[0].lower() + end.type.name[1:]}}Id,
+             };
+               await txn.insert(table{{name_tbl|replace('_', '')}}, {{ table.name[0].lower() + table.name[1:] }}{{end_type_name}}Data);
+                                           {%- set has_many_assoc = true%} 
+    }   
+     return 1; // Return a success indicator
+    });
+ 
+    return result;
+  }
+                                    {%- endif%}
+                                    {%- set _ = lists.append(end.type.name) %}
+                                   {%- endfor %}  
+                                  {%- endif %}
+                                 {%- endfor %}
+                      {%- endif%}
+                    {%- endfor %}
+                  {%- else%}
+     return 1; // Return a success indicator
+    });
+    return result;
+  }
+                  {%- endif %}
+          {%- endfor %}
+          {%- endif%}
+      {%- endfor%}
+    {%- endif%}
+    {%- endfor%}
+  {%- endfor%}
+{# end of define update method for each table #} 
+
+{#- start to define delete method for each table #} 
+{%- for table in BUMLClasses %}
+  {%- set isFk = false %}
+
+// for delete operation on {{ table.name[0].upper() + table.name[1:] }} by id
+static Future<void> delete{{ table.name[0].upper() + table.name[1:] }}(int id) async {
+    final db = await SQLHelper.db();
+    try {
+       await db.transaction((txn) async {
+      {# check in foreignKeys #} 
+      {%- for SqlTable in BUMLClasses %}
+        {%- for foreignKey in foreignKeylists %}
+          {%- set foreignKey_name = foreignKey[0] -%}
+          {%- set SqlTable_name = SqlTable.name[0].upper() + SqlTable.name[1:] -%}
+          {%- set table_name = table.name[0].lower() + table.name[1:] -%}
+          {%- if foreignKey_name == SqlTable_name + '.' + table_name + '_id' %}
+            {%- set isFk = true %}
+      // Update {{SqlTable_name}}s assigned to the {{ table.name[0].upper() + table.name[1:] }} being deleted
+      await txn.update(table{{SqlTable_name}}s, {column{{ table.name[0].lower() + table.name[1:] }}id: null}, where: '$column{{ table.name[0].lower() + table.name[1:] }}id = ?', whereArgs: [id]);
+          {%- endif %}
+        {%- endfor %}
+      {%- endfor %} 
+    {%- for association in model.associations if association.ends|length == 2 %}
+      {%- set ns = namespace(many_to_many = True) %}
+        {%- for end in association.ends %}
+          {%- if end.multiplicity.max < 2 %} 
+              {%- set ns.many_to_many = False %} 
+          {%- endif %}
+        {%- endfor %}
+        {%- if ns.many_to_many == True %}
+        {%- set many_to_many_table_name = association.name.lower()%}
+         {%- set lists = [] %}
+            {%- for end in association.ends %}
+              {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+              {%- if end.type.name == table.name[0].upper() + table.name[1:]%}
+              {%- set isFk = True %}
+              {%- set name_tbl=many_to_many_table_name[0].upper() + many_to_many_table_name[1:] %}
+      // Set {{ table.name[0].upper() + table.name[1:] }} ID to null in {{many_to_many_table_name}} table for the deleted {{ table.name[0].upper() + table.name[1:] }}
+      await txn.update(table{{name_tbl|replace('_', '')}}, {column{{ table.name[0].upper() + table.name[1:] }}Id: null},
+          where: '$column{{ table.name[0].upper() + table.name[1:] }}Id = ?', whereArgs: [id]);
+
+          await txn.delete(table{{name_tbl|replace('_', '')}}, where: "$column{{ table.name[0].upper() + table.name[1:] }}Id IS NULL");
+              {%- endif%}
+             {%- set _ = lists.append(end.type.name) %}
+            {%- endfor %}  
+        {%- endif %}
+    {%- endfor %}
+
+   // Delete the {{ table.name[0].upper() + table.name[1:] }}
+      await txn.delete(table{{ table.name[0].upper() + table.name[1:] }}s, where: "$columnId = ?", whereArgs: [id]);
+    });
+
+  } catch (err) {
+    logger.e("Something went wrong when deleting the {{table.name[0].upper() + table.name[1:] }}: $err");
+  }
+}
+{%- endfor%}
+{# end to define delete method for each table #} 
+
+{#- start to define getIdByName method for each table #} 
+{%- for table in BUMLClasses %}
+
+static Future<int> get{{ table.name[0].upper() + table.name[1:] }}IdByName(String {{ table.name[0].lower() + table.name[1:] }}Name) async {
+    final db = await SQLHelper.db();
+
+    final result =
+        await db.query(table{{ table.name[0].upper() + table.name[1:] }}s, where: '$columnName = ?', whereArgs: [{{ table.name[0].lower() + table.name[1:] }}Name]);
+
+    if (result.isNotEmpty) {
+      final {{ table.name[0].lower() + table.name[1:] }}Id = result.first[columnId] as int;
+      return {{ table.name[0].lower() + table.name[1:] }}Id;
+    }
+    return 0; // Return 0 or another appropriate value instead of an empty string
+  }
+  {%- endfor%}
+{# end to define getIdByName method for each table #} 
+
+{#- start to define getNamesByIds method for each table #} 
+{%- for table in BUMLClasses %}
+
+static Future<List<String>> get{{ table.name[0].upper() + table.name[1:] }}NamesByIds(List<int> {{ table.name[0].lower() + table.name[1:] }}Ids) async {
+  final db = await SQLHelper.db();
+  
+  final List<Map<String, dynamic>> {{ table.name[0].lower() + table.name[1:] }}Records = await db.query(
+    table{{ table.name[0].upper() + table.name[1:] }}s,
+    columns: [columnName],
+    where: '$columnId IN (${ {{ table.name[0].lower() + table.name[1:] }}Ids.map((id) => '?').join(', ')})',
+    whereArgs: {{ table.name[0].lower() + table.name[1:] }}Ids,
+  );
+
+  final List<String> {{ table.name[0].lower() + table.name[1:] }}Names =
+      {{ table.name[0].lower() + table.name[1:] }}Records.map((record) => record[columnName] as String).toList();
+
+  return {{ table.name[0].lower() + table.name[1:] }}Names;
+}
+{%- endfor%}
+{# end to define getNamesByIds method for each table #} 
+
+        {%- for association in model.associations if association.ends|length == 2 %}
+           {%- set ns = namespace(many_to_many = True) %}
+           {%- for end in association.ends %}
+              {%- if end.multiplicity.max < 2 %} 
+                {%- set ns.many_to_many = False %} 
+              {%- endif %}
+            {%- endfor %}
+            {%- if ns.many_to_many == True %}
+             {%- set table_name = association.name.lower()%}
+              {%- set lists = [] %}
+               {%- for end in association.ends %}
+                  {%- set  end_type_name = end.type.name.upper()|replace(".id", "")%}
+        {%- set _ = lists.append(end.type.name) %}
+               {%- endfor %}
+               {%- set first_element = lists[0] if lists|length >= 1 else '' %}
+               {%- set second_element = lists[1] if lists|length >= 2 else '' %}
+static Future<List<String>> get{{first_element}}NamesBy{{second_element}}Id(int {{second_element[0].lower() + second_element[1:]}}Id) async {
+  final db = await SQLHelper.db();
+
+  final List<Map<String, dynamic>> {{first_element[0].lower() + first_element[1:]}}Records = await db.rawQuery('''
+    SELECT $table{{first_element}}s.$columnName
+    FROM $table{{first_element}}s
+    {%-set name_tbl=table_name[0].upper() + table_name[1:]%}
+    INNER JOIN $table{{name_tbl|replace('_', '')}} ON $table{{first_element}}s.$columnId = $table{{name_tbl|replace('_', '')}}.$column{{first_element}}Id
+    WHERE $table{{name_tbl|replace('_', '')}}.$column{{second_element}}Id = ?
+  ''', [{{second_element[0].lower() + second_element[1:]}}Id]);
+
+  final List<String> {{first_element[0].lower() + first_element[1:]}}Names =
+      {{first_element[0].lower() + first_element[1:]}}Records.map((record) => record[columnName] as String).toList();
+
+  return {{first_element[0].lower() + first_element[1:]}}Names;
+}
+
+static Future<List<String>> get{{second_element}}NamesBy{{first_element}}Id(int {{first_element[0].lower() + first_element[1:]}}Id) async {
+  final db = await SQLHelper.db();
+
+  final List<Map<String, dynamic>> {{second_element[0].lower() + second_element[1:]}}Records = await db.rawQuery('''
+    SELECT $table{{second_element}}s.$columnName
+    FROM $table{{second_element}}s
+    {%- set name_tbl=table_name[0].upper() + table_name[1:]%}
+    INNER JOIN $table{{name_tbl|replace('_', '')}} ON $table{{second_element}}s.$columnId = $table{{name_tbl|replace('_', '')}}.$column{{second_element}}Id
+    WHERE $table{{name_tbl|replace('_', '')}}.$column{{first_element}}Id = ?
+  ''', [{{first_element[0].lower() + first_element[1:]}}Id]);
+
+  final List<String> {{second_element[0].lower() + second_element[1:]}}Names =
+      {{second_element[0].lower() + second_element[1:]}}Records.map((record) => record[columnName] as String).toList();
+
+  return {{second_element[0].lower() + second_element[1:]}}Names;
+}
+            {%- endif %}
+         {%- endfor %}
+
+ {%- for table in BUMLClasses %} 
+
+// Fetch existing {{ table.name[0].lower() + table.name[1:] }}s from the database
+static Future<List<String>> getAll{{ table.name[0].upper() + table.name[1:] }}s() async {
+    final db = await SQLHelper.db();
+    final List<Map<String, dynamic>> results =
+        await db.query(table{{ table.name[0].upper() + table.name[1:] }}s, columns: [columnName]);
+    final List<String> {{ table.name[0].lower() + table.name[1:] }}s =
+        results.map((row) => row[columnName] as String).toList();
+    return {{ table.name[0].lower() + table.name[1:] }}s;
+  }
+{%- endfor%}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

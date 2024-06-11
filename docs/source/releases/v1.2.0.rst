@@ -1,0 +1,21 @@
+Version 1.2.0
+=============
+
+New features
+------------
+
+* B-UML deployment model: Enables the specification of the deployment architecture for multi-cloud (and on-premises) environments.
+* Terraform code generator: A code generator to create Infrastructure as Code for Terraform, supporting GCP and AWS deployments.
+* Java code generator: A code generator to produce model domain classes from a B-UML structural model.
+* Flutter code generator: A code generator to create mobile applications for Flutter, including both backend and frontend components.
+
+Improvements
+------------
+
+* Docker image support: The Backend Code Generator can now package the code and create a Docker image, automatically uploading it to `DockerHub <https://hub.docker.com/>`_.
+
+Fixes
+-----
+
+* Fixed the ``view_elements`` relationship in GUI metamodel
+* Fixed the ``attribut_data`` name in the Backend Code Generator

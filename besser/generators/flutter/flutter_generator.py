@@ -62,7 +62,7 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('flutterCodeGeneratorSqlHelperFile.jinja')
+        template = env.get_template('flutterCodeGeneratorSqlHelperFile.py.j2')
         with open(file_path, mode="w") as f:
             generated_code = template.render(BUMLClasses= copy_model.get_classes(), model=copy_model, types=self.TYPES)
             f.write(generated_code)
@@ -155,7 +155,7 @@ class FlutterMainDartGenerator(GeneratorInterface):
         file_path = self.build_generation_path(file_name="main.dart")
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('flutterCodeGeneratorMainFile.jinja')
+        template = env.get_template('flutterCodeGeneratorMainFile.py.j2')
         env.tests['is_Button'] = self.is_Button
         env.tests['is_List'] = self.is_List
         env.tests['is_ModelElement'] = self.is_ModelElement
@@ -227,7 +227,7 @@ class FlutterPubspecGenerator(GeneratorInterface):
         file_path = self.build_generation_path(file_name="pubspec.yaml")
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('flutterCodeGeneratorPubspecFile.jinja')
+        template = env.get_template('flutterCodeGeneratorPubspecFile.py.j2')
         with open(file_path, mode="w") as f:
             generated_code = template.render(
                 app=self.application

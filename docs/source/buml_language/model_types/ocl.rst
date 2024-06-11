@@ -22,6 +22,12 @@ We are able to parse all the queries from the metamodel. The work on OCL interpr
 
   context library inv inv1: self.books>0
 
+.. note::
+
+  B-OCL Interpreter is available at https://github.com/BESSER-PEARL/B-OCL-Interpreter. With this interpreter you can validate your OCL constraints defined on BUML models.
+
+
+
 Supported notations
 -------------------
 

@@ -1,0 +1,7 @@
+Version 1.1.2
+=============
+
+Fixes
+-----
+
+* Bug fixed in the Django code generator: *on_delete* parameter added for *ForeignKey* definitions.

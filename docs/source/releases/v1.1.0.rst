@@ -1,0 +1,16 @@
+Version 1.1.0
+=============
+
+New features
+------------
+
+* **Backend Generator**: Introduced a new Backend generator that can produce a full backend system. This includes integration with REST API generator, Pydantic generator, and SQL Alchemy to ensure comprehensive backend functionality.
+* **Pydantic Generator**: Added a new Pydantic generator to enhance the functionality of model validation and data parsing within the backend systems.
+
+Improvements
+------------
+
+* **REST API Generator**: Improved the REST API generator by extracting the generation of Pydantic classes into a the generator and incorporating a new template exclusive to the backend generator.
+* **Django generator**: Support for relationships with min cardinality = 0 and composition relationships.
+* **SQLAlchemy generator**: Support for relationships with min cardinality = 1
+* **Structural metamodel**: is_aggregated parameter removed from the Property class to simplify the metamodel

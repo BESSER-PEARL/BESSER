@@ -8,3 +8,4 @@ Model types
   model_types/object
   model_types/gui
   model_types/ocl
+  model_types/deployment

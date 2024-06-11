@@ -1,4 +1,5 @@
 from besser.BUML.metamodel.structural import NamedElement, Class, Property, Model
+from enum import Enum
 
 
 # FileSourceType
@@ -95,6 +96,50 @@ class CollectionSourceType:
 
     def __repr__(self):
         return f'CollectionSourceType({self.name}, type={self.type})'
+
+class ButtonActionType(Enum):
+    """Represents a button action type.
+    """
+    Add = "Add"
+    ShowList = "Show List"
+    OpenForm = "Open Form"
+    SubmitForm = "Submit Form"
+    Cancel = "Cancel"
+    Save = "Save"
+    Delete = "Delete"
+    Confirm = "Confirm"
+    Navigate = "Navigate"
+    Search = "Search"
+    Filter = "Filter"
+    Sort = "Sort"
+    Send = "Send"
+    Share = "Share"
+    Settings = "Settings"
+    Back = "Back"
+    Next = "Next"
+    View = "View"
+    Select = "Select"
+    Login = "Login"
+    Logout = "Sign Out"
+    Help = "Help"
+    About= "About"
+    Exit = "Exit"
+
+
+
+class ButtonType(Enum):
+    """Represents a button type.
+    """
+    RaisedButton = "Raised Button"
+    TextButton = "Text Button"
+    OutlinedButton = "Outlined Button"
+    IconButton = "Icon Button"
+    FloatingActionButton = "FloatingActionButton"
+    DropdownButton = "Dropdown Button"
+    ToggleButtons = "Toggle Buttons"
+    iOSStyleButton = "iOS-style Button"
+    CustomizableButton = "Customizable Button"
+
 
 #DataSource
 class DataSource:
@@ -292,11 +337,26 @@ class ViewContainer(ViewElement):
         description (str): The description of the view container.
     """
     
-    def __init__(self, name: str, description: str):
+    def __init__(self, name: str, description: str, view_elements: set[ViewElement]):
         super().__init__(name, description)
+        self.view_elements: set[ViewElement] = view_elements
+
+    @property
+    def view_elements(self) -> set[ViewElement]:
+        """set[ViewComponent]: Get the set of view elements on the screen."""
+        return self.__view_elements
+
+    @view_elements.setter
+    def view_elements(self, view_elements: set[ViewElement]):
+       """set[ViewElement]: Set the set of view elements on the screen."""
+       if view_elements is not None:
+            names = [view_element.name for view_element in view_elements]
+            if len(names) != len(set(names)):
+                raise ValueError("A screen cannot have two elements with the same name.")
+       self.__view_elements = view_elements
 
     def __repr__(self):
-        return f'ViewContainer({self.name}, description={self.description})'
+        return f'ViewContainer({self.name}, description={self.description}, view_elements={self.view_elements})'
 
 #Screen
 class Screen(ViewContainer):
@@ -304,39 +364,24 @@ class Screen(ViewContainer):
 
     Args:
         name (str): The name of the screen.
-        components (set[ViewComponent]): The set of view components on the screen.
+        view_elements (set[ViewElement]): The set of view elements on the screen.
         x_dpi (str): The X DPI (dots per inch) of the screen.
         y_dpi (str): The Y DPI (dots per inch) of the screen.
         size (str): The size of the screen.
 
     Attributes:
         name (str): The name of the screen.
-        components (set[ViewComponent]): The set of view components on the screen.
+        view_elements (set[ViewElement]): The set of view elements on the screen.
         x_dpi (str): The X DPI (dots per inch) of the screen.
         y_dpi (str): The Y DPI (dots per inch) of the screen.
         size (str): The size of the screen.
     """
     
-    def __init__(self, name: str, description: str, components: set[ViewComponent], x_dpi: str, y_dpi: str, size: str):
-        super().__init__(name, description)
+    def __init__(self, name: str, description: str, view_elements: set[ViewElement], x_dpi: str, y_dpi: str, size: str):
+        super().__init__(name, description, view_elements)
         self.x_dpi: str = x_dpi
         self.y_dpi: str = y_dpi
         self.size: str = size
-        self.components: set[ViewComponent] = components
-
-    @property
-    def components(self) -> set[ViewComponent]:
-        """set[ViewComponent]: Get the set of view components on the screen."""
-        return self.__components
-
-    @components.setter
-    def components(self, components: set[ViewComponent]):
-       """set[ViewComponent]: Set the set of view components on the screen."""
-       if components is not None:
-            names = [component.name for component in components]
-            if len(names) != len(set(names)):
-                raise ValueError("A screen cannot have two lists with the same name.")
-       self.__components = components
     
     @property
     def x_dpi(self) -> str:
@@ -363,7 +408,6 @@ class Screen(ViewContainer):
       """str: Get the size of the screen."""
       return self.__size
 
-
     @size.setter
     def size(self, size: str):
         """str: Set the size of the screen.
@@ -377,7 +421,7 @@ class Screen(ViewContainer):
            self.__size = size
 
     def __repr__(self):
-      return f'Screen({self.name}, {self.x_dpi}, {self.y_dpi}, {self.size}, {self.components})'
+      return f'Screen({self.name}, {self.x_dpi}, {self.y_dpi}, {self.size}, {self.view_elements})'
 
 #Module
 class Module(NamedElement):
@@ -413,8 +457,8 @@ class Module(NamedElement):
     def __repr__(self):
         return f'Module({self.name}, {self.screens})'
 
-# List is a type of ViewComponent
-class List(ViewComponent):
+# DataList is a type of ViewComponent
+class DataList(ViewComponent):
     """Represents a list component that encapsulates properties unique to lists, such as list sources.
 
     Args:
@@ -445,7 +489,7 @@ class List(ViewComponent):
         self.__list_sources = list_sources   
 
     def __repr__(self):
-     return f'List({self.name}, {self.list_sources})'
+     return f'DataList({self.name}, {self.list_sources})'
 
 # Button is a type of ViewComponent
 class Button(ViewComponent):
@@ -453,29 +497,87 @@ class Button(ViewComponent):
 
     Args:
         name (str): The name of the button.
+        description (str): The description of the button.
         label (str): The label of the button.
+        buttonType (ButtonType): The type of the button.
+        actionType (ButtonActionType): The action type of the button.
+        targetScreen (Screen, optional): The target Screen associated with the button when the actionType is "Navigate".
 
     Attributes:
         name (str): The name of the button.
+        description (str): The description of the button.
         label (str): The label of the button.
+        buttonType (ButtonType): The type of the button.
+        actionType (ButtonActionType): The action type of the button.
+        targetScreen (Screen, optional): The target Screen associated with the button when the actionType is "Navigate"
     """
     
-    def __init__(self, name: str, description: str, Label: str):
+    def __init__(self, name: str, description: str, label: str, buttonType: ButtonType, actionType: ButtonActionType, targetScreen: Screen = None):
         super().__init__(name, description)
-        self.Label=Label
+        self.label=label
+        self.buttonType: ButtonType = buttonType
+        self.actionType: ButtonActionType=actionType
+        self.targetScreen: Screen = targetScreen
 
     @property
-    def Label(self) -> str:
+    def label(self) -> str:
         """str: Get the label of the button."""
-        return self.__Label
+        return self.__label
 
-    @Label.setter
-    def Label(self, Label: str):
+    @label.setter
+    def label(self, label: str):
         """str: Set the label of the button."""
-        self.__Label = Label
+        self.__label = label
+    
+    @property
+    def buttonType(self) -> ButtonType:
+        """str: Get the type of the button."""
+        return self.__buttonType
+
+    @buttonType.setter
+    def buttonType(self, buttonType: ButtonType):
+        """str: Set the type of the button."""
+        self.__buttonType = buttonType
+
+    @property
+    def actionType(self) -> ButtonActionType:
+        """str: Get the action type of the button."""
+        return self.__actionType
+
+    @actionType.setter
+    def actionType(self, actionType: ButtonActionType):
+        """str: Set the action type of the button."""
+        self.__actionType = actionType
+
+    @property
+    def targetScreen(self) -> Screen:
+        """Type: Get the target Screen of the button."""
+        return self.__targetScreen
+
+    @targetScreen.setter
+    def targetScreen(self, targetScreen: Screen):
+        """
+        Set the target Screen associated with the button.
+
+        Args:
+            targetScreen (Screen): The target Screen to be associated with the button.
+
+        Raises:
+            ValueError: If the actionType is 'Navigate' and the target Screen is not an instance of the Screen class.
+            ValueError: If the actionType is not 'Navigate' and an target Screen is specified.
+
+        """
+        if self.actionType == ButtonActionType.Navigate:
+            if targetScreen is None:
+                raise ValueError("A target Screen must be specified for the button when the actionType is 'Navigate'.")
+            elif not isinstance(targetScreen, Screen):
+                raise ValueError("The target Screen must be an instance of the Screen class when the actionType is 'Navigate'.")
+        elif targetScreen is not None:
+            raise ValueError("A target Screen cannot be specified for the button when the actionType is not 'Navigate'.")
+        self.__targetScreen = targetScreen
 
     def __repr__(self):
-     return f'Button({self.name},{self.label}, {self.description})'
+     return f'Button({self.name},{self.label}, {self.description}, {self.buttonType}, {self.actionType})'
 
 # Image is a type of ViewComponent
 class Image(ViewComponent):
@@ -537,13 +639,13 @@ class InputField(ViewComponent):
 
     @property
     def validationRules(self) -> str:
-        """set[MenuItem]: Get the validation rules of the input field."""
+        """str: Get the validation rules of the input field."""
         return self.__validationRules
 
     
     @validationRules.setter
     def validationRules(self, str):
-        """set[Property]: Set the validation rules of the input field."""
+        """str: Set the validation rules of the input field."""
         self.__validationRules = validationRules
 
     def __repr__(self):
@@ -570,12 +672,12 @@ class Form(ViewComponent):
      
     @property
     def inputFields(self) -> set[InputField]:
-        """set[Module]: Get the set of input Fields contained in the form."""
-        return self.inputFields
+        """set[InputField]: Get the set of input Fields contained in the form."""
+        return self.__inputFields
 
     @inputFields.setter
     def inputFields(self, inputFields: set[InputField]):
-       """set[Module]: Set the set of input Fields contained in the form."""
+       """set[InputField]: Set the set of input Fields contained in the form."""
        self.__inputFields = inputFields
 
     def __repr__(self):
@@ -624,7 +726,7 @@ class Menu(ViewComponent):
 
     @menuItems.setter
     def menuItems(self, menuItems: set[MenuItem]):
-        """set[Property]: Set the set of menuItems."""
+        """set[MenuItem]: Set the set of menuItems."""
         self.__menuItems = menuItems
 
     def __repr__(self):
@@ -715,7 +817,7 @@ class Application(Model):
     @property
     def modules(self) -> set[Module]:
         """set[Module]: Get the set of modules contained in the application."""
-        return self.modules
+        return self.__modules
 
     @modules.setter
     def modules(self, modules: set[Module]):

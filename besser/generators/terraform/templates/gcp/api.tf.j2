@@ -1,0 +1,19 @@
+resource "google_project_service" "compute" {
+   {% for line in config_lines %}
+   {{ line }}
+   {% endfor %}
+    service = "compute.googleapis.com"
+  }
+  
+  resource "google_project_service" "kubernetes" {
+    {% for line in config_lines %}
+    {{ line }}
+    {% endfor %}
+    service = "container.googleapis.com"
+  }
+  resource "google_project_service" "anthos" {
+    {% for line in config_lines %}
+    {{ line }}
+    {% endfor %}
+    service = "anthos.googleapis.com"
+  }

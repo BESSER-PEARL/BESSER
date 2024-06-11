@@ -1,0 +1,255 @@
+{# Template for nn components #}
+
+{% set layers_names = [] %}
+
+{%- macro setup_activation_function(layer)%}
+        {%- if layer.activation_function != None %}
+            {%- set _ = layers_names.append(layer.name+"_activ") %}
+            {%- if layer.activation_function == "relu"  %}
+        self.{{ layer.name }}_activ = nn.ReLU()
+            {%- elif layer.activation_function == "leaky_relu" %}
+        self.{{ layer.name }}_activ = nn.LeakyReLU()
+            {%- elif layer.activation_function == "sigmoid" %}
+        self.{{ layer.name }}_activ = nn.Sigmoid()
+            {%- elif layer.activation_function == "softmax" %}
+        self.{{ layer.name }}_activ = nn.Softmax()
+            {%- elif layer.activation_function == "tanh" %}
+        self.{{ layer.name }}_activ = nn.Tanh()
+            {%- endif -%}
+        {%- else -%}
+        {%- endif -%}
+{% endmacro -%}
+
+{%- macro setup_cnn(layer) %}
+    {%- if layer.__class__.__name__ == "Conv1D" %}
+        self.{{ layer.name }} = nn.Conv1d({{ layer.in_channels }}, {{ layer.out_channels }}, kernel_size={{ layer.kernel_height }}, stride={{ layer.stride_height }}, padding={{ layer.padding_amount }}) 
+    {%- elif layer.__class__.__name__ == "Conv2D" %}
+        self.{{ layer.name }} = nn.Conv2d({{ layer.in_channels }}, {{ layer.out_channels }}, kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}), padding={{ layer.padding_amount }})
+    {%- elif layer.__class__.__name__ == "Conv3D" %}
+        self.{{ layer.name }} = nn.Conv3d({{ layer.in_channels }}, {{ layer.out_channels }}, kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}, {{ layer.kernel_depth }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}, {{ layer.stride_depth }}), padding={{ layer.padding_amount }})
+    {%- elif layer.__class__.__name__ == "PoolingLayer" -%}
+        {%- if layer.type == "average" -%}
+            {% set pl = "Avg" -%}
+        {%- else -%}
+            {% set pl = "Max" -%}
+        {%- endif -%}
+        {%- if layer.dimension == "1D" %}
+        self.{{ layer.name }} = nn.{{ pl }}Pool1d(kernel_size={{ layer.kernel_height }}, stride={{ layer.stride_height }}, padding={{ layer.padding_amount }})
+            {%- elif layer.dimension == "2D" %}
+        self.{{ layer.name }} = nn.{{ pl }}Pool2d(kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}), padding={{ layer.padding_amount }})
+            {%- else %}
+        self.{{ layer.name }} = nn.{{ pl }}Pool3d(kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}, {{ layer.kernel_depth }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}, {{ layer.stride_depth }}), padding={{ layer.padding_amount }})        
+            {%- endif -%}
+    {%- endif -%}
+    {{- setup_activation_function(layer) -}}
+{% endmacro -%}
+
+{%- macro setup_rnn(layer) %}
+    {%- if layer.__class__.__name__ == "SimpleRNNLayer" %}
+        self.{{ layer.name }} = nn.RNN({{ layer.input_size }}, {{ layer.hidden_size }})
+    {%- elif layer.__class__.__name__ == "LSTMLayer" %}
+        self.{{ layer.name }} = nn.LSTM({{ layer.input_size }}, {{ layer.hidden_size }})
+    {%- elif layer.__class__.__name__ == "GRULayer" %}
+        self.{{ layer.name }} = nn.GRU({{ layer.input_size }}, {{ layer.hidden_size }})
+    {%- endif -%}
+    {{- setup_activation_function(layer) -}}
+{% endmacro -%}
+
+
+{%- macro setup_general_layer(layer) %}
+    {%- if layer.__class__.__name__ == "LinearLayer" %}
+        self.{{ layer.name }} =  nn.Linear(in_features={{ layer.in_features }}, out_features={{ layer.out_features }})
+    {%- elif layer.__class__.__name__ == "FlattenLayer" %}
+        self.{{ layer.name }} = nn.Flatten()
+    {%- elif layer.__class__.__name__ == "EmbeddingLayer" %}
+        self.{{ layer.name }} = nn.Embedding(num_embedding={{ layer.num_embeddings }}, embedding_dim={{ layer.embedding_dim }})
+    {%- endif -%}
+    {{- setup_activation_function(layer) -}}
+{% endmacro -%}
+
+
+{%- macro setup_layer_modifier(layer) %}
+    {%- if layer.__class__.mro()[1].__name__ == "NormalizationLayer" %}
+        {%- if layer.__class__.__name__ == "BatchNormLayer" %}
+        self.{{ layer.name }} = nn.BatchNorm{{ layer.dimension[0] }}d(num_features={{ layer.num_features }})
+        {%- elif layer.__class__.__name__ == "LayerNormLayer" %}
+            {%- if layer.norm_height != None -%}
+                {%- if layer.norm_width != None -%}
+                    {% set normalized_shape = [layer.norm_channels, layer.norm_height, layer.norm_width] -%}
+                {%- else -%}
+                    {% set normalized_shape = [layer.norm_channels, layer.norm_height] -%}
+                {%- endif -%}
+            {%- else -%}
+                {% set normalized_shape = [layer.norm_channels] -%}
+            {%- endif %}
+        self.{{ layer.name }} = nn.LayerNorm(normalized_shape={{ normalized_shape }})
+        {%- endif -%}
+        {{- setup_activation_function(layer) -}}
+    {%- elif layer.__class__.__name__ == "DropoutLayer" %}
+        self.{{ layer.name }} = nn.Dropout(p={{ layer.rate }})
+    {%- endif -%}
+{% endmacro -%}
+
+{%- macro setup_layers(layer) %}
+    {%- set _ = layers_names.append(layer.name) %}
+    {%- if layer.__class__.mro()[1].__name__ == "ConvolutionalLayer" or layer.__class__.mro()[1].__name__ == "CNN" -%}
+        {{ setup_cnn(layer) }}
+    {%- elif layer.__class__.mro()[1].__name__ == "RNN" -%}
+        {{ setup_rnn(layer) }}
+    {%- elif layer.__class__.mro()[1].__name__ == "GeneralLayer" -%}
+        {{ setup_general_layer(layer) }}
+    {%- elif layer.__class__.mro()[1].__name__ == "LayerModifier" or layer.__class__.mro()[2].__name__ == "LayerModifier" -%} 
+        {{ setup_layer_modifier(layer) }}
+    {%- endif -%}
+{% endmacro -%}
+
+{%- macro get_loss_function(parameters) %}
+    {%- if parameters.loss_function == "crossentropy" -%}
+        nn.CrossEntropyLoss()
+    {%- elif parameters.loss_function == "binary_crossentropy" -%}
+        nn.BCELoss()
+    {%- else -%}
+        nn.MSELoss()
+    {%- endif -%}
+{% endmacro -%}
+
+{%- macro get_optimizer(model) %}
+    {%- if model.parameters.optimizer == "sgd" -%}
+        {%- if model.parameters.regularization == "l2" -%}
+        torch.optim.SGD({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }}, weight_decay={{ model.parameters.weight_decay }}) 
+        {%- else -%}
+        torch.optim.SGD({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }})
+        {%- endif -%}
+    {%- elif model.parameters.optimizer == "adam" -%}
+        {%- if model.parameters.regularization == "l2" -%}
+        torch.optim.Adam({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }}, weight_decay={{ model.parameters.weight_decay }}) 
+        {%- else -%}
+        torch.optim.Adam({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }})
+        {%- endif -%}
+    {%- elif model.parameters.optimizer == "adamW" -%}
+        {%- if model.parameters.regularization == "l2" -%}
+        torch.optim.AdamW({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }}, weight_decay={{ model.parameters.weight_decay }}) 
+        {%- else -%}
+        #AdamW has a default value weight_decay=0.01
+        torch.optim.AdamW({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }}, weight_decay=0.01) 
+        {%- endif -%}
+    {%- else -%}
+        {%- if model.parameters.regularization == "l2" -%}
+        torch.optim.Adagrad({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }}, weight_decay={{ model.parameters.weight_decay }}) 
+        {%- else -%}
+        torch.optim.Adagrad({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }}) 
+        {%- endif -%}
+    {%- endif -%}
+{% endmacro -%}
+
+{%- macro prepare_data(train_data, test_data, parameters) -%}
+    {%- if train_data.has_images == True -%}
+        {%- set my_image = train_data.features.pop() -%}
+# Define data transformations
+transform = transforms.Compose([
+    transforms.Resize(({{ my_image.height }}, {{ my_image.width }})),  # Resize images
+    transforms.ToTensor()          # Convert images to tensors
+    ])
+
+# Load the training dataset
+# Directory structure: root/class1/img1.jpg, root/class1/img2.jpg, root/class2/img1.jpg, ...
+train_dataset = datasets.ImageFolder(root=r"{{ train_data.path_data }}", transform=transform)
+
+# Load the testing dataset that is in a similar directory structure
+test_dataset = datasets.ImageFolder(root=r"{{ test_data.path_data }}", transform=transform)
+
+    {%- else -%}
+    def load_data(csv_file):
+        # Load data from CSV file
+        data = pd.read_csv(csv_file)
+        # Extract features and targets
+        features = data.iloc[:, :-1].values.astype("float32")
+        targets = data.iloc[:, -1].values.astype("float32")
+        # Convert to PyTorch tensors
+        features_tensor = torch.tensor(features)
+        targets_tensor = torch.tensor(targets)
+        # Create a TensorDataset
+        dataset = torch.utils.data.TensorDataset(features_tensor, targets_tensor)
+        return dataset
+
+# Loading data
+train_dataset = load_data(r"{{ train_data.path_data }}")
+test_dataset = load_data(r"{{ test_data.path_data }}")
+    {%- endif %}
+
+# Create data loaders
+train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size={{ parameters.batch_size }}, shuffle=True)
+test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size={{ parameters.batch_size }}, shuffle=False)
+
+{% endmacro -%}
+
+
+{%- macro train_model(model, prediction_task) -%}
+print('##### Training the model')
+for epoch in range({{ model.parameters.epochs }}):
+    # Initialize the running loss for the current epoch
+    running_loss = 0.0
+    # Iterate over mini-batches of training data
+    for i, data in enumerate(train_loader, 0):
+        inputs, labels = data
+        # Zero the gradients to prepare for backward pass
+        optimizer.zero_grad()
+        outputs = {{ model.name }}(inputs)
+        # Compute the loss 
+        {%- if prediction_task != "regression" %}
+        labels = nn.functional.one_hot(labels, num_classes={{ model.layers[-1].out_features }}).float() 
+        {% else %}
+        labels = labels.unsqueeze(1)
+        {% endif -%}
+        loss = criterion(outputs, labels)
+        loss.backward()
+        # Update model parameters based on computed gradients
+        optimizer.step()
+        running_loss += loss.item()
+        if i % 10 == 9:    # Print every 10 mini-batches
+            print('[%d, %5d] loss: %.3f' %
+                  (epoch + 1, i + 1, running_loss / 10))
+            running_loss = 0.0
+
+print('Training finished')
+{%- endmacro -%}
+
+{% macro evaluate_model(model, prediction_task) -%}
+correct = 0
+total = 0
+print('##### Evaluating the model')
+# Disable gradient calculation during inference
+with torch.no_grad():
+    # Initialize lists to store predicted and true labels
+    predicted_labels = []
+    true_labels = []
+    for data in test_loader:
+        # Extract inputs and labels from the data batch
+        inputs, labels = data
+        # Forward pass
+        outputs = {{ model.name }}(inputs)
+        {% if prediction_task != "regression" -%}
+        _, predicted = torch.max(outputs.data, 1) 
+        {%- else -%}
+        predicted = outputs.numpy()
+        {%- endif %}
+        predicted_labels.extend(predicted)
+        true_labels.extend(labels)
+        
+# Calculate the metrics
+metrics = {{ model.parameters.metrics }}
+{%- if prediction_task != "regression" %}
+report = classification_report(true_labels, predicted_labels, output_dict=True)
+for metric in metrics:
+    {%- if prediction_task == "binary" %}
+    print(f"{metric.capitalize()}:", report['1'][metric])
+    {%- elif prediction_task == 'multi_class' %}
+    for class_label in report.keys():
+        if class_label != 'macro avg' and class_label != 'weighted avg':
+            print(f"{metric.capitalize()} for class {class_label}:", report[class_label][metric])
+    {%- endif -%}
+{%- else %}
+mae = mean_absolute_error(true_labels, predicted_labels)
+print("Mean Absolute Error (MAE):", mae)
+{%- endif -%}
+{% endmacro -%}

@@ -1,0 +1,45 @@
+{%- import "setup_nn_components.py.j2" as nn_components -%}
+import torch
+import torch.nn as nn
+from torchvision import datasets {% if train_data.has_images %}, transforms {%- endif %}
+{% if train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
+{%- else -%} from sklearn.metrics import mean_absolute_error {%- endif %}
+{% if train_data.has_images != True %}import pandas as pd {%- endif -%}
+
+
+{% set ns = namespace(abstract_found=false) -%}
+{% for class in classes -%}
+    {% if class.is_abstract -%}
+        {% set ns.abstract_found = true -%}
+    {% endif -%}    
+{% endfor -%}
+{% if ns.abstract_found -%}
+from abc import ABC, abstractmethod
+{% endif -%}
+{# Two newlines are added here unconditionally #}
+
+# Define the network architecture
+class NeuralNetwork(nn.Module):
+    def __init__(self):
+        super().__init__()
+        {%- for layer in model.layers %}{{ nn_components.setup_layers(layer) }}{% endfor %}
+
+    def forward(self, x):
+    {%- for layer_name in nn_components.layers_names %}
+        x = self.{{ layer_name }}(x)
+    {%- endfor %}
+        return x
+        
+# Dataset preparation
+{{ nn_components.prepare_data(train_data, test_data, model.parameters) -}}
+
+# Define the network, loss function, and optimizer
+{{ model.name }} = NeuralNetwork()
+criterion = {{ nn_components.get_loss_function(model.parameters) }}
+optimizer = {{ nn_components.get_optimizer(model) }}
+
+# Train the neural network
+{{ nn_components.train_model(model, train_data.task_type) }}
+
+# Evaluate the neural network
+{{ nn_components.evaluate_model(model, train_data.task_type) }}

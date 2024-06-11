@@ -3,17 +3,17 @@
 {% set layers_names = [] %}
 
 {%- macro setup_activation_function(layer)%}
-        {%- if layer.activation_function != None %}
+        {%- if layer.actv_func != None %}
             {%- set _ = layers_names.append(layer.name+"_activ") %}
-            {%- if layer.activation_function == "relu"  %}
+            {%- if layer.actv_func == "relu"  %}
         self.{{ layer.name }}_activ = nn.ReLU()
-            {%- elif layer.activation_function == "leaky_relu" %}
+            {%- elif layer.actv_func == "leaky_relu" %}
         self.{{ layer.name }}_activ = nn.LeakyReLU()
-            {%- elif layer.activation_function == "sigmoid" %}
+            {%- elif layer.actv_func == "sigmoid" %}
         self.{{ layer.name }}_activ = nn.Sigmoid()
-            {%- elif layer.activation_function == "softmax" %}
+            {%- elif layer.actv_func == "softmax" %}
         self.{{ layer.name }}_activ = nn.Softmax()
-            {%- elif layer.activation_function == "tanh" %}
+            {%- elif layer.actv_func == "tanh" %}
         self.{{ layer.name }}_activ = nn.Tanh()
             {%- endif -%}
         {%- else -%}

@@ -9,15 +9,15 @@ class Layer:
     
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
 
     Attributes:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
     """
-    def __init__(self, name: str, activation_function: str = None):
+    def __init__(self, name: str, actv_func: str = None):
         self.name: str = name
-        self.activation_function: str = activation_function
+        self.actv_func: str = actv_func
 
     
     @property
@@ -32,28 +32,28 @@ class Layer:
 
 
     @property
-    def activation_function(self) -> str:
-        """str: Get the activation_function."""
-        return self.__activation_function
+    def actv_func(self) -> str:
+        """str: Get the actv_func."""
+        return self.__actv_func
 
 
-    @activation_function.setter
-    def activation_function(self, activation_function: str):
-        """str: Set the activation_function.
+    @actv_func.setter
+    def actv_func(self, actv_func: str):
+        """str: Set the actv_func.
 
         Raises:
-            ValueError: If the activation_function is not one of the allowed 
+            ValueError: If the actv_func is not one of the allowed 
             options: 'relu', 'leaky_rely', 'sigmoid', 'softmax', and 'tanh'
         """
 
-        if activation_function not in ['relu', 'leaky_relu', 'sigmoid', 
+        if actv_func not in ['relu', 'leaky_relu', 'sigmoid', 
                                        'softmax', 'tanh', None]:
-            raise ValueError("Invalid value of activation_function")
-        self.__activation_function = activation_function
+            raise ValueError("Invalid value of actv_func")
+        self.__actv_func = actv_func
 
     
     def __repr__(self):
-        return f'Layer({self.name}, {self.activation_function})'
+        return f'Layer({self.name}, {self.actv_func})'
 
 
 class CNN(Layer):
@@ -61,7 +61,7 @@ class CNN(Layer):
 
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         kernel_height (int): The height of the convolving or pooling kernel.
         kernel_width (int): The width of the convolving  or pooling kernel.
         kernel_depth (int): The depth of the convolving  or pooling kernel.
@@ -73,7 +73,7 @@ class CNN(Layer):
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type 
+        actv_func (str): Inherited from Layer. It represents the type 
                                    of the activation function.
         kernel_height (int): The height of the convolving or pooling kernel.
         kernel_width (int): The width of the convolving  or pooling kernel.
@@ -85,10 +85,10 @@ class CNN(Layer):
         padding_type (str): The type of padding applied to the input. 
     """
 
-    def __init__(self, name: str, activation_function: str, kernel_height: int, 
+    def __init__(self, name: str, actv_func: str, kernel_height: int, 
                  kernel_width: int, kernel_depth: int, stride_height: int, stride_width: int, 
                  stride_depth: int, padding_amount: int = 0, padding_type: str = "valid"):
-        super().__init__(name, activation_function)
+        super().__init__(name, actv_func)
         self.kernel_height: int = kernel_height
         self.kernel_width: int = kernel_width
         self.kernel_depth: int = kernel_depth
@@ -189,7 +189,7 @@ class CNN(Layer):
 
 
     def __repr__(self):
-        return (f'CNN({self.name}, {self.activation_function}, {self.kernel_height}, '
+        return (f'CNN({self.name}, {self.actv_func}, {self.kernel_height}, '
                 f'{self.kernel_width}, {self.kernel_depth}, {self.stride_height}, '
                 f'{self.stride_width}, {self.stride_depth}, {self.padding_amount}, '
                 f'{self.padding_type})')
@@ -201,7 +201,7 @@ class ConvolutionalLayer(CNN):
 
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         in_channels (int): The number of channels in the input image.
         out_channels (int): The number of channels produced by the convolution.
         kernel_height (int): The height of the convolving kernel.
@@ -215,7 +215,7 @@ class ConvolutionalLayer(CNN):
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type 
+        actv_func (str): Inherited from Layer. It represents the type 
                                    of the activation function.
         in_channels (int): The number of channels in the input image.
         out_channels (int): The number of channels produced by the convolution.
@@ -229,11 +229,11 @@ class ConvolutionalLayer(CNN):
         padding_type (str): Inherited from CNN. The type of padding applied to the input. 
     """
         
-    def __init__(self, name: str, activation_function: str, in_channels: int, 
+    def __init__(self, name: str, actv_func: str, in_channels: int, 
                  out_channels: int, kernel_height: int, kernel_width: int, 
                  kernel_depth: int, stride_height: int, stride_width: int, 
                  stride_depth: int, padding_amount: int = 0, padding_type: str = "valid"):
-        super().__init__(name, activation_function, kernel_height, kernel_width, kernel_depth, 
+        super().__init__(name, actv_func, kernel_height, kernel_width, kernel_depth, 
                          stride_height, stride_width, stride_depth, padding_amount, padding_type)
         self.in_channels: int = in_channels
         self.out_channels: int = out_channels
@@ -262,7 +262,7 @@ class ConvolutionalLayer(CNN):
     
 
     def __repr__(self):
-        return (f'ConvolutionaLayer({self.name}, {self.activation_function},  {self.in_channels}, '
+        return (f'ConvolutionaLayer({self.name}, {self.actv_func},  {self.in_channels}, '
                 f'{self.out_channels}, {self.kernel_height}, {self.kernel_width}, '
                 f'{self.kernel_depth}, {self.stride_height}, {self.stride_width}, '
                 f'{self.stride_depth}, {self.padding_amount}, {self.padding_type})')
@@ -273,7 +273,7 @@ class Conv1D(ConvolutionalLayer):
 
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         in_channels (int): The number of channels in the input image.
         out_channels (int): The number of channels produced by the convolution.
         kernel_height (int): The height of the convolving kernel.
@@ -283,7 +283,7 @@ class Conv1D(ConvolutionalLayer):
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type 
+        actv_func (str): Inherited from Layer. It represents the type 
                                    of the activation function.
         in_channels (int): Inherited from ConvolutionalLayer. It represents the number of channels in the input image.
         out_channels (int): Inherited from ConvolutionalLayer. It represents the number of channels produced by the convolution.
@@ -292,15 +292,15 @@ class Conv1D(ConvolutionalLayer):
         padding_amount (int): Inherited from CNN. It represents the amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type of padding applied to the input. 
     """
-    def __init__(self, name: str, activation_function: str, in_channels: int, 
+    def __init__(self, name: str, actv_func: str, in_channels: int, 
                  out_channels: int, kernel_height: int, stride_height: int, 
                  padding_amount: int = 0, padding_type: str = "valid"):
-        super().__init__(name, activation_function, in_channels, out_channels, 
+        super().__init__(name, actv_func, in_channels, out_channels, 
                          kernel_height, None, None, stride_height, None, None, 
                          padding_amount, padding_type)
         
     def __repr__(self):
-        return (f'Conv1D({self.name}, {self.activation_function}, {self.in_channels}, '
+        return (f'Conv1D({self.name}, {self.actv_func}, {self.in_channels}, '
                 f'{self.out_channels}, {self.kernel_height}, {self.stride_height}, ' 
                 f'{self.padding_amount}, {self.padding_type})')
         
@@ -311,7 +311,7 @@ class Conv2D(ConvolutionalLayer):
 
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         in_channels (int): The number of channels in the input image.
         out_channels (int): The number of channels produced by the convolution.
         kernel_height (int): The height of the convolving kernel.
@@ -323,7 +323,7 @@ class Conv2D(ConvolutionalLayer):
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type 
+        actv_func (str): Inherited from Layer. It represents the type 
                                    of the activation function.
         in_channels (int): Inherited from ConvolutionalLayer. It represents the number of channels in the input image.
         out_channels (int): Inherited from ConvolutionalLayer. It represents the number of channels produced by the convolution.
@@ -334,16 +334,16 @@ class Conv2D(ConvolutionalLayer):
         padding_amount (int): Inherited from CNN. It represents the amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type of padding applied to the input. 
     """
-    def __init__(self, name: str, activation_function: str, in_channels: int, 
+    def __init__(self, name: str, actv_func: str, in_channels: int, 
                  out_channels: int, kernel_height: int, kernel_width: int, 
                  stride_height: int, stride_width: int, padding_amount: int = 0, 
                  padding_type: str = "valid"):
-        super().__init__(name, activation_function, in_channels, out_channels, 
+        super().__init__(name, actv_func, in_channels, out_channels, 
                          kernel_height, kernel_width, None, stride_height, 
                          stride_width, None, padding_amount, padding_type)
     
     def __repr__(self):
-        return (f'Conv2D({self.name}, {self.activation_function}, {self.in_channels}, '
+        return (f'Conv2D({self.name}, {self.actv_func}, {self.in_channels}, '
                 f'{self.out_channels}, {self.kernel_height}, {self.kernel_width}, '
                 f'{self.stride_height}, {self.stride_width}, {self.padding_amount}, '
                 f'{self.padding_type})')
@@ -353,7 +353,7 @@ class Conv3D(ConvolutionalLayer):
 
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         in_channels (int): The number of channels in the input image.
         out_channels (int): The number of channels produced by the convolution.
         kernel_height (int): The height of the convolving kernel.
@@ -367,7 +367,7 @@ class Conv3D(ConvolutionalLayer):
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type 
+        actv_func (str): Inherited from Layer. It represents the type 
                                    of the activation function.
         in_channels (int): Inherited from ConvolutionalLayer. It represents the number of channels in the input image.
         out_channels (int): Inherited from ConvolutionalLayer. It represents the number of channels produced by the convolution.
@@ -380,15 +380,15 @@ class Conv3D(ConvolutionalLayer):
         padding_amount (int): Inherited from CNN. It represents the amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type of padding applied to the input. 
     """
-    def __init__(self, name: str, activation_function: str, in_channels: int, out_channels: int, 
+    def __init__(self, name: str, actv_func: str, in_channels: int, out_channels: int, 
                  kernel_height: int, kernel_width: int, kernel_depth: int, stride_height: int, 
                  stride_width: int, stride_depth: int, padding_amount: int = 0, padding_type: str = "valid"):
-        super().__init__(name, activation_function, in_channels, out_channels, kernel_height, 
+        super().__init__(name, actv_func, in_channels, out_channels, kernel_height, 
                          kernel_width, kernel_depth, stride_height, stride_width, stride_depth, 
                          padding_amount, padding_type)
         
     def __repr__(self):
-        return (f'Conv3D({self.name}, {self.activation_function},  {self.in_channels}, '
+        return (f'Conv3D({self.name}, {self.actv_func},  {self.in_channels}, '
                 f'{self.out_channels}, {self.kernel_height}, {self.kernel_width}, '
                 f'{self.kernel_depth}, {self.stride_height}, {self.stride_width}, '
                 f'{self.stride_depth}, {self.padding_amount}, {self.padding_type})')
@@ -399,7 +399,7 @@ class PoolingLayer(CNN):
 
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         type (str): The type of pooling applied.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the pooling operation.
         kernel_height (int): The height of the pooling kernel.
@@ -415,7 +415,7 @@ class PoolingLayer(CNN):
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type 
+        actv_func (str): Inherited from Layer. It represents the type 
                                    of the activation function.
         type (str): It represents the type of pooling applied.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the pooling operation.
@@ -431,11 +431,11 @@ class PoolingLayer(CNN):
         dimension (str): The dimensionality of the pooling. Either 1D, 2D or 3D.
 
     """
-    def __init__(self, name: str, activation_function: str, pooling_type: str, dimension: str, 
+    def __init__(self, name: str, actv_func: str, pooling_type: str, dimension: str, 
                  kernel_height: int, stride_height: int, kernel_width: int = None, 
                  kernel_depth: int = None, stride_width: int = None, stride_depth: int = None, 
                  padding_amount: int = 0, padding_type: str = "valid"):
-        super().__init__(name, activation_function, kernel_height, kernel_width, kernel_depth, 
+        super().__init__(name, actv_func, kernel_height, kernel_width, kernel_depth, 
                          stride_height, stride_width, stride_depth, padding_amount, padding_type)
         self.pooling_type: str = pooling_type
         self.dimension: str = dimension
@@ -480,7 +480,7 @@ class PoolingLayer(CNN):
 
 
     def __repr__(self):
-        return (f'PoolingLayer({self.name}, {self.activation_function}, {self.pooling_type}, '
+        return (f'PoolingLayer({self.name}, {self.actv_func}, {self.pooling_type}, '
                 f'{self.dimension}, {self.kernel_height}, {self.stride_height}, '
                 f'{self.kernel_width}, {self.kernel_depth}, {self.stride_width}, '
                 f'{self.stride_depth}, {self.padding_amount}, {self.padding_type})')
@@ -492,57 +492,57 @@ class LayerModifier(Layer):
 
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type 
+        actv_func (str): Inherited from Layer. It represents the type 
                                    of the activation function.
     """
-    def __init__(self, name: str, activation_function: str):
-        super().__init__(name, activation_function)
+    def __init__(self, name: str, actv_func: str):
+        super().__init__(name, actv_func)
 
     def __repr__(self):
-        return f'LayerModifier({self.name}, {self.activation_function})'
+        return f'LayerModifier({self.name}, {self.actv_func})'
         
 class NormalizationLayer(LayerModifier):
     """Represents a type of layer that applies normalization techniques.
 
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type 
+        actv_func (str): Inherited from Layer. It represents the type 
                                    of the activation function.
     """
-    def __init__(self, name: str, activation_function: str):
-        super().__init__(name, activation_function)
+    def __init__(self, name: str, actv_func: str):
+        super().__init__(name, actv_func)
 
     def __repr__(self):
-        return f'NormalizationLayer({self.name}, {self.activation_function})'
+        return f'NormalizationLayer({self.name}, {self.actv_func})'
         
 class BatchNormLayer(NormalizationLayer):
     """Represents a type of layer that applies Batch Normalization.
     
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         num_features (int): The number of channels or features in each input sample.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the input data to be 
                          normalized using batch normalization.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type 
+        actv_func (str): Inherited from Layer. It represents the type 
                                    of the activation function.
         num_features (int): The number of channels or features in each input sample.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the input data to be 
                          normalized using batch normalization.
     """
-    def __init__(self, name: str, activation_function: str, num_features: int, dimension: str):
-        super().__init__(name, activation_function)
+    def __init__(self, name: str, actv_func: str, num_features: int, dimension: str):
+        super().__init__(name, actv_func)
         self.num_features: int = num_features
         self.dimension: str = dimension
 
@@ -577,7 +577,7 @@ class BatchNormLayer(NormalizationLayer):
 
 
     def __repr__(self):
-        return (f'BatchNormLayer({self.name}, {self.activation_function}, '
+        return (f'BatchNormLayer({self.name}, {self.actv_func}, '
                 f'{self.num_features}, {self.dimension})')
 
 class LayerNormLayer(NormalizationLayer):
@@ -585,7 +585,7 @@ class LayerNormLayer(NormalizationLayer):
     
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         norm_channels (int): It represents the number of channels or features in the input 
                              data, guiding per-channel normalization across samples.
         norm_height (int): It represents the height of each input data, guiding normalization
@@ -595,7 +595,7 @@ class LayerNormLayer(NormalizationLayer):
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type 
+        actv_func (str): Inherited from Layer. It represents the type 
                                    of the activation function.
         norm_channels (int): It represents the number of channels or features in each input 
                              sample, guiding per-channel normalization across samples.
@@ -604,9 +604,9 @@ class LayerNormLayer(NormalizationLayer):
         norm_width (int):  It represents the width of the input sample, guiding normalization
                            along the width dimension.
     """
-    def __init__(self, name: str, activation_function: str, norm_channels: int,
+    def __init__(self, name: str, actv_func: str, norm_channels: int,
                  norm_height: int = None, norm_width: int = None):
-        super().__init__(name, activation_function)
+        super().__init__(name, actv_func)
         self.norm_channels: int = norm_channels
         self.norm_height: int = norm_height
         self.norm_width: int = norm_width
@@ -642,7 +642,7 @@ class LayerNormLayer(NormalizationLayer):
         self.__norm_width = norm_width
 
     def __repr__(self):
-        return (f'LayerNormLayer({self.name}, {self.activation_function}, '
+        return (f'LayerNormLayer({self.name}, {self.actv_func}, '
                 f'{self.norm_channels}, {self.norm_height}, ' 
                 f'{self.norm_width})')
 
@@ -680,21 +680,21 @@ class RNN(Layer):
 
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         input_size (int): It represents the dimensionality of the input features.
         hidden_size (int): It represents the number of units in the hidden state, which captures the network's 
                            internal representation of the input sequence.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type of the activation
+        actv_func (str): Inherited from Layer. It represents the type of the activation
                                    function.
         input_size (int): It represents the dimensionality of the input features.
         hidden_size (int): It represents the number of units in the hidden state, which captures the network's 
                            internal representation of the input sequence.
     """
-    def __init__(self, name: str, activation_function: str, input_size: int, hidden_size: int):
-        super().__init__(name, activation_function)
+    def __init__(self, name: str, actv_func: str, input_size: int, hidden_size: int):
+        super().__init__(name, actv_func)
         self.input_size: int = input_size
         self.hidden_size: int = hidden_size
 
@@ -720,7 +720,7 @@ class RNN(Layer):
 
 
     def __repr__(self):
-        return (f'RNN({self.name}, {self.activation_function}, {self.input_size}, '
+        return (f'RNN({self.name}, {self.actv_func}, {self.input_size}, '
                 f'{self.hidden_size})')
 
 class SimpleRNNLayer(RNN):
@@ -728,24 +728,24 @@ class SimpleRNNLayer(RNN):
 
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         input_size (int): It represents the dimensionality of the input features.
         hidden_size (int): It represents the number of units in the hidden state, which captures the network's 
                            internal representation of the input sequence.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type of the activation
+        actv_func (str): Inherited from Layer. It represents the type of the activation
                                    function.
         input_size (int): Inherited from RNN. It represents the dimensionality of the input features.
         hidden_size (int): Inherited from RNN. It represents the number of units in the hidden state, which captures 
                            the network's internal representation of the input sequence.
     """
-    def __init__(self, name: str, activation_function: str, input_size: int, hidden_size: int):
-        super().__init__(name, activation_function, input_size, hidden_size)
+    def __init__(self, name: str, actv_func: str, input_size: int, hidden_size: int):
+        super().__init__(name, actv_func, input_size, hidden_size)
 
     def __repr__(self):
-        return f'SimpleRNNLayer({self.name}, {self.activation_function}, {self.input_size}, {self.hidden_size})'
+        return f'SimpleRNNLayer({self.name}, {self.actv_func}, {self.input_size}, {self.hidden_size})'
     
 
 class LSTMLayer(RNN):
@@ -753,24 +753,24 @@ class LSTMLayer(RNN):
  
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         input_size (int): It represents the dimensionality of the input features.
         hidden_size (int): It represents the number of units in the hidden state, which captures the network's 
                            internal representation of the input sequence.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type of the activation
+        actv_func (str): Inherited from Layer. It represents the type of the activation
                                    function.
         input_size (int): Inherited from RNN. It represents the dimensionality of the input features.
         hidden_size (int): Inherited from RNN. It represents the number of units in the hidden state, which captures 
                            the network's internal representation of the input sequence.
     """
-    def __init__(self, name: str, activation_function: str, input_size: int, hidden_size: int):
-        super().__init__(name, activation_function, input_size, hidden_size)
+    def __init__(self, name: str, actv_func: str, input_size: int, hidden_size: int):
+        super().__init__(name, actv_func, input_size, hidden_size)
 
     def __repr__(self):
-        return f'LSTMLayer({self.name}, {self.activation_function}, {self.input_size}, {self.hidden_size})'
+        return f'LSTMLayer({self.name}, {self.actv_func}, {self.input_size}, {self.hidden_size})'
         
 
 class GRULayer(RNN):
@@ -778,63 +778,63 @@ class GRULayer(RNN):
  
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         input_size (int): It represents the dimensionality of the input features.
         hidden_size (int): It represents the number of units in the hidden state, which captures the network's 
                            internal representation of the input sequence.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type of the activation
+        actv_func (str): Inherited from Layer. It represents the type of the activation
                                    function.
         input_size (int): Inherited from RNN. It represents the dimensionality of the input features.
         hidden_size (int): Inherited from RNN. It represents the number of units in the hidden state, which captures 
                            the network's internal representation of the input sequence.
     """
-    def __init__(self, name: str, activation_function: str, input_size: int, hidden_size: int):
-        super().__init__(name, activation_function, input_size, hidden_size)
+    def __init__(self, name: str, actv_func: str, input_size: int, hidden_size: int):
+        super().__init__(name, actv_func, input_size, hidden_size)
 
     def __repr__(self):
-        return f'GRULayer({self.name}, {self.activation_function}, {self.input_size}, {self.hidden_size})'
+        return f'GRULayer({self.name}, {self.actv_func}, {self.input_size}, {self.hidden_size})'
 
 class GeneralLayer(Layer):
     """Represents a layer that encapsulates common functionalities utilized across diverse layer types.".
  
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type of the activation
+        actv_func (str): Inherited from Layer. It represents the type of the activation
                                    function.
     """
-    def __init__(self, name: str, activation_function: str):
-        super().__init__(name, activation_function)
+    def __init__(self, name: str, actv_func: str):
+        super().__init__(name, actv_func)
 
     def __repr__(self):
-        return f'GeneralLayer({self.name}, {self.activation_function})'
+        return f'GeneralLayer({self.name}, {self.actv_func})'
 
 class InputLayer(GeneralLayer):
     """Represents the initial layer of an NN architecture, serving as the entry point for input data.
  
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         input_dim1 (int): It represents the size of the first axis of the input tensor.
         input_dim2 (int): It represents the size of the second axis of the input tensor.
         input_dim3 (int): It represents the size of the third axis of the input tensor.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type of the activation
+        actv_func (str): Inherited from Layer. It represents the type of the activation
                                    function.
         input_dim1 (int): It represents the size of the first axis of the input tensor.
         input_dim2 (int): It represents the size of the second axis of the input tensor.
         input_dim3 (int): It represents the size of the third axis of the input tensor.
     """
-    def __init__(self, name: str, activation_function: str, input_dim1: int, input_dim2: int, input_dim3: int):
-        super().__init__(name, activation_function)
+    def __init__(self, name: str, actv_func: str, input_dim1: int, input_dim2: int, input_dim3: int):
+        super().__init__(name, actv_func)
         self.input_dim1: int = input_dim1
         self.input_dim2: int = input_dim2
         self.input_dim3: int = input_dim3
@@ -870,7 +870,7 @@ class InputLayer(GeneralLayer):
         self.__input_dim3 = input_dim3
 
     def __repr__(self):
-        return (f'InputLayer({self.name}, {self.activation_function}, {self.input_dim1}, '
+        return (f'InputLayer({self.name}, {self.actv_func}, {self.input_dim1}, '
                 f'{self.input_dim2}, {self.input_dim3})')
 
 
@@ -879,19 +879,19 @@ class LinearLayer(GeneralLayer):
  
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         in_features (int): It represents the size of each input sample.
         out_features (int): It represents the size of each output sample.
 
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type of the activation
+        actv_func (str): Inherited from Layer. It represents the type of the activation
                                    function.
         in_features (int): It represents the size of each input sample.
         out_features (int): It represents the size of each output sample.
     """
-    def __init__(self, name: str, activation_function: str, in_features: int, out_features: int):
-        super().__init__(name, activation_function)
+    def __init__(self, name: str, actv_func: str, in_features: int, out_features: int):
+        super().__init__(name, actv_func)
         self.in_features: int = in_features
         self.out_features: int = out_features
 
@@ -916,7 +916,7 @@ class LinearLayer(GeneralLayer):
         self.__out_features = out_features
 
     def __repr__(self):
-        return (f'LinearLayer({self.name}, {self.activation_function}, ' 
+        return (f'LinearLayer({self.name}, {self.actv_func}, ' 
                 f'{self.in_features}, {self.out_features})')
 
 class FlattenLayer(GeneralLayer):
@@ -924,18 +924,18 @@ class FlattenLayer(GeneralLayer):
  
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type of the activation
+        actv_func (str): Inherited from Layer. It represents the type of the activation
                                    function.
     """
-    def __init__(self, name: str, activation_function: str):
-        super().__init__(name, activation_function)
+    def __init__(self, name: str, actv_func: str):
+        super().__init__(name, actv_func)
 
     def __repr__(self):
-        return f'FlattenLayer({self.name}, {self.activation_function})'
+        return f'FlattenLayer({self.name}, {self.actv_func})'
 
         
 class EmbeddingLayer(GeneralLayer):
@@ -943,19 +943,19 @@ class EmbeddingLayer(GeneralLayer):
  
     Args:
         name (str): The name of the layer.
-        activation_function (str): The type of the activation function.
+        actv_func (str): The type of the activation function.
         num_embeddings (int): The size of the dictionary of embeddings.
         embedding_dim (int): The size of each embedding vector.
         
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
-        activation_function (str): Inherited from Layer. It represents the type of the activation
+        actv_func (str): Inherited from Layer. It represents the type of the activation
                                    function.
         num_embeddings (int): The size of the dictionary of embeddings.
         embedding_dim (int): The size of each embedding vector.
     """
-    def __init__(self, name: str, activation_function: str, num_embeddings: int, embedding_dim: int):
-        super().__init__(name, activation_function)
+    def __init__(self, name: str, actv_func: str, num_embeddings: int, embedding_dim: int):
+        super().__init__(name, actv_func)
         self.num_embeddings: int = num_embeddings
         self.embedding_dim: int = embedding_dim
 
@@ -980,7 +980,7 @@ class EmbeddingLayer(GeneralLayer):
         self.__embedding_dim = embedding_dim
 
     def __repr__(self):
-        return (f'EmbeddingLayer({self.name}, {self.activation_function}, ' 
+        return (f'EmbeddingLayer({self.name}, {self.actv_func}, ' 
                 f'{self.num_embeddings}, {self.embedding_dim})')
 
 

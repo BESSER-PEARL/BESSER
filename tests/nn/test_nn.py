@@ -8,21 +8,21 @@ from besser.BUML.metamodel.nn import InputLayer, LinearLayer, EmbeddingLayer, \
 
 # Test general layers
 def test_general_layer():
-    input_layer: InputLayer = InputLayer(name="input_layer", activation_function="relu", 
+    input_layer: InputLayer = InputLayer(name="input_layer", actv_func="relu", 
                                          input_dim1=125, input_dim2=125, input_dim3=125)
-    linear_layer: LinearLayer = LinearLayer(name="linear_layer", activation_function="relu", 
+    linear_layer: LinearLayer = LinearLayer(name="linear_layer", actv_func="relu", 
                                             in_features=10, out_features=20)
-    embedding_layer: EmbeddingLayer = EmbeddingLayer(name="embedding_layer", activation_function="relu", 
+    embedding_layer: EmbeddingLayer = EmbeddingLayer(name="embedding_layer", actv_func="relu", 
                                                      num_embeddings=10, embedding_dim=20)
     assert input_layer.name == "input_layer"
     assert input_layer.input_dim1 == 125
     assert linear_layer.in_features == 10
     assert embedding_layer.num_embeddings == 10 
-    assert embedding_layer.activation_function == "relu"
+    assert embedding_layer.actv_func == "relu"
 
 # Test RNN layers
 def test_rnn_layer():
-    simple_rnn_layer: SimpleRNNLayer = SimpleRNNLayer(name="simple_rnn_layer", activation_function="relu", 
+    simple_rnn_layer: SimpleRNNLayer = SimpleRNNLayer(name="simple_rnn_layer", actv_func="relu", 
                                                       input_size=64, hidden_size=32)
     assert simple_rnn_layer.name == "simple_rnn_layer"
     assert simple_rnn_layer.input_size == 64
@@ -30,11 +30,11 @@ def test_rnn_layer():
 
 #Test conv layers
 def test_conv_layer():
-    conv1_layer: Conv1D = Conv1D(name="conv1_layer", activation_function="relu", in_channels=3, out_channels=6, 
+    conv1_layer: Conv1D = Conv1D(name="conv1_layer", actv_func="relu", in_channels=3, out_channels=6, 
                                  kernel_height=3, stride_height=2)
-    conv2_layer: Conv2D = Conv2D(name="conv2_layer", activation_function="relu", in_channels=3, out_channels=6, 
+    conv2_layer: Conv2D = Conv2D(name="conv2_layer", actv_func="relu", in_channels=3, out_channels=6, 
                                  kernel_height=3, kernel_width=4, stride_height=2, stride_width=3)
-    conv3_layer: Conv3D = Conv3D(name="conv3_layer", activation_function="relu", in_channels=3, out_channels=6, 
+    conv3_layer: Conv3D = Conv3D(name="conv3_layer", actv_func="relu", in_channels=3, out_channels=6, 
                                  kernel_height=3, kernel_width=4, kernel_depth=5, stride_height=2, stride_width=3, 
                                  stride_depth=4)
     
@@ -48,7 +48,7 @@ def test_conv_layer():
 
 #Test pooling layers
 def test_pooling_layer():
-    pool_avg1_layer: PoolingLayer = PoolingLayer(name="pool_avg1_layer", activation_function="relu",  kernel_height=3, 
+    pool_avg1_layer: PoolingLayer = PoolingLayer(name="pool_avg1_layer", actv_func="relu",  kernel_height=3, 
                                                  stride_height=2, pooling_type="average", dimension="1D", padding_type="same")
     assert pool_avg1_layer.name == "pool_avg1_layer"
     assert pool_avg1_layer.stride_height == 2
@@ -57,7 +57,7 @@ def test_pooling_layer():
 #Test cnn layers padding
 def test_cnn_padding():
     with pytest.raises(ValueError) as excinfo:
-        conv1_layer: Conv1D = Conv1D(name="conv1_layer", activation_function="relu", in_channels=3, out_channels=6, 
+        conv1_layer: Conv1D = Conv1D(name="conv1_layer", actv_func="relu", in_channels=3, out_channels=6, 
                                      kernel_height=3, stride_height=2, padding_type="my_padding")
     assert ("Invalid padding type" in str(excinfo.value))
  
@@ -65,14 +65,14 @@ def test_cnn_padding():
 #Test pooling type
 def test_pooling_type():
     with pytest.raises(ValueError) as excinfo:
-        pool_avg1_layer: PoolingLayer = PoolingLayer(name="pool_avg1_layer", activation_function="relu",  kernel_height=3, 
+        pool_avg1_layer: PoolingLayer = PoolingLayer(name="pool_avg1_layer", actv_func="relu",  kernel_height=3, 
                                                      stride_height=2, pooling_type="my_type", dimension="1D")
     assert ("Invalid pooling type" in str(excinfo.value))
 
 #Test pooling dimension
 def test_pooling_dimension():
     with pytest.raises(ValueError) as excinfo:
-        pool_avg1_layer: PoolingLayer = PoolingLayer(name="pool_avg1_layer", activation_function="relu",  kernel_height=3, 
+        pool_avg1_layer: PoolingLayer = PoolingLayer(name="pool_avg1_layer", actv_func="relu",  kernel_height=3, 
                                                      stride_height=2, pooling_type="average", dimension="my_dimension")
     assert ("Invalid pooling dimensionality" in str(excinfo.value))
 
@@ -85,9 +85,9 @@ def test_dropout_layer():
 
 #Test normalization layer
 def test_normalization_layer():
-    batch_norm_layer: BatchNormLayer = BatchNormLayer(name="batch_norm_layer", activation_function="relu", 
+    batch_norm_layer: BatchNormLayer = BatchNormLayer(name="batch_norm_layer", actv_func="relu", 
                                                       num_features=3, dimension="3D")
-    layer_norm_layer: LayerNormLayer = LayerNormLayer(name="layer_norm_layer", activation_function="relu", norm_channels=3,
+    layer_norm_layer: LayerNormLayer = LayerNormLayer(name="layer_norm_layer", actv_func="relu", norm_channels=3,
                                                       norm_height=2, norm_width=4)
     assert batch_norm_layer.num_features == 3
     assert layer_norm_layer.norm_channels == 3
@@ -99,7 +99,7 @@ def test_normalization_layer():
 #Test batch norm dimension
 def test_batch_norm_dimension():
     with pytest.raises(ValueError) as excinfo:
-        batch_norm_layer: BatchNormLayer = BatchNormLayer(name="batch_norm_layer", activation_function="relu", 
+        batch_norm_layer: BatchNormLayer = BatchNormLayer(name="batch_norm_layer", actv_func="relu", 
                                                           num_features=3, dimension="my_dimension")
     assert ("Invalid data dimensionality" in str(excinfo.value))
 
@@ -107,7 +107,7 @@ def test_batch_norm_dimension():
 #Test activation function
 def test_activation_function():
     with pytest.raises(ValueError) as excinfo:
-        conv1_layer: Conv1D = Conv1D(name="conv1_layer", activation_function="my_af", in_channels=3, out_channels=6, 
+        conv1_layer: Conv1D = Conv1D(name="conv1_layer", actv_func="my_af", in_channels=3, out_channels=6, 
                                      kernel_height=3, stride_height=2)
     assert ("Invalid value of activation_function" in str(excinfo.value))
 
@@ -208,11 +208,11 @@ def test_regularization():
 # Test nn model
 def test_nn():
     nn_model: NN = NN(name="my_model")
-    conv1_layer: Conv1D = Conv1D(name="conv1_layer", activation_function="relu", in_channels=3, out_channels=6, 
+    conv1_layer: Conv1D = Conv1D(name="conv1_layer", actv_func="relu", in_channels=3, out_channels=6, 
                                  kernel_height=3, stride_height=2)
-    pool_avg1_layer: PoolingLayer = PoolingLayer(name="pool_avg1_layer", activation_function="relu",  kernel_height=3, 
+    pool_avg1_layer: PoolingLayer = PoolingLayer(name="pool_avg1_layer", actv_func="relu",  kernel_height=3, 
                                                  stride_height=2, pooling_type="average", dimension="1D", padding_type="same")
-    linear_layer: LinearLayer = LinearLayer(name="linear_layer", activation_function="relu", 
+    linear_layer: LinearLayer = LinearLayer(name="linear_layer", actv_func="relu", 
                                             in_features=10, out_features=20)
     
     my_parameters: Parameters = Parameters(batch_size=16, epochs=20, learning_rate=0.01, 

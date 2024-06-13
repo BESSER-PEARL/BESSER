@@ -4,38 +4,54 @@ from torchvision import datasets , transforms
 from sklearn.metrics import classification_report
 
 
+
+import numpy as np
+import random
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# Set a specific seed
+set_seed(42)
+
+
+
+
 # Define the network architecture
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         self.l1 = nn.Conv2d(3, 6, kernel_size=(5, 5), stride=(1, 1), padding=0)
-        self.l1_activ = nn.ReLU()
         self.l2 = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0)
         self.l3 = nn.Conv2d(6, 16, kernel_size=(5, 5), stride=(1, 1), padding=0)
-        self.l3_activ = nn.ReLU()
         self.l4 = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0)
         self.l5 = nn.Flatten()
-        self.l6 =  nn.Linear(in_features=12544, out_features=120)
-        self.l6_activ = nn.ReLU()
-        self.l7 =  nn.Linear(in_features=120, out_features=84)
-        self.l7_activ = nn.ReLU()
-        self.l8 =  nn.Linear(in_features=84, out_features=2)
-        self.l8_activ = nn.Softmax()
+        self.l6 = nn.Linear(in_features=12544, out_features=120)
+        self.l7 = nn.Linear(in_features=120, out_features=84)
+        self.l8 = nn.Linear(in_features=84, out_features=2)
+        self.relu_activ = nn.ReLU()
+        self.softmax_activ = nn.Softmax()
 
     def forward(self, x):
         x = self.l1(x)
-        x = self.l1_activ(x)
+        x = self.relu_activ(x)
         x = self.l2(x)
         x = self.l3(x)
-        x = self.l3_activ(x)
+        x = self.relu_activ(x)
         x = self.l4(x)
         x = self.l5(x)
         x = self.l6(x)
-        x = self.l6_activ(x)
+        x = self.relu_activ(x)
         x = self.l7(x)
-        x = self.l7_activ(x)
+        x = self.relu_activ(x)
         x = self.l8(x)
-        x = self.l8_activ(x)
+        x = self.softmax_activ(x)
         return x
         
 # Dataset preparation
@@ -47,10 +63,10 @@ transform = transforms.Compose([
 
 # Load the training dataset
 # Directory structure: root/class1/img1.jpg, root/class1/img2.jpg, root/class2/img1.jpg, ...
-train_dataset = datasets.ImageFolder(root=r"dataset\images\train", transform=transform)
+train_dataset = datasets.ImageFolder(root=r"dataset\images_lions_cheetahs\train", transform=transform)
 
 # Load the testing dataset that is in a similar directory structure
-test_dataset = datasets.ImageFolder(root=r"dataset\images\test", transform=transform)
+test_dataset = datasets.ImageFolder(root=r"dataset\images_lions_cheetahs\test", transform=transform)
 
 # Create data loaders
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=6, shuffle=True)

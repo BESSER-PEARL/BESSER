@@ -1,0 +1,50 @@
+{%- import "setup_nn_components.py.j2" as nn_components -%}
+import torch
+import torch.nn as nn
+from torchvision import datasets {% if train_data.has_images %}, transforms {%- endif %}
+{% if train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
+{%- else -%} from sklearn.metrics import mean_absolute_error {%- endif %}
+{% if train_data.has_images != True %}import pandas as pd {%- endif %}
+
+
+import numpy as np
+import random
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# Set a specific seed
+set_seed(42)
+
+
+
+# Define the network architecture
+
+{{ model.name }} = nn.Sequential(
+    {%- for layer in model.layers -%}{{- nn_components.setup_layers(layer) -}}{%- endfor -%}
+    {%- for layer_def in nn_components.layers_definition -%}
+        {% set my_layer = layer_def.split('=', 1)[1].strip() %}
+    {{ my_layer }},
+    {%- endfor %}
+)
+
+        
+# Dataset preparation
+{{ nn_components.prepare_data(train_data, test_data, model.parameters) -}}
+
+# Define the network, loss function, and optimizer
+
+criterion = {{ nn_components.get_loss_function(model.parameters) }}
+optimizer = {{ nn_components.get_optimizer(model) }}
+
+# Train the neural network
+{{ nn_components.train_model(model, train_data.task_type) }}
+
+# Evaluate the neural network
+{{ nn_components.evaluate_model(model, train_data.task_type) }}

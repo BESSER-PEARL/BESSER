@@ -12,12 +12,15 @@ class PytorchGenerator(GeneratorInterface):
         model (NN): An instance of the NN Model class representing the B-UML model.
         train_data (TrainingDataset): An instance of the training dataset class representing the dataset used to train the NN model.
         test_data (TestDataset): An instance of the test dataset class representing the dataset used to evaluate the NN model.
+        model_type (str): The type of pytorch model generated. It can be either "sequential" or "functional". It defaults to "functional" 
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
-    def __init__(self, model: NN, train_data: TrainingDataset, test_data: TestDataset, output_dir: str = None):
+    def __init__(self, model: NN, train_data: TrainingDataset, test_data: TestDataset,
+                 output_dir: str = None, model_type: str = "functional"):
         super().__init__(model, output_dir)
         self.train_data: TrainingDataset = train_data
         self.test_data: TestDataset = test_data
+        self.model_type: str = model_type
 
     def generate(self):
         """
@@ -32,7 +35,7 @@ class PytorchGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('template_pytorch.py.j2')
+        template = env.get_template(f"template_pytorch_{self.model_type}.py.j2")
         with open(file_path, mode="w") as f:
             generated_code = template.render(model=self.model, train_data=self.train_data, test_data=self.test_data)
             f.write(generated_code)

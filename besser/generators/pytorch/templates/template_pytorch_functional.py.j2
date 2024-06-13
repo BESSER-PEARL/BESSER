@@ -4,25 +4,43 @@ import torch.nn as nn
 from torchvision import datasets {% if train_data.has_images %}, transforms {%- endif %}
 {% if train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
 {%- else -%} from sklearn.metrics import mean_absolute_error {%- endif %}
-{% if train_data.has_images != True %}import pandas as pd {%- endif -%}
+{% if train_data.has_images != True %}import pandas as pd {%- endif %}
 
 
-{% set ns = namespace(abstract_found=false) -%}
-{% for class in classes -%}
-    {% if class.is_abstract -%}
-        {% set ns.abstract_found = true -%}
-    {% endif -%}    
-{% endfor -%}
-{% if ns.abstract_found -%}
-from abc import ABC, abstractmethod
-{% endif -%}
-{# Two newlines are added here unconditionally #}
+import numpy as np
+import random
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# Set a specific seed
+set_seed(42)
+
+
+{% set activ_func_list = [] %}
 
 # Define the network architecture
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
-        {%- for layer in model.layers %}{{ nn_components.setup_layers(layer) }}{% endfor %}
+        {%- for layer in model.layers -%}{{- nn_components.setup_layers(layer) -}}{%- endfor -%}
+        {%- for layer_def in nn_components.layers_definition %}
+            {%- if layer_def.split('=', 1)[0].strip().endswith("activ") %}
+                {%- set _ = activ_func_list.append(layer_def)-%}
+            {%- else %}
+        {{ layer_def }}
+        {%- endif -%}
+        {%- endfor %}
+        {%- set activ_func_set = activ_func_list | unique -%}
+        {%- for layer_def in activ_func_set %}
+        {{ layer_def }}
+        {%- endfor %}
 
     def forward(self, x):
     {%- for layer_name in nn_components.layers_names %}

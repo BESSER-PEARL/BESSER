@@ -109,7 +109,7 @@ def test_activation_function():
     with pytest.raises(ValueError) as excinfo:
         conv1_layer: Conv1D = Conv1D(name="conv1_layer", actv_func="my_af", in_channels=3, out_channels=6, 
                                      kernel_height=3, stride_height=2)
-    assert ("Invalid value of activation_function" in str(excinfo.value))
+    assert ("Invalid value of actv_func" in str(excinfo.value))
 
 
 #Test dataset

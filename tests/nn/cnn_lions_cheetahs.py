@@ -28,9 +28,9 @@ label2 = Label(col_name="target", label_name="cheetah")
 
 image = Image(height=125, width=125, channels=3)
 
-train_data = TrainingDataset(name="train_data", path_data=r"dataset\images\train", 
-                             task_type="binary", has_images=True, features={image}, labels={label1, label2})
-test_data = TestDataset(name="test_data", path_data=r"dataset\images\test")
+train_data = TrainingDataset(name="train_data", path_data=r"dataset\images_lions_cheetahs\train", 
+                             task_type="binary", has_images=True, image=image, labels={label1, label2})
+test_data = TestDataset(name="test_data", path_data=r"dataset\images_lions_cheetahs\test")
 
 pytorch_model = PytorchGenerator(model=nn_model, train_data=train_data, test_data=test_data, output_dir="output/cnn")
 pytorch_model.generate() 

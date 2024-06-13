@@ -1,107 +1,124 @@
 {# Template for nn components #}
 
+{% macro add_to_set(current_set, new_element) %}
+    {{ current_set }} ggg
+    {% if new_element not in current_set %}
+        new_element not in current_set
+        {% set updated_set = current_set + [new_element] %}
+    {% else %}
+        {% set updated_set = current_set %}
+    {% endif %}
+    {{ updated_set }}
+{% endmacro %}
+
+
 {% set layers_names = [] %}
+{% set layers_definition = [] %}
 
 {%- macro setup_activation_function(layer)%}
         {%- if layer.actv_func != None %}
-            {%- set _ = layers_names.append(layer.name+"_activ") %}
+            {%- set _ = layers_names.append(layer.actv_func+"_activ") %}
             {%- if layer.actv_func == "relu"  %}
-        self.{{ layer.name }}_activ = nn.ReLU()
+        {%- set _ = layers_definition.append("self.relu_activ = nn.ReLU()") %}
             {%- elif layer.actv_func == "leaky_relu" %}
-        self.{{ layer.name }}_activ = nn.LeakyReLU()
+        {%- set _ = layers_definition.append("self.leaky_relu_activ = nn.LeakyReLU()") %}
             {%- elif layer.actv_func == "sigmoid" %}
-        self.{{ layer.name }}_activ = nn.Sigmoid()
+        {%- set _ = layers_definition.append("self.sigmoid_activ = nn.Sigmoid()") %}
             {%- elif layer.actv_func == "softmax" %}
-        self.{{ layer.name }}_activ = nn.Softmax()
+        {%- set _ = layers_definition.append("self.softmax_activ = nn.Softmax()") %}
             {%- elif layer.actv_func == "tanh" %}
-        self.{{ layer.name }}_activ = nn.Tanh()
+        {%- set _ = layers_definition.append("self.tanh_activ = nn.Tanh()") %}
             {%- endif -%}
         {%- else -%}
         {%- endif -%}
 {% endmacro -%}
 
-{%- macro setup_cnn(layer) %}
-    {%- if layer.__class__.__name__ == "Conv1D" %}
-        self.{{ layer.name }} = nn.Conv1d({{ layer.in_channels }}, {{ layer.out_channels }}, kernel_size={{ layer.kernel_height }}, stride={{ layer.stride_height }}, padding={{ layer.padding_amount }}) 
-    {%- elif layer.__class__.__name__ == "Conv2D" %}
-        self.{{ layer.name }} = nn.Conv2d({{ layer.in_channels }}, {{ layer.out_channels }}, kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}), padding={{ layer.padding_amount }})
-    {%- elif layer.__class__.__name__ == "Conv3D" %}
-        self.{{ layer.name }} = nn.Conv3d({{ layer.in_channels }}, {{ layer.out_channels }}, kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}, {{ layer.kernel_depth }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}, {{ layer.stride_depth }}), padding={{ layer.padding_amount }})
+{%- macro setup_cnn(layer) -%}
+    {%- if layer.__class__.__name__ == "Conv1D" -%}
+        {%- set my_layer %}self.{{ layer.name }} = nn.Conv1d({{ layer.in_channels }}, {{ layer.out_channels }}, kernel_size={{ layer.kernel_height }}, stride={{ layer.stride_height }}, padding={{ layer.padding_amount }}){%- endset -%}
+    {%- elif layer.__class__.__name__ == "Conv2D" -%}
+        {%- set my_layer %}self.{{ layer.name }} = nn.Conv2d({{ layer.in_channels }}, {{ layer.out_channels }}, kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}), padding={{ layer.padding_amount }}){%- endset -%}
+    {%- elif layer.__class__.__name__ == "Conv3D" -%}
+        {%- set my_layer %}self.{{ layer.name }} = nn.Conv3d({{ layer.in_channels }}, {{ layer.out_channels }}, kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}, {{ layer.kernel_depth }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}, {{ layer.stride_depth }}), padding={{ layer.padding_amount }}){%- endset -%}
     {%- elif layer.__class__.__name__ == "PoolingLayer" -%}
         {%- if layer.type == "average" -%}
-            {% set pl = "Avg" -%}
+            {%- set pl = "Avg" -%}
         {%- else -%}
-            {% set pl = "Max" -%}
+            {%- set pl = "Max" -%}
         {%- endif -%}
-        {%- if layer.dimension == "1D" %}
-        self.{{ layer.name }} = nn.{{ pl }}Pool1d(kernel_size={{ layer.kernel_height }}, stride={{ layer.stride_height }}, padding={{ layer.padding_amount }})
-            {%- elif layer.dimension == "2D" %}
-        self.{{ layer.name }} = nn.{{ pl }}Pool2d(kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}), padding={{ layer.padding_amount }})
-            {%- else %}
-        self.{{ layer.name }} = nn.{{ pl }}Pool3d(kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}, {{ layer.kernel_depth }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}, {{ layer.stride_depth }}), padding={{ layer.padding_amount }})        
+        {%- if layer.dimension == "1D" -%}
+        {%- set my_layer %}self.{{ layer.name }} = nn.{{ pl }}Pool1d(kernel_size={{ layer.kernel_height }}, stride={{ layer.stride_height }}, padding={{ layer.padding_amount }}){%- endset -%}
+            {%- elif layer.dimension == "2D" -%}
+        {%- set my_layer %}self.{{ layer.name }} = nn.{{ pl }}Pool2d(kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}), padding={{ layer.padding_amount }}){%- endset -%}
+            {%- else -%}
+        {%- set my_layer %}self.{{ layer.name }} = nn.{{ pl }}Pool3d(kernel_size=({{ layer.kernel_height }}, {{ layer.kernel_width }}, {{ layer.kernel_depth }}), stride=({{ layer.stride_height }}, {{ layer.stride_width }}, {{ layer.stride_depth }}), padding={{ layer.padding_amount }}){%- endset -%}     
             {%- endif -%}
     {%- endif -%}
+    {%- set _ = layers_definition.append(my_layer) -%}
     {{- setup_activation_function(layer) -}}
-{% endmacro -%}
+{%- endmacro -%}
 
-{%- macro setup_rnn(layer) %}
-    {%- if layer.__class__.__name__ == "SimpleRNNLayer" %}
-        self.{{ layer.name }} = nn.RNN({{ layer.input_size }}, {{ layer.hidden_size }})
-    {%- elif layer.__class__.__name__ == "LSTMLayer" %}
-        self.{{ layer.name }} = nn.LSTM({{ layer.input_size }}, {{ layer.hidden_size }})
-    {%- elif layer.__class__.__name__ == "GRULayer" %}
-        self.{{ layer.name }} = nn.GRU({{ layer.input_size }}, {{ layer.hidden_size }})
+{%- macro setup_rnn(layer) -%}
+    {%- if layer.__class__.__name__ == "SimpleRNNLayer" -%}
+        {%- set my_layer -%}self.{{ layer.name }} = nn.RNN({{ layer.input_size }}, {{ layer.hidden_size }}){%- endset -%}
+    {%- elif layer.__class__.__name__ == "LSTMLayer" -%}
+        {%- set my_layer -%}self.{{ layer.name }} = nn.LSTM({{ layer.input_size }}, {{ layer.hidden_size }}){%- endset -%}
+    {%- elif layer.__class__.__name__ == "GRULayer" -%}
+        {%- set my_layer -%}self.{{ layer.name }} = nn.GRU({{ layer.input_size }}, {{ layer.hidden_size }}){%- endset -%}
     {%- endif -%}
+    {%- set _ = layers_definition.append(my_layer) -%}
     {{- setup_activation_function(layer) -}}
-{% endmacro -%}
+{%- endmacro -%}
 
 
-{%- macro setup_general_layer(layer) %}
-    {%- if layer.__class__.__name__ == "LinearLayer" %}
-        self.{{ layer.name }} =  nn.Linear(in_features={{ layer.in_features }}, out_features={{ layer.out_features }})
-    {%- elif layer.__class__.__name__ == "FlattenLayer" %}
-        self.{{ layer.name }} = nn.Flatten()
-    {%- elif layer.__class__.__name__ == "EmbeddingLayer" %}
-        self.{{ layer.name }} = nn.Embedding(num_embedding={{ layer.num_embeddings }}, embedding_dim={{ layer.embedding_dim }})
+{%- macro setup_general_layer(layer) -%}
+    {%- if layer.__class__.__name__ == "LinearLayer" -%}
+        {% set my_layer -%}self.{{ layer.name }} = nn.Linear(in_features={{ layer.in_features }}, out_features={{ layer.out_features }}){%- endset -%}
+    {%- elif layer.__class__.__name__ == "FlattenLayer" -%}
+        {% set my_layer -%}self.{{ layer.name }} = nn.Flatten(){%- endset -%}
+    {%- elif layer.__class__.__name__ == "EmbeddingLayer" -%}
+        {% set my_layer -%}self.{{ layer.name }} = nn.Embedding(num_embedding={{ layer.num_embeddings }}, embedding_dim={{ layer.embedding_dim }}){%- endset -%}
     {%- endif -%}
+    {%- set _ = layers_definition.append(my_layer) -%}
     {{- setup_activation_function(layer) -}}
-{% endmacro -%}
+{%- endmacro -%}
 
 
-{%- macro setup_layer_modifier(layer) %}
-    {%- if layer.__class__.mro()[1].__name__ == "NormalizationLayer" %}
-        {%- if layer.__class__.__name__ == "BatchNormLayer" %}
-        self.{{ layer.name }} = nn.BatchNorm{{ layer.dimension[0] }}d(num_features={{ layer.num_features }})
-        {%- elif layer.__class__.__name__ == "LayerNormLayer" %}
+{%- macro setup_layer_modifier(layer) -%}
+    {%- if layer.__class__.mro()[1].__name__ == "NormalizationLayer" -%}
+        {%- if layer.__class__.__name__ == "BatchNormLayer" -%}
+        {%- set my_layer %}self.{{ layer.name }} = nn.BatchNorm{{ layer.dimension[0] }}d(num_features={{ layer.num_features }}){%- endset -%}
+        {%- elif layer.__class__.__name__ == "LayerNormLayer" -%}
             {%- if layer.norm_height != None -%}
                 {%- if layer.norm_width != None -%}
-                    {% set normalized_shape = [layer.norm_channels, layer.norm_height, layer.norm_width] -%}
+                    {%- set normalized_shape = [layer.norm_channels, layer.norm_height, layer.norm_width] -%}
                 {%- else -%}
-                    {% set normalized_shape = [layer.norm_channels, layer.norm_height] -%}
+                    {%- set normalized_shape = [layer.norm_channels, layer.norm_height] -%}
                 {%- endif -%}
             {%- else -%}
-                {% set normalized_shape = [layer.norm_channels] -%}
-            {%- endif %}
-        self.{{ layer.name }} = nn.LayerNorm(normalized_shape={{ normalized_shape }})
+                {%- set normalized_shape = [layer.norm_channels] -%}
+            {%- endif -%}
+        {%- set my_layer %}self.{{ layer.name }} = nn.LayerNorm(normalized_shape={{ normalized_shape }}){%- endset -%}
         {%- endif -%}
         {{- setup_activation_function(layer) -}}
-    {%- elif layer.__class__.__name__ == "DropoutLayer" %}
-        self.{{ layer.name }} = nn.Dropout(p={{ layer.rate }})
+    {%- elif layer.__class__.__name__ == "DropoutLayer" -%}
+        {% set my_layer %}self.{{ layer.name }} = nn.Dropout(p={{ layer.rate }}){%- endset -%}
     {%- endif -%}
-{% endmacro -%}
+    {%- set _ = layers_definition.append(my_layer)-%}
+{%- endmacro -%}
 
-{%- macro setup_layers(layer) %}
-    {%- set _ = layers_names.append(layer.name) %}
+{%- macro setup_layers(layer) -%}
+    {%- set _ = layers_names.append(layer.name) -%}
     {%- if layer.__class__.mro()[1].__name__ == "ConvolutionalLayer" or layer.__class__.mro()[1].__name__ == "CNN" -%}
-        {{ setup_cnn(layer) }}
+        {{- setup_cnn(layer) -}}
     {%- elif layer.__class__.mro()[1].__name__ == "RNN" -%}
-        {{ setup_rnn(layer) }}
+        {{- setup_rnn(layer) -}}
     {%- elif layer.__class__.mro()[1].__name__ == "GeneralLayer" -%}
-        {{ setup_general_layer(layer) }}
+        {{- setup_general_layer(layer) -}}
     {%- elif layer.__class__.mro()[1].__name__ == "LayerModifier" or layer.__class__.mro()[2].__name__ == "LayerModifier" -%} 
-        {{ setup_layer_modifier(layer) }}
+        {{- setup_layer_modifier(layer) -}}
     {%- endif -%}
-{% endmacro -%}
+{%- endmacro -%}
 
 {%- macro get_loss_function(parameters) %}
     {%- if parameters.loss_function == "crossentropy" -%}
@@ -144,10 +161,9 @@
 
 {%- macro prepare_data(train_data, test_data, parameters) -%}
     {%- if train_data.has_images == True -%}
-        {%- set my_image = train_data.features.pop() -%}
 # Define data transformations
 transform = transforms.Compose([
-    transforms.Resize(({{ my_image.height }}, {{ my_image.width }})),  # Resize images
+    transforms.Resize(({{ train_data.image.height }}, {{ train_data.image.width }})),  # Resize images
     transforms.ToTensor()          # Convert images to tensors
     ])
 
@@ -160,17 +176,17 @@ test_dataset = datasets.ImageFolder(root=r"{{ test_data.path_data }}", transform
 
     {%- else -%}
     def load_data(csv_file):
-        # Load data from CSV file
-        data = pd.read_csv(csv_file)
-        # Extract features and targets
-        features = data.iloc[:, :-1].values.astype("float32")
-        targets = data.iloc[:, -1].values.astype("float32")
-        # Convert to PyTorch tensors
-        features_tensor = torch.tensor(features)
-        targets_tensor = torch.tensor(targets)
-        # Create a TensorDataset
-        dataset = torch.utils.data.TensorDataset(features_tensor, targets_tensor)
-        return dataset
+    # Load data from CSV file
+    data = pd.read_csv(csv_file)
+    # Extract features and targets
+    features = data.iloc[:, :-1].values.astype("float32")
+    targets = data.iloc[:, -1].values.astype("float32")
+    # Convert to PyTorch tensors
+    features_tensor = torch.tensor(features)
+    targets_tensor = torch.tensor(targets)
+    # Create a TensorDataset
+    dataset = torch.utils.data.TensorDataset(features_tensor, targets_tensor)
+    return dataset
 
 # Loading data
 train_dataset = load_data(r"{{ train_data.path_data }}")

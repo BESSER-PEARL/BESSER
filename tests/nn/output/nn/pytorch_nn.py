@@ -4,39 +4,57 @@ from torchvision import datasets
 from sklearn.metrics import mean_absolute_error
 import pandas as pd
 
+
+import numpy as np
+import random
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+# Set a specific seed
+set_seed(42)
+
+
+
+
 # Define the network architecture
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
-        self.l1 =  nn.Linear(in_features=13, out_features=64)
-        self.l1_activ = nn.ReLU()
-        self.l2 =  nn.Linear(in_features=64, out_features=128)
-        self.l2_activ = nn.ReLU()
+        self.l1 = nn.Linear(in_features=13, out_features=64)
+        self.l2 = nn.Linear(in_features=64, out_features=128)
         self.l3 = nn.Dropout(p=0.2)
-        self.l4 =  nn.Linear(in_features=128, out_features=1)
+        self.l4 = nn.Linear(in_features=128, out_features=1)
+        self.relu_activ = nn.ReLU()
 
     def forward(self, x):
         x = self.l1(x)
-        x = self.l1_activ(x)
+        x = self.relu_activ(x)
         x = self.l2(x)
-        x = self.l2_activ(x)
+        x = self.relu_activ(x)
         x = self.l3(x)
         x = self.l4(x)
         return x
         
 # Dataset preparation
 def load_data(csv_file):
-        # Load data from CSV file
-        data = pd.read_csv(csv_file)
-        # Extract features and targets
-        features = data.iloc[:, :-1].values.astype("float32")
-        targets = data.iloc[:, -1].values.astype("float32")
-        # Convert to PyTorch tensors
-        features_tensor = torch.tensor(features)
-        targets_tensor = torch.tensor(targets)
-        # Create a TensorDataset
-        dataset = torch.utils.data.TensorDataset(features_tensor, targets_tensor)
-        return dataset
+    # Load data from CSV file
+    data = pd.read_csv(csv_file)
+    # Extract features and targets
+    features = data.iloc[:, :-1].values.astype("float32")
+    targets = data.iloc[:, -1].values.astype("float32")
+    # Convert to PyTorch tensors
+    features_tensor = torch.tensor(features)
+    targets_tensor = torch.tensor(targets)
+    # Create a TensorDataset
+    dataset = torch.utils.data.TensorDataset(features_tensor, targets_tensor)
+    return dataset
 
 # Loading data
 train_dataset = load_data(r"dataset\BostonHousingTrain.csv")

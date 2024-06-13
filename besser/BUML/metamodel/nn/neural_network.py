@@ -1131,7 +1131,7 @@ class Dataset:
         path_data (str): The file path or directory location containing the dataset.
         task_type (str): The type of prediction task associated with the dataset.
         has_images (bool): Indicates whether the dataset contains images.
-        features (set[Feature]): The set of features in the dataset.
+        image (Image): The dimensions to use for the images if included in the dataset.
         labels (set[Label]): The set of labels in the dataset.
         
     Attributes:
@@ -1139,16 +1139,16 @@ class Dataset:
         path_data (str): The file path or directory location containing the dataset.
         task_type (str): The type of prediction task associated with the dataset.
         has_images (bool): Indicates whether the dataset contains images.
-        features (set[Feature]): The set of features in the dataset.
+        image (Image): The dimensions to use for the images if included in the dataset.
         labels (set[Label]): The set of labels in the dataset.
     """
     def __init__(self, name: str, path_data: str, task_type: str, has_images: bool, 
-                 features: set[Feature] = None, labels: set[Label] = None):
+                 image: Image = None, labels: set[Label] = set()):
         self.name: str = name
         self.path_data: str = path_data
         self.task_type: str = task_type
         self.has_images: bool = has_images
-        self.features: set[Feature] = features
+        self.image: Image = image
         self.labels: set[Label] = labels
 
     @property
@@ -1201,17 +1201,20 @@ class Dataset:
         """bool: Set whether the dataset contains images."""
         self.__has_image = has_image
 
-
     @property
-    def features(self) -> set[Label]:
-        """set[Feature]: Get the set of features."""
-        return self.__features
+    def image(self) -> Image:
+        """Image: Get the dimensions of the images."""
+        return self.__image
     
-    @features.setter
-    def features(self, features: set[Label]):
-        """set[Feature]: Set the set of features."""
-        self.__features = features
+    @image.setter
+    def image(self, image: Image):
+        """Image: Set the dimensions of the images."""
+        self.__image = image
         
+    def add_image(self, image: Image):
+        """Image: Add the dimensions of the image."""
+        self.__image = image
+        return self
         
     @property
     def labels(self) -> set[Label]:
@@ -1222,6 +1225,11 @@ class Dataset:
     def labels(self, labels: set[Label]):
         """set[Label]: Set the set of labels."""
         self.__labels = labels
+
+    def add_label(self, label: Label):
+        """Label: add a label to the set of labels."""
+        self.__labels.add(label)
+        return self
 
     def load_data(self):
         pass
@@ -1241,7 +1249,7 @@ class TrainingDataset(Dataset):
         path_data (str): The file path or directory location containing the dataset.
         task_type (str): The type of prediction task associated with the dataset.
         has_images (bool): Indicates whether the dataset contains images.
-        features (set[Feature]): The set of features in the dataset.
+        image (Image): The dimensions to use for the images if included in the dataset.
         labels (set[Label]): The set of labels in the dataset.
         
     Attributes:
@@ -1250,17 +1258,17 @@ class TrainingDataset(Dataset):
         task_type (str): Inherited from Dataset. It represents the type of prediction task 
                         associated with the dataset.
         has_images (bool): Inherited from Dataset. It indicates whether the dataset contains images.
-        features (set[Feature]): Inherited from Dataset. It represents the set of features in the dataset.
+        image (Image): Inherited from Dataset. The dimensions to use for the images if included in the dataset.
         labels (set[Label]): Inherited from Dataset. It represents the set of labels in the dataset.
     """
 
     def __init__(self, name: str, path_data: str, task_type: str, has_images: bool, 
-                 features: set[Feature] = None, labels: set[Label] = None):
-        super().__init__(name, path_data, task_type, has_images, features, labels)
+                 image: Image = None, labels: set[Label] = set()):
+        super().__init__(name, path_data, task_type, has_images, image, labels)
     
     def __repr__(self):
         return (f'TrainingDataset({self.name}, {self.path_data}, {self.task_type}, '
-                f'{self.has_images}, {self.features}, {self.labels})')
+                f'{self.has_images}, {self.image}, {self.labels})')
 
 class TestDataset(Dataset):
     """Represents a Dataset used for evaluating the performance of the NN model.
@@ -1505,9 +1513,11 @@ class NN(BehavioralImplementation):
 
     def add_parameters(self, parameters: Parameters):
         self.parameters = parameters
+        return self
 
     def add_layer(self, layer: Layer):
         self.layers.append(layer)
+        return self
 
     def compile(self):
         pass

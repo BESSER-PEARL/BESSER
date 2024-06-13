@@ -397,6 +397,86 @@ class Property(TypedElement):
     def __repr__(self):
         return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite}, is_id={self.is_id}, is_read_only={self.is_read_only})'
 
+
+class BehavioralImplementation():
+    """A behavioralImplementation represents the body of a behavior associated with a class.
+
+    Args:
+        name (str): The name of the behavioral implementation.
+        
+    Attributes:
+        name (str): The name of the behavioral implementation.  
+    """
+    
+    def __init__(self, name: str):
+        self.name: str = name
+
+    @property
+    def name(self) -> str:
+        """str: Get the name of the behavioral implementation."""
+        return self.__name
+
+    @name.setter
+    def name(self, name: str):
+        """str: Set name of the behavioral implementation."""
+        self.__name = name
+
+    def __repr__(self):
+        return f'BehavioralImplementation({self.name})'
+
+
+class BehavioralDeclaration():
+    """A behavioralDeclaration represents the signature of a behavior associated with a class.
+
+    Args:
+        name (str): The name of the behavior.
+        implementations (set[BehavioralImplementation]): The implementations associated with the behavior.
+        
+    Attributes:
+        name (str): The name of the behavior.
+        implementations (set[BehavioralImplementation]): The implementations associated with the behavior.
+    """
+    
+    def __init__(self, name: str, implementations: set[BehavioralImplementation]):
+        self.name: str = name
+        self.implementations: set[BehavioralImplementation] = implementations
+
+    @property
+    def name(self) -> str:
+        """str: Get the name of the behavior."""
+        return self.__name
+
+    @name.setter
+    def name(self, name: str):
+        """str: Set name of the behavior."""
+        self.__name = name
+
+    @property
+    def implementations(self) -> set[BehavioralImplementation]:
+        """set[BehavioralImplementation]: Get the implementations of the behavior."""
+        return self.__implementations
+
+
+    @implementations.setter
+    def implementations(self, implementations: set[BehavioralImplementation]):
+        """
+        set[BehavioralImplementation]: Set the implementations of the behavior.
+
+        Raises:
+            ValueError: if two implementations have the same name.
+        """
+        if implementations is not None:
+            names = [implementation.name for implementation in implementations]
+            if len(names) != len(set(names)):
+                raise ValueError("A behavior cannot have two implementations with the same name")
+            self.__implementations = implementations
+        else:
+            self.__implementations = set()
+
+    def __repr__(self):
+        return f'BehavioralDeclaration({self.name}, {self.implementations})'
+
+
 class Class(Type):
     """Represents a class in a modeling context.
 
@@ -406,23 +486,26 @@ class Class(Type):
     Args:
         name (str): The name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
+        behaviors (set[BehavioralDeclaration]): The set of behaviors associated with the class.
         is_abstract (bool): Indicates whether the class is abstract.
         is_read_only (bool): Indicates whether the class is read only.
 
     Attributes:
         name (str): Inherited from Type, represents the name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
+        behaviors (set[BehavioralDeclaration]): The set of behaviors associated with the class.
         is_abstract (bool): Indicates whether the class is abstract.
         is_read_only (bool): Indicates whether the class is read only.
         __associations (set[Association]): Set of associations involving the class.
         __generalizations (set[Generalization]): Set of generalizations involving the class.
     """
 
-    def __init__(self, name: str, attributes: set[Property], is_abstract: bool= False, is_read_only: bool= False):
+    def __init__(self, name: str, attributes: set[Property], behaviors: set[BehavioralDeclaration], is_abstract: bool= False, is_read_only: bool= False):
         super().__init__(name)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
         self.attributes: set[Property] = attributes
+        self.behaviors: set[BehavioralDeclaration] = behaviors
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
 
@@ -471,6 +554,27 @@ class Class(Type):
         attribute.owner = self
         self.attributes.add(attribute)
     
+    @property
+    def behaviors(self) -> set[BehavioralDeclaration]:
+        """set[BehavioralDeclaration]: Get the behaviors associated with the class."""
+        return self.__behaviors
+
+    @behaviors.setter
+    def behaviors(self, behaviors: set[BehavioralDeclaration]):
+        """
+        set[BehavioralDeclaration]: Set the behaviors associated with the class.
+        
+        Raises:
+            ValueError: if two behaviors have the same name.
+        """
+        if behaviors is not None:
+            names = [behavior.name for behavior in behaviors]
+            if len(names) != len(set(names)):
+                raise ValueError("A class cannot have two behaviors with the same name")
+            self.__behaviors = behaviors
+        else:
+            self.__behaviors = set()
+
     @property
     def is_abstract(self) -> bool:
         """bool: Get wheter the class is abstract."""

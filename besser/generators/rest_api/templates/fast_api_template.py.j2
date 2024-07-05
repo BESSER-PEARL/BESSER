@@ -69,10 +69,6 @@ def create_{{ class.name | lower }}({{ class.name | lower }}: {{ class.name }}):
         {{ x[0] | lower }}_exists = any({{ x[0] | lower }}.id == {{ x[0] | lower }}_id for {{ x[0] | lower }} in {{ x[0] | lower }}_list)
         if not {{ x[0] | lower }}_exists:
             raise HTTPException(status_code=400, detail="{{ x[0] }} not found")
-    {% if x[1] == 1 %}
-    else:
-        raise HTTPException(status_code=400, detail="{{ x[0] }} ID is required")
-    {% endif %}
     {% endfor %}
     {% endif %}
 

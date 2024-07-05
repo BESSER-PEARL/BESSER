@@ -67,8 +67,5 @@ sql.generate()
 rest_api = RESTAPIGenerator(model=library_model)
 rest_api.generate()
 
-pydantic_model = PydanticGenerator(model=library_model, backend=True)
-pydantic_model.generate()
-
-backend = BackendGenerator(model=library_model, http_methods=["GET", "POST", "PUT", "DELETE"], nested_creations=True)
+backend = BackendGenerator(model=library_model, http_methods=["GET", "POST", "PUT", "DELETE"], nested_creations=False)
 backend.generate()

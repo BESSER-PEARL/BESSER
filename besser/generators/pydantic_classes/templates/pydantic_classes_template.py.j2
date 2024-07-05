@@ -61,7 +61,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
 
             {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
             {% if not backend %}
-    {{ class2_name.lower() }}: "{{ class2_name }}"  # N:1 Relationship
+    {{ class2_name.lower() }}_id: int  # N:1 Relationship
             {% else %}
     {{ class2_name.lower() }}_id: int
             {% endif %}

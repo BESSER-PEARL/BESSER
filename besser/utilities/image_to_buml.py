@@ -12,6 +12,7 @@ def image_to_plantuml(image_path: str, openai_token: str, openai_model: str = "g
     Args:
         image_path (str): the path of the image to transform.
         openai_token (str): the OpenAI token.
+        openai_model (str, optional): the OpenAI model. Defaults to "gpt-4o".
 
     Returns:
         plant_uml_chunk (str): the PlantUML code.
@@ -72,6 +73,7 @@ def image_to_buml(image_path: str, openai_token: str, openai_model: str = "gpt-4
     Args:
         image_path (str): the path of the image to transform.
         openai_token (str): the OpenAI token.
+        openai_model (str, optional): the OpenAI model. Defaults to "gpt-4o".
 
     Returns:
         domain (DomainModel): the B-UML model object.

@@ -45,7 +45,7 @@ method              : visibility? modifier? 'void'? ID '()' NL ;
 
 visibility          : '#' | '-' | '~' | '+' ;
 
-primitiveData       : 'int' | 'float' | 'str' | 'bool' | 'time' | 'date' | 'datetime' | 'timedelta' ;
+primitiveData       : 'int' | 'float' | 'str' | 'string' | 'bool' | 'time' | 'date' | 'datetime' | 'timedelta' ;
 
 modifier            : '{static}' | '{abstract}' ;
 
@@ -60,4 +60,3 @@ ASTK            : '*' ;
 DOUBLE_QUOTE    : '"' 'hola' '"';
 WS              : (' ' | '\t')+ -> skip ;
 NL              :  ('\r'? '\n')+ ;
-//STRING          : '"' .*? '"'  ;

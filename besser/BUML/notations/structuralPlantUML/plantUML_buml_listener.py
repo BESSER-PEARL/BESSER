@@ -38,18 +38,22 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__classes.append(ctx.ID().getText())
 
     def enterAttribute(self, ctx: PlantUMLParser.AttributeContext):
-        attribute_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID().getText()
-        attr_type = ctx.primitiveData().getText()
-        if attr_type == 'string':
-            attr_type = 'str'
-        text = attribute_name + ": Property = Property(name=\"" + ctx.ID().getText() + \
-            "\", type="+ attr_type +"_type"
+        attribute_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID(0).getText()
+        if ctx.primitiveData():
+            type = ctx.primitiveData().getText()
+            if type == 'string':
+                type = 'str'
+            self.__dtypes.add(type)
+            type = type + '_type'
+        else:
+            type = ctx.ID(1).getText()
+        text = attribute_name + ": Property = Property(name=\"" + ctx.ID(0).getText() + \
+            "\", type="+ type
         if ctx.visibility():
             text += ", visibility=\"" + self.visibility[ctx.visibility().getText()] + "\""
         text += ")\n"
         self.output.write(text)
         self.__attr_list.append(attribute_name)
-        self.__dtypes.add(attr_type)
 
     def enterAbstract(self, ctx: PlantUMLParser.AbstractContext):
         self.__abstract_class = True

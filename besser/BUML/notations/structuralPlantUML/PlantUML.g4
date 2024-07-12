@@ -39,7 +39,7 @@ cardinality         : '"' min=cardinalityVal ('..' max=cardinalityVal)? '"' ;
 
 cardinalityVal      : INT | ASTK ;
 
-attribute           : visibility? ID ':' primitiveData NL ;
+attribute           : visibility? ID ':' (primitiveData | ID) NL ;
 
 method              : visibility? modifier? type? name=ID '('
                       (parameter (',' parameter)?)?

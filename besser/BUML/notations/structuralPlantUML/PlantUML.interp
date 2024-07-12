@@ -111,7 +111,7 @@ method
 parameter
 type
 enumeration
-literal
+enumLiteral
 visibility
 primitiveData
 modifier

@@ -50,10 +50,10 @@ parameter           : type name=ID;
 type                : 'void' | primitiveData | ID ;
 
 enumeration         : 'enum' ID '{' NL
-                      literal*
+                      enumLiteral*
                       '}' NL ;
 
-literal             : ID NL ;
+enumLiteral         : ID NL ;
 
 visibility          : '#' | '-' | '~' | '+' ;
 

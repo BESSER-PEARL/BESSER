@@ -12,6 +12,8 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__attr_list: list = list()
         self.__abstract_class: bool = False
         self.__dtypes: set = set()
+        self.__enums: dict = dict()
+        self.__eLiterals: list = list()
         self.__classes: list = list()
         self.__relations: dict = dict()
         self.__ends: list = list()
@@ -117,6 +119,13 @@ class BUMLGenerationListener(PlantUMLListener):
     
     def enterSkinParam(self, ctx: PlantUMLParser.SkinParamContext):
         self.__group_inh = int(ctx.INT().getText())
+    
+    def enterEnumLiteral(self, ctx: PlantUMLParser.EnumLiteralContext):
+        self.__eLiterals.append("EnumerationLiteral(name=\"" + ctx.ID().getText() + "\")")
+
+    def exitEnumeration(self, ctx: PlantUMLParser.EnumerationContext):
+        self.__enums[ctx.ID().getText()] = self.__eLiterals
+        self.__eLiterals = []
 
     def exitDomainModel(self, ctx: PlantUMLParser.DomainModelContext):
         self.check_classes_definition()
@@ -135,13 +144,21 @@ class BUMLGenerationListener(PlantUMLListener):
         generalizations = list_to_str(list(self.__inheritances.keys()))
         self.output.write("\n\n# Domain Model\n")
         self.output.write("domain: DomainModel = DomainModel(name=\"Domain Model\", types=" + classes + ", associations=" + associations + ", generalizations=" + generalizations + ")")
-        text = '''from besser.BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \\
-        Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, \\
-        GeneralizationSet, AssociationClass \n\n'''
+        text = '''from besser.BUML.metamodel.structural import *  \n\n'''
+
+        # Primitive data types definition
         text += "# Primitive Data Types \n"
         for dtype in self.__dtypes:
             text += dtype + "_type = PrimitiveDataType(\"" + dtype + "\")\n"
         text += "\n"
+
+        # Enumeration definition
+        if len(self.__enums) > 0:
+            text += "# Enumerations \n"
+            for enum in self.__enums:
+                literals = ", ".join(self.__enums[enum])
+                text += enum + " = Enumeration(name=\"" + enum + "\", literals = {" + literals + "})\n\n"
+
         self.output.seek(0)
         content = self.output.read()
         self.output.seek(0)

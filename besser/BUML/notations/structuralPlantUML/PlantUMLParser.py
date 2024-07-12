@@ -149,7 +149,7 @@ class PlantUMLParser ( Parser ):
     RULE_parameter = 17
     RULE_type = 18
     RULE_enumeration = 19
-    RULE_literal = 20
+    RULE_enumLiteral = 20
     RULE_visibility = 21
     RULE_primitiveData = 22
     RULE_modifier = 23
@@ -158,7 +158,7 @@ class PlantUMLParser ( Parser ):
                    "relationship", "association", "bidirectional", "unidirectional", 
                    "aggregation", "composition", "inheritance", "extends", 
                    "cardinality", "cardinalityVal", "attribute", "method", 
-                   "parameter", "type", "enumeration", "literal", "visibility", 
+                   "parameter", "type", "enumeration", "enumLiteral", "visibility", 
                    "primitiveData", "modifier" ]
 
     EOF = Token.EOF
@@ -1585,11 +1585,11 @@ class PlantUMLParser ( Parser ):
             else:
                 return self.getToken(PlantUMLParser.NL, i)
 
-        def literal(self, i:int=None):
+        def enumLiteral(self, i:int=None):
             if i is None:
-                return self.getTypedRuleContexts(PlantUMLParser.LiteralContext)
+                return self.getTypedRuleContexts(PlantUMLParser.EnumLiteralContext)
             else:
-                return self.getTypedRuleContext(PlantUMLParser.LiteralContext,i)
+                return self.getTypedRuleContext(PlantUMLParser.EnumLiteralContext,i)
 
 
         def getRuleIndex(self):
@@ -1626,7 +1626,7 @@ class PlantUMLParser ( Parser ):
             _la = self._input.LA(1)
             while _la==39:
                 self.state = 222
-                self.literal()
+                self.enumLiteral()
                 self.state = 227
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
@@ -1644,7 +1644,7 @@ class PlantUMLParser ( Parser ):
         return localctx
 
 
-    class LiteralContext(ParserRuleContext):
+    class EnumLiteralContext(ParserRuleContext):
         __slots__ = 'parser'
 
         def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
@@ -1658,23 +1658,23 @@ class PlantUMLParser ( Parser ):
             return self.getToken(PlantUMLParser.NL, 0)
 
         def getRuleIndex(self):
-            return PlantUMLParser.RULE_literal
+            return PlantUMLParser.RULE_enumLiteral
 
         def enterRule(self, listener:ParseTreeListener):
-            if hasattr( listener, "enterLiteral" ):
-                listener.enterLiteral(self)
+            if hasattr( listener, "enterEnumLiteral" ):
+                listener.enterEnumLiteral(self)
 
         def exitRule(self, listener:ParseTreeListener):
-            if hasattr( listener, "exitLiteral" ):
-                listener.exitLiteral(self)
+            if hasattr( listener, "exitEnumLiteral" ):
+                listener.exitEnumLiteral(self)
 
 
 
 
-    def literal(self):
+    def enumLiteral(self):
 
-        localctx = PlantUMLParser.LiteralContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 40, self.RULE_literal)
+        localctx = PlantUMLParser.EnumLiteralContext(self, self._ctx, self.state)
+        self.enterRule(localctx, 40, self.RULE_enumLiteral)
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 231

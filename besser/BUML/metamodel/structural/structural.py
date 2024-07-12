@@ -125,14 +125,14 @@ class EnumerationLiteral(NamedElement):
 
     Args:
         name (str): the name of the enumeration literal.
-        owner (DataType): the owner data type of the enumeration literal.
+        owner (DataType): the owner data type of the enumeration literal (None as default).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the enumeration literal.
-        owner (DataType): Represents the owner data type of the enumeration literal.
+        owner (DataType): Represents the owner data type of the enumeration literal (None as default).
     """
 
-    def __init__(self, name: str, owner: DataType):
+    def __init__(self, name: str, owner: DataType=None):
         super().__init__(name)
         self.owner: DataType = owner
     

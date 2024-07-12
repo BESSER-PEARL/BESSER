@@ -188,12 +188,12 @@ class PlantUMLListener(ParseTreeListener):
         pass
 
 
-    # Enter a parse tree produced by PlantUMLParser#literal.
-    def enterLiteral(self, ctx:PlantUMLParser.LiteralContext):
+    # Enter a parse tree produced by PlantUMLParser#enumLiteral.
+    def enterEnumLiteral(self, ctx:PlantUMLParser.EnumLiteralContext):
         pass
 
-    # Exit a parse tree produced by PlantUMLParser#literal.
-    def exitLiteral(self, ctx:PlantUMLParser.LiteralContext):
+    # Exit a parse tree produced by PlantUMLParser#enumLiteral.
+    def exitEnumLiteral(self, ctx:PlantUMLParser.EnumLiteralContext):
         pass
 
 

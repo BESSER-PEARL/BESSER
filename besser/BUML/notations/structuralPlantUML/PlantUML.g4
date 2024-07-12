@@ -6,7 +6,7 @@ domainModel         : Start NL
                       End
                       ;
 
-element             : skinParam | class | relationship ;
+element             : skinParam | class | relationship | enumeration ;
 
 skinParam           : 'skinparam' 'groupInheritance' INT NL ;
 
@@ -41,7 +41,19 @@ cardinalityVal      : INT | ASTK ;
 
 attribute           : visibility? ID ':' primitiveData NL ;
 
-method              : visibility? modifier? 'void'? ID '()' NL ;
+method              : visibility? modifier? type? name=ID '('
+                      (parameter (',' parameter)?)?
+                      ')' NL ;
+
+parameter           : type name=ID;
+
+type                : 'void' | primitiveData | ID ;
+
+enumeration         : 'enum' ID '{' NL
+                      literal*
+                      '}' NL ;
+
+literal             : ID NL ;
 
 visibility          : '#' | '-' | '~' | '+' ;
 
@@ -57,6 +69,5 @@ End                 : '@enduml' ;
 ID              : [a-zA-Z_][a-zA-Z0-9_]* ;
 INT             : [0-9]+ ;
 ASTK            : '*' ;
-DOUBLE_QUOTE    : '"' 'hola' '"';
 WS              : (' ' | '\t')+ -> skip ;
 NL              :  ('\r'? '\n')+ ;

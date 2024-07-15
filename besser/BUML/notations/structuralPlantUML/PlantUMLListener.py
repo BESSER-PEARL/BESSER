@@ -161,6 +161,42 @@ class PlantUMLListener(ParseTreeListener):
         pass
 
 
+    # Enter a parse tree produced by PlantUMLParser#parameter.
+    def enterParameter(self, ctx:PlantUMLParser.ParameterContext):
+        pass
+
+    # Exit a parse tree produced by PlantUMLParser#parameter.
+    def exitParameter(self, ctx:PlantUMLParser.ParameterContext):
+        pass
+
+
+    # Enter a parse tree produced by PlantUMLParser#type.
+    def enterType(self, ctx:PlantUMLParser.TypeContext):
+        pass
+
+    # Exit a parse tree produced by PlantUMLParser#type.
+    def exitType(self, ctx:PlantUMLParser.TypeContext):
+        pass
+
+
+    # Enter a parse tree produced by PlantUMLParser#enumeration.
+    def enterEnumeration(self, ctx:PlantUMLParser.EnumerationContext):
+        pass
+
+    # Exit a parse tree produced by PlantUMLParser#enumeration.
+    def exitEnumeration(self, ctx:PlantUMLParser.EnumerationContext):
+        pass
+
+
+    # Enter a parse tree produced by PlantUMLParser#enumLiteral.
+    def enterEnumLiteral(self, ctx:PlantUMLParser.EnumLiteralContext):
+        pass
+
+    # Exit a parse tree produced by PlantUMLParser#enumLiteral.
+    def exitEnumLiteral(self, ctx:PlantUMLParser.EnumLiteralContext):
+        pass
+
+
     # Enter a parse tree produced by PlantUMLParser#visibility.
     def enterVisibility(self, ctx:PlantUMLParser.VisibilityContext):
         pass

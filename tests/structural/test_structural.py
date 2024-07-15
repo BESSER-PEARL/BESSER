@@ -1,9 +1,5 @@
 import pytest
-
-from besser.BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \
-    Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, \
-    GeneralizationSet, AssociationClass, Enumeration, EnumerationLiteral
-
+from besser.BUML.metamodel.structural import *
 
 def test_named_element():
     named_element: NamedElement = NamedElement(name="element1")
@@ -180,3 +176,22 @@ def test_duplicated_name_literal():
         literal2: EnumerationLiteral = EnumerationLiteral(name="duplicated_name", owner=None)
         enum1: Enumeration = Enumeration(name="Enumeration", literals={literal1,literal2})
     assert "An enumeration cannot have two literals with the same name" in str(excinfo.value)
+
+# Testing method and parameters initialization
+def test_method_initialization():
+    parameter1: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="str"))
+    parameter2: Parameter = Parameter(name="parameter_2", type=PrimitiveDataType(name="int"))
+    method: Method = Method(name='method_1', is_abstract=True, parameters={parameter1, parameter2})
+    cls: Class = Class(name="class_1", attributes={}, methods={method})
+    method.type = cls
+    assert len(method.parameters) == 2
+    assert method.owner == cls
+    assert method.name == "method_1"
+    assert method.type.name == "class_1"
+
+def test_parameters_same_name():
+    with pytest.raises(ValueError) as excinfo:
+        parameter1: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="str"))
+        parameter2: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="int"))
+        method: Method = Method(name='method_1', is_abstract=True, parameters={parameter1, parameter2})
+    assert "A method cannot have two parameters with the same name" in str(excinfo.value)

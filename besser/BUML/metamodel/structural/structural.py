@@ -125,14 +125,14 @@ class EnumerationLiteral(NamedElement):
 
     Args:
         name (str): the name of the enumeration literal.
-        owner (DataType): the owner data type of the enumeration literal.
+        owner (DataType): the owner data type of the enumeration literal (None as default).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the enumeration literal.
-        owner (DataType): Represents the owner data type of the enumeration literal.
+        owner (DataType): Represents the owner data type of the enumeration literal (None as default).
     """
 
-    def __init__(self, name: str, owner: DataType):
+    def __init__(self, name: str, owner: DataType=None):
         super().__init__(name)
         self.owner: DataType = owner
     
@@ -397,6 +397,130 @@ class Property(TypedElement):
     def __repr__(self):
         return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite}, is_id={self.is_id}, is_read_only={self.is_read_only})'
 
+class Parameter(NamedElement):
+    """
+    Parameter is used to represent a parameter of a method with a specific type.
+
+    Args:
+        name (str): The name of the parameter.
+        type (Type): The data type of the parameter.
+
+    Attributes:
+        name (str): Inherited from NamedElement, represents the name of the parameter.
+        type (Type): The data type of the parameter.
+    """
+
+    def __init__(self, name: str, type: Type):
+        super().__init__(name)
+        self.type: Type = type
+
+    @property
+    def type(self) -> Type:
+        """Type: Get the type of the parameter."""
+        return self.__type
+
+    @type.setter
+    def type(self, type: Type):
+        """Type: Set the type of the parameter."""
+        self.__type = type
+
+    def __repr__(self):
+        return f'Parameter({self.name}, {self.type})'
+
+class Method(TypedElement):
+    """
+    Method is used to represent a method of a class.
+
+    Args:
+        name (str): The name of the method.
+        visibility (str): Determines the kind of visibility of the method (public as default).
+        is_abstract (bool): Indicates if the method is abstract (False as default).
+        parameters (set[Parameter]): The set of parameters for the method.
+        type (Type): The type of the method.
+        owner (Type): The type that owns the method.
+        code (str): code of the method.
+
+    Attributes:
+        name (str): Inherited from TypedElement, represents the name of the method.
+        visibility (str): Inherited from TypedElement, represents the visibility of the method.
+        is_abstract (bool): Indicates if the method is abstract.
+        parameters (set[Parameter]): The set of parameters for the method.
+        type (Type): Inherited from TypedElement, represents the type of the method.
+        owner (Type): The type that owns the property.
+        code (str): code of the method.
+    """
+
+    def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False, parameters: set[Parameter] = set(), type: Type = None, 
+                 owner: Type = None, code: str = ""):
+        super().__init__(name, type, visibility)
+        self.is_abstract: bool = is_abstract
+        self.parameters: set[Parameter] = parameters
+        self.owner: Type = owner
+        self.code: str = code
+
+    @property
+    def is_abstract(self) -> bool:
+        """bool: Get wheter the method is abstract."""
+        return self.__is_abstract
+
+    @is_abstract.setter
+    def is_abstract(self, is_abstract: bool):
+        """bool: Set wheter the method is abstract."""
+        self.__is_abstract = is_abstract
+
+    @property
+    def parameters(self) -> set[Parameter]:
+        """set[Parameter]: Get the set of parameters of the method."""
+        return self.__parameters
+
+    @parameters.setter
+    def parameters(self, parameters: set[Parameter]):
+        """
+        set[Parameter]: Set the parameters of the method.
+        
+        Raises:
+            ValueError: if two parameters have the same name.
+        """
+        if parameters is not None:
+            names = [parameter.name for parameter in parameters]
+            if len(names) != len(set(names)):
+                raise ValueError("A method cannot have two parameters with the same name")
+            for parameter in parameters:
+                parameter.owner = self
+            self.__parameters = parameters
+        else:
+            self.__parameters = set()
+
+    @property
+    def owner(self) -> Type:
+        """Type: Get the owner type of the method."""
+        return self.__owner
+
+    @owner.setter
+    def owner(self, owner: Type):
+        """
+        Type: Set the owner type of the method.
+        
+        Raises:
+            ValueError: (Invalid owner) if the owner is instance of DataType.
+        """
+        if isinstance(owner, DataType):
+            raise ValueError("Invalid owner")
+        self.__owner = owner
+
+    @property
+    def code(self) -> str:
+        """str: Get the code of the method."""
+        return self.__code
+
+    @code.setter
+    def code(self, code: str):
+        """str: Set the code of the method."""
+        self.__code = code
+
+    def __repr__(self):
+        return f'Parameter({self.name}, {self.visibility}, {self.is_abstract}, {self.parameters}, {self.type}, {self.owner}, {self.code})'
+
 class Class(Type):
     """Represents a class in a modeling context.
 
@@ -406,23 +530,26 @@ class Class(Type):
     Args:
         name (str): The name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
+        methods (set[Method]): The set of methods of the class.
         is_abstract (bool): Indicates whether the class is abstract.
         is_read_only (bool): Indicates whether the class is read only.
 
     Attributes:
         name (str): Inherited from Type, represents the name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
+        methods (set[Method]): The set of methods of the class.
         is_abstract (bool): Indicates whether the class is abstract.
         is_read_only (bool): Indicates whether the class is read only.
         __associations (set[Association]): Set of associations involving the class.
         __generalizations (set[Generalization]): Set of generalizations involving the class.
     """
 
-    def __init__(self, name: str, attributes: set[Property], is_abstract: bool= False, is_read_only: bool= False):
+    def __init__(self, name: str, attributes: set[Property], methods: set[Method] = set(), is_abstract: bool= False, is_read_only: bool= False):
         super().__init__(name)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
         self.attributes: set[Property] = attributes
+        self.methods: set[Method] = methods
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
 
@@ -452,6 +579,29 @@ class Class(Type):
             self.__attributes = attributes
         else:
             self.__attributes = set()
+
+    @property
+    def methods(self) -> set[Method]:
+        """set[Method]: Get the methods of the class."""
+        return self.__methods
+
+    @methods.setter
+    def methods(self, methods: set[Method]):
+        """
+        set[Method]: Set the methods of the class.
+        
+        Raises:
+            ValueError: if two methods have the same name.
+        """
+        if methods is not None:
+            names = [method.name for method in methods]
+            if len(names) != len(set(names)):
+                raise ValueError("A class cannot have two methods with the same name")
+            for method in methods:
+                method.owner = self
+            self.__methods = methods
+        else:
+            self.__methods = set()
 
     def all_attributes(self) -> set[Property]:
         """set[Property]: Get all attributes, including inherited ones."""

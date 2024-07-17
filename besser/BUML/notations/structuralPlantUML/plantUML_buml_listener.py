@@ -146,8 +146,10 @@ class BUMLGenerationListener(PlantUMLListener):
         classes = list_to_str(self.__classes)
         associations = list_to_str(list(self.__relations.keys()))
         generalizations = list_to_str(list(self.__inheritances.keys()))
+        enumerations = list_to_str(list(self.__enums.keys()))
         self.output.write("\n\n# Domain Model\n")
-        self.output.write("domain: DomainModel = DomainModel(name=\"Domain Model\", types=" + classes + ", associations=" + associations + ", generalizations=" + generalizations + ")")
+        self.output.write("domain: DomainModel = DomainModel(name=\"Domain Model\", types=" + classes + ", associations=" + associations + 
+                          ", generalizations=" + generalizations + ", enumerations=" + enumerations + ")")
         text = '''from besser.BUML.metamodel.structural import *  \n\n'''
 
         # Primitive data types definition

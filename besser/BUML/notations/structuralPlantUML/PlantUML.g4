@@ -41,9 +41,9 @@ cardinalityVal      : INT | ASTK ;
 
 attribute           : visibility? ID ':' (primitiveData | ID) NL ;
 
-method              : visibility? modifier? type? name=ID '('
+method              : visibility? modifier? name=ID '('
                       (parameter (',' parameter)?)?
-                      ')' NL ;
+                      ')' (':' type)? NL ;
 
 parameter           : type name=ID;
 

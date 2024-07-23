@@ -39,15 +39,17 @@ cardinality         : '"' min=cardinalityVal ('..' max=cardinalityVal)? '"' ;
 
 cardinalityVal      : INT | ASTK ;
 
-attribute           : visibility? ID ':' (primitiveData | ID) NL ;
+attribute           : visibility? ID ':' dType NL ;
 
 method              : visibility? modifier? name=ID '('
                       (parameter (',' parameter)?)?
-                      ')' (':' type)? NL ;
+                      ')' (':' dType)? NL ;
 
-parameter           : type name=ID;
+parameter           : dType name=ID ('=' value)?;
 
-type                : 'void' | primitiveData | ID ;
+value               : '"'? (ID | INT | FLOAT) '"'?;
+
+dType               : primitiveData | ID ;
 
 enumeration         : 'enum' ID '{' NL
                       enumLiteral*
@@ -68,6 +70,8 @@ End                 : '@enduml' ;
 // Lexer rules
 ID              : [a-zA-Z_][a-zA-Z0-9_]* ;
 INT             : [0-9]+ ;
+FLOAT           : [0-9]+ '.' [0-9]+ ;
 ASTK            : '*' ;
 WS              : (' ' | '\t')+ -> skip ;
 NL              :  ('\r'? '\n')+ ;
+//STRING          : '"' ('\\' . | ~('\\' | '"'))* '"' ;

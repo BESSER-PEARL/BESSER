@@ -9,25 +9,27 @@ class BUMLGenerationListener(PlantUMLListener):
 
     def __init__(self, output):
         self.output = output
-        self.__attr_list: list = list()
+        self.__attr_list: list = []
+        self.__methods: list = []
+        self.__parameters: list = []
         self.__abstract_class: bool = False
         self.__dtypes: set = set()
-        self.__enums: dict = dict()
-        self.__eLiterals: list = list()
-        self.__classes: list = list()
-        self.__relations: dict = dict()
-        self.__ends: list = list()
-        self.__inheritances: dict = dict()
-        self.__relation_classes: list = list()
+        self.__enums: dict = {}
+        self.__e_literals: list = []
+        self.__classes: list = []
+        self.__relations: dict = {}
+        self.__ends: list = []
+        self.__inheritances: dict = {}
+        self.__relation_classes: list = []
         self.__group_inh: int = 0
-        self.__parent_classes: dict = dict()
-        
+        self.__parent_classes: dict = []
+
     def enterClass(self, ctx: PlantUMLParser.ClassContext):
         text = "# " + ctx.ID().getText() + " class definition \n"
         self.output.write(text)
         self.__attr_list = []
         self.__abstract_class = False
-    
+
     def exitClass(self, ctx: PlantUMLParser.ClassContext):
         attributes = list_to_str(self.__attr_list)
         text = ctx.ID().getText() + ": Class = Class(name=\"" + ctx.ID().getText() + "\", attributes=" + attributes
@@ -38,29 +40,68 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__classes.append(ctx.ID().getText())
 
     def enterAttribute(self, ctx: PlantUMLParser.AttributeContext):
-        attribute_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID(0).getText()
-        if ctx.primitiveData():
-            type = ctx.primitiveData().getText()
-            if type == 'string':
-                type = 'str'
-            self.__dtypes.add(type)
-            type = type + '_type'
-        else:
-            type = ctx.ID(1).getText()
-        text = attribute_name + ": Property = Property(name=\"" + ctx.ID(0).getText() + \
-            "\", type="+ type
+        attribute_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID().getText()
+        text = attribute_name + ": Property = Property(name=\"" + ctx.ID().getText() + "\", "
+        text += self.get_type(ctx.dType())
         if ctx.visibility():
             text += ", visibility=\"" + self.visibility[ctx.visibility().getText()] + "\""
         text += ")\n"
         self.output.write(text)
         self.__attr_list.append(attribute_name)
 
+    def get_type(self, ctx: PlantUMLParser.DTypeContext):
+        if ctx.primitiveData():
+            attr_type = ctx.primitiveData().getText()
+            if attr_type == 'string':
+                attr_type = 'str'
+            self.__dtypes.add(attr_type)
+            attr_type = attr_type + '_type'
+        else:
+            attr_type = ctx.ID().getText()   
+        text = "type="+ attr_type
+        return text
+
+    def enterMethod(self, ctx: PlantUMLParser.MethodContext):
+        self.__parameters = []
+        method_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID().getText()
+        text = method_name + ": Method = Method(name=\"" + ctx.ID().getText() + "\", "
+        if ctx.visibility():
+            text += "visibility=\"" + self.visibility[ctx.visibility().getText()] + "\", "
+        if ctx.modifier():
+            if ctx.modifier().getText() == "{abstract}":
+                text += "is_abstract=True, "
+        self.output.write(text)
+
+    def enterParameter(self, ctx: PlantUMLParser.ParameterContext):
+        text = "Parameter(name=\"" + ctx.ID().getText() + "\", " + self.get_type(ctx.dType())
+        if ctx.value():
+            text += ", default_value="
+            if ctx.value().ID():
+                text += ctx.value().ID().getText()
+            if ctx.value().INT():
+                text += ctx.value().INT().getText()
+            if ctx.value().FLOAT():
+                text += ctx.value().FLOAT().getText()
+        text += ")"
+        self.__parameters.append(text)
+    
+    def exitMethod(self, ctx: PlantUMLParser.MethodContext):
+        text = ""
+        if ctx.parameter():
+            parameters = list_to_str(self.__parameters)
+            text = "parameters=" + parameters + ", "
+        if ctx.dType():
+            text += self.get_type(ctx.dType()) + ")\n"
+        else:
+            text += "type=None)\n"
+        self.output.write(text)
+
     def enterAbstract(self, ctx: PlantUMLParser.AbstractContext):
         self.__abstract_class = True
-    
+
     def enterAssociation(self, ctx: PlantUMLParser.AssociationContext):
         self.__ends = []
-            
+
     def exitAssociation(self, ctx: PlantUMLParser.AssociationContext):
         cl_name_1 = ctx.ID(0).getText()
         cl_name_2 = ctx.ID(1).getText()
@@ -78,7 +119,7 @@ class BUMLGenerationListener(PlantUMLListener):
 
     def enterBidirectional(self, ctx: PlantUMLParser.BidirectionalContext):
         self.__ends = ["", ""]
-    
+
     def enterUnidirectional(self, ctx: PlantUMLParser.UnidirectionalContext):
         end_1 = ", is_navigable=True" if ctx.nav_l is not None else ", is_navigable=False"
         end_2 = ", is_navigable=True" if ctx.nav_r is not None else ", is_navigable=False"
@@ -120,16 +161,16 @@ class BUMLGenerationListener(PlantUMLListener):
         inheritance_name = "gen_" + general + "_" + specific
         text = inheritance_name + ": Generalization = Generalization(general=" + general + ", specific=" + specific + ")\n"
         self.__inheritances[inheritance_name] = text
-    
+
     def enterSkinParam(self, ctx: PlantUMLParser.SkinParamContext):
         self.__group_inh = int(ctx.INT().getText())
-    
+
     def enterEnumLiteral(self, ctx: PlantUMLParser.EnumLiteralContext):
-        self.__eLiterals.append("EnumerationLiteral(name=\"" + ctx.ID().getText() + "\")")
+        self.__e_literals.append("EnumerationLiteral(name=\"" + ctx.ID().getText() + "\")")
 
     def exitEnumeration(self, ctx: PlantUMLParser.EnumerationContext):
-        self.__enums[ctx.ID().getText()] = self.__eLiterals
-        self.__eLiterals = []
+        self.__enums[ctx.ID().getText()] = self.__e_literals
+        self.__e_literals = []
 
     def exitDomainModel(self, ctx: PlantUMLParser.DomainModelContext):
         self.check_classes_definition()
@@ -148,8 +189,9 @@ class BUMLGenerationListener(PlantUMLListener):
         generalizations = list_to_str(list(self.__inheritances.keys()))
         enumerations = list_to_str(list(self.__enums.keys()))
         self.output.write("\n\n# Domain Model\n")
-        self.output.write("domain: DomainModel = DomainModel(name=\"Domain Model\", types=" + classes + ", associations=" + associations + 
-                          ", generalizations=" + generalizations + ", enumerations=" + enumerations + ")")
+        self.output.write("domain: DomainModel = DomainModel(name=\"Domain Model\", types=" +
+                          classes + ", associations=" + associations + ", generalizations=" +
+                          generalizations + ", enumerations=" + enumerations + ")")
         text = '''from besser.BUML.metamodel.structural import *  \n\n'''
 
         # Primitive data types definition
@@ -183,7 +225,7 @@ class BUMLGenerationListener(PlantUMLListener):
                 text = key + "_generalization_set: GeneralizationSet = GeneralizationSet(name=\"" + key + \
                      "_gen_set\", generalizations={" + generalizations + "}, is_disjoint=True, is_complete=True)\n"
                 self.output.write(text)
-    
+
 def list_to_str(list:list):
     if len(list) == 0:
         str_list = "set()"
@@ -214,4 +256,4 @@ def getMultiplicity(cardinality:PlantUMLParser.CardinalityContext):
             min = "0"
 
     multiplicity = "Multiplicity(" + min + ", " + max + ")"
-    return (multiplicity)
+    return multiplicity

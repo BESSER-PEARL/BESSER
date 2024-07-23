@@ -170,12 +170,21 @@ class PlantUMLListener(ParseTreeListener):
         pass
 
 
-    # Enter a parse tree produced by PlantUMLParser#type.
-    def enterType(self, ctx:PlantUMLParser.TypeContext):
+    # Enter a parse tree produced by PlantUMLParser#value.
+    def enterValue(self, ctx:PlantUMLParser.ValueContext):
         pass
 
-    # Exit a parse tree produced by PlantUMLParser#type.
-    def exitType(self, ctx:PlantUMLParser.TypeContext):
+    # Exit a parse tree produced by PlantUMLParser#value.
+    def exitValue(self, ctx:PlantUMLParser.ValueContext):
+        pass
+
+
+    # Enter a parse tree produced by PlantUMLParser#dType.
+    def enterDType(self, ctx:PlantUMLParser.DTypeContext):
+        pass
+
+    # Exit a parse tree produced by PlantUMLParser#dType.
+    def exitDType(self, ctx:PlantUMLParser.DTypeContext):
         pass
 
 

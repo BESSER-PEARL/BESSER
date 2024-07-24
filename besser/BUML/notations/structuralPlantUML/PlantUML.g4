@@ -35,7 +35,7 @@ inheritance         : ID (inh_left='<|--' | '--|>') ID NL ;
 
 extends             : 'extends' ID ;
 
-cardinality         : '"' min=cardinalityVal ('..' max=cardinalityVal)? '"' ;
+cardinality         : D_QUOTE min=cardinalityVal ('..' max=cardinalityVal)? D_QUOTE ;
 
 cardinalityVal      : INT | ASTK ;
 
@@ -45,9 +45,9 @@ method              : visibility? modifier? name=ID '('
                       (parameter (',' parameter)?)?
                       ')' (':' dType)? NL ;
 
-parameter           : dType name=ID ('=' value)?;
+parameter           : dType name=ID ('=' value)? ;
 
-value               : '"'? (ID | INT | FLOAT) '"'?;
+value               : D_QUOTE? (ID | INT | FLOAT) D_QUOTE? ;
 
 dType               : primitiveData | ID ;
 
@@ -74,4 +74,4 @@ FLOAT           : [0-9]+ '.' [0-9]+ ;
 ASTK            : '*' ;
 WS              : (' ' | '\t')+ -> skip ;
 NL              :  ('\r'? '\n')+ ;
-//STRING          : '"' ('\\' . | ~('\\' | '"'))* '"' ;
+D_QUOTE         : '"' ;

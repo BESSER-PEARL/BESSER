@@ -2,6 +2,14 @@ from .PlantUMLParser import PlantUMLParser
 from .PlantUMLListener import PlantUMLListener
 
 class BUMLGenerationListener(PlantUMLListener):
+    """
+       This listener class generates a B-UML structural model from a parse-tree that 
+       representing a plantUML textual model
+
+       Args:
+           output (file): The file to be written with the code for the B-UML model creation.
+    """
+
     visibility = {"+": "public",
                   "-": "private",
                   "#": "protected",
@@ -9,7 +17,7 @@ class BUMLGenerationListener(PlantUMLListener):
 
     def __init__(self, output):
         self.output = output
-        self.__attr_list: list = []
+        self.__attributes: list = []
         self.__methods: list = []
         self.__parameters: list = []
         self.__abstract_class: bool = False
@@ -22,17 +30,21 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__inheritances: dict = {}
         self.__relation_classes: list = []
         self.__group_inh: int = 0
-        self.__parent_classes: dict = []
+        self.__parent_classes: dict = {}
 
     def enterClass(self, ctx: PlantUMLParser.ClassContext):
         text = "# " + ctx.ID().getText() + " class definition \n"
         self.output.write(text)
-        self.__attr_list = []
+        self.__attributes = []
+        self.__methods = []
         self.__abstract_class = False
 
     def exitClass(self, ctx: PlantUMLParser.ClassContext):
-        attributes = list_to_str(self.__attr_list)
-        text = ctx.ID().getText() + ": Class = Class(name=\"" + ctx.ID().getText() + "\", attributes=" + attributes
+        text = ctx.ID().getText() + ": Class = Class(name=\"" + ctx.ID().getText() + "\""
+        if len(self.__attributes) > 0:
+            text += ", attributes=" + list_to_str(self.__attributes)
+        if len(self.__methods) > 0:
+            text += ", methods=" + list_to_str(self.__methods)
         if self.__abstract_class:
             text += ", is_abstract=True"
         text += ")\n\n"
@@ -41,15 +53,24 @@ class BUMLGenerationListener(PlantUMLListener):
 
     def enterAttribute(self, ctx: PlantUMLParser.AttributeContext):
         attribute_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID().getText()
-        text = attribute_name + ": Property = Property(name=\"" + ctx.ID().getText() + "\", "
-        text += self.get_type(ctx.dType())
+        text = attribute_name + ": Property = Property(name=\"" + ctx.ID().getText() + \
+            "\", type=" + self.get_type(ctx.dType())
         if ctx.visibility():
             text += ", visibility=\"" + self.visibility[ctx.visibility().getText()] + "\""
         text += ")\n"
         self.output.write(text)
-        self.__attr_list.append(attribute_name)
+        self.__attributes.append(attribute_name)
 
     def get_type(self, ctx: PlantUMLParser.DTypeContext):
+        """
+        Return the data type.
+
+        Args:
+            ctx (PlantUMLParser.DTypeContext): The context containing type information.
+
+        Returns:
+            str: The formatted type.
+        """
         if ctx.primitiveData():
             attr_type = ctx.primitiveData().getText()
             if attr_type == 'string':
@@ -57,9 +78,8 @@ class BUMLGenerationListener(PlantUMLListener):
             self.__dtypes.add(attr_type)
             attr_type = attr_type + '_type'
         else:
-            attr_type = ctx.ID().getText()   
-        text = "type="+ attr_type
-        return text
+            attr_type = ctx.ID().getText()
+        return attr_type
 
     def enterMethod(self, ctx: PlantUMLParser.MethodContext):
         self.__parameters = []
@@ -71,27 +91,32 @@ class BUMLGenerationListener(PlantUMLListener):
             if ctx.modifier().getText() == "{abstract}":
                 text += "is_abstract=True, "
         self.output.write(text)
+        self.__methods.append(method_name)
 
     def enterParameter(self, ctx: PlantUMLParser.ParameterContext):
-        text = "Parameter(name=\"" + ctx.ID().getText() + "\", " + self.get_type(ctx.dType())
+        text = "Parameter(name=\"" + ctx.ID().getText() + "\", type=" + self.get_type(ctx.dType())
         if ctx.value():
             text += ", default_value="
+            if ctx.value().D_QUOTE(0):
+                text += "\""
             if ctx.value().ID():
                 text += ctx.value().ID().getText()
             if ctx.value().INT():
                 text += ctx.value().INT().getText()
             if ctx.value().FLOAT():
                 text += ctx.value().FLOAT().getText()
+            if ctx.value().D_QUOTE(1):
+                text += "\""
         text += ")"
         self.__parameters.append(text)
-    
+
     def exitMethod(self, ctx: PlantUMLParser.MethodContext):
         text = ""
         if ctx.parameter():
             parameters = list_to_str(self.__parameters)
             text = "parameters=" + parameters + ", "
         if ctx.dType():
-            text += self.get_type(ctx.dType()) + ")\n"
+            text += "type=" + self.get_type(ctx.dType()) + ")\n"
         else:
             text += "type=None)\n"
         self.output.write(text)
@@ -111,8 +136,8 @@ class BUMLGenerationListener(PlantUMLListener):
         if assoc_name in self.__relations:
             raise ValueError("The model cannot have two associations with the same name")
         text = assoc_name + ": BinaryAssociation = BinaryAssociation(name=\"" + assoc_name + "\", ends={\n\
-        Property(name=\"" + assoc_name + "\", type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.c_left) + self.__ends[0] + "),\n\
-        Property(name=\"" + assoc_name + "\", type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.c_right) + self.__ends[1] + ")})\n"
+        Property(name=\"" + assoc_name + "\", type=" + cl_name_1 + ", multiplicity=" + get_multiplicity(ctx.c_left) + self.__ends[0] + "),\n\
+        Property(name=\"" + assoc_name + "\", type=" + cl_name_2 + ", multiplicity=" + get_multiplicity(ctx.c_right) + self.__ends[1] + ")})\n"
         self.__relations[assoc_name] = text
         self.__relation_classes.append(cl_name_1)
         self.__relation_classes.append(cl_name_2)
@@ -137,7 +162,7 @@ class BUMLGenerationListener(PlantUMLListener):
         end_2 = ", is_navigable=False, is_aggregation=True" if ctx.aggr_r is not None else ""
         self.__ends.append(end_1)
         self.__ends.append(end_2)
-    
+
     def enterInheritance(self, ctx: PlantUMLParser.InheritanceContext):
         if ctx.inh_left:
             general = ctx.ID(0).getText()
@@ -173,7 +198,7 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__e_literals = []
 
     def exitDomainModel(self, ctx: PlantUMLParser.DomainModelContext):
-        self.check_classes_definition()
+        self.classes_definition()
         if len(self.__relations) != 0:
             self.output.write("# Relationships\n")
             for relation in self.__relations.values():
@@ -183,7 +208,7 @@ class BUMLGenerationListener(PlantUMLListener):
             for inheritance in self.__inheritances.values():
                 self.output.write(inheritance)
             if self.__group_inh > 1:
-                self.create_generalization_set()
+                self.generalization_set_definition()
         classes = list_to_str(self.__classes)
         associations = list_to_str(list(self.__relations.keys()))
         generalizations = list_to_str(list(self.__inheritances.keys()))
@@ -203,57 +228,74 @@ class BUMLGenerationListener(PlantUMLListener):
         # Enumeration definition
         if len(self.__enums) > 0:
             text += "# Enumerations \n"
-            for enum in self.__enums:
-                literals = ", ".join(self.__enums[enum])
-                text += enum + " = Enumeration(name=\"" + enum + "\", literals = {" + literals + "})\n\n"
-
+            for key, value in self.__enums.items():
+                literals = ", ".join(value)
+                text += key + " = Enumeration(name=\"" + key + "\", literals = {" + literals + "})\n\n"
         self.output.seek(0)
         content = self.output.read()
         self.output.seek(0)
         self.output.write(text + content)
 
-    def check_classes_definition(self):
+    def classes_definition(self):
+        """
+            Method to write the class definition code
+        """
         for cls in list(set(self.__relation_classes) - set(self.__classes)):
             text = "# " + cls + " class definition \n"
             text += cls + ": Class = Class(name=\"" + cls + "\", attributes={})\n\n"
             self.output.write(text)
 
-    def create_generalization_set(self):
+    def generalization_set_definition(self):
+        """
+            Method to write the generalization definition code
+        """
         for key, value in self.__parent_classes.items():
             if len(value) >= self.__group_inh:
                 generalizations = ", ".join(value)
-                text = key + "_generalization_set: GeneralizationSet = GeneralizationSet(name=\"" + key + \
-                     "_gen_set\", generalizations={" + generalizations + "}, is_disjoint=True, is_complete=True)\n"
+                text = key + "_generalization_set: GeneralizationSet = GeneralizationSet(name=\"" \
+                        + key + "_gen_set\", generalizations={" + generalizations \
+                        + "}, is_disjoint=True, is_complete=True)\n"
                 self.output.write(text)
 
-def list_to_str(list:list):
-    if len(list) == 0:
+def list_to_str(elements:list):
+    """
+        Method to transform a list of elements to string
+
+        Args:
+           elements (list): The list to transform.
+    """
+    if len(elements) == 0:
         str_list = "set()"
     else:
-        str_list = ", ".join(list)
+        str_list = ", ".join(elements)
         str_list = "{" + str_list + "}"
     return str_list
 
-def getMultiplicity(cardinality:PlantUMLParser.CardinalityContext):
-    min = ""
-    max = ""
+def get_multiplicity(cardinality:PlantUMLParser.CardinalityContext):
+    """
+        Method to get the multiplicity or cardinality in str format
+
+        Args:
+           cardinality (CardinalityContext): The cardinality context from parse-tree to analyze.
+    """
+    min_value = ""
+    max_value = ""
     multiplicity = ""
     if cardinality is None:
-        min = "1"
-        max = "1"
+        min_value = "1"
+        max_value = "1"
     else:
         if cardinality.cardinalityVal(0).INT():
-            min = cardinality.cardinalityVal(0).INT().getText()
+            min_value = cardinality.cardinalityVal(0).INT().getText()
         elif cardinality.cardinalityVal(0).ASTK():
-            min = "\"*\""
+            min_value = "\"*\""
         if cardinality.cardinalityVal(1) and cardinality.cardinalityVal(1).INT():
-            max = cardinality.cardinalityVal(1).INT().getText()
+            max_value = cardinality.cardinalityVal(1).INT().getText()
         elif cardinality.cardinalityVal(1) and cardinality.cardinalityVal(1).ASTK():
-            max = "\"*\""
-        if max == "":
-            max = min
-        if max == "\"*\"" == min:
-            min = "0"
-
-    multiplicity = "Multiplicity(" + min + ", " + max + ")"
+            max_value = "\"*\""
+        if max_value == "":
+            max_value = min_value
+        if max_value == "\"*\"" == min_value:
+            min_value = "0"
+    multiplicity = "Multiplicity(" + min_value + ", " + max_value + ")"
     return multiplicity

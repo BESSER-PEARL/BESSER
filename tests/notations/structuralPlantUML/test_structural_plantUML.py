@@ -1,3 +1,4 @@
+import os
 from besser.BUML.metamodel.structural import DomainModel
 from besser.BUML.notations.structuralPlantUML import plantuml_to_buml
 
@@ -33,6 +34,20 @@ def test_attributes():
     for attr in library.attributes:
         assert attr.name in ["name", "address"]
 
+# Test the attributes of a class
+def test_methods():
+    author = modeltest.get_class_by_name("Author")
+    assert len(author.methods) == 2
+    for method in author.methods:
+        assert method.name in ["notify", "func"]
+
+# Test the attributes of a class
+def test_enumeration():
+    assert len(modeltest.enumerations) == 1
+    for enum in modeltest.enumerations:
+        assert enum.name == "ContactM"
+        assert len(enum.literals) == 3
+
 # Test the inherited attributes of a specific class
 def test_inherited_attributes():
     literature = modeltest.get_class_by_name("Literature")
@@ -46,3 +61,8 @@ def test_association_ends():
     assert len(library.association_ends()) == 1
     assert library.association_ends().pop().multiplicity.min == 1
     assert library.association_ends().pop().multiplicity.max == 1
+    os.remove("buml/buml_model.py")
+
+# Delete generated files
+def delete_files():
+    assert os.remove("buml/buml_model.py")

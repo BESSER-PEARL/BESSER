@@ -45,7 +45,7 @@ method              : visibility? modifier? name=ID '('
                       (parameter (',' parameter)?)?
                       ')' (':' dType)? NL ;
 
-parameter           : dType name=ID ('=' value)? ;
+parameter           : name=ID ':' dType ('=' value)? ;
 
 value               : D_QUOTE? (ID | INT | FLOAT) D_QUOTE? ;
 

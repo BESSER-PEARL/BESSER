@@ -170,7 +170,7 @@ class Enumeration(DataType):
         name (str): Inherited from DataType, represents the name of the enumeration.
         literals (set[EnumerationLiteral]): Represents a set of enumeration literals associated with the enumeration.
     """
-    
+
     def __init__(self, name: str, literals: set[EnumerationLiteral]):
         super().__init__(name)
         self.literals: set[EnumerationLiteral] = literals
@@ -208,11 +208,11 @@ class TypedElement(NamedElement):
     Args:
         name (str): The name of the typed element.
         type (Type): The data type of the typed element.
-        visibility: Determines the kind of visibility of the typed element (public as default).
+        visibility (str): Determines the kind of visibility of the typed element (public as default).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the typed element.
-        visibility: Inherited from NamedElement, represents the visibility of the typed element.
+        visibility (str): Inherited from NamedElement, represents the visibility of the typed element (public as default).
         type (Type): The data type of the typed element.
     """
 
@@ -297,24 +297,24 @@ class Property(TypedElement):
     Args:
         name (str): The name of the property.
         type (Type): The type of the property.
-        owner (Type): The type that owns the property.
-        multiplicity (Multiplicity): The multiplicity of the property.
-        visibility (str): The visibility of the property ('public', 'private', etc.).
-        is_composite (bool): Indicates whether the property is a composite.
-        is_navigable (bool): Indicates whether the property is navigable in a relationship.
-        is_id (bool): Indicates whether the property is an id.
-        is_read_only (bool): Indicates whether the property is read only.
+        owner (Type): The type that owns the property (None as default).
+        multiplicity (Multiplicity): The multiplicity of the property (1..1 as default).
+        visibility (str): The visibility of the property (public as default).
+        is_composite (bool): Indicates whether the property is a composite (False as default).
+        is_navigable (bool): Indicates whether the property is navigable in a relationship (True as default).
+        is_id (bool): Indicates whether the property is an id (False as default).
+        is_read_only (bool): Indicates whether the property is read only (False as default).
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the property.
         type (Type): Inherited from TypedElement, represents the type of the property.
-        owner (Type): The type that owns the property.
-        multiplicity (Multiplicity): The multiplicity of the property.
-        visibility (str): Inherited from TypedElement, represents the visibility of the property.
-        is_composite (bool): Indicates whether the property is a composite.
-        is_navigable (bool): Indicates whether the property is navigable in a relationship.
-        is_id (bool): Indicates whether the property is an id.
-        is_read_only (bool): Indicates whether the property is read only.
+        owner (Type): The type that owns the property (public as default).
+        multiplicity (Multiplicity): The multiplicity of the property (1..1 as default).
+        visibility (str): Inherited from TypedElement, represents the visibility of the property (public as default).
+        is_composite (bool): Indicates whether the property is a composite (False as default).
+        is_navigable (bool): Indicates whether the property is navigable in a relationship (True as default).
+        is_id (bool): Indicates whether the property is an id (False as default).
+        is_read_only (bool): Indicates whether the property is read only (False as default).
     """
 
     def __init__(self, name: str, type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1),
@@ -409,12 +409,12 @@ class Parameter(NamedElement):
     Args:
         name (str): The name of the parameter.
         type (Type): The data type of the parameter.
-        default_value (Any, optional): The default value of the parameter.
+        default_value (Any): The default value of the parameter (None as default).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the parameter.
         type (Type): The data type of the parameter.
-        default_value (Any, optional): The default value of the parameter.
+        default_value (Any): The default value of the parameter (None as default).
     """
 
     def __init__(self, name: str, type: Type, default_value: Any = None):
@@ -453,19 +453,19 @@ class Method(TypedElement):
         name (str): The name of the method.
         visibility (str): Determines the kind of visibility of the method (public as default).
         is_abstract (bool): Indicates if the method is abstract (False as default).
-        parameters (set[Parameter]): The set of parameters for the method.
-        type (Type): The type of the method.
-        owner (Type): The type that owns the method.
-        code (str): code of the method.
+        parameters (set[Parameter]): The set of parameters for the method (set() as default).
+        type (Type): The type of the method (None as default).
+        owner (Type): The type that owns the method (None as default).
+        code (str): code of the method ("" as default).
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the method.
-        visibility (str): Inherited from TypedElement, represents the visibility of the method.
-        is_abstract (bool): Indicates if the method is abstract.
-        parameters (set[Parameter]): The set of parameters for the method.
-        type (Type): Inherited from TypedElement, represents the type of the method.
-        owner (Type): The type that owns the property.
-        code (str): code of the method.
+        visibility (str): Inherited from TypedElement, represents the visibility of the method (public as default).
+        is_abstract (bool): Indicates if the method is abstract. (False as default)
+        parameters (set[Parameter]): The set of parameters for the method (set() as default).
+        type (Type): Inherited from TypedElement, represents the type of the method (None as default).
+        owner (Type): The type that owns the property (None as default).
+        code (str): code of the method ("" as default).
     """
 
     def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False,
@@ -551,28 +551,28 @@ class Class(Type):
 
     Args:
         name (str): The name of the class.
-        attributes (set[Property]): The set of attributes associated with the class.
-        methods (set[Method]): The set of methods of the class.
-        is_abstract (bool): Indicates whether the class is abstract.
-        is_read_only (bool): Indicates whether the class is read only.
+        attributes (set[Property]): The set of attributes associated with the class (set() as default).
+        methods (set[Method]): The set of methods of the class (set() as default).
+        is_abstract (bool): Indicates whether the class is abstract (False as default).
+        is_read_only (bool): Indicates whether the class is read only (False as default).
 
     Attributes:
         name (str): Inherited from Type, represents the name of the class.
-        attributes (set[Property]): The set of attributes associated with the class.
-        methods (set[Method]): The set of methods of the class.
-        is_abstract (bool): Indicates whether the class is abstract.
-        is_read_only (bool): Indicates whether the class is read only.
+        attributes (set[Property]): The set of attributes associated with the class (set() as default).
+        methods (set[Method]): The set of methods of the class (set() as default).
+        is_abstract (bool): Indicates whether the class is abstract (False as default).
+        is_read_only (bool): Indicates whether the class is read only (False as default).
         __associations (set[Association]): Set of associations involving the class.
         __generalizations (set[Generalization]): Set of generalizations involving the class.
     """
 
-    def __init__(self, name: str, attributes: set[Property], methods: set[Method] = set(), 
+    def __init__(self, name: str, attributes: set[Property] = None, methods: set[Method] = None,
                  is_abstract: bool= False, is_read_only: bool= False):
         super().__init__(name)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
-        self.attributes: set[Property] = attributes
-        self.methods: set[Method] = methods
+        self.attributes: set[Property] = attributes if attributes is not None else set()
+        self.methods: set[Method] = methods if methods is not None else set()
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
 
@@ -834,7 +834,7 @@ class BinaryAssociation(Association):
         """
         if len(ends) != 2:
             raise ValueError("A binary association must have exactly two ends")
-        if list(ends)[0].is_composite == True and list(ends)[1].is_composite == True:
+        if list(ends)[0].is_composite is True and list(ends)[1].is_composite is True:
             raise ValueError("The composition attribute cannot be tagged at both ends")
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
 
@@ -945,7 +945,7 @@ class GeneralizationSet(NamedElement):
         is_complete (bool): Indicates whether the set is complete (every instance of the superclass must belong to a subclass).
     """
 
-    def __init__(self, name: str, generalizations: set[Generalization], is_disjoint: bool, 
+    def __init__(self, name: str, generalizations: set[Generalization], is_disjoint: bool,
                  is_complete: bool):
         super().__init__(name)
         self.generalizations: set[Generalization] = generalizations
@@ -1092,33 +1092,33 @@ class DomainModel(Model):
 
     Args:
         name (str): The name of the domain model.
-        types (set[Type]): The set of types (classes and datatypes) in the domain model.
-        associations (set[Association]): The set of associations in the domain model.
-        generalizations (set[Generalization]): The set of generalizations in the domain model.
-        enumerations (set[Enumeration]): The set of enumerations in the domain model.
-        packages (set[Package]): The set of packages in the domain model.
-        constraints (set[Constraint]): The set of constraints in the domain model.
+        types (set[Type]): The set of types (classes and datatypes) in the domain model (set() as default).
+        associations (set[Association]): The set of associations in the domain model (set() as default).
+        generalizations (set[Generalization]): The set of generalizations in the domain model (set() as default).
+        enumerations (set[Enumeration]): The set of enumerations in the domain model (set() as default).
+        packages (set[Package]): The set of packages in the domain model (set() as default).
+        constraints (set[Constraint]): The set of constraints in the domain model (set() as default).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the domain model.
-        types (set[Type]): The set of types (classes and datatypes) in the domain model.
-        associations (set[Association]): The set of associations in the domain model.
-        generalizations (set[Generalization]): The set of generalizations in the domain model.
-        enumerations (set[Enumeration]): The set of enumerations in the domain model.
-        packages (set[Package]): The set of packages in the domain model.
-        constraints (set[Constraint]): The set of constraints in the domain model.
+        types (set[Type]): The set of types (classes and datatypes) in the domain model (set() as default).
+        associations (set[Association]): The set of associations in the domain model (set() as default).
+        generalizations (set[Generalization]): The set of generalizations in the domain model (set() as default).
+        enumerations (set[Enumeration]): The set of enumerations in the domain model (set() as default).
+        packages (set[Package]): The set of packages in the domain model (set() as default).
+        constraints (set[Constraint]): The set of constraints in the domain model (set() as default).
     """
 
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None,
                  generalizations: set[Generalization] = None, enumerations: set[Enumeration] = None,
                  packages: set[Package] = None, constraints: set[Constraint] = None):
         super().__init__(name)
-        self.types: set[Type] = types
-        self.packages: set[Package] = packages
-        self.constraints: set[Constraint] = constraints
-        self.associations: set[Association] = associations
-        self.enumerations: set[Enumeration] = enumerations
-        self.generalizations: set[Generalization] = generalizations
+        self.types: set[Type] = types if types is not None else set()
+        self.packages: set[Package] = packages if packages is not None else set()
+        self.constraints: set[Constraint] = constraints if constraints is not None else set()
+        self.associations: set[Association] = associations if associations is not None else set()
+        self.enumerations: set[Enumeration] = enumerations if enumerations is not None else set()
+        self.generalizations: set[Generalization] = generalizations if generalizations is not None else set()
 
     @property
     def types(self) -> set[Type]:
@@ -1245,7 +1245,8 @@ class DomainModel(Model):
     def get_class_by_name(self, class_name: str) -> Class:
         """Class: Gets a class by name."""
         return next(
-            (element for element in self.types if isinstance(element, Class) and element.name == class_name), None
+            (element for element in self.types if isinstance(element, Class) and
+             element.name == class_name), None
             )
 
     def classes_sorted_by_inheritance(self) -> list[Class]:

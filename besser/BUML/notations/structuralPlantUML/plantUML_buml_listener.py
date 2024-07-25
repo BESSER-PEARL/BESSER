@@ -20,11 +20,10 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__attributes: list = []
         self.__methods: list = []
         self.__parameters: list = []
-        self.__abstract_class: bool = False
         self.__dtypes: set = set()
         self.__enums: dict = {}
         self.__e_literals: list = []
-        self.__classes: list = []
+        self.__classes: dict = {}
         self.__relations: dict = {}
         self.__ends: list = []
         self.__inheritances: dict = {}
@@ -33,23 +32,23 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__parent_classes: dict = {}
 
     def enterClass(self, ctx: PlantUMLParser.ClassContext):
-        text = "# " + ctx.ID().getText() + " class definition \n"
+        text = "\n# " + ctx.ID().getText() + " class attributes and methods\n"
         self.output.write(text)
         self.__attributes = []
         self.__methods = []
-        self.__abstract_class = False
 
     def exitClass(self, ctx: PlantUMLParser.ClassContext):
-        text = ctx.ID().getText() + ": Class = Class(name=\"" + ctx.ID().getText() + "\""
+        text=""
+        textd = ctx.ID().getText() + ": Class = Class(name=\"" + ctx.ID().getText() + "\""
         if len(self.__attributes) > 0:
-            text += ", attributes=" + list_to_str(self.__attributes)
+            text += ctx.ID().getText() + ".attributes=" + list_to_str(self.__attributes) + "\n"
         if len(self.__methods) > 0:
-            text += ", methods=" + list_to_str(self.__methods)
-        if self.__abstract_class:
-            text += ", is_abstract=True"
-        text += ")\n\n"
+            text += ctx.ID().getText() + ".methods=" + list_to_str(self.__methods) + "\n"
+        if ctx.abstract():
+            textd += ", is_abstract=True"
+        textd += ")\n"
         self.output.write(text)
-        self.__classes.append(ctx.ID().getText())
+        self.__classes[(ctx.ID().getText())] = textd
 
     def enterAttribute(self, ctx: PlantUMLParser.AttributeContext):
         attribute_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID().getText()
@@ -83,7 +82,7 @@ class BUMLGenerationListener(PlantUMLListener):
 
     def enterMethod(self, ctx: PlantUMLParser.MethodContext):
         self.__parameters = []
-        method_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID().getText()
+        method_name = ctx.parentCtx.ID().getText() + "_m_" + ctx.ID().getText()
         text = method_name + ": Method = Method(name=\"" + ctx.ID().getText() + "\", "
         if ctx.visibility():
             text += "visibility=\"" + self.visibility[ctx.visibility().getText()] + "\", "
@@ -120,9 +119,6 @@ class BUMLGenerationListener(PlantUMLListener):
         else:
             text += "type=None)\n"
         self.output.write(text)
-
-    def enterAbstract(self, ctx: PlantUMLParser.AbstractContext):
-        self.__abstract_class = True
 
     def enterAssociation(self, ctx: PlantUMLParser.AssociationContext):
         self.__ends = []
@@ -198,9 +194,8 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__e_literals = []
 
     def exitDomainModel(self, ctx: PlantUMLParser.DomainModelContext):
-        self.classes_definition()
         if len(self.__relations) != 0:
-            self.output.write("# Relationships\n")
+            self.output.write("\n# Relationships\n")
             for relation in self.__relations.values():
                 self.output.write(relation)
         if len(self.__inheritances) != 0:
@@ -209,41 +204,45 @@ class BUMLGenerationListener(PlantUMLListener):
                 self.output.write(inheritance)
             if self.__group_inh > 1:
                 self.generalization_set_definition()
-        classes = list_to_str(self.__classes)
+        classes = list_to_str(list(self.__classes.keys()))
         associations = list_to_str(list(self.__relations.keys()))
         generalizations = list_to_str(list(self.__inheritances.keys()))
         enumerations = list_to_str(list(self.__enums.keys()))
+        space = "\n" + ("\t"*4)
         self.output.write("\n\n# Domain Model\n")
-        self.output.write("domain: DomainModel = DomainModel(name=\"Domain Model\", types=" +
-                          classes + ", associations=" + associations + ", generalizations=" +
-                          generalizations + ", enumerations=" + enumerations + ")")
+        self.output.write("domain: DomainModel = DomainModel(" + space +
+                          "name=\"Domain Model\","+ space +
+                          "types=" + classes + "," + space +
+                          "associations=" + associations + "," + space + 
+                          "generalizations=" + generalizations + "," + space +
+                          "enumerations=" + enumerations + space + ")\n")
         text = '''from besser.BUML.metamodel.structural import *  \n\n'''
 
         # Primitive data types definition
-        text += "# Primitive Data Types \n"
+        text += "# Primitive Data Types\n"
         for dtype in self.__dtypes:
             text += dtype + "_type = PrimitiveDataType(\"" + dtype + "\")\n"
         text += "\n"
 
         # Enumeration definition
         if len(self.__enums) > 0:
-            text += "# Enumerations \n"
+            text += "# Enumerations\n"
             for key, value in self.__enums.items():
-                literals = ", ".join(value)
-                text += key + " = Enumeration(name=\"" + key + "\", literals = {" + literals + "})\n\n"
+                literals = ",\n\t\t\t".join(value)
+                text += key + " = Enumeration(name=\"" + key + "\", literals = {\n\t\t\t" + literals + "})\n\n"
+
+        # Classes definition
+        if len(self.__classes) > 0:
+            text += "# Classes\n"
+            for key, value in self.__classes.items():
+                text += value
+        for cls in list(set(self.__relation_classes) - set(self.__classes.keys())):
+            text += cls + ": Class = Class(name=\"" + cls + "\")\n"
+
         self.output.seek(0)
         content = self.output.read()
         self.output.seek(0)
         self.output.write(text + content)
-
-    def classes_definition(self):
-        """
-            Method to write the class definition code
-        """
-        for cls in list(set(self.__relation_classes) - set(self.__classes)):
-            text = "# " + cls + " class definition \n"
-            text += cls + ": Class = Class(name=\"" + cls + "\", attributes={})\n\n"
-            self.output.write(text)
 
     def generalization_set_definition(self):
         """

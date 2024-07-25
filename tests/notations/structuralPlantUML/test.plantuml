@@ -24,7 +24,7 @@ class Fantasy {
 class Author {
 + name: str
 + email: str
-+ notify(str sms="message", ContactM contact_method)
++ notify(sms: str = "message", contact_method: ContactM)
 + {abstract} func(): str
 }
 
@@ -33,6 +33,8 @@ enum ContactM {
     TELEPHONE
     LETTER
 }
+
+abstract class Platform{}
 
 Book "*" -- "1..*" Author: writtenBy
 Library "1" -- Book: has

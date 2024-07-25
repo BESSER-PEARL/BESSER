@@ -6,13 +6,14 @@ modeltest: DomainModel = plantuml_to_buml(plantUML_model_path="test.plantuml")
 
 # Test the classes of the BUML output model
 def test_classes():
-    assert len(modeltest.get_classes()) == 6
+    assert len(modeltest.get_classes()) == 7
     assert modeltest.get_class_by_name("Library")
     assert modeltest.get_class_by_name("Book")
     assert modeltest.get_class_by_name("Author")
     assert modeltest.get_class_by_name("Science")
     assert modeltest.get_class_by_name("Fantasy")
     assert modeltest.get_class_by_name("Literature")
+    assert modeltest.get_class_by_name("Platform")
 
 # Test the association of the BUML output model
 def test_associations():
@@ -56,12 +57,19 @@ def test_inherited_attributes():
         assert attr.name in ["tittle", "pages", "edition"]
 
 # Test association ends of a class
-def test_association_ends():
+def test_abstract_class():
     library = modeltest.get_class_by_name("Library")
     assert len(library.association_ends()) == 1
     assert library.association_ends().pop().multiplicity.min == 1
     assert library.association_ends().pop().multiplicity.max == 1
     os.remove("buml/buml_model.py")
+
+# Test abstract class
+def test_association_ends():
+    cls1 = modeltest.get_class_by_name("Platform")
+    assert cls1.is_abstract is True
+    cls2 = modeltest.get_class_by_name("Author")
+    assert cls2.is_abstract is False
 
 # Delete generated files
 def delete_files():

@@ -6,7 +6,7 @@ All you need is to provide the textual model (PlantUML) and our T2M transformati
 based model, including the source code to build the model, in case you want to modify any part of your model 
 that is not possible with PlantUML.
 
-Let's see an example with the classic `library model <https://besser.readthedocs.io/en/latest/_images/library_uml_model.png>`_.
+Let's see an example with the classic library model.
 The textual model written in PlantUML is shown below.
 
 .. literalinclude:: ../../code_eg/structural_grammar/library.plantuml
@@ -16,8 +16,8 @@ The textual model written in PlantUML is shown below.
 
 And the diagram produced by PlantUML is as follows.
 
-.. image:: ../../img/library_plantuml.png
-  :width: 120
+.. image:: ../../img/library_plantuml_2.png
+  :width: 350
   :alt: Library model
   :align: center
 

@@ -1,5 +1,6 @@
-from besser.BUML.metamodel.structural import NamedElement, DomainModel, Model
 from enum import Enum
+from besser.BUML.metamodel.structural import NamedElement, DomainModel, Model
+
 
 class Hypervisor(Enum):
     '''Enumeration to list various types of hypervisors.
@@ -165,7 +166,8 @@ class Application(NamedElement):
         domain_model (DomainModel): The domain model of the application.
     """
 
-    def __init__(self, name: str, image_repo: str, port: int, required_resources: Resources, domain_model: DomainModel):
+    def __init__(self, name: str, image_repo: str, port: int, required_resources: Resources,
+            domain_model: DomainModel):
         super().__init__(name)
         self.image_repo: str = image_repo
         self.port: str = port
@@ -201,19 +203,22 @@ class Application(NamedElement):
     def required_resources(self, required_resources: Resources):
         """Resource: Set the required resources."""
         self.__required_resources = required_resources
-    
+
     @property
     def domain_model(self) -> DomainModel:
         """str: Get the domain model."""
         return self.__domain_model
 
-    @image_repo.setter
+    @domain_model.setter
     def domain_model(self, domain_model: DomainModel):
         """str: Set the domain model."""
         self.__domain_model = domain_model
 
     def __repr__(self) -> str:
-        return f'Application({self.name}, {self.required_resources}, {self.image_repo}, {self.domain_model})'
+        return (
+            f'Application({self.name}, {self.required_resources}, {self.image_repo}, '
+            f'{self.domain_model})'
+        )
 
 
 class Volume(NamedElement):
@@ -273,11 +278,12 @@ class Container(NamedElement):
         volumes (set[Volume]): The set of volumes attached to the container.
     """
 
-    def __init__(self, name: str, application: Application, resources_limit: Resources = None, volumes: set[Volume] = set()):
+    def __init__(self, name: str, application: Application, resources_limit: Resources = None,
+            volumes: set[Volume] = None):
         super().__init__(name)
         self.application: Application = application
         self.resources_limit: Resources = resources_limit
-        self.volumes: set[Volume] = volumes
+        self.volumes: set[Volume] = volumes if volumes is not None else set()
 
     @property
     def application(self) -> Application:
@@ -311,7 +317,7 @@ class Container(NamedElement):
 
     def __repr__(self) -> str:
         return f'Container({self.name}, {self.application}, {self.resources_limit}, {self.volumes})'
-    
+
 
 class Deployment(NamedElement):
     """ A class to represent a deployment.
@@ -350,7 +356,7 @@ class Deployment(NamedElement):
     def containers(self, containers: set[Container]):
         """set[Container]: Set the set of containers."""
         self.__containers = containers
-    
+
     def __repr__(self) -> str:
         return f'Deployment({self.name}, {self.replicas}, {self.containers})'
 
@@ -374,7 +380,8 @@ class Service(NamedElement):
         application (Application): The application associated with the service.
     """
 
-    def __init__(self, name: str, port: int, target_port: int, type: ServiceType, protocol: Protocol, application: Application = None):
+    def __init__(self, name: str, port: int, target_port: int, type: ServiceType,
+                 protocol: Protocol, application: Application = None):
         super().__init__(name)
         self.port: int = port
         self.target_port: int = target_port
@@ -431,10 +438,13 @@ class Service(NamedElement):
     def application(self, application: Application):
         """Application: Set the application associated with the service."""
         self.__application = application
-    
+
     def __repr__(self) -> str:
-        return f'Service({self.name}, {self.port}, {self.target_port}, {self.type}, {self.protocol}, {self.application})'
-    
+        return (
+            f'Service({self.name}, {self.port}, {self.target_port}, {self.type}, '
+            f'{self.protocol}, {self.application})'
+        )
+
 class IPRange(NamedElement):
     """A class to represent an IP range.
 
@@ -487,7 +497,7 @@ class IPRange(NamedElement):
         self.__public = public
 
     def __repr__(self) -> str:
-        return f'IPRange({self.name}, {self.cidr_range}, {self.type}, {self.public})' 
+        return f'IPRange({self.name}, {self.cidr_range}, {self.type}, {self.public})'
 
 
 class SecurityGroup(NamedElement):
@@ -504,7 +514,7 @@ class SecurityGroup(NamedElement):
     def __init__(self, name: str, rules: set[Service]):
         super().__init__(name)
         self.rules: set[Service] = rules
-    
+
     @property
     def rules(self) -> set[Service]:
         """set[Service]: Get the set of security rules."""
@@ -524,15 +534,17 @@ class Network(NamedElement):
 
     Args:
         name (str): The name of the network.
-        security_groups (set[SecurityGroup], optional): The set of security groups associated with the network.
+        security_groups (set[SecurityGroup], optional): The set of security groups associated
+        with the network.
 
     Attributes:
-        security_groups (set[SecurityGroup]): The set of security groups associated with the network.
+        security_groups (set[SecurityGroup]): The set of security groups associated with the
+        network.
     """
 
-    def __init__(self, name: str, security_groups: set[SecurityGroup] = set()):
+    def __init__(self, name: str, security_groups: set[SecurityGroup] = None):
         super().__init__(name)
-        self.security_groups: set[SecurityGroup] = security_groups
+        self.security_groups: set[SecurityGroup] = security_groups if security_groups is not None else set()
 
     @property
     def security_groups(self) -> set[SecurityGroup]:
@@ -545,7 +557,7 @@ class Network(NamedElement):
         self.__security_groups = security_groups
 
     def __repr__(self) -> str:
-        return f'Network({self.name})' 
+        return f'Network({self.name})'
 
 
 class Subnetwork(NamedElement):
@@ -587,7 +599,7 @@ class Subnetwork(NamedElement):
         self.__network = network
 
     def __repr__(self) -> str:
-        return f'Subnetwork({self.name}, {self.ip_ranges}, {self.network})' 
+        return f'Subnetwork({self.name}, {self.ip_ranges}, {self.network})'
 
 
 class Zone(NamedElement):
@@ -656,7 +668,8 @@ class Node(NamedElement):
         processor (Processor): The processor type of the node.
     """
 
-    def __init__(self, name: str, public_ip: str, private_ip, os: str, resources: Resources, storage: int, processor: Processor):
+    def __init__(self, name: str, public_ip: str, private_ip, os: str, resources: Resources,
+                 storage: int, processor: Processor):
         super().__init__(name)
         self.public_ip: str = public_ip
         self.private_ip: str = private_ip
@@ -730,7 +743,8 @@ class EdgeNode(Node):
     """A class to represent an edge node.
     """
 
-    def __init__(self, name: str, public_ip: str, private_ip, os: str, resources: Resources, storage: int, processor: Processor):
+    def __init__(self, name: str, public_ip: str, private_ip, os: str, resources: Resources,
+                 storage: int, processor: Processor):
         super().__init__(name, public_ip, private_ip, os, resources, storage, processor)
 
 
@@ -738,7 +752,8 @@ class CloudNode(Node):
     """A class to represent a cloud node.
     """
 
-    def __init__(self, name: str, public_ip: str, private_ip, os: str, resources: Resources, storage: int, processor: Processor):
+    def __init__(self, name: str, public_ip: str, private_ip, os: str, resources: Resources,
+                 storage: int, processor: Processor):
         super().__init__(name, public_ip, private_ip, os, resources, storage, processor)
 
 
@@ -765,8 +780,9 @@ class Cluster(NamedElement):
         subnets (set[Subnetwork]): The set of subnetworks in the cluster.
     """
 
-    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: set[Region], net_config: bool = True, nodes: set[Node] = set(),
-                 networks: set[Network] = set(), subnets: set[Subnetwork] = set()):
+    def __init__(self, name: str, services: set[Service], deployments: set[Deployment],
+                 regions: set[Region], net_config: bool = True, nodes: set[Node] = None,
+                 networks: set[Network] = None, subnets: set[Subnetwork] = None):
         super().__init__(name)
         self.services: set[Service] = services
         self.deployments: set[Deployment] = deployments
@@ -847,7 +863,10 @@ class Cluster(NamedElement):
         self.__subnets = subnets
 
     def __repr__(self) -> str:
-        return f'Cluster({self.name}, {self.services}, {self.deployments}, {self.regions}, {self.net_config}, {self.nodes}, {self.networks}, {self.subnets})'
+        return (
+            f'Cluster({self.name}, {self.services}, {self.deployments}, {self.regions}, '
+            f'{self.net_config}, {self.nodes}, {self.networks}, {self.subnets})'
+        )
 
 
 class PublicCluster(Cluster):
@@ -871,8 +890,10 @@ class PublicCluster(Cluster):
         provider (Provider): The provider of the public cluster.
     """
 
-    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: Region, num_nodes: int, provider: Provider, 
-                 config_file: str, networks: set[Network] = set(), subnets: set[Subnetwork] = set(), net_config: bool = True):
+    def __init__(self, name: str, services: set[Service], deployments: set[Deployment],
+                 regions: Region, num_nodes: int, provider: Provider, config_file: str,
+                 networks: set[Network] = None, subnets: set[Subnetwork] = None,
+                 net_config: bool = True):
         super().__init__(name, services, deployments, regions, net_config, networks, subnets)
         self.config_file: str = config_file
         self.num_nodes: int = num_nodes
@@ -909,7 +930,11 @@ class PublicCluster(Cluster):
         self.__provider = provider
 
     def __repr__(self) -> str:
-        return f'PublicCluster({self.name}, {self.services},{self.deployments}, {self.regions}, {self.config_file}, {self.provider}, {self.networks}, {self.subnets}, {self.net_config})'
+        return (
+            f'PublicCluster({self.name}, {self.services},{self.deployments}, '
+            f'{self.regions}, {self.config_file}, {self.provider}, '
+            f'{self.networks}, {self.subnets}, {self.net_config})'
+        )
 
 class OnPremises(Cluster):
     """A class to represent an on-premises cluster.
@@ -928,8 +953,9 @@ class OnPremises(Cluster):
         hypervisor (Hypervisor): The hypervisor used in the on-premises cluster.
     """
 
-    def __init__(self, name: str, services: set[Service], deployments: set[Deployment], regions: Region, nodes: set[Node], 
-                 hypervisor: Hypervisor, networks: set[Network], subnets: set[Subnetwork]):
+    def __init__(self, name: str, services: set[Service], deployments: set[Deployment],
+                 regions: Region, nodes: set[Node], hypervisor: Hypervisor,
+                 networks: set[Network], subnets: set[Subnetwork]):
         super().__init__(name, services, deployments, regions, nodes, networks, subnets)
         self.hypervisor: str = hypervisor
 
@@ -944,8 +970,11 @@ class OnPremises(Cluster):
         self.__hypervisor = hypervisor
 
     def __repr__(self) -> str:
-        return f'Cluster({self.name}, {self.services},{self.deployments}, {self.regions}, {self.nodes}, {self.hypervisor}, {self.networks}, {self.subnets})'
-    
+        return (
+            f'Cluster({self.name}, {self.services},{self.deployments}, {self.regions}, '
+            f'{self.nodes}, {self.hypervisor}, {self.networks}, {self.subnets})'
+        )
+
 
 class DeploymentModel(Model):
     """A class to represent a deployment model.

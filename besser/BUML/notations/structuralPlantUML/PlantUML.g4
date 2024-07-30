@@ -35,19 +35,21 @@ inheritance         : ID (inh_left='<|--' | '--|>') ID NL ;
 
 extends             : 'extends' ID ;
 
-cardinality         : '"' min=cardinalityVal ('..' max=cardinalityVal)? '"' ;
+cardinality         : D_QUOTE min=cardinalityVal ('..' max=cardinalityVal)? D_QUOTE ;
 
 cardinalityVal      : INT | ASTK ;
 
-attribute           : visibility? ID ':' (primitiveData | ID) NL ;
+attribute           : visibility? ID ':' dType NL ;
 
-method              : visibility? modifier? type? name=ID '('
+method              : visibility? modifier? name=ID '('
                       (parameter (',' parameter)?)?
-                      ')' NL ;
+                      ')' (':' dType)? NL ;
 
-parameter           : type name=ID;
+parameter           : name=ID ':' dType ('=' value)? ;
 
-type                : 'void' | primitiveData | ID ;
+value               : D_QUOTE? (ID | INT | FLOAT) D_QUOTE? ;
+
+dType               : primitiveData | ID ;
 
 enumeration         : 'enum' ID '{' NL
                       enumLiteral*
@@ -68,6 +70,8 @@ End                 : '@enduml' ;
 // Lexer rules
 ID              : [a-zA-Z_][a-zA-Z0-9_]* ;
 INT             : [0-9]+ ;
+FLOAT           : [0-9]+ '.' [0-9]+ ;
 ASTK            : '*' ;
 WS              : (' ' | '\t')+ -> skip ;
 NL              :  ('\r'? '\n')+ ;
+D_QUOTE         : '"' ;

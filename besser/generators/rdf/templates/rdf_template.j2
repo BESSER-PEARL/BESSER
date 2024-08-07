@@ -24,8 +24,13 @@ ex:{{class_obj.name}} rdf:type rdfs:Class .
     {% for property in class_obj.attributes %}
 ex:{{property.name}} rdf:type rdf:Property ;
         rdfs:domain ex:{{class_obj.name}} ;
+        {% if types[property.type.name ]%}
         rdfs:range xsd:{{types[property.type.name]}} .
 
+        {% else %}
+        rdfs:range xsd:{{property.type.name}} .
+
+        {% endif %}
     {% endfor %}
 {% endfor %}
 

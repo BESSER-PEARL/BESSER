@@ -1,0 +1,8 @@
+{% set ns = namespace(last_section=None) -%}
+{% for prop in properties -%}
+{% if ns.last_section != prop.section -%}
+{% set ns.last_section = prop.section %}
+[{{ ns.last_section }}]
+{% endif -%}
+{{ prop.name }} = {{ prop.value }}
+{% endfor -%}

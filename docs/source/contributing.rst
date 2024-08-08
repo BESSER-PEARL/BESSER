@@ -21,6 +21,7 @@ We want to recognize the work of the contributors:
 * `Armen Sulejmani <https://github.com/Arm-Sl>`_
 * `Fedor Chikhachev <https://github.com/FChikh>`_
 * `Alisa Vorokhta <https://github.com/Vorokhalice>`_
+* `Marcos Gomez <https://github.com/mgv99>`_
 
 Contact
 -------

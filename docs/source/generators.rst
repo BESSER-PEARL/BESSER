@@ -21,11 +21,12 @@ own generator).
    generators/backend
    generators/flutter
    generators/terraform
+   generators/besser_bot_framework
    generators/build_generator
 
 
 .. warning::
    
-   Right now, most of our code generators availables can only handle :doc:`structural models <../buml_language/model_types/structural>`. 
+   Right now, most of our available code generators can only handle :doc:`structural models <../buml_language/model_types/structural>`.
    But here's the cool part: BESSER offers an interface that makes it easy to :doc:`develop your own code generator </generators/build_generator>` 
    capable of handling any type of B-UML model.

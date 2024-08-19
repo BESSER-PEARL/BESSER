@@ -12,4 +12,3 @@ Generators
    generators/api_backend
    generators/api_flutter
    generators/api_terraform
-   generators/api_besser_bot_framework

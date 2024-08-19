@@ -28,37 +28,3 @@ When modelling a state machine, a session is only used as an argument for the ev
 .. note::
 
   The classes highlighted in green originate from the :doc:`structural metamodel <structural>`.
-
-
-.. _bot-metamodel:
-
-Bot metamodel
--------------
-
-The bot metamodel is an extension of the state machine metamodel that adds the necessary components of bots, chatbots and voicebots
-that are 'state machine' and 'intent' based. Some relevant extensions are:
-
-- **Intents**: An intent is a purpose or goal behind the user input. A bot definition can contain a set of intents. Each intent can
-  embed multiple parameters, which are defined by the bot entities.
-- **Entities**: An entity contains a set of values that the bot can use to understand or extract them from the user inputs. An entity can have
-  either explicit values (**CustomEntity**) or can be one of the pre-defined entities (**BaseEntity**) that are intended to recognize full domain of values (e.g., numbers)
-- A **BotSession** now stores information about the **IntentClassifierPrediction** (if any) and **File** received (if any)
-- Each **BotState** has an intent classifier, defined by an **IntentClassifierConfiguration**.
-- A bot can send and receive data (e.g., messages, files, images, etc.) through **Platforms**.
-
-.. image:: ../../img/bot_mm.png
-  :width: 1600
-  :alt: State machine metamodel
-  :align: center
-
-.. note::
-
-  You can visit the `BESSER Bot Framework documentation <https://besserbot-framework.readthedocs.io/en/latest/>`_ for a
-  complete understanding about bots
-
-Supported notations
--------------------
-
-To create a state machine or bot model, you can use the following notation:
-
-* :doc:`Coding in Python Using the B-UML python library <../model_building/buml_core>`

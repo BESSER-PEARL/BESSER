@@ -21,7 +21,6 @@ own generator).
    generators/backend
    generators/flutter
    generators/terraform
-   generators/besser_bot_framework
    generators/build_generator
 
 

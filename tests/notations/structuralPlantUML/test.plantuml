@@ -23,8 +23,18 @@ class Fantasy {
 
 class Author {
 + name: str
-+ email: str 
++ email: str
++ notify(sms: str = "message", contact_method: ContactM)
++ {abstract} func(): str
 }
+
+enum ContactM {
+    EMAIL
+    TELEPHONE
+    LETTER
+}
+
+abstract class Platform{}
 
 Book "*" -- "1..*" Author: writtenBy
 Library "1" -- Book: has

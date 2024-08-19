@@ -1,5 +1,5 @@
-State Machine / Bot
-===================
+State Machine
+=============
 
 .. _state-machine-metamodel:
 

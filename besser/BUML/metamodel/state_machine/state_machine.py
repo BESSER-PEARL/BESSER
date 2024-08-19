@@ -273,7 +273,7 @@ class StateMachine(Model):
         """Get the state machine's initial state. It can be None if it has not been set.
 
         Returns:
-            State or None: the initial state of the bot, if exists
+            State or None: the initial state of the machine, if exists
         """
         for state in self.states:
             if state.initial:
@@ -289,7 +289,7 @@ class Session:
     """A user session in a state machine execution.
 
     When a user starts interacting with a state machine, a session is assigned to him/her to store user related
-    information, such as the current state of the bot or any custom variable. A session can be accessed from the body of
+    information, such as the current state or any custom variable. A session can be accessed from the body of
     the states to read/write user information. If a state machine does not have the concept of 'users' (i.e., there are
     no concurrent executions of the state machine, but a single one) then it could simply have 1 unique session.
 

@@ -72,7 +72,6 @@ def test_screen_generation():
     assert not f"class {myScreen.name}State extends " in content, "Missing screen definition in the generated file."
 
     # Clean up (optional)
-    #os.remove(output_file)
     shutil.rmtree("output")
 
 
@@ -189,7 +188,7 @@ def test_CRUD_Operations():
         size="SmallScreen",
         view_elements={myList}
     )
-    
+
     # HomeScreen definition
     myHomeScreen: Screen = Screen(
         name="MyHomeScreen",
@@ -216,7 +215,7 @@ def test_CRUD_Operations():
 
     # Generate the file
     output_file = 'output/sql_helper.dart'
-    
+
     code_gen = FlutterSQLHelperGenerator(model = model)
     code_gen.generate()
 

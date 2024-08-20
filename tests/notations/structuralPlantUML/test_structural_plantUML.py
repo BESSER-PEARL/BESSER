@@ -1,8 +1,12 @@
 import os
+import shutil
 from besser.BUML.metamodel.structural import DomainModel
 from besser.BUML.notations.structuralPlantUML import plantuml_to_buml
 
-modeltest: DomainModel = plantuml_to_buml(plantUML_model_path="test.plantuml")
+model_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(model_dir, "test.plantuml")
+modeltest: DomainModel = plantuml_to_buml(plantUML_model_path=model_path)
+shutil.rmtree("buml")
 
 # Test the classes of the BUML output model
 def test_classes():
@@ -62,7 +66,6 @@ def test_abstract_class():
     assert len(library.association_ends()) == 1
     assert library.association_ends().pop().multiplicity.min == 1
     assert library.association_ends().pop().multiplicity.max == 1
-    os.remove("buml/buml_model.py")
 
 # Test abstract class
 def test_association_ends():
@@ -70,7 +73,3 @@ def test_association_ends():
     assert cls1.is_abstract is True
     cls2 = modeltest.get_class_by_name("Author")
     assert cls2.is_abstract is False
-
-# Delete generated files
-def delete_files():
-    assert os.remove("buml/buml_model.py")

@@ -5,7 +5,7 @@ New features
 ------------
 
 * State Machine Models in B-UML: B-UML now allows the specification of State Machine models.
-* New RDF Code Generator: Added support for RDF code generation.
+* New `RDF <https://www.w3.org/TR/rdf-schema/>`_ Code Generator: A code generator to produce the RDF representation of a structural model.
 
 Improvements
 ------------

@@ -1,4 +1,5 @@
 from besser.BUML.notations.ocl.FactoryInstance import Factory
+
 class Root_Handler:
     def __init__(self,ocl=None,dm=None,om=None):
         context = None
@@ -18,40 +19,51 @@ class Root_Handler:
 
     def get_root(self):
         return self.root
+
     def get_inv(self):
         return self.invariant
+
     def set_inv(self,inv):
         self.invariant = inv
+
     def set_post(self,post):
         self.post = post
+
     def get_post(self):
         return self.post
 
     def set_body(self,body):
         self.body = body
+
     def get_body(self):
         return self.body
+
     def set_pre(self,pre):
         self.pre=pre
+
     def get_pre(self):
         return self.pre
+
     def create_property (self,prop):
         return self.factory.create_property_Call_Expression(prop,"NP")
+
     def handle_property(self,prop):
         self.add_to_root(self.factory.create_property_Call_Expression(prop,"NP"))
 
-    def get_root(self):
-        return self.root
     def get_context_name(self):
         return self.context_name
+
     def set_context_name(self,name):
         self.context_name = name
+
     def create_if_else_exp(self,name,type):
         self.if_else_roots.append(None)
         return self.factory.create_if_else_exp(name,type)
+
     def pop(self):
         if len(self.all)!=0:
             self.add_to_root(self.all.pop())
+
     def checkNumberOrVariable(self, txt):
         if txt.isnumeric():
             if "." in txt:
@@ -75,11 +87,13 @@ class Root_Handler:
         else:
             self.all[-1].add_body(op)
         return root
+
     def getTop(self,last = False):
         currentHead = self.if_else_roots.pop()
         if not last:
             self.if_else_roots.append(None)
         return currentHead
+
     def add_to_root(self, op):
         self.last_added = op
         if len(self.if_else_roots) != 0:
@@ -88,25 +102,14 @@ class Root_Handler:
         else:
             self.root = self._add_root(self.root, op)
         pass
-    def pop_root(self,root):
-
-        if self.root == self.last_coll_exp:
-            self.root = None
-            return self.last_coll_exp
-        if hasattr(root, "arguments"):
-            if self.last_coll_exp in root.arguments:
-                root.arguments.remove(self.last_coll_exp)
-                return self.last_coll_exp
-            for args in root.arguments:
-                self.pop_root(args)
 
     def print(self):
         self.handlePrint(self.root)
+
     def handle_ID(self,id):
         varID =self.factory.create_variable_expression(id,None)
         self.add_to_root(varID)
-        # print('\x1b[6;30;42m' + 'handled ID, verify me!!!' + '\x1b[0m')
-        pass
+
     def create_ordered_set(self):
         type = self.factory.create_ordered_set_type()
         return self.factory.create_collection_literal_expression("orderedSet", type)
@@ -118,9 +121,11 @@ class Root_Handler:
     def create_sub_ordered_set(self):
         type = self.factory.create_ordered_set_type()
         return self.factory.create_collection_literal_expression("subOrderedSet", type)
+
     def create_sequence(self):
         type = self.factory.create_sequence_type ()
         return self.factory.create_collection_literal_expression("sequence",type)
+
     def create_sub_sequence(self):
         type = self.factory.create_sub_sequence_type ()
         return self.factory.create_collection_literal_expression("subsequence",type)
@@ -134,6 +139,7 @@ class Root_Handler:
 
     def create_infinix_op(self,op):
         self.factory.create_infix_operator(op)
+
     def handle_and_with_function_call(self, text):
         op = None
         inF = None
@@ -145,48 +151,43 @@ class Root_Handler:
             op = self.factory.create_operation_call_expression(name = "OR")
         op.arguments.append(inF)
         self.add_to_root(op)
-        pass
+
     def create_operation_call_exp(self,name):
         return self.factory.create_operation_call_expression(name=name)
+
     def get_factory(self):
         return self.factory
+
     def handle_bag(self,  collectionLiteral, operator):
         infixOperator = None
         if operator is not None:
             infixOperator = self.factory.create_infix_operator(operator)
-
         if infixOperator is not None:
             operationCallExp = self.factory.create_operation_call_expression(None,collectionLiteral,infixOperator,None,True)
-
         self.add_to_root(operationCallExp)
+
     def handle_adding_to_root(self, expression, op=None):
         if op is not None:
             expression.referredOperation(op)
         self.add_to_root(expression)
-        pass
+
     def handlePrimaryExp(self,primaryExp,operator):
         pass
 
     def handle_collection(self,oclExp):
-
         collectionOperator = None
         if "forAll" in oclExp[0:8]:
             collectionOperator = "forAll"
-            pass
         elif "exists" in oclExp[0:8]:
             collectionOperator = "exists"
-            pass
         elif "collect" in oclExp[0:9]:
             collectionOperator = "collect"
-            pass
         elif "select" in oclExp[0:8]:
             collectionOperator = "select"
-            pass
 
         # print("Collection Operator: " + collectionOperator)
         self.handleColl(oclExp,collectionOperator)
 
-        pass
     def handle_single_variable(self, variable_name,sign):
         op = self.factory.create_operation_call_expression(name = "operation")
         infinix_op = self.factory.create_infix_operator(sign)
@@ -194,7 +195,7 @@ class Root_Handler:
         op.arguments.append(infinix_op)
         op.arguments.append(prop)
         self.add_to_root(op)
-        pass
+
     def verify(self,item):
         referredOP= None
         if 'and' in item[0:3]:
@@ -213,15 +214,14 @@ class Root_Handler:
             opCallExp = self.factory.create_operation_call_expression(name=referredOP)
             opCallExp.referredOperation = self.factory.create_infix_operator(referredOP)
             self.add_to_root(opCallExp)
-        pass
+
     def getClass(self,name):
         for type in self.dm.types:
             if name == type.name:
                 return type
         raise Exception ("Class not found")
-        pass
-    def handleColl(self, forAllExp,collectionOperator):
 
+    def handleColl(self, forAllExp,collectionOperator):
         self.all.append(self.factory.create_loop_expression(collectionOperator))
         without_arrow = forAllExp.replace("->", '')
         without_collOp = without_arrow.replace(collectionOperator+"(", '')
@@ -238,17 +238,12 @@ class Root_Handler:
                 iteratorExp = self.factory.create_iterator_expression(iteratorVariableName ,iteratorclass)
                 self.all[-1].addIterator(iteratorExp)
 
-
-        pass
     def handle_binary_expression(self, expression, operator,inbetween= None,beforeSign = None):
         expressionParts = expression.split(operator)
-
         leftside = self.checkNumberOrVariable(expressionParts[0])
         rightside = self.checkNumberOrVariable(expressionParts[1])
-
         leftPart = None
         rightPart = None
-
         if "var" in leftside:
             leftPart = self.factory.create_property_Call_Expression(expressionParts[0], type="NP",iterators=self.all)
         elif "int" in leftside:
@@ -259,7 +254,6 @@ class Root_Handler:
             leftPart = self.factory.create_boolean_literal_expression("NP", (expressionParts[0]))
         elif "str" in leftside:
             leftPart = self.factory.create_string_literal_expression("str", expressionParts[0].replace("'",""))
-
         if "var" in rightside:
             rightPart = self.factory.create_property_Call_Expression(expressionParts[1], type="NP",iterators=self.all)
         elif "int" in rightside:
@@ -270,7 +264,6 @@ class Root_Handler:
             rightPart = self.factory.create_boolean_literal_expression("NP", (expressionParts[1]))
         elif "str" in rightside:
             rightPart = self.factory.create_string_literal_expression("str", expressionParts[1].replace("'",""))
-
         infixOperator = self.factory.create_infix_operator(operator)
         beforeOp = None
         if beforeSign is not None:
@@ -282,12 +275,8 @@ class Root_Handler:
                                                                            inBetweenOp,beforeOp)
         self.add_to_root(opeartion_call_exp)
 
-
-        pass
     def handleBinaryFunc(self,operator,number):
-
         num = self.checkNumberOrVariable(number)
-
         if "int" in num:
             rightPart = self.factory.create_integer_literal_expression("NP", int(number))
 
@@ -301,10 +290,8 @@ class Root_Handler:
         op= self.factory.create_operation_call_expression(name='callExp')
         op.arguments.append(self.factory.create_infix_operator(operator))
         num = self.checkNumberOrVariable(number)
-
         if "int" in num:
-           rightPart = self.factory.create_integer_literal_expression("NP", int(number))
-
+            rightPart = self.factory.create_integer_literal_expression("NP", int(number))
         if "real" in num:
             rightPart = self.factory.create_real_literal_expression("NP", float(number))
 
@@ -312,8 +299,9 @@ class Root_Handler:
             rightPart
         )
         self.add_to_root(op)
+
     def handlePrint(self, root):
-        if root == None:
+        if root is None:
             return
         if hasattr(root, 'arguments'):
             print(root.arguments)
@@ -325,4 +313,3 @@ class Root_Handler:
             print(root.iterator)
             for item in root.body:
                 print(item)
-

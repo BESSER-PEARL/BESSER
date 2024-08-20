@@ -6,7 +6,7 @@ domainModel         : Start NL
                       End
                       ;
 
-element             : skinParam | class | relationship ;
+element             : skinParam | class | relationship | enumeration ;
 
 skinParam           : 'skinparam' 'groupInheritance' INT NL ;
 
@@ -35,13 +35,27 @@ inheritance         : ID (inh_left='<|--' | '--|>') ID NL ;
 
 extends             : 'extends' ID ;
 
-cardinality         : '"' min=cardinalityVal ('..' max=cardinalityVal)? '"' ;
+cardinality         : D_QUOTE min=cardinalityVal ('..' max=cardinalityVal)? D_QUOTE ;
 
 cardinalityVal      : INT | ASTK ;
 
-attribute           : visibility? ID ':' primitiveData NL ;
+attribute           : visibility? ID ':' dType NL ;
 
-method              : visibility? modifier? 'void'? ID '()' NL ;
+method              : visibility? modifier? name=ID '('
+                      (parameter (',' parameter)?)?
+                      ')' (':' dType)? NL ;
+
+parameter           : name=ID ':' dType ('=' value)? ;
+
+value               : D_QUOTE? (ID | INT | FLOAT) D_QUOTE? ;
+
+dType               : primitiveData | ID ;
+
+enumeration         : 'enum' ID '{' NL
+                      enumLiteral*
+                      '}' NL ;
+
+enumLiteral         : ID NL ;
 
 visibility          : '#' | '-' | '~' | '+' ;
 
@@ -56,7 +70,8 @@ End                 : '@enduml' ;
 // Lexer rules
 ID              : [a-zA-Z_][a-zA-Z0-9_]* ;
 INT             : [0-9]+ ;
+FLOAT           : [0-9]+ '.' [0-9]+ ;
 ASTK            : '*' ;
-DOUBLE_QUOTE    : '"' 'hola' '"';
 WS              : (' ' | '\t')+ -> skip ;
 NL              :  ('\r'? '\n')+ ;
+D_QUOTE         : '"' ;

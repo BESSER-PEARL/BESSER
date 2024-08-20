@@ -1,17 +1,19 @@
+import os
+import shutil
 from antlr4 import *
 from besser.BUML.notations.deployment.deploymentLexer import deploymentLexer
 from besser.BUML.notations.deployment.deploymentParser import deploymentParser
 from besser.BUML.notations.deployment.deploymentListener import deploymentListener
 from besser.BUML.notations.deployment import buml_deployment_model
-import shutil
 from besser.BUML.metamodel.deployment import Provider, Protocol, ServiceType
 
-model = buml_deployment_model(deployment_textfile="deployment.txt")
+model_dir = os.path.dirname(os.path.abspath(__file__))
+model_path = os.path.join(model_dir, "deployment.txt")
+model = buml_deployment_model(deployment_textfile=model_path)
 shutil.rmtree("buml")
 
 def test_simple_Deployment_Grammar():
-    od = "deployment.txt"
-    input_stream = FileStream(od)
+    input_stream = FileStream(model_path)
     lexer = deploymentLexer(input_stream)
     stream = CommonTokenStream(lexer)
     parser = deploymentParser(stream)

@@ -9,3 +9,4 @@ Model types
   model_types/gui
   model_types/ocl
   model_types/deployment
+  model_types/state_machine_bot

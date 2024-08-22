@@ -21,6 +21,7 @@ own generator).
    generators/backend
    generators/flutter
    generators/terraform
+   generators/rdf
    generators/build_generator
 
 

@@ -5,7 +5,7 @@ from besser.generators.django import DjangoGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.rest_api import RESTAPIGenerator
-from besser.generators.pydantic_classes import PydanticGenerator
+from besser.generators.rdf import RDFGenerator
 from besser.generators.backend import BackendGenerator
 
 # Primitive DataTypes
@@ -69,3 +69,6 @@ rest_api.generate()
 
 backend = BackendGenerator(model=library_model, http_methods=["GET", "POST", "PUT", "DELETE"], nested_creations=False)
 backend.generate()
+
+rdf = RDFGenerator(model=library_model)
+rdf.generate()

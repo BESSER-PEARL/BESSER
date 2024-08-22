@@ -12,7 +12,7 @@ the ``generate`` method as follows:
     
     from besser.generators.python_classes import PythonGenerator
     
-    generator: Python_Generator = PythonGenerator(model=library_model)
+    generator: PythonGenerator = PythonGenerator(model=library_model)
     generator.generate()
 
 The ``classes.py`` file with the Python domain model (i.e., the set of classes) will be generated in the ``<<current_directory>>/output`` 

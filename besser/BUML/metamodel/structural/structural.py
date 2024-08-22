@@ -402,7 +402,7 @@ class Property(TypedElement):
             f'is_read_only={self.is_read_only})'
         )
 
-class Parameter(NamedElement):
+class Parameter(TypedElement):
     """
     Parameter is used to represent a parameter of a method with a specific type.
 
@@ -413,24 +413,13 @@ class Parameter(NamedElement):
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the parameter.
-        type (Type): The data type of the parameter.
+        type (Type): Inherited from TypedElement, represents the type of the parameter.
         default_value (Any): The default value of the parameter (None as default).
     """
 
     def __init__(self, name: str, type: Type, default_value: Any = None):
-        super().__init__(name)
-        self.type: Type = type
+        super().__init__(name, type)
         self.default_value: Any = default_value
-
-    @property
-    def type(self) -> Type:
-        """Type: Get the type of the parameter."""
-        return self.__type
-
-    @type.setter
-    def type(self, type: Type):
-        """Type: Set the type of the parameter."""
-        self.__type = type
 
     @property
     def default_value(self) -> Any:

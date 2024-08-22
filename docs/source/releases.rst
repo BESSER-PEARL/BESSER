@@ -12,3 +12,4 @@ Release Notes
    releases/v1.1.3
    releases/v1.2.0
    releases/v1.3.0
+   releases/v1.3.1

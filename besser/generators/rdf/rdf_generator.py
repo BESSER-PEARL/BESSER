@@ -6,13 +6,12 @@ from besser.generators import GeneratorInterface
 
 class RDFGenerator(GeneratorInterface):
     """
-    SQLGenerator is a class that implements the GeneratorInterface and produces the code or set of SQL statements 
-    used to define and modify the structure of the tables in a database..
+    RDFGenerator is a class that implements the GeneratorInterface and produces the vocabulary spec in RDF Turtle format 
+    for a structural model defined with B-UML.
 
     Args:
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
-        sql_dialect (str, optional): The SQL dialect. Values allowed: None, "postgres", or "mysql".
     """
 
     TYPES = {

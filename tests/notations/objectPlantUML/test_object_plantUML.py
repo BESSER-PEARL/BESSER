@@ -1,9 +1,13 @@
+import os
 from antlr4 import *
 from besser.BUML.notations.objectPlantUML.ODLexer import ODLexer
 from besser.BUML.notations.objectPlantUML.ODParser import ODParser
 from besser.BUML.notations.objectPlantUML.ODListener import ODListener
+
+model_dir = os.path.dirname(os.path.abspath(__file__))
+od = os.path.join(model_dir, "libraryObjectDiagram.plantuml")
+
 def test_simple_OD():
-    od = "libraryObjectDiagram.plantuml"
     all_objs = []
     input_stream = FileStream(od)
     lexer = ODLexer(input_stream)
@@ -16,7 +20,6 @@ def test_simple_OD():
     assert parser.getNumberOfSyntaxErrors() == 0
 
 def test_number_of_objects():
-    od = "libraryObjectDiagram.plantuml"
     all_objs = []
     input_stream = FileStream(od)
     lexer = ODLexer(input_stream)
@@ -27,8 +30,8 @@ def test_number_of_objects():
     walker = ParseTreeWalker()
     walker.walk(listener, tree)
     assert len(all_objs) == 5
+
 def test_number_of_slots_for_libaray():
-    od = "libraryObjectDiagram.plantuml"
     all_objs = []
     input_stream = FileStream(od)
     lexer = ODLexer(input_stream)
@@ -38,11 +41,9 @@ def test_number_of_slots_for_libaray():
     listener = ODListener(all_objs)
     walker = ParseTreeWalker()
     walker.walk(listener, tree)
-
     assert len(all_objs[0].slots) == 2
 
 def test_number_of_slots_for_libaray1():
-    od = "libraryObjectDiagram.plantuml"
     all_objs = []
     input_stream = FileStream(od)
     lexer = ODLexer(input_stream)
@@ -55,7 +56,6 @@ def test_number_of_slots_for_libaray1():
     assert len(all_objs[1].slots) == 3
 
 def test_number_of_slots_for_book():
-    od = "libraryObjectDiagram.plantuml"
     all_objs = []
     input_stream = FileStream(od)
     lexer = ODLexer(input_stream)

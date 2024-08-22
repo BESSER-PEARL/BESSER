@@ -465,7 +465,7 @@ class IterateExp(LoopExp):
     def __init__(self,name: str, type: Type):
         super().__init__(name, type)
 
-        self.result=Variable()
+        self.result=Variable(name, type)
 
 class IteratorExp(LoopExp):
     """A class to define Iterator expression

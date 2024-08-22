@@ -61,7 +61,7 @@ def test_container_repr():
     app1 = Application(name="App1", image_repo="my_image:latest", port=8000, required_resources=Resources(cpu=100, memory=500), domain_model=None)
     container = Container(name="MyContainer", application=app1, resources_limit=Resources(cpu=100, memory=200))
     expected_repr = (
-        "Container(MyContainer, Application(App1, Resource(100, 500), my_image:latest, my_image:latest), "
+        "Container(MyContainer, Application(App1, Resource(100, 500), my_image:latest, None), "
         "Resource(100, 200), set())"
     )
     assert repr(container) == expected_repr

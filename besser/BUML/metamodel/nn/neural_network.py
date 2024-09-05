@@ -814,7 +814,6 @@ class PoolingLayer(CNN):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        type (str): The type of pooling applied.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the pooling 
             operation.
         kernel_dim (List[int]): A list containing the dimensions of 
@@ -838,7 +837,6 @@ class PoolingLayer(CNN):
         name (str): Inherited from Layer. It represents the name of the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        type (str): It represents the type of pooling applied.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the pooling 
             operation.
         kernel_dim (List[int]): Inherited from CNN. A list containing 
@@ -1902,15 +1900,20 @@ class Image(Feature):
 
     Args:
         shape (list[int]): The shape of the image in the form 
-            [height, width, channels].
+            [height, width, channels]. Default to [256, 256].
+        normalize (bool): If true, the images will be normalized to zero mean 
+            and unit standard deviation. 
         
     Attributes:
         shape (list[int]): The shape of the image in the form 
-            [height, width, channels].
+            [height, width, channels]. Default to [256, 256].
+        normalize (bool): If true, the images will be normalized to zero mean 
+            and unit standard deviation.  
 
     """
-    def __init__(self, shape: List[int]):
+    def __init__(self, shape: List[int] = [256, 256], normalize: bool = False):
         self.shape: List[int] = shape
+        self.normalize: bool = normalize
 
     @property
     def shape(self) -> List[int]:
@@ -1922,9 +1925,24 @@ class Image(Feature):
         """List[int]: Set the shape of the image."""
         self.__shape = shape
 
+    @property
+    def normalize(self) -> bool:
+        """
+        bool: If true, the images will be normalized to zero mean 
+            and unit standard deviation. 
+        """
+        return self.__normalize
+
+    @normalize.setter
+    def normalize(self, normalize: bool):
+        """
+        bool: If true, the images will be normalized to zero mean 
+            and unit standard deviation.  
+        """
+        self.__normalize = normalize
 
     def __repr__(self):
-        return f'Image({self.shape})' 
+        return f'Image({self.shape}, {self.normalize})' 
 
 class Structured(Feature):
     """
@@ -2179,6 +2197,9 @@ class Parameters:
             the performance of NN models.
         weight_decay (float): It represents the strength of L2 regularisation 
             applied to the model's parameters during optimisation.
+        momentum (float): It represents a hyperparameter in optimization 
+            that helps speed up training by using past gradients to smooth 
+            out updates.
         
     Attributes:
         batch_size (int): The number of data samples processed in each 
@@ -2198,10 +2219,13 @@ class Parameters:
             the performance of NN models.
         weight_decay (float): It represents the strength of L2 regularisation 
             applied to the model's parameters during optimisation.
+        momentum (float): It represents a hyperparameter in optimization 
+            that helps speed up training by using past gradients to smooth 
+            out updates.
     """
     def __init__(self, batch_size: int, epochs: int, learning_rate: float, 
                  optimiser: str, loss_function: str, metrics: List[str], 
-                 weight_decay: float = 0):
+                 weight_decay: float = 0, momentum: float = 0):
         self.batch_size: int = batch_size
         self.epochs: int = epochs
         self.learning_rate: float = learning_rate
@@ -2209,6 +2233,7 @@ class Parameters:
         self.loss_function: str = loss_function
         self.metrics: List[str] = metrics
         self.weight_decay: float = weight_decay
+        self.momentum: float = momentum
 
     @property
     def batch_size(self) -> int:
@@ -2360,12 +2385,26 @@ class Parameters:
         """
         self.__weight_decay = weight_decay
 
+    @property
+    def momentum(self) -> float:
+        """
+        float: Get the value of the momentum hyperparameter.
+        """
+        return self.__momentum
+
+    @momentum.setter
+    def momentum(self, momentum: float):
+        """
+        float: Set the value of the momentum hyperparameter.
+        """
+        self.__momentum = momentum
+
 
     def __repr__(self):
         return (
             f'Parameters({self.batch_size}, {self.epochs}, '
             f'{self.learning_rate}, {self.optimiser}, {self.loss_function}, '
-            f'{self.metrics}, {self.weight_decay})'
+            f'{self.metrics}, {self.weight_decay}, , {self.momentum})'
         )
 
 class NN(BehaviorImplementation):
@@ -2484,3 +2523,8 @@ class NN(BehaviorImplementation):
         """Self: Add the parameters to the NN model."""
         self.__parameters = parameters
         return self
+    
+    def __repr__(self):
+        return (
+            f'NN({self.name}, {self.parameters}, {self.modules})'
+        )

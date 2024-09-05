@@ -1,5 +1,5 @@
 from __future__ import annotations
-from besser.BUML.metamodel.structural import BehaviorImplementation
+from besser.BUML.metamodel.structural import BehavioralImplementation
 from typing import List, Self, Union
 
                                                                               
@@ -2407,7 +2407,7 @@ class Parameters:
             f'{self.metrics}, {self.weight_decay}, , {self.momentum})'
         )
 
-class NN(BehaviorImplementation):
+class NN(BehavioralImplementation):
     """
     It is a subclass of the BehaviorImplementation class and comprises 
     the fundamental properties and behaviors of a neural network model.

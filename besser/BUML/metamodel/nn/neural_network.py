@@ -1,5 +1,5 @@
 from __future__ import annotations
-from besser.BUML.metamodel.structural import BehavioralImplementation
+from besser.BUML.metamodel.structural import BehaviorImplementation
 from typing import List, Self, Union
 
                                                                               
@@ -467,7 +467,7 @@ class ConvolutionalLayer(CNN):
         padding_amount (int): Inherited from CNN. The amount of padding added 
             to the input.
         padding_type (str): Inherited from CNN. The type of padding applied 
-            to the input. 
+            to the input.
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
@@ -484,6 +484,7 @@ class ConvolutionalLayer(CNN):
                          input_reused)
         self.in_channels: int = in_channels
         self.out_channels: int = out_channels
+        
 
     @property
     def in_channels(self) -> int:
@@ -530,6 +531,8 @@ class Conv1D(ConvolutionalLayer):
             of the convolution or pooling (i.e., [depth, height, width]).
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
+        permute_dim (bool): Whether the dimensions of the input need to be 
+            permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused as 
@@ -553,6 +556,8 @@ class Conv1D(ConvolutionalLayer):
             padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type of 
             padding applied to the input. 
+        permute_dim (bool): Whether the dimensions of the input need to be 
+            permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
@@ -561,11 +566,12 @@ class Conv1D(ConvolutionalLayer):
     def __init__(self, name: str, in_channels: int, out_channels: int, 
                  kernel_dim: List[int], stride_dim: List[int] = [1], 
                  padding_amount: int = 0, padding_type: str = "valid",
-                 actv_func: str = None, name_layer_input: str = None, 
-                 input_reused: bool = False):
+                 permute_dim: bool = False, actv_func: str = None, 
+                 name_layer_input: str = None, input_reused: bool = False):
         super().__init__(name, in_channels, out_channels, kernel_dim, 
-                         stride_dim, padding_amount, padding_type, actv_func,
-                         name_layer_input, input_reused)
+                         stride_dim, padding_amount, padding_type,
+                         actv_func, name_layer_input, input_reused)
+        self.permute_dim: bool = permute_dim
     
     @property
     def kernel_dim(self) -> List[int]:
@@ -602,12 +608,26 @@ class Conv1D(ConvolutionalLayer):
                              (dimension).")
         self.__stride_dim = stride_dim
 
+    @property
+    def permute_dim(self) -> bool:
+        """
+        bool: Get whether to permute the dim of the input.
+        """
+        return self.__permute_dim
+
+    @permute_dim.setter
+    def permute_dim(self, permute_dim: bool):
+        """
+        bool: Set whether to permute the dim of the input.
+        """
+        self.__permute_dim = permute_dim
+
     def __repr__(self):
         return (
             f'Conv1D({self.name}, {self.actv_func}, {self.in_channels}, '
             f'{self.out_channels}, {self.kernel_dim}, {self.stride_dim}, ' 
             f'{self.padding_amount}, {self.padding_type}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.permute_dim}, {self.name_layer_input}, {self.input_reused})'
         )
         
 class Conv2D(ConvolutionalLayer):
@@ -626,7 +646,7 @@ class Conv2D(ConvolutionalLayer):
             the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
         padding_amount (int): The amount of padding added to the input.
-        padding_type (str): The type of padding applied to the input. 
+        padding_type (str): The type of padding applied to the input.  
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused 
@@ -649,7 +669,7 @@ class Conv2D(ConvolutionalLayer):
         padding_amount (int): Inherited from CNN. It represents the amount of 
             padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type of 
-            padding applied to the input. 
+            padding applied to the input.
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
@@ -760,8 +780,8 @@ class Conv3D(ConvolutionalLayer):
                  actv_func: str = None, name_layer_input: str = None, 
                  input_reused: bool = False):
         super().__init__(name, in_channels, out_channels, kernel_dim, 
-                         stride_dim, padding_amount, padding_type, actv_func, 
-                         name_layer_input, input_reused)
+                         stride_dim, padding_amount, padding_type,
+                         actv_func, name_layer_input, input_reused)
     
     @property
     def kernel_dim(self) -> List[int]:
@@ -1252,6 +1272,8 @@ class RNN(Layer):
             features but the hidden states.
         return_sequences (bool): If True, the layer does not return only the 
             last output in the output sequence but the full sequence.
+        permute_dim (bool): Whether the dimensions of the input need to be 
+            permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused as 
@@ -1276,6 +1298,8 @@ class RNN(Layer):
             features but the hidden states.
         return_sequences (bool): If True, the layer does not return only the 
             last output in the output sequence but the full sequence.
+        permute_dim (bool): Whether the dimensions of the input need to be 
+            permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
@@ -1284,8 +1308,9 @@ class RNN(Layer):
     def __init__(self, name: str, input_size: int, hidden_size: int, 
                  bidirectional: bool = False, dropout: float = 0.0, 
                  batch_first: bool = True, return_hidden: bool = False, 
-                 return_sequences: bool = False, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
+                 return_sequences: bool = False, permute_dim: bool = False,
+                 actv_func: str = None, name_layer_input: str = None, 
+                 input_reused: bool = False):
         super().__init__(name, actv_func, name_layer_input, input_reused)
         self.bidirectional: bool = bidirectional
         self.dropout: float = dropout
@@ -1294,6 +1319,7 @@ class RNN(Layer):
         self.return_sequences: bool = return_sequences
         self.input_size: int = input_size
         self.hidden_size: int = hidden_size
+        self.permute_dim: bool = permute_dim
 
     @property
     def input_size(self) -> int:
@@ -1383,13 +1409,27 @@ class RNN(Layer):
         """
         self.__return_sequences= return_sequences
 
+    @property
+    def permute_dim(self) -> bool:
+        """
+        bool: Get whether to permute the dim of the input.
+        """
+        return self.__permute_dim
+
+    @permute_dim.setter
+    def permute_dim(self, permute_dim: bool):
+        """
+        bool: Set whether to permute the dim of the input.
+        """
+        self.__permute_dim = permute_dim
+
     def __repr__(self):
         return (
             f'RNN({self.name}, {self.actv_func}, {self.input_size}, '
             f'{self.hidden_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.return_hidden}, '
-            f'{self.return_sequences}, {self.name_layer_input}, '
-            f'{self.input_reused})'
+            f'{self.return_sequences}, {self.permute_dim}, '
+            f'{self.name_layer_input}, {self.input_reused})'
         )
 
 class SimpleRNNLayer(RNN):
@@ -1415,6 +1455,8 @@ class SimpleRNNLayer(RNN):
             features but the hidden states.
         return_sequences (bool): If True, the layer does not return only the 
             last output in the output sequence but the full sequence.
+        permute_dim (bool): Whether the dimensions of the input need to be 
+            permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused as 
@@ -1442,6 +1484,8 @@ class SimpleRNNLayer(RNN):
         return_sequences (bool): Inherited from Layer. If True, the layer does
             not return only the last output in the output sequence but the full
             sequence.
+        permute_dim (bool): Inherited from RNN. Whether the dimensions of the 
+            input need to be permuted to (0, 2, 1). Relevant for PyTorch.
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
@@ -1451,19 +1495,20 @@ class SimpleRNNLayer(RNN):
                  bidirectional: bool = False, dropout: float = 0.0, 
                  batch_first: bool = True, return_hidden: bool = False, 
                  return_sequences: bool = False, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
+                 permute_dim: bool = False, name_layer_input: str = None, 
+                 input_reused: bool = False):
         super().__init__(name, input_size, hidden_size, bidirectional, 
                          dropout, batch_first, return_hidden, 
-                         return_sequences, actv_func, name_layer_input, 
-                         input_reused)
+                         return_sequences, permute_dim, actv_func, 
+                         name_layer_input, input_reused)
 
     def __repr__(self):
         return (
             f'SimpleRNNLayer({self.name}, {self.actv_func}, '
             f'{self.input_size}, {self.hidden_size}, {self.bidirectional}, '
             f'{self.dropout}, {self.batch_first}, {self.return_hidden}, '
-            f'{self.return_sequences}, {self.name_layer_input}, '
-            f'{self.input_reused})'
+            f'{self.return_sequences}, {self.permute_dim}, '
+            f'{self.name_layer_input}, {self.input_reused})'
         )
     
 
@@ -1489,6 +1534,8 @@ class LSTMLayer(RNN):
             features but the hidden states.
         return_sequences (bool): If True, the layer does not return only the 
             last output in the output sequence but the full sequence.
+        permute_dim (bool): Whether the dimensions of the input need to be 
+            permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused as 
@@ -1516,6 +1563,8 @@ class LSTMLayer(RNN):
         return_sequences (bool): Inherited from Layer. If True, the layer does
             not return only the last output in the output sequence but the full
             sequence.
+        permute_dim (bool): Inherited from RNN. Whether the dimensions of the 
+            input need to be permuted to (0, 2, 1). Relevant for PyTorch.
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
@@ -1524,11 +1573,12 @@ class LSTMLayer(RNN):
     def __init__(self, name: str, input_size: int, hidden_size: int, 
                  bidirectional: bool = False, dropout: float = 0.0, 
                  batch_first: bool = True, return_hidden: bool = False, 
-                 return_sequences: bool = False, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
+                 return_sequences: bool = False, permute_dim: bool = False,
+                 actv_func: str = None, name_layer_input: str = None, 
+                 input_reused: bool = False):
         super().__init__(name, input_size, hidden_size, bidirectional, 
                          dropout, batch_first, return_hidden, 
-                         return_sequences, actv_func, name_layer_input, 
+                         return_sequences, permute_dim, actv_func, name_layer_input, 
                          input_reused)
 
     def __repr__(self):
@@ -1536,7 +1586,7 @@ class LSTMLayer(RNN):
             f'LSTMLayer({self.name}, {self.actv_func}, {self.input_size}, '
             f'{self.hidden_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.return_hidden}, {self.return_sequences}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.permute_dim}, {self.name_layer_input}, {self.input_reused})'
         )
         
 
@@ -1562,6 +1612,8 @@ class GRULayer(RNN):
             features but the hidden states.
         return_sequences (bool): If True, the layer does not return only the 
             last output in the output sequence but the full sequence.
+        permute_dim (bool): Whether the dimensions of the input need to be 
+            permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused as 
@@ -1589,6 +1641,8 @@ class GRULayer(RNN):
         return_sequences (bool): Inherited from Layer. If True, the layer does
             not return only the last output in the output sequence but the full
             sequence.
+        permute_dim (bool): Inherited from RNN. Whether the dimensions of the 
+            input need to be permuted to (0, 2, 1). Relevant for PyTorch.
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
@@ -1597,18 +1651,19 @@ class GRULayer(RNN):
     def __init__(self, name: str, input_size: int, hidden_size: int, 
                  bidirectional: bool = False, dropout: float = 0.0, 
                  batch_first: bool = True, return_hidden: bool = False, 
-                 return_sequences: bool = False, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
+                 return_sequences: bool = False, permute_dim: bool = False,
+                 actv_func: str = None, name_layer_input: str = None, 
+                 input_reused: bool = False):
         super().__init__(name, input_size, hidden_size, bidirectional, 
                          dropout, batch_first, return_hidden, return_sequences, 
-                         actv_func, name_layer_input, input_reused)
+                         permute_dim, actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
             f'GRULayer({self.name}, {self.actv_func}, {self.input_size}, '
             f'{self.hidden_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.return_hidden}, {self.return_sequences}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.permute_dim}, {self.name_layer_input}, {self.input_reused})'
         )
 
 class GeneralLayer(Layer):
@@ -2407,7 +2462,7 @@ class Parameters:
             f'{self.metrics}, {self.weight_decay}, , {self.momentum})'
         )
 
-class NN(BehavioralImplementation):
+class NN(BehaviorImplementation):
     """
     It is a subclass of the BehaviorImplementation class and comprises 
     the fundamental properties and behaviors of a neural network model.

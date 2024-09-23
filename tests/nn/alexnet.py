@@ -1,7 +1,7 @@
 from besser.BUML.metamodel.nn import NN, Conv2D, PoolingLayer, \
     FlattenLayer, LinearLayer, DropoutLayer
 from besser.generators.pytorch.pytorch_code_generator import PytorchGenerator
-
+from besser.generators.tf.tf_code_generator import TFGenerator
 
 """Paper: A survey of the recent architectures of deep convolutional neural networks
 https://pytorch.org/vision/main/_modules/torchvision/models/alexnet.html"""
@@ -45,3 +45,5 @@ alexnet.add_sub_nn(classifier)
 
 pytorch_model = PytorchGenerator(model=alexnet, output_dir="output/alexnet")
 pytorch_model.generate() 
+tf_model = TFGenerator(model=alexnet, output_dir="output/alexnet")
+tf_model.generate()

@@ -398,14 +398,14 @@ class Property(TypedElement):
         return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite}, is_id={self.is_id}, is_read_only={self.is_read_only})'
 
 
-class BehavioralImplementation():
-    """A behavioralImplementation represents the body of a behavior associated with a class.
+class BehaviorImplementation():
+    """A behaviorImplementation represents the body of a behavior associated with a class.
 
     Args:
-        name (str): The name of the behavioral implementation.
+        name (str): The name of the behavior implementation.
         
     Attributes:
-        name (str): The name of the behavioral implementation.  
+        name (str): The name of the behavior implementation.  
     """
     
     def __init__(self, name: str):
@@ -413,33 +413,33 @@ class BehavioralImplementation():
 
     @property
     def name(self) -> str:
-        """str: Get the name of the behavioral implementation."""
+        """str: Get the name of the behavior implementation."""
         return self.__name
 
     @name.setter
     def name(self, name: str):
-        """str: Set name of the behavioral implementation."""
+        """str: Set name of the behavior implementation."""
         self.__name = name
 
     def __repr__(self):
-        return f'BehavioralImplementation({self.name})'
+        return f'BehaviorImplementation({self.name})'
 
 
-class BehavioralDeclaration():
-    """A behavioralDeclaration represents the signature of a behavior associated with a class.
+class BehaviorDeclaration():
+    """A BehaviorDeclaration represents the signature of a behavior associated with a class.
 
     Args:
         name (str): The name of the behavior.
-        implementations (set[BehavioralImplementation]): The implementations associated with the behavior.
+        implementations (set[BehaviorImplementation]): The implementations associated with the behavior.
         
     Attributes:
         name (str): The name of the behavior.
-        implementations (set[BehavioralImplementation]): The implementations associated with the behavior.
+        implementations (set[BehaviorImplementation]): The implementations associated with the behavior.
     """
     
-    def __init__(self, name: str, implementations: set[BehavioralImplementation]):
+    def __init__(self, name: str, implementations: set[BehaviorImplementation]):
         self.name: str = name
-        self.implementations: set[BehavioralImplementation] = implementations
+        self.implementations: set[BehaviorImplementation] = implementations
 
     @property
     def name(self) -> str:
@@ -452,15 +452,15 @@ class BehavioralDeclaration():
         self.__name = name
 
     @property
-    def implementations(self) -> set[BehavioralImplementation]:
-        """set[BehavioralImplementation]: Get the implementations of the behavior."""
+    def implementations(self) -> set[BehaviorImplementation]:
+        """set[BehaviorImplementation]: Get the implementations of the behavior."""
         return self.__implementations
 
 
     @implementations.setter
-    def implementations(self, implementations: set[BehavioralImplementation]):
+    def implementations(self, implementations: set[BehaviorImplementation]):
         """
-        set[BehavioralImplementation]: Set the implementations of the behavior.
+        set[BehaviorImplementation]: Set the implementations of the behavior.
 
         Raises:
             ValueError: if two implementations have the same name.
@@ -474,7 +474,7 @@ class BehavioralDeclaration():
             self.__implementations = set()
 
     def __repr__(self):
-        return f'BehavioralDeclaration({self.name}, {self.implementations})'
+        return f'BehaviorDeclaration({self.name}, {self.implementations})'
 
 
 class Class(Type):
@@ -486,26 +486,26 @@ class Class(Type):
     Args:
         name (str): The name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
-        behaviors (set[BehavioralDeclaration]): The set of behaviors associated with the class.
+        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class.
         is_abstract (bool): Indicates whether the class is abstract.
         is_read_only (bool): Indicates whether the class is read only.
 
     Attributes:
         name (str): Inherited from Type, represents the name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
-        behaviors (set[BehavioralDeclaration]): The set of behaviors associated with the class.
+        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class.
         is_abstract (bool): Indicates whether the class is abstract.
         is_read_only (bool): Indicates whether the class is read only.
         __associations (set[Association]): Set of associations involving the class.
         __generalizations (set[Generalization]): Set of generalizations involving the class.
     """
 
-    def __init__(self, name: str, attributes: set[Property], behaviors: set[BehavioralDeclaration], is_abstract: bool= False, is_read_only: bool= False):
+    def __init__(self, name: str, attributes: set[Property], behaviors: set[BehaviorDeclaration], is_abstract: bool= False, is_read_only: bool= False):
         super().__init__(name)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
         self.attributes: set[Property] = attributes
-        self.behaviors: set[BehavioralDeclaration] = behaviors
+        self.behaviors: set[BehaviorDeclaration] = behaviors
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
 
@@ -555,14 +555,14 @@ class Class(Type):
         self.attributes.add(attribute)
     
     @property
-    def behaviors(self) -> set[BehavioralDeclaration]:
-        """set[BehavioralDeclaration]: Get the behaviors associated with the class."""
+    def behaviors(self) -> set[BehaviorDeclaration]:
+        """set[BehaviorDeclaration]: Get the behaviors associated with the class."""
         return self.__behaviors
 
     @behaviors.setter
-    def behaviors(self, behaviors: set[BehavioralDeclaration]):
+    def behaviors(self, behaviors: set[BehaviorDeclaration]):
         """
-        set[BehavioralDeclaration]: Set the behaviors associated with the class.
+        set[BehaviorDeclaration]: Set the behaviors associated with the class.
         
         Raises:
             ValueError: if two behaviors have the same name.

@@ -53,14 +53,17 @@ def setup_layer_modifier(layer: Layer) -> str:
 
 
 
-def setup_rnn(layer: Layer) -> str:
+def setup_rnn(layer: Layer, modules_details) -> str:
+    if layer.permute_dim:
+        permute = TensorOp(name=f"{layer.name}_op", type="permute", permute_dim=[0, 2, 1])
+        modules_details = get_tensorop_notation(permute, modules_details)
     if layer.__class__.__name__ == "SimpleRNNLayer":
         my_layer = f"self.{layer.name} = nn.RNN({layer.input_size}, {layer.hidden_size}, bidirectional={layer.bidirectional}, dropout={layer.dropout}, batch_first={layer.batch_first})"
     elif layer.__class__.__name__ == "LSTMLayer":
         my_layer = f"self.{layer.name} = nn.LSTM({layer.input_size}, {layer.hidden_size}, bidirectional={layer.bidirectional}, dropout={layer.dropout}, batch_first={layer.batch_first})"
     elif layer.__class__.__name__ == "GRULayer":
         my_layer = f"self.{layer.name} = nn.GRU({layer.input_size}, {layer.hidden_size}, bidirectional={layer.bidirectional}, dropout={layer.dropout}, batch_first={layer.batch_first})"
-    return my_layer
+    return my_layer, modules_details
 
 def setup_activation_function(layer: Layer) -> str:
     if hasattr(layer, 'actv_func'):
@@ -80,8 +83,12 @@ def setup_activation_function(layer: Layer) -> str:
     
         
 
-def setup_cnn(layer: Layer) -> str:
-    if layer.__class__.__name__ == "Conv1D":
+def setup_cnn(layer: Layer, modules_details: Dict) -> str:
+    if layer.__class__.__name__ == "Conv1D" and layer.permute_dim:
+        permute = TensorOp(name=f"{layer.name}_op", type="permute", permute_dim=[0, 2, 1])
+        modules_details = get_tensorop_notation(permute, modules_details)
+        my_layer = f"self.{layer.name} = nn.Conv1d({layer.in_channels}, {layer.out_channels}, kernel_size={layer.kernel_dim[0]}, stride={layer.stride_dim[0]}, padding={layer.padding_amount})"
+    elif layer.__class__.__name__ == "Conv1D":
         my_layer = f"self.{layer.name} = nn.Conv1d({layer.in_channels}, {layer.out_channels}, kernel_size={layer.kernel_dim[0]}, stride={layer.stride_dim[0]}, padding={layer.padding_amount})"
     elif layer.__class__.__name__ == "Conv2D":
         my_layer = f"self.{layer.name} = nn.Conv2d({layer.in_channels}, {layer.out_channels}, kernel_size=({layer.kernel_dim[0]}, {layer.kernel_dim[1]}), stride=({layer.stride_dim[0]}, {layer.stride_dim[1]}), padding={layer.padding_amount})"
@@ -110,7 +117,7 @@ def setup_cnn(layer: Layer) -> str:
                 my_layer = f"self.{layer.name} = nn.{pl}Pool2d(({layer.output_dim[0]}, {layer.output_dim[1]}))"
             else:
                 my_layer = f"self.{layer.name} = nn.{pl}Pool3d(({layer.output_dim[0]}, {layer.output_dim[1]}, {layer.output_dim[2]}))"
-    return my_layer
+    return my_layer, modules_details
 
 
 
@@ -147,9 +154,9 @@ def get_previous_out_notation(modules_details, previous_module):
 def get_layer_syntax(layer, modules_details):
     parent_class = layer.__class__.mro()[1].__name__
     if (parent_class == "ConvolutionalLayer" or parent_class == "CNN"):
-        layer_synt = setup_cnn(layer)
+        layer_synt, modules_details = setup_cnn(layer, modules_details)
     elif parent_class == "RNN":
-        layer_synt = setup_rnn(layer)
+        layer_synt, modules_details = setup_rnn(layer, modules_details)
     elif parent_class == "GeneralLayer":
         layer_synt = setup_general_layer(layer)
     elif (parent_class == "LayerModifier" or parent_class == "NormalizationLayer"):

@@ -98,11 +98,11 @@ WS=97
 STRING=98
 DOUBLE=99
 ':'=1
-'params'=2
-'layers'=3
-'sub_nn'=4
-'tensor_ops'=5
-'modules'=6
+'layers'=2
+'sub_nn'=3
+'tensor_ops'=4
+'modules'=5
+'params'=6
 'batch_size'=7
 '='=8
 'epochs'=9

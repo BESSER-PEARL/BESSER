@@ -4,15 +4,15 @@ import tensorflow as tf
 from tensorflow.keras import layers
 {% for module_name, module_details in modules_details.items() -%}
 {% if module_name.endswith("nn") and si.sequential_imported == False %}from tensorflow.keras.models import Sequential {%- set si.sequential_imported = True -%} {% endif %}{% endfor %}
-{% if model.parameters and model.parameters.weight_decay != 0 %}from besser.generators.tf.utils import loss_with_weight_decay {% endif %} 
-{%- if train_data is not none %}
-{% if train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
+{% if model.configuration and model.configuration.weight_decay != 0 %}from besser.generators.tf.utils import loss_with_weight_decay {% endif %} 
+{%- if model.train_data is not none %}
+{% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
 {%- else -%} from sklearn.metrics import mean_absolute_error {%- endif %} 
-{% if train_data.input_format == "csv" %}import pandas as pd {%- endif %}
+{% if model.train_data.input_format == "csv" %}import pandas as pd {%- endif %}
 {%- endif %}
 {%- for module_name, module_details in modules_details.items() -%}
 {%- if module_name.endswith("layer") %}{% if module_details[0].split("=")[1].strip().startswith("tfa") %}import tensorflow_addons as tfa  {% endif %}{% endif %}{% endfor %}
-{% if train_data.input_format == "images" %}from besser.generators.tf.utils import compute_mean_std{%- endif %}
+{% if model.train_data.input_format == "images" %}from besser.generators.tf.utils import compute_mean_std{%- endif %}
 
 # Define the network architecture
 class NeuralNetwork(tf.keras.Model):
@@ -23,7 +23,7 @@ class NeuralNetwork(tf.keras.Model):
 
         self.{{ module_name.split('_')[0] }} = Sequential([
             {%- for subnn_key, subnn_value in module_details.items() %}
-            {%- if subnn_key != "notation" %}
+            {%- if subnn_key != "in_out_variable" %}
             {%- if "layers.ZeroPadding" in subnn_value[0] %}
             {{ subnn_value[0].split("#")[0].split('=', 1)[1].strip() }},
             {{ subnn_value[0].split("#")[1].split('=', 1)[1].strip() }},
@@ -43,13 +43,13 @@ class NeuralNetwork(tf.keras.Model):
         {%- endif -%}
         {%- endif -%}
         {%- endfor %}
-    {% set return_notation =  namespace(value="") %}
+    {% set return_variable =  namespace(value="") %}
     def call(self, x):
     {%- for module_name, module_details in modules_details.items() -%}
     {%- if module_name.endswith("op") %}
         {{ module_details[1] }} = {{ module_details[0] }}
     {%- elif module_name.endswith("nn") %} 
-        {{ module_details["notation"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["notation"] }})
+        {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
     {%- else %}
         {%- if "layers.ZeroPadding" in module_details[0] %}
         {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}_pad({{ module_details[2] }})
@@ -73,15 +73,15 @@ class NeuralNetwork(tf.keras.Model):
     {%- endif -%}
     {%- endif -%}
     {%- if module_name.endswith("nn") %}
-    {%- set return_notation.value =  module_details["notation"] %}
+    {%- set return_variable.value =  module_details["in_out_variable"] %}
     {%- else %} 
-    {%- set return_notation.value =  module_details[1] %}
+    {%- set return_variable.value =  module_details[1] %}
     {%- endif -%}
     {%- endfor %}
-        {%- if "," in return_notation.value %}
-        return {{ return_notation.value.split(",")[0].strip() if return_notation.value.split(",")[0].strip()!="_" else return_notation.value.split(",")[1].strip()}}
+        {%- if "," in return_variable.value %}
+        return {{ return_variable.value.split(",")[0].strip() if return_variable.value.split(",")[0].strip()!="_" else return_variable.value.split(",")[1].strip()}}
         {%- else %}
-        return {{ return_notation.value }}
+        return {{ return_variable.value }}
         {%- endif %}
 
 {%- set last_module = modules_details.items() | last -%}
@@ -100,19 +100,19 @@ class NeuralNetwork(tf.keras.Model):
 {%- endif %}
 {%- endif %}
 
-{% if train_data is not none %}
+{% if model.train_data is not none %}
 # Dataset preparation
-{{ nn_components.prepare_data(train_data, test_data, model.parameters) }}
+{{ nn_components.prepare_data(model.train_data, model.test_data, model.configuration) }}
 
 
 # Define the network, loss function, and optimiser
 {{ model.name }} = NeuralNetwork()
-criterion = {{ nn_components.get_loss_function(model.parameters, from_logits) }}
+criterion = {{ nn_components.get_loss_function(model.configuration, from_logits) }}
 optimizer = {{ nn_components.get_optimiser(model) }}
 
 # Train the neural network
-{{ nn_components.train_model(model, train_data.task_type) }}
+{{ nn_components.train_model(model, model.train_data.task_type) }}
 
 # Evaluate the neural network
-{{ nn_components.evaluate_model(model, train_data.task_type) }}
+{{ nn_components.evaluate_model(model, model.train_data.task_type) }}
 {%- endif -%}

@@ -15,11 +15,11 @@
     {%- set _ = dict_def.update({key: []}) -%}
 {%- endmacro -%}
 
-{%- macro get_loss_function(parameters, from_logits) %}
+{%- macro get_loss_function(configuration, from_logits) %}
     {%- if from_logits.flag -%}{% set fl = "from_logits=True" %}{%- else -%}{% set fl = "" %}{%- endif -%}
-    {%- if parameters.loss_function == "crossentropy" -%}
+    {%- if configuration.loss_function == "crossentropy" -%}
         {% set loss_function = "tf.keras.losses.CategoricalCrossentropy(" ~ fl ~ ")" %}
-    {%- elif parameters.loss_function == "binary_crossentropy" -%}
+    {%- elif configuration.loss_function == "binary_crossentropy" -%}
         {% set loss_function = "tf.keras.losses.BinaryCrossentropy(" ~ fl ~ ")" %}
     {%- else -%}
         {% set loss_function = "tf.keras.losses.MeanSquaredError()" %}
@@ -28,32 +28,32 @@
 {% endmacro -%}
 
 {%- macro get_optimiser(model) %}
-    {%- if model.parameters.optimiser == "sgd" -%}
+    {%- if model.configuration.optimiser == "sgd" -%}
     {% set optimiser_name = "tf.keras.optimizers.SGD" %}
-    {%- elif model.parameters.optimiser == "adam" -%}
+    {%- elif model.configuration.optimiser == "adam" -%}
     {% set optimiser_name = "tf.keras.optimizers.Adam" %}
-    {%- elif model.parameters.optimiser == "adamW" -%}
+    {%- elif model.configuration.optimiser == "adamW" -%}
     {% set optimiser_name = "tf.keras.optimizers.AdamW" %}
     {%- else -%}
     {% set optimiser_name = "tf.keras.optimizers.Adagrad" %}
     {%- endif -%}
-    {%- if model.parameters.momentum != 0 and model.parameters.optimiser == "sgd" -%}
-    {%- if model.parameters.weight_decay != 0 -%}
-    {{ optimiser_name }}(learning_rate={{ model.parameters.learning_rate }}, momentum={{ model.parameters.momentum }}, weight_decay={{ model.parameters.weight_decay }})
+    {%- if model.configuration.momentum != 0 and model.configuration.optimiser == "sgd" -%}
+    {%- if model.configuration.weight_decay != 0 -%}
+    {{ optimiser_name }}(learning_rate={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }}, weight_decay={{ model.configuration.weight_decay }})
     {%- else -%}
-    {{ optimiser_name }}(learning_rate={{ model.parameters.learning_rate }}, momentum={{ model.parameters.momentum }})
+    {{ optimiser_name }}(learning_rate={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }})
     {%- endif -%}
-    {%- elif model.parameters.optimiser != "sgd" -%}
-    {%- if model.parameters.weight_decay != 0 -%}
-    {{ optimiser_name }}(learning_rate={{ model.parameters.learning_rate }}, weight_decay={{ model.parameters.weight_decay }})
+    {%- elif model.configuration.optimiser != "sgd" -%}
+    {%- if model.configuration.weight_decay != 0 -%}
+    {{ optimiser_name }}(learning_rate={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }})
     {%- else -%}
-    {{ optimiser_name }}(learning_rate={{ model.parameters.learning_rate }})
+    {{ optimiser_name }}(learning_rate={{ model.configuration.learning_rate }})
     {%- endif -%}
     {%- endif -%}
 {% endmacro -%}
 
 
-{%- macro prepare_data(train_data, test_data, parameters) -%}
+{%- macro prepare_data(train_data, test_data, configuration) -%}
     {%- if train_data.input_format == "images" -%}
 IMAGE_SIZE = ({{ train_data.image.shape[0] }}, {{ train_data.image.shape[1] }})
         {%- set resize = namespace(flag=False) %}
@@ -89,7 +89,7 @@ def load_dataset(directory, mode):
         directory=directory,
         label_mode="int",
         image_size=IMAGE_SIZE, 
-        batch_size={{ parameters.batch_size }},
+        batch_size={{ configuration.batch_size }},
         shuffle=True if mode == 'train' else False,
     )
     # Apply preprocessing
@@ -129,7 +129,7 @@ test_dataset = load_data(r"{{ test_data.path_data }}")
 def create_data_loader(dataset, mode):
     if mode == "train":
         dataset = dataset.shuffle(buffer_size=10000)  # Shuffle the dataset
-    dataset = dataset.batch({{ parameters.batch_size }})  # Batch the dataset
+    dataset = dataset.batch({{ configuration.batch_size }})  # Batch the dataset
     dataset = dataset.prefetch(buffer_size=tf.data.AUTOTUNE)  # Prefetch for performance
     return dataset
 
@@ -142,7 +142,7 @@ test_loader = create_data_loader(test_dataset, "test")
 
 {%- macro train_model(model, prediction_task) -%}
 print('##### Training the model')
-for epoch in range({{ model.parameters.epochs }}):
+for epoch in range({{ model.configuration.epochs }}):
     # Initialize the running loss for the current epoch
     running_loss = 0.0
     total_loss = 0.0
@@ -203,7 +203,7 @@ average_loss = test_loss / len(test_loader)
 print(f"Test Loss: {average_loss:.3f}")
 
 # Calculate the metrics
-metrics = {{ model.parameters.metrics }}
+metrics = {{ model.configuration.metrics }}
 {%- if prediction_task != "regression" %}
 report = classification_report(true_labels, predicted_labels, output_dict=True)
 for metric in metrics:

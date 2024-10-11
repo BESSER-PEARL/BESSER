@@ -2,12 +2,13 @@ grammar NN;
 
 // Parser rules
 neuralNetwork       : ID ':'
-                      'params' ':' parameters
                       'layers' ':' layer+
                       ('sub_nn' ':' sub_nn+)*
-                      ('tensor_ops' ':' tensorOp+)?
+                      ('tensor_ops' ':' tensorOp+)*
                       'modules' ':' modules
-                      (trainingDataset | testDataset)+
+                      'params' ':' parameters
+                      trainingDataset
+                      testDataset
                       ;
 
 parameters          : 'batch_size' '=' INT

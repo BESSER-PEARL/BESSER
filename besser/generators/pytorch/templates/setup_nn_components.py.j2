@@ -15,10 +15,10 @@
     {%- set _ = dict_def.update({key: []}) -%}
 {%- endmacro -%}
 
-{%- macro get_loss_function(parameters) %}
-    {%- if parameters.loss_function == "crossentropy" -%}
+{%- macro get_loss_function(configuration) %}
+    {%- if configuration.loss_function == "crossentropy" -%}
         nn.CrossEntropyLoss()
-    {%- elif parameters.loss_function == "binary_crossentropy" -%}
+    {%- elif configuration.loss_function == "binary_crossentropy" -%}
         nn.BCELoss()
     {%- else -%}
         nn.MSELoss()
@@ -26,27 +26,27 @@
 {% endmacro -%}
 
 {%- macro get_optimiser(model) %}
-    {%- if model.parameters.optimiser == "sgd" -%}
+    {%- if model.configuration.optimiser == "sgd" -%}
     {% set optimiser_name = "torch.optim.SGD" %}
-    {%- elif model.parameters.optimiser == "adam" -%}
+    {%- elif model.configuration.optimiser == "adam" -%}
     {% set optimiser_name = "torch.optim.Adam" %}
-    {%- elif model.parameters.optimiser == "adamW" -%}
+    {%- elif model.configuration.optimiser == "adamW" -%}
     {% set optimiser_name = "torch.optim.AdamW" %}
     {%- else -%}
     {% set optimiser_name = "torch.optim.Adagrad" %}
     {%- endif -%}
-    {%- if model.parameters.weight_decay != 0 and model.parameters.momentum != 0 -%}
-    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }}, weight_decay={{ model.parameters.weight_decay }}, momentum={{ model.parameters.momentum }}) 
-    {%- elif model.parameters.weight_decay != 0 -%}
-    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }}, weight_decay={{ model.parameters.weight_decay }}) 
-    {%- elif model.parameters.momentum != 0 -%}
-    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }}, momentum={{ model.parameters.momentum }}) 
+    {%- if model.configuration.weight_decay != 0 and model.configuration.momentum != 0 -%}
+    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }}, momentum={{ model.configuration.momentum }}) 
+    {%- elif model.configuration.weight_decay != 0 -%}
+    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }}) 
+    {%- elif model.configuration.momentum != 0 -%}
+    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }}) 
     {%- else -%}
-    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.parameters.learning_rate }})
+    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }})
     {%- endif -%}
 {% endmacro -%}
 
-{% macro prepare_data(train_data, test_data, parameters) -%}
+{% macro prepare_data(train_data, test_data, configuration) -%}
     {%- if train_data.input_format == "images" -%}
 {%- set transformations = [] -%}
 
@@ -91,15 +91,15 @@ test_dataset = load_data(r"{{ test_data.path_data }}")
     {%- endif %}
 
 # Create data loaders
-train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size={{ parameters.batch_size }}, shuffle=True)
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size={{ parameters.batch_size }}, shuffle=False)
+train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size={{ configuration.batch_size }}, shuffle=True)
+test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size={{ configuration.batch_size }}, shuffle=False)
 
 {% endmacro -%}
 
 
 {%- macro train_model(model, prediction_task) -%}
 print('##### Training the model')
-for epoch in range({{ model.parameters.epochs }}):
+for epoch in range({{ model.configuration.epochs }}):
     # Initialize the running loss for the current epoch
     running_loss = 0.0
     total_loss = 0.0
@@ -162,7 +162,7 @@ average_loss = test_loss / len(test_loader)
 print(f"Test Loss: {average_loss:.3f}")
 
 # Calculate the metrics
-metrics = {{ model.parameters.metrics }}
+metrics = {{ model.configuration.metrics }}
 {%- if prediction_task != "regression" %}
 report = classification_report(true_labels, predicted_labels, output_dict=True)
 for metric in metrics:

@@ -1,11 +1,11 @@
 {%- import "setup_nn_components.py.j2" as nn_components -%}
 import torch.nn as nn
-{% if train_data is not none %}import torch
-{% if train_data.input_format == "images" %}from torchvision import datasets, transforms 
+{% if model.train_data is not none %}import torch
+{% if model.train_data.input_format == "images" %}from torchvision import datasets, transforms 
 from besser.generators.pytorch.utils import compute_mean_std{%- endif %}
-{% if train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
+{% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
 {%- else -%} from sklearn.metrics import mean_absolute_error {%- endif %} 
-{% if train_data.input_format == "csv" %}import pandas as pd {%- endif %}
+{% if model.train_data.input_format == "csv" %}import pandas as pd {%- endif %}
 {%- endif %}
 {%- for module_name, module_details in modules_details.items() -%}{% if module_name.endswith("op") %}{% if module_details[0].startswith("torch") %}import torch {%- endif %}{%- endif %}{%- endfor %}
 
@@ -20,7 +20,7 @@ class NeuralNetwork(nn.Module):
         {%- if module_name.endswith("nn") %}
         self.{{ module_name.split('_')[0] }} = nn.Sequential(
             {%- for subnn_key, subnn_value in module_details.items() %}
-                {%- if subnn_key != "notation" %}
+                {%- if subnn_key != "in_out_variable" %}
             {{ subnn_value[0].split('=', 1)[1].strip() }},
                 {%- endif -%}
             {%- endfor %}
@@ -34,13 +34,13 @@ class NeuralNetwork(nn.Module):
         {{ module_details[0] }}
         {%- endif -%}
         {%- endfor %}
-    {% set return_notation =  namespace(value="") %}
+    {% set return_variable =  namespace(value="") %}
     def forward(self, x):
     {%- for module_name, module_details in modules_details.items() -%}
     {%- if module_name.endswith("op") %}
         {{ module_details[1] }} = {{ module_details[0] }}
     {%- elif module_name.endswith("nn") %} 
-        {{ module_details["notation"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["notation"] }})
+        {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
     {%- else %}
         {%- if module_name.endswith("activ") %}
         {{ module_details[1] }} = self.{{ module_details[0].split('.', 1)[1].split('=', 1)[0].strip() }}({{ module_details[2] }})
@@ -73,25 +73,25 @@ class NeuralNetwork(nn.Module):
         {%- endif -%}
     {%- endif -%}
     {%- if module_name.endswith("nn") %}
-    {%- set return_notation.value =  module_details["notation"] %}
+    {%- set return_variable.value =  module_details["in_out_variable"] %}
     {%- else %} 
-    {%- set return_notation.value =  module_details[1] %}
+    {%- set return_variable.value =  module_details[1] %}
     {%- endif -%}
     {%- endfor %}
-        return {{ return_notation.value }}
+        return {{ return_variable.value }}
 
-{% if train_data is not none %}
+{% if model.train_data is not none %}
 # Dataset preparation
-{{ nn_components.prepare_data(train_data, test_data, model.parameters) -}}
+{{ nn_components.prepare_data(model.train_data, model.test_data, model.configuration) -}}
 
 # Define the network, loss function, and optimiser
 {{ model.name }} = NeuralNetwork()
-criterion = {{ nn_components.get_loss_function(model.parameters) }}
+criterion = {{ nn_components.get_loss_function(model.configuration) }}
 optimiser = {{ nn_components.get_optimiser(model) }}
 
 # Train the neural network
-{{ nn_components.train_model(model, train_data.task_type) }}
+{{ nn_components.train_model(model, model.train_data.task_type) }}
 
 # Evaluate the neural network
-{{ nn_components.evaluate_model(model, train_data.task_type) }}
+{{ nn_components.evaluate_model(model, model.train_data.task_type) }}
 {%- endif -%}

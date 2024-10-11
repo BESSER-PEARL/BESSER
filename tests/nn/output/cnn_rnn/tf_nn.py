@@ -34,3 +34,4 @@ class NeuralNetwork(tf.keras.Model):
         x_2 = self.l10(x_2)
         x_2 = self.l11(x_2)
         return x_2
+

@@ -15,7 +15,7 @@ nn_model.add_layer(Conv1D(name="l5", actv_func="relu", in_channels=50, out_chann
                           input_reused=True, name_layer_input="l2"))
 nn_model.add_layer(PoolingLayer(name="l6", actv_func=None, pooling_type="max", dimension="1D", 
                                 kernel_dim=[2]))
-nn_model.add_tensor_op(TensorOp(name="op2", type="concatenate", layers_of_tensors=["l4", "l6"], concatenate_dim=1))
+nn_model.add_tensor_op(TensorOp(name="op1", type="concatenate", layers_of_tensors=["l4", "l6"], concatenate_dim=1))
 nn_model.add_layer(DropoutLayer(name="l7", rate=0.15))
 nn_model.add_layer(GRULayer(name="l8", actv_func=None, input_size=400, hidden_size=100, batch_first=True, permute_dim=True))
 nn_model.add_layer(LinearLayer(name="l9", actv_func="relu", in_features=100, out_features=400))

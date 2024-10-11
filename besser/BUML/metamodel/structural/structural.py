@@ -398,7 +398,7 @@ class Property(TypedElement):
         return f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, is_composite={self.is_composite}, is_id={self.is_id}, is_read_only={self.is_read_only})'
 
 
-class BehaviorImplementation():
+class BehaviorImplementation(NamedElement):
     """A behaviorImplementation represents the body of a behavior associated with a class.
 
     Args:
@@ -409,23 +409,14 @@ class BehaviorImplementation():
     """
     
     def __init__(self, name: str):
-        self.name: str = name
+        super().__init__(name)
 
-    @property
-    def name(self) -> str:
-        """str: Get the name of the behavior implementation."""
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        """str: Set name of the behavior implementation."""
-        self.__name = name
 
     def __repr__(self):
         return f'BehaviorImplementation({self.name})'
 
 
-class BehaviorDeclaration():
+class BehaviorDeclaration(NamedElement):
     """A BehaviorDeclaration represents the signature of a behavior associated with a class.
 
     Args:
@@ -438,18 +429,9 @@ class BehaviorDeclaration():
     """
     
     def __init__(self, name: str, implementations: set[BehaviorImplementation]):
-        self.name: str = name
+        super().__init__(name)
         self.implementations: set[BehaviorImplementation] = implementations
 
-    @property
-    def name(self) -> str:
-        """str: Get the name of the behavior."""
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        """str: Set name of the behavior."""
-        self.__name = name
 
     @property
     def implementations(self) -> set[BehaviorImplementation]:

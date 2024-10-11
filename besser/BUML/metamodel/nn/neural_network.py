@@ -1,5 +1,5 @@
 from __future__ import annotations
-from besser.BUML.metamodel.structural import BehaviorImplementation
+from besser.BUML.metamodel.structural import BehaviorImplementation, NamedElement
 from typing import List, Self, Union
 
                                                                               
@@ -2150,12 +2150,6 @@ class Dataset:
         self.__labels.add(label)
         return self
 
-    def load_data(self):
-        pass
-
-    def split_features_labels(self):
-        pass
-
     def __repr__(self):
         return (
             f'Dataset({self.name}, {self.path_data}, {self.task_type}, '
@@ -2229,7 +2223,7 @@ class TestDataset(Dataset):
         return f'TestDataset({self.name}, {self.path_data})' 
 
 
-class Parameters:
+class Configuration:
     """
     Represents a collection of parameters essential for training and 
     evaluating neural networks.
@@ -2457,9 +2451,9 @@ class Parameters:
 
     def __repr__(self):
         return (
-            f'Parameters({self.batch_size}, {self.epochs}, '
+            f'Configuration({self.batch_size}, {self.epochs}, '
             f'{self.learning_rate}, {self.optimiser}, {self.loss_function}, '
-            f'{self.metrics}, {self.weight_decay}, , {self.momentum})'
+            f'{self.metrics}, {self.weight_decay}, {self.momentum})'
         )
 
 class NN(BehaviorImplementation):
@@ -2469,21 +2463,28 @@ class NN(BehaviorImplementation):
 
     Args:
         name (str): The name of the neural network model.
-        parameters (Parameters): The parameters related to the NN training 
+        configuration (Configuration): The parameters related to the NN training 
             and evaluation. 
+        train_data (Dataset): The dataset used to train the NN model.
+        test_data (Dataset): The dataset used to evaluate the NN model.
         
     Attributes:
         name (str): The name of the neural network model.
-        parameters (Parameters): The parameters related to the NN training 
-            and evaluation. 
+        configuration (Configuration): The parameters related to the NN training 
+            and evaluation.
+        train_data (Dataset): The dataset used to train the NN model.
+        test_data (Dataset): The dataset used to evaluate the NN model.        
     """
-    def __init__(self, name: str, parameters: Parameters = None):
+    def __init__(self, name: str, configuration: Configuration = None,
+                 train_data: Dataset = None, test_data: Dataset = None):
         super().__init__(name)
-        self.parameters: Parameters = parameters
+        self.configuration: Configuration = configuration
         self.__sub_nns: List[NN] = []
         self.__layers: List[Layer] = []
         self.__tensor_ops: List[TensorOp] = []
         self.__modules: List[Union[NN, Layer, TensorOp]] = []
+        self.train_data: Dataset = train_data
+        self.test_data: Dataset = test_data
 
     @property
     def sub_nns(self) -> List[NN]:
@@ -2559,27 +2560,59 @@ class NN(BehaviorImplementation):
         raise AttributeError("modules attribute is read-only")
 
     @property
-    def parameters(self) -> Parameters:
+    def configuration(self) -> Configuration:
         """
-        Parameters: Get the parameters related to the NN training and 
+        Configuration: Get the parameters related to the NN training and 
             evaluation.
         """
-        return self.__parameters
+        return self.__configuration
 
-    @parameters.setter
-    def parameters(self, parameters: Parameters):
+    @configuration.setter
+    def configuration(self, configuration: Configuration):
         """
-        Parameters: Set the parameters related to the NN training and 
+        Configuration: Set the parameters related to the NN training and 
             evaluation.
         """
-        self.__parameters = parameters
+        self.__configuration = configuration
 
-    def add_parameters(self, parameters: Parameters) -> Self:
-        """Self: Add the parameters to the NN model."""
-        self.__parameters = parameters
+    @property
+    def train_data(self) -> Dataset:
+        """Dataset: Get the dataset used to train the NN model."""
+        return self.__train_data
+
+    @train_data.setter
+    def train_data(self, train_data: Dataset):
+        """Dataset: Set the dataset used to train the NN model."""
+        self.__train_data = train_data
+
+    @property
+    def test_data(self) -> Dataset:
+        """Dataset: Get the dataset used to evaluate the NN model."""
+        return self.__test_data
+
+    @test_data.setter
+    def test_data(self, test_data: Dataset):
+        """Dataset: Set the dataset used to evaluate the NN model."""
+        self.__test_data = test_data
+
+    def add_configuration(self, configuration: Configuration) -> Self:
+        """Self: Add the configuration to the NN model."""
+        self.__configuration = configuration
+        return self
+    
+    def add_train_data(self, train_data: Dataset) -> Self:
+        """Self: Add the training dataset to the NN model."""
+        self.__train_data = train_data
+        return self
+    
+    def add_test_data(self, test_data: Dataset) -> Self:
+        """Self: Add the test dataset to the NN model."""
+        self.__test_data = test_data
         return self
     
     def __repr__(self):
         return (
-            f'NN({self.name}, {self.parameters}, {self.modules})'
-        )
+            f'NN({self.name}, {self.configuration}, {self.modules}, '
+            f'{self.train_data}, {self.test_data})'
+            )
+    

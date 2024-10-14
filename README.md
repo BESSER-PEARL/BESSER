@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11-blue?logo=python&logoColor=gold)](https://pypi.org/project/besser/)
 [![PyPI version](https://img.shields.io/pypi/v/besser?logo=pypi&logoColor=white)](https://pypi.org/project/besser/)
 [![PyPI - Downloads](https://static.pepy.tech/badge/besser)](https://pypi.org/project/besser/)
-[![Documentation Status](https://readthedocs.org/projects/besser/badge/?version=latest)](https://besser.readthedocs.io/latest/?badge=latest)
+[![Documentation Status](https://readthedocs.org/projects/besser/badge/?version=latest)](https://besser.readthedocs.io/en/latest/)
 [![PyPI - License](https://img.shields.io/pypi/l/besser)](https://opensource.org/license/MIT)
 [![LinkedIn](https://img.shields.io/badge/-LinkedIn-blue?logo=Linkedin&logoColor=white)](https://www.linkedin.com/company/besser-pearl)
 [![GitHub Repo stars](https://img.shields.io/github/stars/besser-pearl/besser?style=social)](https://star-history.com/#besser-pearl/besser)

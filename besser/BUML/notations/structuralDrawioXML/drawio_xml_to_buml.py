@@ -1,8 +1,39 @@
 import xml.etree.ElementTree as ET
 import re
-import math
-from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
-    PrimitiveDataType, Multiplicity, BinaryAssociation
+from besser.BUML.metamodel.structural import DomainModel, Class, Property, PrimitiveDataType, Multiplicity, BinaryAssociation, Enumeration, EnumerationLiteral, Generalization
+import os
+
+def xml_to_buml(xml_file_path: str, buml_model_file_name: str = "buml_model"):
+    """Transforms an XML model into a B-UML model.
+
+    Args:
+        xml_file_path (str): The path to the XML file containing the UML data.
+        buml_model_file_name (str, optional): The name of the output file to generate the B-UML model.
+
+    Returns:
+        BUML_model (DomainModel): The B-UML model object.
+    """
+    buml_model, association_properties = generate_buml_from_xml(xml_file_path)
+
+    # Create output directory if it doesn't exist
+    output_dir = "buml"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    # Save the BUML model to a Python file
+    output_file_path = os.path.join(output_dir, buml_model_file_name + ".py")
+    save_buml_to_file(buml_model, association_properties, output_file_path)
+    print(f"BUML model has been saved to {output_file_path}")
+
+    # Load the generated model into a DomainModel object
+    namespace = {}
+    with open(output_file_path, 'r') as model_code:
+        code = model_code.read()
+        exec(code, namespace)
+    BUML_model: DomainModel = namespace.get('domain_model')
+
+    return BUML_model
+
 
 # Function to clean HTML tags from class names
 def clean_html_tags(text):
@@ -35,14 +66,17 @@ def extract_classes_from_xml(xml_file):
         root = tree.getroot()
     except ET.ParseError as e:
         print(f"Erreur lors du parsing du fichier XML: {e}")
-        return {}, [], {}, {}, {}
+        return {}, [], {}, {}, {}, []
 
     classes = {}
+    enumerations = {}
     associations = []
+    generalizations = []
     cells = {}
     class_positions = {}
     edges = {}
 
+    # First pass: Collect all cells
     for cell in root.findall(".//mxCell"):
         cell_id = cell.get('id')
         value = cell.get('value')
@@ -59,20 +93,36 @@ def extract_classes_from_xml(xml_file):
             cells[cell_id] = {'value': value, 'x': x, 'y': y}
 
         # Check if it's a class
-        if value and (style and "swimlane" in style):
+        if value and (style and "swimlane" in style) and "&lt;&lt;Enum&gt;&gt;" not in value:
             class_name = clean_html_tags(value.strip().replace("+", ""))
             if class_name:
                 classes[class_name] = []
                 class_positions[class_name] = {'x': x, 'y': y}
                 print(f"Found class: {class_name} at position ({x}, {y})")
 
-        # Check if it's a class attribute
-        elif value and "+ " in value:
-            field_name = value.split(":")[0].strip().replace("+ ", "")
-            if classes:
+        # Check if it's an enumeration
+        elif value and "&lt;&lt;Enum&gt;&gt;" in value:
+            enum_name = clean_html_tags(value.split("<br>")[1].strip())
+            if enum_name:
+                enumerations[enum_name] = []
+                class_positions[enum_name] = {'x': x, 'y': y}
+                print(f"Found enumeration: {enum_name} at position ({x}, {y})")
+
+        # Check if it's a class attribute or enumeration value
+        elif value and "- " in value:
+            field_name = value.split(":")[0].strip().replace("- ", "")
+            if enumerations:
+                enum_name = list(enumerations.keys())[-1]  # Assign to the last enumeration found
+                enumerations[enum_name].append(field_name)
+                print(f"Found enumeration value: {field_name} for enumeration {enum_name}")
+            elif classes:
                 class_name = list(classes.keys())[-1]  # Assign to the last class found
                 classes[class_name].append(field_name)
                 print(f"Found attribute: {field_name} for class {class_name}")
+            elif enumerations:
+                enum_name = list(enumerations.keys())[-1]  # Assign to the last enumeration found
+                enumerations[enum_name].append(field_name)
+                print(f"Found enumeration value: {field_name} for enumeration {enum_name}")
 
         # Store edge information (source and target)
         if source and target and "endArrow" in (style or ""):
@@ -85,8 +135,26 @@ def extract_classes_from_xml(xml_file):
                 'target_x': target_x, 'target_y': target_y
             }
 
+    # Second pass: Process generalizations and associations
+    for cell in root.findall(".//mxCell"):
+        cell_id = cell.get('id')
+        style = cell.get('style')
+        source = cell.get('source')
+        target = cell.get('target')
+
+        # Generalization (extends relationship)
+        if source and target and "endArrow=block" in (style or ""):
+            source_class = clean_html_tags(cells[source]['value']).replace("+", "") if source in cells else None
+            target_class = clean_html_tags(cells[target]['value']).replace("+", "") if target in cells else None
+            print(f"Found generalization: {source_class} extends {target_class}")
+            if source_class and target_class:
+                generalizations.append({'specific': source_class, 'general': target_class})
+                print(f"Found generalization: {source_class} extends {target_class}")
+
         # Calculate absolute positions of association labels
-        elif style and "edgeLabel" in style and value:
+        elif style and "edgeLabel" in style and cell.get('value'):
+            value = cell.get('value')
+            geometry = cell.find(".//mxGeometry")
             edge_id = cell.get('parent')
             if edge_id in edges:
                 edge = edges[edge_id]
@@ -95,7 +163,6 @@ def extract_classes_from_xml(xml_file):
                 # Check if the label contains multiplicity
                 multiplicity_match = re.search(r'\[(\d+\.\.\d+|\d+\.\.\*|\d+)\]', value)
                 multiplicity = None
-                #print(multiplicity_match)
                 if multiplicity_match:
                     multiplicity_str = multiplicity_match.group(1)
                     if multiplicity_str == '*':
@@ -105,7 +172,7 @@ def extract_classes_from_xml(xml_file):
                         multiplicity = Multiplicity(int(lower), upper if upper == '*' else int(upper))
                     elif '.' in multiplicity_str:
                         lower, upper = multiplicity_str.split('.')
-                        multiplicity = Multiplicity(int(lower), upper if upper == '*' else int(upper))
+                        multiplicity = Multiplicity(int(lower), upper if upper != '*' else int(upper))
                     else:
                         multiplicity = Multiplicity(int(multiplicity_str), int(multiplicity_str))
 
@@ -123,30 +190,36 @@ def extract_classes_from_xml(xml_file):
 
                 else:
                     raise ValueError(f"Invalid association used for label '{value}', please use the UML package notation from DrawIO.")
-                    #abs_x, abs_y = calculate_absolute_position(edge, geometry)
-                    #print(f"Label '{value}' absolute position calculated as ({abs_x}, {abs_y})")
-                    #associations.append({'name': value, 'x': abs_x, 'y': abs_y, 'multiplicity': multiplicity})
 
-    return classes, associations, cells, class_positions
+    return classes, enumerations, associations, generalizations, cells, class_positions
 
 # Function to generate BUML model from the extracted XML content
 def generate_buml_from_xml(xml_file):
-    classes, associations, cells, class_positions = extract_classes_from_xml(xml_file)
+    classes, enumerations, associations, generalizations, cells, class_positions = extract_classes_from_xml(xml_file)
 
     buml_classes = {}
     buml_associations = []
+    buml_generalizations = []
+    buml_enumerations = []
     association_properties = {}
 
     # Define classes and their attributes
     for class_name, attributes in classes.items():
         buml_attributes = set()
         for attr in attributes:
-            buml_attributes.add(Property(name=attr, type=PrimitiveDataType("str")))   #TODO: Add support for other data types
+            buml_attributes.add(Property(name=attr, type=PrimitiveDataType("str")))  # TODO: Add support for other data types
             print(f"Creating property {attr} for class {class_name}")
 
         buml_class = Class(name=class_name, attributes=buml_attributes)
         buml_classes[class_name] = buml_class
         print(f"Creating class {buml_class}")
+
+    # Define enumerations and their values
+    for enum_name, values in enumerations.items():
+        buml_values = {EnumerationLiteral(name=value) for value in values}
+        buml_enum = Enumeration(name=enum_name, literals=buml_values)
+        buml_enumerations.append(buml_enum)
+        print(f"Creating enumeration {buml_enum}")
 
     # Process each association
     for i in range(0, len(associations), 2):
@@ -180,8 +253,25 @@ def generate_buml_from_xml(xml_file):
         else:
             print("No matching association found for label")
 
+    for gen in generalizations:
+        specific_class = buml_classes.get(gen['specific'])
+        general_class = buml_classes.get(gen['general'])
+
+        if specific_class and general_class:
+            print(f"Creating generalization: {specific_class.name} extends {general_class.name}")
+            buml_generalization = Generalization(general=general_class, specific=specific_class)
+            buml_generalizations.append(buml_generalization)
+        else:
+            print(f"Skipping generalization: could not find specific class '{gen['specific']}' or general class '{gen['general']}'")
+
     # Define the domain model
-    domain_model = DomainModel(name="Generated Model", types=set(buml_classes.values()), associations=set(buml_associations))
+    domain_model = DomainModel(
+        name="Generated Model",
+        types=set(buml_classes.values()),
+        associations=set(buml_associations),
+        generalizations=set(buml_generalizations),
+        enumerations=set(buml_enumerations)
+    )
     print(f"Generated BUML model: {domain_model}")
     return domain_model, association_properties
 
@@ -189,21 +279,29 @@ def generate_buml_from_xml(xml_file):
 def save_buml_to_file(model, association_properties, file_name):
     with open(file_name, 'w') as f:
         f.write("# BUML Generated Model\n")
-        f.write("from besser.BUML.metamodel.structural import DomainModel, Class, Property, PrimitiveDataType, Multiplicity, BinaryAssociation\n\n")
+        f.write("from besser.BUML.metamodel.structural import DomainModel, Class, Property, PrimitiveDataType, Multiplicity, BinaryAssociation, Enumeration, Generalization, EnumerationLiteral\n\n")
 
         # Write the classes
         for buml_class in model.types:
-            f.write(f"# Class: {buml_class.name}\n")
-            for attribute in buml_class.attributes:
-                f.write(f"{attribute.name}: Property = Property(name=\"{attribute.name}\", owner=None, type=PrimitiveDataType(\"str\"))\n")
-            f.write(f"{buml_class.name}: Class = Class(name=\"{buml_class.name}\", attributes={{")
-            f.write(", ".join([attr.name for attr in buml_class.attributes]))
+            if isinstance(buml_class, Class):
+                f.write(f"# Class: {buml_class.name}\n")
+                for attribute in buml_class.attributes:
+                    f.write(f"{attribute.name}: Property = Property(name=\"{attribute.name}\", owner=None, type=PrimitiveDataType(\"str\"))\n")
+                f.write(f"{buml_class.name}: Class = Class(name=\"{buml_class.name}\", attributes={{")
+                f.write(", ".join([attr.name for attr in buml_class.attributes]))
+                f.write("})\n\n")
+
+        # Write the enumerations
+        for buml_enum in model.enumerations:
+            buml_enum_name = buml_enum.name
+            f.write(f"# Enumeration: {buml_enum_name}\n")
+            f.write(f"{buml_enum_name}: Enumeration = Enumeration(name=\"{buml_enum_name}\", literals={{")
+            f.write(", ".join([f"EnumerationLiteral(\"{value.name}\")" for value in buml_enum.literals]))
             f.write("})\n\n")
 
         # Write the association properties first
         for assoc_name, assoc_property in association_properties.items():
             print(f"Writing association property {assoc_name}")
-            print(f"{assoc_name}: Property = Property(name=\"{assoc_name}\", type={assoc_property.type.name}, multiplicity={assoc_property.multiplicity})\n")
             f.write(f"{assoc_name}: Property = Property(name=\"{assoc_name}\", type={assoc_property.type.name}, multiplicity={assoc_property.multiplicity})\n")
 
         # Write the associations after the properties
@@ -213,19 +311,19 @@ def save_buml_to_file(model, association_properties, file_name):
             f.write(", ".join([end.name for end in association.ends]))
             f.write("})\n\n")
 
+        # Write the generalizations
+        f.write("\n# Generalizations\n")
+        for generalization in model.generalizations:
+            f.write(f"gen_{generalization.specific.name}_{generalization.general.name}: Generalization = Generalization(general={generalization.general.name}, specific={generalization.specific.name})\n")
+
         # Finalize with the domain model definition
+        f.write("\n# Domain model\n")
         f.write("domain_model: DomainModel = DomainModel(name=\"Generated Model\", types={")
         f.write(", ".join([buml_class.name for buml_class in model.types]))
         f.write("}, associations={")
         f.write(", ".join([association.name for association in model.associations]))
+        f.write("}, generalizations={")
+        f.write(", ".join([f"gen_{generalization.specific.name}_{generalization.general.name}" for generalization in model.generalizations]))
+        f.write("}, enumerations={")
+        f.write(", ".join([buml_enum.name for buml_enum in model.enumerations]))
         f.write("})\n")
-
-# Example usage
-xml_file = 'aa.xml'
-buml_model, association_properties = generate_buml_from_xml(xml_file)
-
-# Save the BUML model to a Python file
-output_file = 'generated_buml_model.py'
-save_buml_to_file(buml_model, association_properties, output_file)
-
-print(f"BUML model has been saved to {output_file}")

@@ -1,5 +1,6 @@
 import pytest
 from besser.BUML.metamodel.structural import *
+from besser.utilities import sort_by_timestamp
 
 def test_named_element():
     named_element: NamedElement = NamedElement(name="element1")
@@ -195,3 +196,16 @@ def test_parameters_same_name():
         parameter2: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="int"))
         method: Method = Method(name='method_1', is_abstract=True, parameters={parameter1, parameter2})
     assert "A method cannot have two parameters with the same name" in str(excinfo.value)
+
+# Testing sort attributes by timestamp
+def test_sort_parameters():
+    attribute1: Property = Property(name="attribute_1", type=PrimitiveDataType(name="str"))
+    attribute2: Property = Property(name="attribute_2", type=PrimitiveDataType(name="int"))
+    attribute3: Property = Property(name="attribute_3", type=PrimitiveDataType(name="int"))
+    cls: Class = Class(name="class", attributes={attribute1, attribute2, attribute3})
+    attributes = sort_by_timestamp(cls.attributes)
+    assert len(attributes) == 3
+    assert type(attributes) == list
+    assert attributes[0] == attribute1
+    assert attributes[1] == attribute2
+    assert attributes[2] == attribute3

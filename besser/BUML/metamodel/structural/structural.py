@@ -1,5 +1,7 @@
 from abc import ABC, abstractmethod 
+from datetime import datetime, timedelta
 from typing import Any
+import time
  
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
@@ -12,16 +14,20 @@ class NamedElement(Element):
 
     Args:
         name (str): The name of the named element
-        visibility: Determines the kind of visibility of the named element (public as default).
-    
+        visibility (str): Determines the kind of visibility of the named element (public as default).
+        timestamp (datetime): Object creation datetime (default is current time).
+
     Attributes:
         name (str): The name of the named element
         visibility: Determines the kind of visibility of the named element (public as default).
+        timestamp (datetime): Object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, visibility: str = "public"):
+    def __init__(self, name: str, timestamp: datetime = None, visibility: str = "public"):
         self.name: str = name
-        self.visibility = visibility
+        self.timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
+                         timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
+        self.visibility: str = visibility
 
     @property
     def name(self) -> str:
@@ -32,6 +38,16 @@ class NamedElement(Element):
     def name(self, name: str):
         """str: Set the name of the named element."""
         self.__name = name
+
+    @property
+    def timestamp(self) -> datetime:
+        """str: Get the timestamp of the named element."""
+        return self.__datestamp
+
+    @timestamp.setter
+    def timestamp(self, timestamp: datetime):
+        """str: Set the timestamp of the named element."""
+        self.__datestamp = timestamp
 
     @property
     def visibility(self) -> str:
@@ -56,16 +72,18 @@ class Type(NamedElement):
 
     Args:
         name (str): The name of the Type.
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the Type.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str):
-        super().__init__(name)
+    def __init__(self, name: str, timestamp: int = None):
+        super().__init__(name, timestamp)
 
     def __repr__(self):
-        return f"Type({self.name})"
+        return f"Type({self.name}, {self.timestamp})"
 
 class DataType(Type):
     """Represents a data type.
@@ -74,13 +92,15 @@ class DataType(Type):
 
     Args:
         name (str): The name of the data type.
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the data type.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str):
-        super().__init__(name)
+    def __init__(self, name: str, timestamp: int = None):
+        super().__init__(name, timestamp)
 
     def __repr__(self):
         return f"DataType({self.name})"
@@ -93,13 +113,15 @@ class PrimitiveDataType(DataType):
 
     Args:
         name (str): The name of the primitive data type.
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the primitive data type.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str):
-        super().__init__(name)
+    def __init__(self, name: str, timestamp: int = None):
+        super().__init__(name, timestamp)
 
     @NamedElement.name.setter
     def name(self, name: str):
@@ -115,7 +137,7 @@ class PrimitiveDataType(DataType):
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
     
     def __repr__(self):
-        return f"PrimitiveDataType({self.name})"
+        return f"PrimitiveDataType({self.name}, {self.timestamp})"
     
 class EnumerationLiteral(NamedElement):
     """Class representing an enumeration literal.
@@ -126,14 +148,16 @@ class EnumerationLiteral(NamedElement):
     Args:
         name (str): The name of the enumeration literal.
         owner (DataType): The owner data type of the enumeration literal (None as default).
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the enumeration literal.
         owner (DataType): Represents the owner data type of the enumeration literal (None as default).
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, owner: DataType=None):
-        super().__init__(name)
+    def __init__(self, name: str, owner: DataType=None, timestamp: int = None):
+        super().__init__(name, timestamp)
         self.owner: DataType = owner
 
     @property
@@ -154,8 +178,8 @@ class EnumerationLiteral(NamedElement):
         self.__owner = owner
 
     def __repr__(self):
-        return f"EnumerationLiteral({self.name})"
-    
+        return f"EnumerationLiteral({self.name}, {self.owner}, {self.timestamp})"
+
 class Enumeration(DataType):
     """Class representing an enumeration.
 
@@ -165,14 +189,16 @@ class Enumeration(DataType):
     Args:
         name (str): The name of the enumeration data type.
         literals (set[EnumerationLiteral]): Set of enumeration literals associated with the enumeration.
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from DataType, represents the name of the enumeration.
         literals (set[EnumerationLiteral]): Represents a set of enumeration literals associated with the enumeration.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, literals: set[EnumerationLiteral]):
-        super().__init__(name)
+    def __init__(self, name: str, literals: set[EnumerationLiteral], timestamp: int = None):
+        super().__init__(name, timestamp)
         self.literals: set[EnumerationLiteral] = literals
 
     @property
@@ -199,7 +225,7 @@ class Enumeration(DataType):
             self.__literals = set()
 
     def __repr__(self):
-        return f"Enumeration({self.name}, {self.literals})"
+        return f"Enumeration({self.name}, {self.literals}, {self.timestamp})"
 
 class TypedElement(NamedElement):
     """TypedElement is a subclass of NamedElement and is used to represent elements
@@ -209,15 +235,17 @@ class TypedElement(NamedElement):
         name (str): The name of the typed element.
         type (Type): The data type of the typed element.
         visibility (str): Determines the kind of visibility of the typed element (public as default).
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the typed element.
         visibility (str): Inherited from NamedElement, represents the visibility of the typed element (public as default).
         type (Type): The data type of the typed element.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, type: Type, visibility: str="public"):
-        super().__init__(name, visibility)
+    def __init__(self, name: str, type: Type, timestamp: int = None, visibility: str="public"):
+        super().__init__(name, timestamp, visibility)
         self.type: Type = type
 
     @property
@@ -286,7 +314,7 @@ class Multiplicity:
         self.__max = max_multiplicity
 
     def __repr__(self):
-        return f'Multiplicity({self.min},{self.max})'
+        return f'Multiplicity({self.min}, {self.max})'
 
 # Properties are owned by a class or an association and point to a type with a multiplicity
 class Property(TypedElement):
@@ -304,6 +332,7 @@ class Property(TypedElement):
         is_navigable (bool): Indicates whether the property is navigable in a relationship (True as default).
         is_id (bool): Indicates whether the property is an id (False as default).
         is_read_only (bool): Indicates whether the property is read only (False as default).
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the property.
@@ -315,12 +344,13 @@ class Property(TypedElement):
         is_navigable (bool): Indicates whether the property is navigable in a relationship (True as default).
         is_id (bool): Indicates whether the property is an id (False as default).
         is_read_only (bool): Indicates whether the property is read only (False as default).
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
     def __init__(self, name: str, type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1),
                  visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True,
-                 is_id: bool = False, is_read_only: bool = False):
-        super().__init__(name, type, visibility)
+                 is_id: bool = False, is_read_only: bool = False, timestamp: int = None):
+        super().__init__(name, type, timestamp, visibility)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
@@ -399,7 +429,7 @@ class Property(TypedElement):
         return (
             f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, '
             f'is_composite={self.is_composite}, is_id={self.is_id}, '
-            f'is_read_only={self.is_read_only})'
+            f'is_read_only={self.is_read_only}, {self.timestamp})'
         )
 
 class Parameter(TypedElement):
@@ -410,15 +440,17 @@ class Parameter(TypedElement):
         name (str): The name of the parameter.
         type (Type): The data type of the parameter.
         default_value (Any): The default value of the parameter (None as default).
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the parameter.
         type (Type): Inherited from TypedElement, represents the type of the parameter.
         default_value (Any): The default value of the parameter (None as default).
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, type: Type, default_value: Any = None):
-        super().__init__(name, type)
+    def __init__(self, name: str, type: Type, default_value: Any = None, timestamp: int = None):
+        super().__init__(name, type, timestamp)
         self.default_value: Any = default_value
 
     @property
@@ -432,7 +464,7 @@ class Parameter(TypedElement):
         self.__default_value = default_value
 
     def __repr__(self):
-        return f'Parameter({self.name}, {self.type})'
+        return f'Parameter({self.name}, {self.type}, {self.default_value}, {self.timestamp})'
 
 class Method(TypedElement):
     """
@@ -446,6 +478,7 @@ class Method(TypedElement):
         type (Type): The type of the method (None as default).
         owner (Type): The type that owns the method (None as default).
         code (str): code of the method ("" as default).
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the method.
@@ -455,12 +488,13 @@ class Method(TypedElement):
         type (Type): Inherited from TypedElement, represents the type of the method (None as default).
         owner (Type): The type that owns the property (None as default).
         code (str): code of the method ("" as default).
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
     def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False,
                  parameters: set[Parameter] = set(), type: Type = None, owner: Type = None,
-                 code: str = ""):
-        super().__init__(name, type, visibility)
+                 code: str = "", timestamp: int = None):
+        super().__init__(name, type, timestamp, visibility)
         self.is_abstract: bool = is_abstract
         self.parameters: set[Parameter] = parameters
         self.owner: Type = owner
@@ -529,7 +563,7 @@ class Method(TypedElement):
     def __repr__(self):
         return (
             f'Method({self.name}, {self.visibility}, {self.is_abstract}, {self.parameters}, '
-            f'{self.type}, {self.owner}, {self.code})'
+            f'{self.type}, {self.owner}, {self.code}, {self.timestamp})'
         )
 
 class Class(Type):
@@ -544,6 +578,7 @@ class Class(Type):
         methods (set[Method]): The set of methods of the class (set() as default).
         is_abstract (bool): Indicates whether the class is abstract (False as default).
         is_read_only (bool): Indicates whether the class is read only (False as default).
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from Type, represents the name of the class.
@@ -553,11 +588,12 @@ class Class(Type):
         is_read_only (bool): Indicates whether the class is read only (False as default).
         __associations (set[Association]): Set of associations involving the class.
         __generalizations (set[Generalization]): Set of generalizations involving the class.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
     def __init__(self, name: str, attributes: set[Property] = None, methods: set[Method] = None,
-                 is_abstract: bool= False, is_read_only: bool= False):
-        super().__init__(name)
+                 is_abstract: bool= False, is_read_only: bool= False, timestamp: int = None):
+        super().__init__(name, timestamp)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
         self.attributes: set[Property] = attributes if attributes is not None else set()
@@ -747,7 +783,7 @@ class Class(Type):
         return None
 
     def __repr__(self):
-        return f'Class({self.name}, {self.attributes})'
+        return f'Class({self.name}, {self.attributes}, {self.methods}, {self.timestamp})'
 
 class Association(NamedElement):
     """Represents an association between classes.
@@ -758,14 +794,16 @@ class Association(NamedElement):
     Args:
         name (str): The name of the association.
         ends (set[Property]): The set of ends related to the association.
+        timestamp (datetime): Object creation datetime (default is current time).
         
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the association.
         ends (set[Property]): The set of ends related to the association.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, ends: set[Property]):
-        super().__init__(name)
+    def __init__(self, name: str, ends: set[Property], timestamp: int = None):
+        super().__init__(name, timestamp)
         self.ends: set[Property] = ends
 
     @property
@@ -792,7 +830,7 @@ class Association(NamedElement):
         self.__ends = ends
 
     def __repr__(self):
-        return f'Association({self.name}, {self.ends})'
+        return f'Association({self.name}, {self.ends}, {self.timestamp})'
 
 class BinaryAssociation(Association):
     """Represents a binary association between two classes.
@@ -803,15 +841,17 @@ class BinaryAssociation(Association):
 
     Args:
         name (str): The name of the binary association.
-        ends (set[Property]): The set of ends related to the binary association. 
+        ends (set[Property]): The set of ends related to the binary association.
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from Association, represents the name of the binary association.
         ends (set[Property]): Inherited from NamedElement, represents the set of ends related to the binary association.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, ends: set[Property]):
-        super().__init__(name, ends)
+    def __init__(self, name: str, ends: set[Property], timestamp: int = None):
+        super().__init__(name, ends, timestamp)
 
     @Association.ends.setter
     def ends(self, ends: set[Property]):
@@ -828,7 +868,7 @@ class BinaryAssociation(Association):
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
 
     def __repr__(self):
-        return f'BinaryAssociation({self.name}, {self.ends})'
+        return f'BinaryAssociation({self.name}, {self.ends}, {self.timestamp})'
 
 class AssociationClass(Class):
     # Class that has an association nature
@@ -839,15 +879,17 @@ class AssociationClass(Class):
         name (str): The name of the association class.
         attributes (set[Property]): The set of attributes associated with the association class.
         association (Association): The underlying association linked to the association class.
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from Class, represents the name of the association class.
         attributes (set[Property]): Inherited from Class, represents the set of attributes associated with the association class.
         association (Association): The underlying association linked to the association class.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, attributes: set[Property], association: Association):
-        super().__init__(name, attributes)
+    def __init__(self, name: str, attributes: set[Property], association: Association, timestamp: int = None):
+        super().__init__(name, attributes, timestamp=timestamp)
         self.association: Association = association
 
     @property
@@ -861,7 +903,7 @@ class AssociationClass(Class):
         self.__association = association
 
     def __repr__(self):
-        return f'AssociationClass({self.name}, {self.attributes}, {self.association})'
+        return f'AssociationClass({self.name}, {self.attributes}, {self.association}, {self.timestamp})'
 
 class Generalization(Element):
     """Represents a generalization relationship between two classes.
@@ -872,15 +914,18 @@ class Generalization(Element):
     Args:
         general (Class): The general (parent) class in the generalization relationship.
         specific (Class): The specific (child) class in the generalization relationship.
+        timestamp (datetime): Object creation datetime (default is current time).
     
     Attributes:
         general (Class): The general (parent) class in the generalization relationship.
         specific (Class): The specific (child) class in the generalization relationship.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, general: Class, specific: Class):
+    def __init__(self, general: Class, specific: Class, timestamp: int = None):
         self.general: Class = general
         self.specific: Class = specific
+        self.timestamp: datetime = timestamp
 
     @property
     def general(self) -> Class:
@@ -915,8 +960,18 @@ class Generalization(Element):
         specific._add_generalization(generalization=self)
         self.__specific = specific
 
+    @property
+    def timestamp(self) -> datetime:
+        """str: Get the timestamp of the generalization."""
+        return self.__datestamp
+
+    @timestamp.setter
+    def timestamp(self, timestamp: datetime):
+        """str: Set the timestamp of the generalization."""
+        self.__datestamp = timestamp
+
     def __repr__(self):
-        return f'Generalization({self.general}, {self.specific})'
+        return f'Generalization({self.general}, {self.specific}, {self.timestamp})'
 
 class GeneralizationSet(NamedElement):
     """Represents a set of generalization relationships.
@@ -926,17 +981,19 @@ class GeneralizationSet(NamedElement):
         generalizations (set[Generalization]): The set of generalization relationships in the set.
         is_disjoint (bool): Indicates whether the set is disjoint (instances cannot belong to more than one class in the set).
         is_complete (bool): Indicates whether the set is complete (every instance of the superclass must belong to a subclass).
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the generalization set.
         generalizations (set[Generalization]): The set of generalization relationships in the set.
         is_disjoint (bool): Indicates whether the set is disjoint (instances cannot belong to more than one class in the set).
         is_complete (bool): Indicates whether the set is complete (every instance of the superclass must belong to a subclass).
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
     def __init__(self, name: str, generalizations: set[Generalization], is_disjoint: bool,
-                 is_complete: bool):
-        super().__init__(name)
+                 is_complete: bool, timestamp: int = None):
+        super().__init__(name, timestamp)
         self.generalizations: set[Generalization] = generalizations
         self.is_disjoint: bool = is_disjoint
         self.is_complete: bool = is_complete
@@ -974,7 +1031,7 @@ class GeneralizationSet(NamedElement):
     def __repr__(self):
         return (
             f'GeneralizationSet({self.name}, {self.generalizations}, '
-            f'is_disjoint={self.is_disjoint}, is_complete={self.is_complete})'
+            f'is_disjoint={self.is_disjoint}, is_complete={self.is_complete}, {self.timestamp})'
         )
 
 class Package(NamedElement):
@@ -983,14 +1040,16 @@ class Package(NamedElement):
     Attributes:
         name (str): The name of the package.
         classes (set[Class]): The set of classes contained in the package.
+        timestamp (datetime): Object creation datetime (default is current time).
     
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the package.
         classes (set[Class]): The set of classes contained in the package.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, classes: set[Class]):
-        super().__init__(name)
+    def __init__(self, name: str, classes: set[Class], timestamp: int = None):
+        super().__init__(name, timestamp)
         self.classes: set[Class] = classes
 
     @property
@@ -1004,7 +1063,7 @@ class Package(NamedElement):
         self.__classes = classes
 
     def __repr__(self):
-        return f'Package({self.name}, {self.classes})'
+        return f'Package({self.name}, {self.classes}), {self.timestamp}'
 
 class Constraint(NamedElement):
     """A Constraint is a statement that restricts or defines conditions on the behavior,
@@ -1015,16 +1074,18 @@ class Constraint(NamedElement):
         context (Class): The class to which the constraint is associated.
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the constraint.
         context (Class): The class to which the constraint is associated.
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, context: Class, expression: Any, language: str):
-        super().__init__(name)
+    def __init__(self, name: str, context: Class, expression: Any, language: str, timestamp: int = None):
+        super().__init__(name, timestamp)
         self.context: Class = context
         self.expression: str = expression
         self.language: str = language
@@ -1060,7 +1121,7 @@ class Constraint(NamedElement):
         self.__language = language
 
     def __repr__(self):
-        return f'Constraint({self.name},{self.context.name},{self.language},{self.expression})'
+        return f'Constraint({self.name}, {self.context.name}, {self.language}, {self.expression}, {self.timestamp})'
 
 class Model(NamedElement):
     """A model is the root element. A model is the root element. There are different types of models
@@ -1068,12 +1129,14 @@ class Model(NamedElement):
 
     Args:
         name (str): The name of the model.
+        timestamp (datetime): Object creation datetime (default is current time).
         
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the model.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
-    def __init__(self, name: str):
-        super().__init__(name)
+    def __init__(self, name: str, timestamp: int = None):
+        super().__init__(name, timestamp)
 
 class DomainModel(Model):
     """A domain model comprises a number of types, associations, 
@@ -1087,6 +1150,7 @@ class DomainModel(Model):
         enumerations (set[Enumeration]): The set of enumerations in the domain model (set() as default).
         packages (set[Package]): The set of packages in the domain model (set() as default).
         constraints (set[Constraint]): The set of constraints in the domain model (set() as default).
+        timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the domain model.
@@ -1096,12 +1160,14 @@ class DomainModel(Model):
         enumerations (set[Enumeration]): The set of enumerations in the domain model (set() as default).
         packages (set[Package]): The set of packages in the domain model (set() as default).
         constraints (set[Constraint]): The set of constraints in the domain model (set() as default).
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None,
                  generalizations: set[Generalization] = None, enumerations: set[Enumeration] = None,
-                 packages: set[Package] = None, constraints: set[Constraint] = None):
-        super().__init__(name)
+                 packages: set[Package] = None, constraints: set[Constraint] = None,
+                 timestamp: int = None):
+        super().__init__(name, timestamp)
         self.types: set[Type] = types if types is not None else set()
         self.packages: set[Package] = packages if packages is not None else set()
         self.constraints: set[Constraint] = constraints if constraints is not None else set()
@@ -1240,17 +1306,31 @@ class DomainModel(Model):
 
     def classes_sorted_by_inheritance(self) -> list[Class]:
         """list[Class]: Get the list of classes ordered by inheritance."""
-        classes: set[Class] = self.get_classes()
-        ordered_classes: list = []
-        while len(classes) != 0:
-            for cl in classes:
-                if len(cl.parents()) == 0 or all(parent in ordered_classes for parent in cl.parents()):
-                    ordered_classes.append(cl)
-            classes.difference_update(ordered_classes)
-        return ordered_classes
+        classes = self.get_classes()
+        # Set up a dependency graph
+        child_map = {cl: set() for cl in classes}
+        # Populating the child_map based on generalizations (edges in top-sort graph)
+        for cl in classes:
+            for generalization in cl.generalizations:
+                child_map[generalization.general].add(cl)
+        # Helper function for DFS
+        def dfs(cl, visited, sorted_list):
+            visited.add(cl)
+            for child in child_map[cl]:
+                if child not in visited:
+                    dfs(child, visited, sorted_list)
+            sorted_list.append(cl)
+        # Perform DFS from each node that hasn't been visited yet
+        visited = set()
+        sorted_list = []
+        for cl in classes:
+            if cl not in visited:
+                dfs(cl, visited, sorted_list)
+        sorted_list.reverse()
+        return sorted_list
 
     def __repr__(self):
         return (
             f'Package({self.name}, {self.types}, {self.associations}, {self.generalizations}, '
-            f'{self.enumerations}, {self.packages}, {self.constraints})'
+            f'{self.enumerations}, {self.packages}, {self.constraints}, {self.timestamp})'
         )

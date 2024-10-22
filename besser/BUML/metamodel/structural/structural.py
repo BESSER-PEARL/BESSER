@@ -1306,14 +1306,28 @@ class DomainModel(Model):
 
     def classes_sorted_by_inheritance(self) -> list[Class]:
         """list[Class]: Get the list of classes ordered by inheritance."""
-        classes: set[Class] = self.get_classes()
-        ordered_classes: list = []
-        while len(classes) != 0:
-            for cl in classes:
-                if len(cl.parents()) == 0 or all(parent in ordered_classes for parent in cl.parents()):
-                    ordered_classes.append(cl)
-            classes.difference_update(ordered_classes)
-        return ordered_classes
+        classes = self.get_classes()
+        # Set up a dependency graph
+        child_map = {cl: set() for cl in classes}
+        # Populating the child_map based on generalizations (edges in top-sort graph)
+        for cl in classes:
+            for generalization in cl.generalizations:
+                child_map[generalization.general].add(cl)
+        # Helper function for DFS
+        def dfs(cl, visited, sorted_list):
+            visited.add(cl)
+            for child in child_map[cl]:
+                if child not in visited:
+                    dfs(child, visited, sorted_list)
+            sorted_list.append(cl)
+        # Perform DFS from each node that hasn't been visited yet
+        visited = set()
+        sorted_list = []
+        for cl in classes:
+            if cl not in visited:
+                dfs(cl, visited, sorted_list)
+        sorted_list.reverse()
+        return sorted_list
 
     def __repr__(self):
         return (

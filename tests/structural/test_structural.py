@@ -209,3 +209,27 @@ def test_sort_parameters():
     assert attributes[0] == attribute1
     assert attributes[1] == attribute2
     assert attributes[2] == attribute3
+
+# Testing the classes_sorted_by_inheritance method
+def test_classes_sorted_by_inheritance():
+    cl1 = Class(name="c1")
+    cl2 = Class(name="c2")
+    cl3 = Class(name="c3")
+    cl4 = Class(name="c4")
+    cl5 = Class(name="c5")
+    cl6 = Class(name="c6")
+    cl7 = Class(name="c7")
+    h1 = Generalization(general=cl7, specific=cl6)
+    h2 = Generalization(general=cl6, specific=cl5)
+    h3 = Generalization(general=cl5, specific=cl4)
+    h4 = Generalization(general=cl4, specific=cl2)
+    h5 = Generalization(general=cl4, specific=cl3)
+    h6 = Generalization(general=cl3, specific=cl2)
+    h7 = Generalization(general=cl2, specific=cl1)
+    model = DomainModel(name="model", types={cl1,cl2,cl3,cl4,cl5,cl6,cl7}, generalizations={h1,h2,h3,h4,h5,h6,h7})
+    classes = model.classes_sorted_by_inheritance()
+    assert len(classes) == 7
+    assert classes[0] == cl7
+    assert classes[2] == cl5
+    assert classes[4] == cl3
+    assert classes[6] == cl1

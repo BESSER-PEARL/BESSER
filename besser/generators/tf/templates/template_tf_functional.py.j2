@@ -55,18 +55,21 @@ class NeuralNetwork(tf.keras.Model):
         {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}_pad({{ module_details[2] }})
         {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
         {%- elif module_details[-1].__class__.mro()[1].__name__ == "RNN" %}
-            {%- if module_details[-1].__class__.__name__ == "LSTMLayer" %}
-                {%- if module_details[-1].return_hidden %}
+            {%- if module_details[-1].return_type == "hidden" %}
+                {%- if module_details[-1].__class__.__name__ == "LSTMLayer" and module_details[-1].bidirectional %}
+        _, forward_h_n, _, backward_h_n, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- elif module_details[-1].__class__.__name__ == "LSTMLayer" %}
         _, {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- elif module_details[-1].__class__.__name__ != "LSTMLayer" and module_details[-1].bidirectional %}
+        _, forward_h_n, backward_h_n = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
                 {%- else %}
-        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- endif -%}
+                {%- if module_details[-1].bidirectional %}
+        {{ module_details[1] }} = tf.concat([forward_h_n, backward_h_n], axis=-1)
                 {%- endif -%}
             {%- else %}
-                {%- if module_details[-1].return_hidden %}
-        _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
-                {%- else %}
         {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
-                {%- endif -%}
             {%- endif -%}
         {%- else %}
         {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})

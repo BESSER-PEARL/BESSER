@@ -54,22 +54,21 @@ def setup_layer_modifier(layer: Layer) -> str:
     return my_layer       
 
 
-
 def setup_rnn(layer: Layer) -> str:
     actv_func = setup_activation_function(layer)
-    if layer.__class__.__name__ == "SimpleRNNLayer":
-        my_layer = f"self.{layer.name} = layers.SimpleRNN(units={layer.hidden_size}, activation={actv_func}, dropout={layer.dropout}, return_sequences={layer.return_sequences}, return_state={layer.return_hidden})"
-        if layer.bidirectional == True:
-            my_layer = f"self.{layer.name} = layers.Bidirectional(layers.SimpleRNN(units={layer.hidden_size}, activation={actv_func}, dropout={layer.dropout}, return_sequences={layer.return_sequences}, return_state={layer.return_hidden}))"
-    elif layer.__class__.__name__ == "LSTMLayer":
-        my_layer = f"self.{layer.name} = layers.LSTM(units={layer.hidden_size}, activation={actv_func}, dropout={layer.dropout}, return_sequences={layer.return_sequences}, return_state={layer.return_hidden})"
-        if layer.bidirectional == True:
-            my_layer = f"self.{layer.name} = layers.Bidirectional(layers.LSTM(units={layer.hidden_size}, activation={actv_func}, dropout={layer.dropout}, return_sequences={layer.return_sequences}, return_state={layer.return_hidden}))"
-    elif layer.__class__.__name__ == "GRULayer":
-        my_layer = f"self.{layer.name} = layers.GRU(units={layer.hidden_size}, activation={actv_func}, dropout={layer.dropout}, return_sequences={layer.return_sequences}, return_state={layer.return_hidden})"
-        if layer.bidirectional == True:
-            my_layer = f"self.{layer.name} = layers.Bidirectional(layers.GRU(units={layer.hidden_size}, activation={actv_func}, dropout={layer.dropout}, return_sequences={layer.return_sequences}, return_state={layer.return_hidden}))"
+    layer_type = layer.__class__.__name__[:-5]
+    my_layer = f"layers.{layer_type}(units={layer.hidden_size}, activation={actv_func}, dropout={layer.dropout}"
+    if layer.return_type == "full":
+        my_layer = f"{my_layer}, return_sequences=True)"
+    elif layer.return_type == "hidden":
+        my_layer = f"{my_layer}, return_state=True)"
+    else:
+        my_layer = f"{my_layer})"
 
+    if layer.bidirectional == True:
+        my_layer = f"self.{layer.name} = layers.Bidirectional({my_layer})"
+    else:
+        my_layer = f"self.{layer.name} = {my_layer}"
     return my_layer
 
 def setup_activation_function(layer: Layer) -> str:
@@ -238,8 +237,11 @@ the first layer that receives that output should have the parameter input_reused
 
 
 def get_tensorop_syntax(tensorOp, modules_details):
-    previous_module = list(modules_details.keys())[-1]
-    prev_out_variable = get_previous_out_variable(modules_details, previous_module)
+    if len(list(modules_details.keys())) == 0:
+        prev_out_variable = "x"
+    else:
+        previous_module = list(modules_details.keys())[-1]
+        prev_out_variable = get_previous_out_variable(modules_details, previous_module)
     if tensorOp.type == "reshape":
         reshape_dim = ', '.join([str(i) for i in tensorOp.reshape_dim])
         ts_op_synt = f"tf.reshape({prev_out_variable}, {reshape_dim})"

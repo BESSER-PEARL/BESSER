@@ -3,6 +3,7 @@ __pycache__/
 # pipenv
 Pipfile
 Pipfile.lock
+.env
 
 # package
 /dist/

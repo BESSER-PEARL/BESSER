@@ -25,22 +25,31 @@ The latest stable version of BESSER is available in the Python Package Index (Py
 
     $ pip install besser
 
-## Building From Source
+BESSER can be used with any of the popular IDEs for Python development such as [VScode](https://code.visualstudio.com/), [PyCharm](https://www.jetbrains.com/pycharm/), [Sublime Text](https://www.sublimetext.com/), etc.
 
-If you prefer to obtain the full code, you can clone the git repository.
+## Running BESSER Locally
+
+If you are interested in developing new code generators or designing BESSER extensions, you can download and modify the full codebase, including tests and examples.
+
+### Step 1: Clone the repository
 
     $ git clone https://github.com/BESSER-PEARL/BESSER.git
     $ cd BESSER
 
-Install *build*, then generate and install the *besser* package. Remember to replace `*.*.*` by the package version number.
+### Step 2: Create a virtual environment**
 
-    $ pip install --upgrade build
-    $ python -m build
-    $ pip install dist/besser-*.*.*-py3-none-any.whl
+Run the setup script to create a virtual environment (if not already created), install the requirements, and configure the ``PYTHONPATH``. This ensures compatibility with IDEs (like VSCode) that may not automatically set the ``PYTHONPATH`` for recognizing *besser* as an importable module.
 
-You can check the installation of the *besser* package.
+    $ python setup_environment.py
 
-    $ pip list
+Each time you start your IDE, run the `setup_environment.py` script to ensure the environment is properly configured.
+
+### Step 3: Run an example**
+
+To verify the setup, you can run a basic example.
+
+    $ cd tests/structural/library
+    $ python library.py
 
 ## Examples
 If you want to try examples, check out the [BESSER-examples](https://github.com/BESSER-PEARL/BESSER-examples) repository!

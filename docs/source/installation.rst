@@ -20,19 +20,36 @@ BESSER can be used with any of the popular IDEs for Python development such as `
   :alt: VSCode
   :align: center
 
-Building From Source
---------------------
-To obtain the full code, including examples and tests, you can clone the git repository.
+Running BESSER Locally
+----------------------
+If you are interested in developing new code generators or designing BESSER extensions, you can download and modify the full codebase, 
+including tests and examples.
+
+**Step 1: Clone the repository**
 
 .. code-block:: console
 
     $ git clone https://github.com/BESSER-PEARL/BESSER.git
     $ cd BESSER
 
-Now, install *build*, then generate and install the *besser* package. Remember to replace ``*.*.*`` by the package version number.
+**Step 2: Create a virtual environment**
+
+Run the setup script to create a virtual environment (if not already created), install the requirements, and configure the ``PYTHONPATH``. 
+This ensures compatibility with IDEs (like VSCode) that may not automatically set the ``PYTHONPATH`` for recognizing *besser* as an importable module.
 
 .. code-block:: console
 
-    $ pip install --upgrade build
-    $ python -m build
-    $ pip install dist/besser-*.*.*-py3-none-any.whl
+    $ python setup_environment.py
+
+.. note::
+  
+  Each time you start your IDE, run the `setup_environment.py` script to ensure the environment is properly configured.
+
+**Step 3: Run an example**
+
+To verify the setup, you can run a basic example.
+
+.. code-block:: console
+
+    $ cd tests/structural/library
+    $ python library.py

@@ -36,15 +36,15 @@ If you are interested in developing new code generators or designing BESSER exte
     $ git clone https://github.com/BESSER-PEARL/BESSER.git
     $ cd BESSER
 
-### Step 2: Create a virtual environment**
+### Step 2: Create a virtual environment
 
 Run the setup script to create a virtual environment (if not already created), install the requirements, and configure the ``PYTHONPATH``. This ensures compatibility with IDEs (like VSCode) that may not automatically set the ``PYTHONPATH`` for recognizing *besser* as an importable module.
 
     $ python setup_environment.py
 
-Each time you start your IDE, run the `setup_environment.py` script to ensure the environment is properly configured.
+**Note:** Each time you start your IDE, run the `setup_environment.py` script to ensure the environment is properly configured.
 
-### Step 3: Run an example**
+### Step 3: Run an example
 
 To verify the setup, you can run a basic example.
 

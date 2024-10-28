@@ -1268,16 +1268,14 @@ class RNN(Layer):
         batch_first (bool): If True, the input and output tensors are 
             provided as (batch, seq, feature) instead of (seq, batch, feature).
             Only relevant to PyTorch.
-        return_hidden (bool): If True, the layer does not return the output 
-            features but the hidden states.
-        return_sequences (bool): If True, the layer does not return only the 
-            last output in the output sequence but the full sequence.
         permute_dim (bool): Whether the dimensions of the input need to be 
             permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
+        return_type (str): Whether to return the hidden states, the last output
+        in the output sequence or the full sequence.
         
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
@@ -1294,32 +1292,28 @@ class RNN(Layer):
         batch_first (bool): If True, the input and output tensors are 
             provided as (batch, seq, feature) instead of (seq, batch, feature).
             Only relevant to PyTorch.
-        return_hidden (bool): If True, the layer does not return the output 
-            features but the hidden states.
-        return_sequences (bool): If True, the layer does not return only the 
-            last output in the output sequence but the full sequence.
         permute_dim (bool): Whether the dimensions of the input need to be 
             permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
             layer is reused as input to another layer.
+        return_type (str): Whether to return the hidden states, the last output
+        in the output sequence or the full sequence.
     """
     def __init__(self, name: str, input_size: int, hidden_size: int, 
-                 bidirectional: bool = False, dropout: float = 0.0, 
-                 batch_first: bool = True, return_hidden: bool = False, 
-                 return_sequences: bool = False, permute_dim: bool = False,
-                 actv_func: str = None, name_layer_input: str = None, 
-                 input_reused: bool = False):
+                 return_type: str, bidirectional: bool = False, 
+                 dropout: float = 0.0, batch_first: bool = True, 
+                 permute_dim: bool = False, actv_func: str = None, 
+                 name_layer_input: str = None, input_reused: bool = False):
         super().__init__(name, actv_func, name_layer_input, input_reused)
         self.bidirectional: bool = bidirectional
         self.dropout: float = dropout
         self.batch_first: bool = batch_first
-        self.return_hidden: bool = return_hidden
-        self.return_sequences: bool = return_sequences
         self.input_size: int = input_size
         self.hidden_size: int = hidden_size
         self.permute_dim: bool = permute_dim
+        self.return_type: str = return_type
 
     @property
     def input_size(self) -> int:
@@ -1378,38 +1372,6 @@ class RNN(Layer):
         self.__batch_first = batch_first
 
     @property
-    def return_hidden(self) -> bool:
-        """
-        bool: Get whether to return the output features or the hidden 
-            states.
-        """
-        return self.__return_hidden
-
-    @return_hidden.setter
-    def return_hidden(self, return_hidden: bool):
-        """
-        bool: Set whether to return the output features or the hidden 
-            states.
-        """
-        self.__return_hidden = return_hidden
-
-    @property
-    def return_sequences(self) -> bool:
-        """
-        bool: Get whether to return the full output sequences or only 
-            the last one.
-        """
-        return self.__return_sequences
-
-    @return_sequences.setter
-    def return_sequences(self, return_sequences: bool):
-        """
-        bool: Set whether to return the full output sequences or only 
-            the last one.
-        """
-        self.__return_sequences= return_sequences
-
-    @property
     def permute_dim(self) -> bool:
         """
         bool: Get whether to permute the dim of the input.
@@ -1423,12 +1385,34 @@ class RNN(Layer):
         """
         self.__permute_dim = permute_dim
 
+    @property
+    def return_type(self) -> str:
+        """
+        str: Whether to return the hidden states, the last output in the output
+            sequence or the full sequence.
+        """
+        return self.__return_type
+
+    @return_type.setter
+    def return_type(self, return_type: str):
+        """
+        str: Whether to return the hidden states, the last output in the output
+            sequence or the full sequence.
+        Raises:
+            ValueError: If the return_type is none of these: 
+            'hidden', 'last', or 'full'.
+        """
+
+        if return_type not in ['hidden', 'last', 'full']:
+            raise ValueError ("Invalid return type")  
+        self.__return_type = return_type
+
     def __repr__(self):
         return (
             f'RNN({self.name}, {self.actv_func}, {self.input_size}, '
-            f'{self.hidden_size}, {self.bidirectional}, {self.dropout}, '
-            f'{self.batch_first}, {self.return_hidden}, '
-            f'{self.return_sequences}, {self.permute_dim}, '
+            f'{self.hidden_size}, {self.return_type}, '
+            f'{self.bidirectional}, {self.dropout}, '
+            f'{self.batch_first}, {self.permute_dim}, '
             f'{self.name_layer_input}, {self.input_reused})'
         )
 
@@ -1451,16 +1435,14 @@ class SimpleRNNLayer(RNN):
         batch_first (bool): If True, the input and output tensors are 
             provided as (batch, seq, feature) instead of (seq, batch, feature).
             Only relevant to PyTorch.
-        return_hidden (bool): If True, the layer does not return the output 
-            features but the hidden states.
-        return_sequences (bool): If True, the layer does not return only the 
-            last output in the output sequence but the full sequence.
         permute_dim (bool): Whether the dimensions of the input need to be 
             permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
+        return_type (str): Whether to return the hidden states, the last output
+        in the output sequence or the full sequence.
         
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
@@ -1479,36 +1461,31 @@ class SimpleRNNLayer(RNN):
         batch_first (bool): Inherited from RNN. If True, the input and output 
             tensors are provided as (batch, seq, feature) instead of 
             (seq, batch, feature). Only relevant to PyTorch.
-        return_hidden (bool): Inherited from Layer. If True, the layer does 
-            not return the output features but the hidden states.
-        return_sequences (bool): Inherited from Layer. If True, the layer does
-            not return only the last output in the output sequence but the full
-            sequence.
         permute_dim (bool): Inherited from RNN. Whether the dimensions of the 
             input need to be permuted to (0, 2, 1). Relevant for PyTorch.
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
             layer is reused as input to another layer.
+        return_type (str): Inherited from RNN. Whether to return the hidden
+        states, the last output in the output sequence or the full sequence.
     """
     def __init__(self, name: str, input_size: int, hidden_size: int,
-                 bidirectional: bool = False, dropout: float = 0.0, 
-                 batch_first: bool = True, return_hidden: bool = False, 
-                 return_sequences: bool = False, actv_func: str = None, 
-                 permute_dim: bool = False, name_layer_input: str = None, 
-                 input_reused: bool = False):
-        super().__init__(name, input_size, hidden_size, bidirectional, 
-                         dropout, batch_first, return_hidden, 
-                         return_sequences, permute_dim, actv_func, 
-                         name_layer_input, input_reused)
+                 return_type: str, bidirectional: bool = False, 
+                 dropout: float = 0.0, batch_first: bool = True, 
+                 actv_func: str = None, permute_dim: bool = False, 
+                 name_layer_input: str = None, input_reused: bool = False):
+        super().__init__(name, input_size, hidden_size, return_type, 
+                         bidirectional, dropout, batch_first, permute_dim, 
+                         actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
             f'SimpleRNNLayer({self.name}, {self.actv_func}, '
-            f'{self.input_size}, {self.hidden_size}, {self.bidirectional}, '
-            f'{self.dropout}, {self.batch_first}, {self.return_hidden}, '
-            f'{self.return_sequences}, {self.permute_dim}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.input_size}, {self.hidden_size}, {self.return_type}, '
+            f'{self.bidirectional}, {self.dropout}, {self.batch_first}, '
+            f'{self.permute_dim}, {self.name_layer_input}, '
+            f'{self.input_reused})'
         )
     
 
@@ -1530,16 +1507,14 @@ class LSTMLayer(RNN):
         batch_first (bool): If True, the input and output tensors are 
             provided as (batch, seq, feature) instead of (seq, batch, feature).
             Only relevant to PyTorch.
-        return_hidden (bool): If True, the layer does not return the output 
-            features but the hidden states.
-        return_sequences (bool): If True, the layer does not return only the 
-            last output in the output sequence but the full sequence.
         permute_dim (bool): Whether the dimensions of the input need to be 
             permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
+        return_type (str): Whether to return the hidden states, the last output
+        in the output sequence or the full sequence.
         
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
@@ -1558,34 +1533,29 @@ class LSTMLayer(RNN):
         batch_first (bool): Inherited from RNN. If True, the input and output 
             tensors are provided as (batch, seq, feature) instead of 
             (seq, batch, feature). Only relevant to PyTorch.
-        return_hidden (bool): Inherited from Layer. If True, the layer does 
-            not return the output features but the hidden states.
-        return_sequences (bool): Inherited from Layer. If True, the layer does
-            not return only the last output in the output sequence but the full
-            sequence.
         permute_dim (bool): Inherited from RNN. Whether the dimensions of the 
             input need to be permuted to (0, 2, 1). Relevant for PyTorch.
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
             layer is reused as input to another layer.
+        return_type (str): Inherited from RNN. Whether to return the hidden
+        states, the last output in the output sequence or the full sequence.
     """
     def __init__(self, name: str, input_size: int, hidden_size: int, 
-                 bidirectional: bool = False, dropout: float = 0.0, 
-                 batch_first: bool = True, return_hidden: bool = False, 
-                 return_sequences: bool = False, permute_dim: bool = False,
-                 actv_func: str = None, name_layer_input: str = None, 
-                 input_reused: bool = False):
-        super().__init__(name, input_size, hidden_size, bidirectional, 
-                         dropout, batch_first, return_hidden, 
-                         return_sequences, permute_dim, actv_func, name_layer_input, 
-                         input_reused)
+                 return_type: str, bidirectional: bool = False, 
+                 dropout: float = 0.0, batch_first: bool = True, 
+                 permute_dim: bool = False, actv_func: str = None, 
+                 name_layer_input: str = None, input_reused: bool = False):
+        super().__init__(name, input_size, hidden_size, return_type, 
+                         bidirectional, dropout, batch_first, permute_dim, 
+                         actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
             f'LSTMLayer({self.name}, {self.actv_func}, {self.input_size}, '
-            f'{self.hidden_size}, {self.bidirectional}, {self.dropout}, '
-            f'{self.batch_first}, {self.return_hidden}, {self.return_sequences}, '
+            f'{self.hidden_size}, {self.return_type}, '
+            f'{self.bidirectional}, {self.dropout}, {self.batch_first}, '
             f'{self.permute_dim}, {self.name_layer_input}, {self.input_reused})'
         )
         
@@ -1608,16 +1578,14 @@ class GRULayer(RNN):
         batch_first (bool): If True, the input and output tensors are 
             provided as (batch, seq, feature) instead of (seq, batch, feature).
             Only relevant to PyTorch.
-        return_hidden (bool): If True, the layer does not return the output 
-            features but the hidden states.
-        return_sequences (bool): If True, the layer does not return only the 
-            last output in the output sequence but the full sequence.
         permute_dim (bool): Whether the dimensions of the input need to be 
             permuted to (0, 2, 1). Relevant for PyTorch. 
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
+        return_type (str): Whether to return the hidden states, the last output
+        in the output sequence or the full sequence.
         
     Attributes:
         name (str): Inherited from Layer. It represents the name of the layer.
@@ -1636,33 +1604,30 @@ class GRULayer(RNN):
         batch_first (bool): Inherited from RNN. If True, the input and output 
             tensors are provided as (batch, seq, feature) instead of 
             (seq, batch, feature). Only relevant to PyTorch.
-        return_hidden (bool): Inherited from Layer. If True, the layer does 
-            not return the output features but the hidden states.
-        return_sequences (bool): Inherited from Layer. If True, the layer does
-            not return only the last output in the output sequence but the full
-            sequence.
         permute_dim (bool): Inherited from RNN. Whether the dimensions of the 
             input need to be permuted to (0, 2, 1). Relevant for PyTorch.
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
             layer is reused as input to another layer.
+        return_type (str): Inherited from RNN. Whether to return the hidden
+        states, the last output in the output sequence or the full sequence.
     """
     def __init__(self, name: str, input_size: int, hidden_size: int, 
+                 return_type: str,
                  bidirectional: bool = False, dropout: float = 0.0, 
-                 batch_first: bool = True, return_hidden: bool = False, 
-                 return_sequences: bool = False, permute_dim: bool = False,
+                 batch_first: bool = True, permute_dim: bool = False,
                  actv_func: str = None, name_layer_input: str = None, 
                  input_reused: bool = False):
-        super().__init__(name, input_size, hidden_size, bidirectional, 
-                         dropout, batch_first, return_hidden, return_sequences, 
-                         permute_dim, actv_func, name_layer_input, input_reused)
+        super().__init__(name, input_size, hidden_size, return_type, 
+                         bidirectional, dropout, batch_first, permute_dim, 
+                         actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
             f'GRULayer({self.name}, {self.actv_func}, {self.input_size}, '
-            f'{self.hidden_size}, {self.bidirectional}, {self.dropout}, '
-            f'{self.batch_first}, {self.return_hidden}, {self.return_sequences}, '
+            f'{self.hidden_size}, {self.return_type}, '
+            f'{self.bidirectional}, {self.dropout}, {self.batch_first}, '
             f'{self.permute_dim}, {self.name_layer_input}, {self.input_reused})'
         )
 

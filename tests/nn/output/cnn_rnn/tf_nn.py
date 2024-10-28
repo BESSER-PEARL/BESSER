@@ -15,7 +15,7 @@ class NeuralNetwork(tf.keras.Model):
         self.l5 = layers.Conv1D(filters=200, kernel_size=5, strides=1, padding='valid', activation='relu')
         self.l6 = layers.MaxPool1D(pool_size=2, strides=2, padding='valid')
         self.l7 = layers.Dropout(rate=0.15)
-        self.l8 = layers.GRU(units=100, activation=None, dropout=0.0, return_sequences=False, return_state=False)
+        self.l8 = layers.GRU(units=100, activation=None, dropout=0.0)
         self.l9 = layers.Dense(units=400, activation='relu')
         self.l10 = layers.Dropout(rate=0.1)
         self.l11 = layers.Dense(units=1, activation='sigmoid')

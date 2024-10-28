@@ -9,9 +9,9 @@ class NeuralNetwork(tf.keras.Model):
     def __init__(self):
         super().__init__()
         self.l1 = layers.Embedding(input_dim=10000, output_dim=326)
-        self.l2 = layers.Bidirectional(layers.LSTM(units=40, activation=None, dropout=0.5, return_sequences=True, return_state=False))
+        self.l2 = layers.Bidirectional(layers.LSTM(units=40, activation=None, dropout=0.5, return_sequences=True))
         self.l3 = layers.Dropout(rate=0.2)
-        self.l4 = layers.LSTM(units=40, activation=None, dropout=0.2, return_sequences=False, return_state=False)
+        self.l4 = layers.LSTM(units=40, activation=None, dropout=0.2)
         self.l5 = layers.Dense(units=40, activation='relu')
         self.l6 = layers.Dense(units=2, activation='softmax')
     

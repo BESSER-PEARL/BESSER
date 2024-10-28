@@ -6,9 +6,9 @@ class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         self.l1 = nn.Embedding(num_embeddings=10000, embedding_dim=326)
-        self.l2 = nn.LSTM(326, 40, bidirectional=True, dropout=0.5, batch_first=True)
+        self.l2 = nn.LSTM(input_size=326, hidden_size=40, bidirectional=True, dropout=0.5, batch_first=True)
         self.l3 = nn.Dropout(p=0.2)
-        self.l4 = nn.LSTM(80, 40, bidirectional=False, dropout=0.2, batch_first=True)
+        self.l4 = nn.LSTM(input_size=80, hidden_size=40, bidirectional=False, dropout=0.2, batch_first=True)
         self.l5 = nn.Linear(in_features=40, out_features=40)
         self.relu_activ = nn.ReLU()
         self.l6 = nn.Linear(in_features=40, out_features=2)

@@ -57,11 +57,11 @@ def setup_rnn(layer: Layer, modules_details) -> str:
         permute = TensorOp(name=f"{layer.name}_op", type="permute", permute_dim=[0, 2, 1])
         modules_details = get_tensorop_out_variable(permute, modules_details)
     if layer.__class__.__name__ == "SimpleRNNLayer":
-        my_layer = f"self.{layer.name} = nn.RNN({layer.input_size}, {layer.hidden_size}, bidirectional={layer.bidirectional}, dropout={layer.dropout}, batch_first={layer.batch_first})"
+        my_layer = f"self.{layer.name} = nn.RNN(input_size={layer.input_size}, hidden_size={layer.hidden_size}, bidirectional={layer.bidirectional}, dropout={layer.dropout}, batch_first={layer.batch_first})"
     elif layer.__class__.__name__ == "LSTMLayer":
-        my_layer = f"self.{layer.name} = nn.LSTM({layer.input_size}, {layer.hidden_size}, bidirectional={layer.bidirectional}, dropout={layer.dropout}, batch_first={layer.batch_first})"
+        my_layer = f"self.{layer.name} = nn.LSTM(input_size={layer.input_size}, hidden_size={layer.hidden_size}, bidirectional={layer.bidirectional}, dropout={layer.dropout}, batch_first={layer.batch_first})"
     elif layer.__class__.__name__ == "GRULayer":
-        my_layer = f"self.{layer.name} = nn.GRU({layer.input_size}, {layer.hidden_size}, bidirectional={layer.bidirectional}, dropout={layer.dropout}, batch_first={layer.batch_first})"
+        my_layer = f"self.{layer.name} = nn.GRU(input_size={layer.input_size}, hidden_size={layer.hidden_size}, bidirectional={layer.bidirectional}, dropout={layer.dropout}, batch_first={layer.batch_first})"
     return my_layer, modules_details
 
 def setup_activation_function(layer: Layer) -> str:
@@ -86,13 +86,13 @@ def setup_cnn(layer: Layer, modules_details: Dict) -> str:
     if layer.__class__.__name__ == "Conv1D" and layer.permute_dim:
         permute = TensorOp(name=f"{layer.name}_op", type="permute", permute_dim=[0, 2, 1])
         modules_details = get_tensorop_out_variable(permute, modules_details)
-        my_layer = f"self.{layer.name} = nn.Conv1d({layer.in_channels}, {layer.out_channels}, kernel_size={layer.kernel_dim[0]}, stride={layer.stride_dim[0]}, padding={layer.padding_amount})"
+        my_layer = f"self.{layer.name} = nn.Conv1d(in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size={layer.kernel_dim[0]}, stride={layer.stride_dim[0]}, padding={layer.padding_amount})"
     elif layer.__class__.__name__ == "Conv1D":
-        my_layer = f"self.{layer.name} = nn.Conv1d({layer.in_channels}, {layer.out_channels}, kernel_size={layer.kernel_dim[0]}, stride={layer.stride_dim[0]}, padding={layer.padding_amount})"
+        my_layer = f"self.{layer.name} = nn.Conv1d(in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size={layer.kernel_dim[0]}, stride={layer.stride_dim[0]}, padding={layer.padding_amount})"
     elif layer.__class__.__name__ == "Conv2D":
-        my_layer = f"self.{layer.name} = nn.Conv2d({layer.in_channels}, {layer.out_channels}, kernel_size=({layer.kernel_dim[0]}, {layer.kernel_dim[1]}), stride=({layer.stride_dim[0]}, {layer.stride_dim[1]}), padding={layer.padding_amount})"
+        my_layer = f"self.{layer.name} = nn.Conv2d(in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size=({layer.kernel_dim[0]}, {layer.kernel_dim[1]}), stride=({layer.stride_dim[0]}, {layer.stride_dim[1]}), padding={layer.padding_amount})"
     elif layer.__class__.__name__ == "Conv3D":
-        my_layer = f"self.{layer.name} = nn.Conv3d({layer.in_channels}, {layer.out_channels}, kernel_size=({layer.kernel_dim[0]}, {layer.kernel_dim[1]}, {layer.kernel_dim[2]}), stride=({layer.stride_dim[0]}, {layer.stride_dim[1]}, {layer.stride_dim[2]}), padding={layer.padding_amount})"
+        my_layer = f"self.{layer.name} = nn.Conv3d(in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size=({layer.kernel_dim[0]}, {layer.kernel_dim[1]}, {layer.kernel_dim[2]}), stride=({layer.stride_dim[0]}, {layer.stride_dim[1]}, {layer.stride_dim[2]}), padding={layer.padding_amount})"
     elif layer.__class__.__name__ == "PoolingLayer":
         if layer.pooling_type == "average":
             pl = "Avg"
@@ -111,11 +111,11 @@ def setup_cnn(layer: Layer, modules_details: Dict) -> str:
                 my_layer = f"self.{layer.name} = nn.{pl}Pool3d(kernel_size=({layer.kernel_dim[0]}, {layer.kernel_dim[1]}, {layer.kernel_dim[2]}), stride=({layer.stride_dim[0]}, {layer.stride_dim[1]}, {layer.stride_dim[2]}), padding={layer.padding_amount})"     
         else:
             if layer.dimension == "1D":
-                my_layer = f"self.{layer.name} = nn.{pl}Pool1d({layer.output_dim[0]})"
+                my_layer = f"self.{layer.name} = nn.{pl}Pool1d(output_size={layer.output_dim[0]})"
             elif layer.dimension == "2D":
-                my_layer = f"self.{layer.name} = nn.{pl}Pool2d(({layer.output_dim[0]}, {layer.output_dim[1]}))"
+                my_layer = f"self.{layer.name} = nn.{pl}Pool2d(output_size=({layer.output_dim[0]}, {layer.output_dim[1]}))"
             else:
-                my_layer = f"self.{layer.name} = nn.{pl}Pool3d(({layer.output_dim[0]}, {layer.output_dim[1]}, {layer.output_dim[2]}))"
+                my_layer = f"self.{layer.name} = nn.{pl}Pool3d(output_size=({layer.output_dim[0]}, {layer.output_dim[1]}, {layer.output_dim[2]}))"
     return my_layer, modules_details
 
 
@@ -258,8 +258,11 @@ def get_layer_in_out_variables(layer: Layer, modules_details: Dict) -> Dict:
 the first layer that receives that output should have the parameter input_reused set to True"""
 
 def get_tensorop_syntax(tensorOp, modules_details):
-    previous_module = list(modules_details.keys())[-1]
-    prev_out_variable = get_previous_out_variable(modules_details, previous_module)
+    if len(list(modules_details.keys())) == 0:
+        prev_out_variable = "x"
+    else:
+        previous_module = list(modules_details.keys())[-1]
+        prev_out_variable = get_previous_out_variable(modules_details, previous_module)
     if tensorOp.type == "reshape":
         reshape_dim = ', '.join([str(i) for i in tensorOp.reshape_dim])
         ts_op_synt = f"{prev_out_variable}.reshape({reshape_dim})"

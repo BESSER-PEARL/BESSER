@@ -405,7 +405,7 @@ def generate_buml_from_xml(xml_file: str) -> tuple:
             class1 = buml_classes.get(assoc1['class'])
             class2 = buml_classes.get(assoc2['class'])
 
-            if class1 and class2 and class1 != class2:
+            if class1 and class2:
                 assoc_property_1 = Property(
                     name=assoc1['name'].split('[')[0].strip(),
                     owner=class1,

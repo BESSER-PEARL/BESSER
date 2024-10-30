@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod 
-from typing import Any
- 
+from typing import Any, Union
+
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
 
@@ -117,6 +117,16 @@ class PrimitiveDataType(DataType):
     def __repr__(self):
         return f"PrimitiveDataType({self.name})"
     
+# Define instances of PrimitiveDataType
+StringType = PrimitiveDataType("str")
+IntegerType = PrimitiveDataType("int")
+FloatType = PrimitiveDataType("float")
+BooleanType = PrimitiveDataType("bool")
+TimeType = PrimitiveDataType("time")
+DateType = PrimitiveDataType("date")
+DateTimeType = PrimitiveDataType("datetime")
+TimeDeltaType = PrimitiveDataType("timedelta")
+
 class EnumerationLiteral(NamedElement):
     """Class representing an enumeration literal.
 
@@ -207,18 +217,30 @@ class TypedElement(NamedElement):
 
     Args:
         name (str): The name of the typed element.
-        type (Type): The data type of the typed element.
+        type (Type, str): The data type of the typed element.
         visibility (str): Determines the kind of visibility of the typed element (public as default).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the typed element.
         visibility (str): Inherited from NamedElement, represents the visibility of the typed element (public as default).
-        type (Type): The data type of the typed element.
+        type (Type, str): The data type of the typed element.
     """
 
-    def __init__(self, name: str, type: Type, visibility: str="public"):
+    type_mapping = {
+        "str": StringType,
+        "string": StringType,
+        "int": IntegerType,
+        "float": FloatType,
+        "bool": BooleanType,
+        "time": TimeType,
+        "date": DateType,
+        "datetime": DateTimeType,
+        "timedelta": TimeDeltaType
+    }
+
+    def __init__(self, name: str, type: Union[Type, str], visibility: str="public"):
         super().__init__(name, visibility)
-        self.type: Type = type
+        self.type = self.type_mapping.get(type, type)
 
     @property
     def type(self) -> Type:
@@ -287,6 +309,7 @@ class Multiplicity:
 
     def __repr__(self):
         return f'Multiplicity({self.min},{self.max})'
+
 
 # Properties are owned by a class or an association and point to a type with a multiplicity
 class Property(TypedElement):
@@ -1254,3 +1277,6 @@ class DomainModel(Model):
             f'Package({self.name}, {self.types}, {self.associations}, {self.generalizations}, '
             f'{self.enumerations}, {self.packages}, {self.constraints})'
         )
+
+
+#Predfined primitive types

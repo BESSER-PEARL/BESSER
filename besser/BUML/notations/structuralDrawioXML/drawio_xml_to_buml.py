@@ -267,6 +267,8 @@ def extract_classes_from_xml(xml_file: str) -> tuple:
                     multiplicity_str = value
                     if multiplicity_str == '*':
                         multiplicity = Multiplicity(0, '*')
+                    elif multiplicity_str == '1':
+                        multiplicity = Multiplicity(1, 1)
                     elif '..' in multiplicity_str:
                         lower, upper = multiplicity_str.split('..')
                         multiplicity = Multiplicity(int(lower), upper if upper == '*' else int(upper))
@@ -291,6 +293,8 @@ def extract_classes_from_xml(xml_file: str) -> tuple:
                         multiplicity_str = multiplicity_match.group(1)
                         if multiplicity_str == '*':
                             multiplicity = Multiplicity(0, '*')
+                        elif multiplicity_str == '1':
+                            multiplicity = Multiplicity(1, 1)
                         elif '..' in multiplicity_str:
                             lower, upper = multiplicity_str.split('..')
                             multiplicity = Multiplicity(int(lower), upper if upper == '*' else int(upper))
@@ -509,14 +513,22 @@ def save_buml_to_file(model: DomainModel, association_properties: dict, file_nam
 
         # Write association properties
         for assoc_name, assoc_property in association_properties.items():
-            f.write(f"{assoc_name}: Property = Property(name=\"{assoc_name}\", type={assoc_property.type.name}, "
+            # Clean the variable name by replacing invalid characters
+            clean_var_name = assoc_name.replace('[', '_').replace(']', '_').replace('*', 'many')
+            f.write(f"{clean_var_name}: Property = Property(name=\"{assoc_name}\", type={assoc_property.type.name}, "
                    f"multiplicity={assoc_property.multiplicity})\n")
 
         # Write associations
         f.write("\n# Associations\n")
         for association in model.associations:
+            ends = []
+            for end in association.ends:
+                property_str = (f"Property(name=\"{end.name}\", type={end.type.name}, "
+                              f"multiplicity={end.multiplicity})")
+                ends.append(property_str)
+                
             f.write(f"{association.name} = BinaryAssociation(name=\"{association.name}\", "
-                   f"ends={{{', '.join([end.name for end in association.ends])}}})\n\n")
+                   f"ends={{{', '.join(ends)}}})\n\n")
 
         # Write generalizations
         f.write("\n# Generalizations\n")

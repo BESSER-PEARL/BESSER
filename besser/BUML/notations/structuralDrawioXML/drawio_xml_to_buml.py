@@ -10,7 +10,7 @@ import os
 import xml.etree.ElementTree as ET
 import re
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, PrimitiveDataType, \
-    Multiplicity, BinaryAssociation, Enumeration, EnumerationLiteral, Generalization, Method
+    Multiplicity, BinaryAssociation, Enumeration, EnumerationLiteral, Generalization, Method, Parameter
 
 def xml_to_buml(xml_file_path: str, buml_model_file_name: str = "buml_model") -> DomainModel:
     """
@@ -190,29 +190,55 @@ def extract_classes_from_xml(xml_file: str) -> tuple:
                         visibility = "+" if "+ " in value else "-"
                         method_name = method_match.group(2).strip()
                         params_str = method_match.group(3).strip()
-                        return_type = method_match.group(4).strip() if method_match.group(4) else None
+                        return_type = None
+                        
+                        # Extract return type after the colon
+                        if method_match.group(4):
+                            return_type = method_match.group(4).strip()
+                            # Clean any trailing comments or extra whitespace
+                            if ' ' in return_type:
+                                return_type = return_type.split(' ')[0].strip()
 
                         parameters = []
                         if params_str:
                             param_list = params_str.split(',')
                             for param in param_list:
                                 param = param.strip()
-                                if ':' in param:
+                                
+                                # Handle parameter with type but no name (e.g., "str sms")
+                                if ' ' in param and ':' not in param:
+                                    param_type, param_name = param.split(' ', 1)
+                                    param_name = param_name.strip()
+                                    param_type = param_type.strip()
+                                # Handle parameter with explicit type (e.g., "title:str")
+                                elif ':' in param:
                                     param_name, param_type = param.split(':')
                                     param_name = param_name.strip()
                                     param_type = param_type.strip()
-                                    if '=' in param_type:
-                                        param_type, default_value = param_type.split('=')
-                                        parameters.append({
-                                            'name': param_name,
-                                            'type': param_type.strip(),
-                                            'default': default_value.strip()
-                                        })
-                                    else:
-                                        parameters.append({
-                                            'name': param_name,
-                                            'type': param_type
-                                        })
+                                else:
+                                    param_name = param
+                                    param_type = "str"  # default type if none specified
+                                
+                                # Handle default value if present
+                                if '=' in param_name:
+                                    param_name, default_value = param_name.split('=')
+                                    parameters.append({
+                                        'name': param_name.strip(),
+                                        'type': param_type,
+                                        'default': default_value.strip('"\'')  # Remove quotes
+                                    })
+                                elif '=' in param_type:
+                                    param_type, default_value = param_type.split('=')
+                                    parameters.append({
+                                        'name': param_name,
+                                        'type': param_type.strip(),
+                                        'default': default_value.strip('"\'')  # Remove quotes
+                                    })
+                                else:
+                                    parameters.append({
+                                        'name': param_name,
+                                        'type': param_type
+                                    })
 
                         method_data = (visibility, method_name, parameters, return_type)
                         if parent_value and parent_value.strip() in model_elements['classes']:
@@ -372,7 +398,7 @@ def generate_buml_from_xml(xml_file: str) -> tuple:
         for attr_data in class_data['attributes']:
             visibility, attr_name, attr_type = attr_data
             visibility = "public" if visibility == "+" else "private"
-            
+
             enum_type = next((enum for enum in buml_enumerations if enum.name == attr_type), None)
             if enum_type:
                 buml_attribute = Property(
@@ -393,13 +419,38 @@ def generate_buml_from_xml(xml_file: str) -> tuple:
             visibility, method_name, parameters, return_type = method_data
             visibility = "public" if visibility == "+" else "private"
             
+            # Convert parameters to Parameter objects
+            buml_parameters = set()
+            for param in parameters:
+                # Resolve parameter type
+                param_type = (next((enum for enum in buml_enumerations if enum.name == param['type']), None) or 
+                            next((cls for cls in buml_classes.values() if cls.name == param['type']), None) or 
+                            PrimitiveDataType(param['type']))
+                
+                # Create Parameter object
+                param_obj = Parameter(
+                    name=param['name'],
+                    type=param_type
+                )
+                if 'default' in param:
+                    param_obj.default_value = param['default']
+                
+                buml_parameters.add(param_obj)
+            
+            # Handle return type (could be enum, class, or primitive)
+            if return_type:
+                return_type_obj = (next((enum for enum in buml_enumerations if enum.name == return_type), None) or 
+                                 next((cls for cls in buml_classes.values() if cls.name == return_type), None) or 
+                                 PrimitiveDataType(return_type))
+            else:
+                return_type_obj = None
+
             buml_method = Method(
                 name=method_name,
-                parameters=parameters,
-                visibility=visibility
+                parameters=buml_parameters,
+                visibility=visibility,
+                type=return_type_obj
             )
-            if return_type:
-                buml_method.return_type = return_type
             buml_methods.add(buml_method)
 
         # Create class
@@ -465,92 +516,94 @@ def generate_buml_from_xml(xml_file: str) -> tuple:
     return domain_model, association_properties
 
 def save_buml_to_file(model: DomainModel, association_properties: dict, file_name: str):
-    """
-    Save generated B-UML model to Python file.
-
-    Args:
-        model: The B-UML domain model to save
-        association_properties: Dictionary of association properties
-        file_name: Output file path
-    """
     with open(file_name, 'w', encoding='utf-8') as f:
+        # Write imports
         f.write("# Generated B-UML Model\n")
-        f.write("from besser.BUML.metamodel.structural import DomainModel, Class, Property, PrimitiveDataType, "
-                "Multiplicity, BinaryAssociation, Enumeration, Generalization, EnumerationLiteral, Method\n\n")
+        f.write("from besser.BUML.metamodel.structural import *\n\n")
 
         # Write enumerations
-        for enum in model.enumerations:
-            f.write(f"# Enumeration: {enum.name}\n")
-            literals_str = ", ".join([f"EnumerationLiteral(name=\"{lit.name}\")" for lit in enum.literals])
-            f.write(f"{enum.name} = Enumeration(name=\"{enum.name}\", literals={{{literals_str}}})\n\n")
+        if model.enumerations:
+            f.write("# Enumerations\n")
+            for enum in model.enumerations:
+                literals_str = ", ".join([f"EnumerationLiteral(name=\"{lit.name}\")" for lit in enum.literals])
+                f.write(f"{enum.name} = Enumeration(name=\"{enum.name}\", literals={{{literals_str}}})\n")
+            f.write("\n")
 
-        # Write classes
-        for buml_class in model.types:
-            if isinstance(buml_class, Class):
-                f.write(f"# Class: {buml_class.name}\n")
+        # Declare classes first
+        f.write("# Classes\n")
+        for cls in model.types:
+            f.write(f"{cls.name}: Class = Class(name=\"{cls.name}\")\n")
+        f.write("\n")
+
+        # Write class members
+        for cls in model.types:
+            if cls.attributes or cls.methods:
+                f.write(f"# {cls.name} class attributes and methods\n")
                 
                 # Write attributes
-                for attribute in buml_class.attributes:
-                    if isinstance(attribute.type, Enumeration):
-                        f.write(f"{attribute.name} = Property(name=\"{attribute.name}\", type={attribute.type.name}, "
-                               f"visibility=\"{attribute.visibility}\")\n")
-                    else:
-                        f.write(f"{attribute.name} = Property(name=\"{attribute.name}\", "
-                               f"type=PrimitiveDataType(\"{attribute.type.name}\"), "
-                               f"visibility=\"{attribute.visibility}\")\n")
+                for attr in cls.attributes:
+                    type_str = attr.type.name if isinstance(attr.type, (Class, Enumeration)) else f"PrimitiveDataType(\"{attr.type.name}\")"
+                    f.write(f"{cls.name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
+                           f"type={type_str}, visibility=\"{attr.visibility}\")\n")
                 
                 # Write methods
-                for method in buml_class.methods:
+                for method in cls.methods:
                     params = []
                     for param in method.parameters:
-                        param_str = f"Parameter(name=\"{param['name']}\", type=PrimitiveDataType(\"{param['type']}\""
-                        if 'default' in param:
-                            param_str += f", default_value=\"{param['default']}\""
+                        type_str = param.type.name if isinstance(param.type, (Class, Enumeration)) else f"PrimitiveDataType(\"{param.type.name}\")"
+                        param_str = f"Parameter(name=\"{param.name}\", type={type_str}"
+                        if hasattr(param, 'default_value') and param.default_value is not None:
+                            param_str += f", default_value=\"{param.default_value}\""
                         param_str += ")"
                         params.append(param_str)
                     
                     params_str = ", ".join(params)
-                    method_str = (f"{method.name} = Method(name=\"{method.name}\", "
-                                  f"visibility=\"{method.visibility}\", "
-                                  f"parameters={{{params_str}}}")
-                    # Add the type argument only if it's not None
-                    if method.type is not None:
-                        method_str += f", type={{{method.type.name}}}"
-                    method_str += ")\n"
-                    f.write(method_str)
-
-                # Create class definition
-                attributes_str = ", ".join([attr.name for attr in buml_class.attributes])
-                methods_str = ", ".join([method.name for method in buml_class.methods])
-                f.write(f"{buml_class.name} = Class(name=\"{buml_class.name}\", "
-                       f"attributes={{{attributes_str}}}, "
-                       f"methods={{{methods_str}}})\n\n")
+                    type_str = ""
+                    if method.type:
+                        if isinstance(method.type, (Class, Enumeration)):
+                            type_str = f", type={method.type.name}"
+                        else:
+                            type_str = f", type=PrimitiveDataType(\"{method.type.name}\")"
+                    
+                    f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\", "
+                           f"visibility=\"{method.visibility}\", parameters={{{params_str}}}{type_str})\n")
+                
+                # Write class members assignment
+                if cls.attributes:
+                    attrs_str = ", ".join([f"{cls.name}_{attr.name}" for attr in cls.attributes])
+                    f.write(f"{cls.name}.attributes={{{attrs_str}}}\n")
+                if cls.methods:
+                    methods_str = ", ".join([f"{cls.name}_m_{method.name}" for method in cls.methods])
+                    f.write(f"{cls.name}.methods={{{methods_str}}}\n")
+                f.write("\n")
 
         # Write associations
-        f.write("\n# Associations\n")
-        for association in model.associations:
-            ends = []
-            for end in association.ends:
-                property_str = (f"Property(name=\"{end.name}\", type={end.type.name}, "
-                              f"multiplicity={end.multiplicity})")
-                ends.append(property_str)
-                
-            f.write(f"{association.name} = BinaryAssociation(name=\"{association.name}\", "
-                   f"ends={{{', '.join(ends)}}})\n\n")
+        if model.associations:
+            f.write("# Relationships\n")
+            for assoc in model.associations:
+                ends_str = []
+                for end in assoc.ends:
+                    max_value = '"*"' if end.multiplicity.max == "*" else end.multiplicity.max
+                    ends_str.append(f"Property(name=\"{end.name}\", type={end.type.name}, "
+                                  f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value}))")
+                f.write(f"{assoc.name}: BinaryAssociation = BinaryAssociation(name=\"{assoc.name}\", "
+                       f"ends={{{', '.join(ends_str)}}})\n")
+            f.write("\n")
 
         # Write generalizations
-        f.write("\n# Generalizations\n")
-        for generalization in model.generalizations:
-            f.write(f"gen_{generalization.specific.name}_{generalization.general.name} = "
-                   f"Generalization(general={generalization.general.name}, "
-                   f"specific={generalization.specific.name})\n")
+        if model.generalizations:
+            f.write("# Generalizations\n")
+            for gen in model.generalizations:
+                f.write(f"gen_{gen.specific.name}_{gen.general.name} = Generalization(general={gen.general.name}, "
+                       f"specific={gen.specific.name})\n")
+            f.write("\n")
 
-        # Write domain model definition
-        f.write("\n# Domain model\n")
+        # Write domain model
+        f.write("# Domain Model\n")
         f.write("domain_model = DomainModel(\n")
         f.write("    name=\"Generated Model\",\n")
-        f.write(f"    types={{{', '.join([buml_class.name for buml_class in model.types])}}},\n")
-        f.write(f"    associations={{{', '.join([association.name for association in model.associations])}}},\n")
-        f.write(f"    generalizations={{{', '.join([f'gen_{gen.specific.name}_{gen.general.name}' for gen in model.generalizations])}}},\n")
-        f.write(f"    enumerations={{{', '.join([buml_enum.name for buml_enum in model.enumerations])}}}\n")
+        f.write(f"    types={{{', '.join(cls.name for cls in model.types)}}},\n")
+        f.write(f"    associations={{{', '.join(assoc.name for assoc in model.associations)}}},\n")
+        f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in model.generalizations)}}},\n")
+        f.write(f"    enumerations={{{', '.join(enum.name for enum in model.enumerations)}}}\n")
         f.write(")\n")

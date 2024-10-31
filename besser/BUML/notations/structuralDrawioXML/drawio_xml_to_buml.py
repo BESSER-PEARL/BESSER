@@ -510,9 +510,14 @@ def save_buml_to_file(model: DomainModel, association_properties: dict, file_nam
                         params.append(param_str)
                     
                     params_str = ", ".join(params)
-                    f.write(f"{method.name} = Method(name=\"{method.name}\", "
-                           f"visibility=\"{method.visibility}\", "
-                           f"parameters={{{params_str}}})\n")
+                    method_str = (f"{method.name} = Method(name=\"{method.name}\", "
+                                  f"visibility=\"{method.visibility}\", "
+                                  f"parameters={{{params_str}}}")
+                    # Add the type argument only if it's not None
+                    if method.type is not None:
+                        method_str += f", type={{{method.type.name}}}"
+                    method_str += ")\n"
+                    f.write(method_str)
 
                 # Create class definition
                 attributes_str = ", ".join([attr.name for attr in buml_class.attributes])

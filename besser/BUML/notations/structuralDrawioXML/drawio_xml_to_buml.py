@@ -10,39 +10,35 @@ import os
 import xml.etree.ElementTree as ET
 import re
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, PrimitiveDataType, \
-    Multiplicity, BinaryAssociation, Enumeration, EnumerationLiteral, Generalization, Method, Parameter
+        Multiplicity, BinaryAssociation, Enumeration, EnumerationLiteral, \
+        Generalization, Method, Parameter
 
-def xml_to_buml(xml_file_path: str, buml_model_file_name: str = "buml_model") -> DomainModel:
+def xml_to_buml(xml_file_path: str, buml_model_file_name: str = "buml_model", save_buml: bool = True) -> DomainModel:
     """
     Transform a Draw.io XML model into a B-UML model.
 
     Args:
         xml_file_path: Path to the XML file containing the UML diagram
         buml_model_file_name: Name for the output B-UML model file (default: "buml_model")
+        save_buml: Whether to save the model to a file (default: True)
 
     Returns:
         DomainModel: The generated B-UML model object
     """
-    buml_model, association_properties = generate_buml_from_xml(xml_file_path)
+    buml_model, _ = generate_buml_from_xml(xml_file_path)
 
-    # Create output directory if needed
-    output_dir = "buml"
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+    if save_buml:
+        # Create output directory if needed
+        output_dir = "buml"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
 
-    # Save model to Python file
-    output_file_path = os.path.join(output_dir, buml_model_file_name + ".py")
-    save_buml_to_file(buml_model, association_properties, output_file_path)
-    print(f"BUML model saved to {output_file_path}")
+        # Save model to Python file
+        output_file_path = os.path.join(output_dir, buml_model_file_name + ".py")
+        save_buml_to_file(buml_model, output_file_path)
+        print(f"BUML model saved to {output_file_path}")
 
-    # Load generated model
-    namespace = {}
-    with open(output_file_path, 'r', encoding='utf-8') as model_code:
-        code = model_code.read()
-        exec(code, namespace)
-    bumlmodel: DomainModel = namespace.get('domain_model')
-
-    return bumlmodel
+    return buml_model
 
 def clean_html_tags(text: str) -> str:
     """
@@ -423,8 +419,8 @@ def generate_buml_from_xml(xml_file: str) -> tuple:
             buml_parameters = set()
             for param in parameters:
                 # Resolve parameter type
-                param_type = (next((enum for enum in buml_enumerations if enum.name == param['type']), None) or 
-                            next((cls for cls in buml_classes.values() if cls.name == param['type']), None) or 
+                param_type = (next((enum for enum in buml_enumerations if enum.name == param['type']), None) or
+                            next((cls for cls in buml_classes.values() if cls.name == param['type']), None) or
                             PrimitiveDataType(param['type']))
                 
                 # Create Parameter object
@@ -439,8 +435,8 @@ def generate_buml_from_xml(xml_file: str) -> tuple:
             
             # Handle return type (could be enum, class, or primitive)
             if return_type:
-                return_type_obj = (next((enum for enum in buml_enumerations if enum.name == return_type), None) or 
-                                 next((cls for cls in buml_classes.values() if cls.name == return_type), None) or 
+                return_type_obj = (next((enum for enum in buml_enumerations if enum.name == return_type), None) or
+                                 next((cls for cls in buml_classes.values() if cls.name == return_type), None) or
                                  PrimitiveDataType(return_type))
             else:
                 return_type_obj = None
@@ -515,11 +511,22 @@ def generate_buml_from_xml(xml_file: str) -> tuple:
 
     return domain_model, association_properties
 
-def save_buml_to_file(model: DomainModel, association_properties: dict, file_name: str):
+def save_buml_to_file(model: DomainModel, file_name: str):
+    """
+    Save B-UML model to a Python file.
+
+    Args:
+        model: The B-UML domain model to save
+        file_name: Path to the output Python file
+    """
     with open(file_name, 'w', encoding='utf-8') as f:
         # Write imports
         f.write("# Generated B-UML Model\n")
-        f.write("from besser.BUML.metamodel.structural import *\n\n")
+        f.write("from besser.BUML.metamodel.structural import (\n")
+        f.write("    Class, Property, Method, Parameter, PrimitiveDataType,\n")
+        f.write("    BinaryAssociation, Generalization, DomainModel,\n") 
+        f.write("    Enumeration, EnumerationLiteral, Multiplicity\n")
+        f.write(")\n\n")
 
         # Write enumerations
         if model.enumerations:
@@ -556,7 +563,7 @@ def save_buml_to_file(model: DomainModel, association_properties: dict, file_nam
                             param_str += f", default_value=\"{param.default_value}\""
                         param_str += ")"
                         params.append(param_str)
-                    
+
                     params_str = ", ".join(params)
                     type_str = ""
                     if method.type:

@@ -300,6 +300,7 @@ def extract_classes_from_xml(xml_file: str) -> tuple:
                     if multiplicity_str == '*':
                         multiplicity = Multiplicity(0, '*')
                     elif multiplicity_str == '1':
+                        print("im here")
                         multiplicity = Multiplicity(1, 1)
                     elif '..' in multiplicity_str:
                         lower, upper = multiplicity_str.split('..')
@@ -308,11 +309,26 @@ def extract_classes_from_xml(xml_file: str) -> tuple:
                         multiplicity = Multiplicity(int(multiplicity_str), int(multiplicity_str))
 
                     if label_x > 0:
-                        if model_elements['associations'] and model_elements['associations'][-1]['class'] == clean_html_tags(graph_data['cells'][edge['target']]['value']).replace("+", ""):
-                            model_elements['associations'][-1]['multiplicity'] = multiplicity
+                        print(f"Label x > 0: {label_x}")
+                        print(f"Current multiplicity: {multiplicity}")
+                        print(f"Target class: {clean_html_tags(graph_data['cells'][edge['target']]['value']).replace('+', '')}")
+                        
+                        # Find the most recent matching association (searching backwards)
+                        target_class = clean_html_tags(graph_data['cells'][edge['target']]['value']).replace('+', '')
+                        matching_assoc_idx = next((i for i in range(len(model_elements['associations'])-1, -1, -1) 
+                                                if model_elements['associations'][i]['class'] == target_class), None)
+                        
+                        if matching_assoc_idx is not None:
+                            print(f"Found matching association at index {matching_assoc_idx}")
+                            model_elements['associations'][matching_assoc_idx]['multiplicity'] = multiplicity
                     else:
+                        print(f"Label x <= 0: {label_x}")
+                        print(f"Current multiplicity: {multiplicity}")
+                        print(f"Associations: {model_elements['associations']}")
                         if len(model_elements['associations']) >= 2 and model_elements['associations'][-2]['class'] == clean_html_tags(graph_data['cells'][edge['source']]['value']).replace("+", ""):
+                            print("Assigning multiplicity to source end")
                             model_elements['associations'][-2]['multiplicity'] = multiplicity
+
 
                 # Handle association names
                 else:
@@ -342,6 +358,7 @@ def extract_classes_from_xml(xml_file: str) -> tuple:
                             'multiplicity': multiplicity,
                             'visibility': visibility
                         })
+                        
                     elif label_x > 0:
                         assoc_class = clean_html_tags(graph_data['cells'][edge['target']]['value']).replace("+", "")
                         model_elements['associations'].append({
@@ -350,6 +367,7 @@ def extract_classes_from_xml(xml_file: str) -> tuple:
                             'multiplicity': multiplicity,
                             'visibility': visibility
                         })
+                        
 
     return (model_elements['classes'], model_elements['enumerations'],
             model_elements['associations'], model_elements['generalizations'],
@@ -437,7 +455,7 @@ def generate_buml_from_xml(xml_file: str) -> tuple:
             if return_type:
                 return_type_obj = (next((enum for enum in buml_enumerations if enum.name == return_type), None) or
                                  next((cls for cls in buml_classes.values() if cls.name == return_type), None) or
-                                 PrimitiveDataType(return_type))
+                                 return_type)
             else:
                 return_type_obj = None
 
@@ -549,7 +567,7 @@ def save_buml_to_file(model: DomainModel, file_name: str):
                 
                 # Write attributes
                 for attr in cls.attributes:
-                    type_str = attr.type.name if isinstance(attr.type, (Class, Enumeration)) else f"PrimitiveDataType(\"{attr.type.name}\")"
+                    type_str = attr.type.name if isinstance(attr.type, (Class, Enumeration)) else f"\"{attr.type.name}\""
                     f.write(f"{cls.name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
                            f"type={type_str}, visibility=\"{attr.visibility}\")\n")
                 
@@ -557,7 +575,7 @@ def save_buml_to_file(model: DomainModel, file_name: str):
                 for method in cls.methods:
                     params = []
                     for param in method.parameters:
-                        type_str = param.type.name if isinstance(param.type, (Class, Enumeration)) else f"PrimitiveDataType(\"{param.type.name}\")"
+                        type_str = param.type.name if isinstance(param.type, (Class, Enumeration)) else f"\"{param.type.name}\""
                         param_str = f"Parameter(name=\"{param.name}\", type={type_str}"
                         if hasattr(param, 'default_value') and param.default_value is not None:
                             param_str += f", default_value=\"{param.default_value}\""
@@ -570,7 +588,7 @@ def save_buml_to_file(model: DomainModel, file_name: str):
                         if isinstance(method.type, (Class, Enumeration)):
                             type_str = f", type={method.type.name}"
                         else:
-                            type_str = f", type=PrimitiveDataType(\"{method.type.name}\")"
+                            type_str = f", type=\"{method.type}\""
                     
                     f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\", "
                            f"visibility=\"{method.visibility}\", parameters={{{params_str}}}{type_str})\n")
@@ -591,6 +609,8 @@ def save_buml_to_file(model: DomainModel, file_name: str):
                 ends_str = []
                 for end in assoc.ends:
                     max_value = '"*"' if end.multiplicity.max == "*" else end.multiplicity.max
+                    print(end.multiplicity.max)
+                    print(end.multiplicity.min)
                     ends_str.append(f"Property(name=\"{end.name}\", type={end.type.name}, "
                                   f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value}))")
                 f.write(f"{assoc.name}: BinaryAssociation = BinaryAssociation(name=\"{assoc.name}\", "

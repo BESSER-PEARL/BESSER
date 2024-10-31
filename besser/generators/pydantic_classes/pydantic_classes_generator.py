@@ -2,6 +2,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+import itertools
 
 class PydanticGenerator(GeneratorInterface):
     """
@@ -19,6 +20,7 @@ class PydanticGenerator(GeneratorInterface):
     """
     def __init__(self, model: DomainModel, backend: bool = False, nested_creations: bool = False, output_dir: str = None):
         super().__init__(model, output_dir)
+        self.domain_model = model
         self.backend = backend
         self.nested_creations = nested_creations
 
@@ -34,10 +36,20 @@ class PydanticGenerator(GeneratorInterface):
         file_path = self.build_generation_path(file_name="pydantic_classes.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path),
-                          trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
+        env = Environment(
+            loader=FileSystemLoader(templates_path),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            keep_trailing_newline=True,
+            extensions=['jinja2.ext.do']
+        )
         template = env.get_template('pydantic_classes_template.py.j2')
-        with open(file_path, mode="w") as f:
-            generated_code = template.render(classes=self.model.classes_sorted_by_inheritance(), backend=self.backend, nested_creations=self.nested_creations)
+        with open(file_path, mode="w", newline='\n') as f:
+            generated_code = template.render(
+                domain=self.domain_model,
+                classes=self.domain_model.types,
+                backend=self.backend,
+                nested_creations=self.nested_creations
+            )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

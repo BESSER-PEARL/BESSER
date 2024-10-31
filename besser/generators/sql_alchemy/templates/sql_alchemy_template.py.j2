@@ -13,9 +13,19 @@ from sqlalchemy.orm import mapped_column
 from sqlalchemy.orm import relationship
 from sqlalchemy import Boolean, String, Date, Time, DateTime, Float, Integer
 from datetime import datetime, time, date
+from sqlalchemy import Enum
 
 class Base(DeclarativeBase):
     pass
+
+# Enum definitions
+{% for enum in enumerations %}
+class {{ enum.name }}(Enum):
+    {% for literal in enum.literals %}
+    {{ literal.name }} = "{{ literal.name }}"
+    {%- endfor %}
+
+{% endfor %}
 
 # Tables definition for many-to-many relationships
 

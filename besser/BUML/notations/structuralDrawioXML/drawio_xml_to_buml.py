@@ -144,9 +144,14 @@ def extract_classes_from_xml(xml_file: str) -> tuple:
 
         # Process class elements
         if value and (style and "swimlane" in style):
-            if "&lt;&lt;Enum&gt;&gt;" in value:
+            if "<<Enum>>" in value or "&lt;&lt;Enum&gt;&gt;" in value or "&amp;lt;&amp;lt;Enum&amp;gt;&amp;gt;" in value:
                 # Handle enumeration
-                enum_name = clean_html_tags(value.split("<br>")[1].strip())
+                if "&#10;" in value:
+                    enum_name = clean_html_tags(value.split("&#10;")[1].strip())
+                elif "<br>" in value:
+                    enum_name = clean_html_tags(value.split("<br>")[1].strip())
+                else:
+                    enum_name = clean_html_tags(value.split("\n")[1].strip())
                 if enum_name:
                     model_elements['enumerations'][enum_name] = []
                     graph_data['class_positions'][enum_name] = {'x': x, 'y': y}
@@ -166,8 +171,13 @@ def extract_classes_from_xml(xml_file: str) -> tuple:
                 parent_value = graph_data['cells'][parent_id]['value']
                 
                 # Handle enumeration literals
-                if parent_value and "&lt;&lt;Enum&gt;&gt;" in parent_value:
-                    enum_name = clean_html_tags(parent_value.split("<br>")[1].strip())
+                if parent_value and ("<<Enum>>" in parent_value or "&lt;&lt;Enum&gt;&gt;" in parent_value or "&amp;lt;&amp;lt;Enum&amp;gt;&amp;gt;" in parent_value):
+                    if "&#10;" in parent_value:
+                        enum_name = clean_html_tags(parent_value.split("&#10;")[1].strip())
+                    elif "<br>" in parent_value:
+                        enum_name = clean_html_tags(parent_value.split("<br>")[1].strip())
+                    else:
+                        enum_name = clean_html_tags(parent_value.split("\n")[1].strip())
                     if enum_name in model_elements['enumerations']:
                         literal_name = clean_value.lstrip("+-").strip()
                         model_elements['enumerations'][enum_name].append(literal_name)
@@ -510,13 +520,6 @@ def save_buml_to_file(model: DomainModel, association_properties: dict, file_nam
                 f.write(f"{buml_class.name} = Class(name=\"{buml_class.name}\", "
                        f"attributes={{{attributes_str}}}, "
                        f"methods={{{methods_str}}})\n\n")
-
-        # Write association properties
-        for assoc_name, assoc_property in association_properties.items():
-            # Clean the variable name by replacing invalid characters
-            clean_var_name = assoc_name.replace('[', '_').replace(']', '_').replace('*', 'many')
-            f.write(f"{clean_var_name}: Property = Property(name=\"{assoc_name}\", type={assoc_property.type.name}, "
-                   f"multiplicity={assoc_property.multiplicity})\n")
 
         # Write associations
         f.write("\n# Associations\n")

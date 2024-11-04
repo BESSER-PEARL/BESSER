@@ -4,7 +4,7 @@
 from django.db import models
 
 {# Enumeration definition#}
-{% for enum in model.enumerations %}
+{% for enum in model.get_enumerations() %}
 class {{ enum.name }}(models.TextChoices):
     {% for literal in enum.literals %}
     {{ literal.name }} = '{{ literal.name }}', '{{ literal.name }}'

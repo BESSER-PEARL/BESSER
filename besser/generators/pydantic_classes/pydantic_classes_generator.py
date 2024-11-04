@@ -47,7 +47,6 @@ class PydanticGenerator(GeneratorInterface):
         with open(file_path, mode="w", newline='\n') as f:
             generated_code = template.render(
                 domain=self.domain_model,
-                classes=self.domain_model.types,
                 backend=self.backend,
                 nested_creations=self.nested_creations
             )

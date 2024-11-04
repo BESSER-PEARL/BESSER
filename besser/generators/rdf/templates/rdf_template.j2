@@ -72,7 +72,7 @@ ex:{{association.name}} rdf:type rdf:Property ;
 
 {# Iterate over enumerations #}
 # Enumeration definition
-{% for enum in model.enumerations %}
+{% for enum in model.get_enumerations() %}
 ex:{{enum.name}} rdf:type rdfs:Class .
     {% for literal in enum.litelars %}
 ex:{{literal.name}} rdf:type ex:{{enum.name}} .

@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 {% set ns = namespace(abstract_found=false, id_found = false, same_name_found = false )-%}
 {% set processed_associations = [] %}
-{% for class in classes -%}
+{% for class in domain.get_classes() -%}
     {% if class.is_abstract -%}
         {% set ns.abstract_found = true -%}
     {% endif -%}    
@@ -19,7 +19,7 @@ from abc import ABC, abstractmethod
 ############################################
 
 {# Handle enums first #}
-{% for enum in domain.enumerations -%}
+{% for enum in domain.get_enumerations() -%}
 class {{ enum.name }}(Enum):
 {% for literal in enum.literals %}
     {{ literal.name }} = "{{ literal.name }}"
@@ -30,7 +30,7 @@ class {{ enum.name }}(Enum):
 ############################################
 # Classes are defined here
 ############################################
-{% for class in classes %}
+{% for class in domain.get_classes() %}
 class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{% if backend %}Create{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC, BaseModel){% else %}(BaseModel){% endif %}:
     {% set ns.id_found = false %}
     {% for attribute in class.attributes %}

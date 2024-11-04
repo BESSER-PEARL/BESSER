@@ -48,7 +48,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 classes=self.model.classes_sorted_by_inheritance(),
                 types=self.TYPES,
                 associations=self.model.associations,
-                enumerations=self.model.enumerations  # Add enumerations to template context
+                enumerations=self.model.get_enumerations()
             )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

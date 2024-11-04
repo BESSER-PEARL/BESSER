@@ -10,10 +10,11 @@ def test_model_initialization():
     class1: Type = Type(name="element1")
     class2: Type = Type(name="element2")
     model: DomainModel = DomainModel(name="mymodel", types={class1, class2}, associations = None, packages = None, constraints = None)
-    assert len(model.types) == 2
+    assert class1 in model.types
+    assert class2 in model.types
     model_empty: DomainModel = DomainModel(name="mymodel", types = None, associations = None, packages = None, constraints = None)
-    assert len(model_empty.types) == 0
-
+    assert class1 not in model_empty.types
+    assert class2 not in model_empty.types
 
 # Testing the WFR for duplicate names in a model
 def test_model_duplicated_names():

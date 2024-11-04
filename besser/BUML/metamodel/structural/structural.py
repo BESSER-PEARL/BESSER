@@ -1109,7 +1109,6 @@ class DomainModel(Model):
         types (set[Type]): The set of types (classes and datatypes) in the domain model (set() as default).
         associations (set[Association]): The set of associations in the domain model (set() as default).
         generalizations (set[Generalization]): The set of generalizations in the domain model (set() as default).
-        enumerations (set[Enumeration]): The set of enumerations in the domain model (set() as default).
         packages (set[Package]): The set of packages in the domain model (set() as default).
         constraints (set[Constraint]): The set of constraints in the domain model (set() as default).
 
@@ -1118,20 +1117,18 @@ class DomainModel(Model):
         types (set[Type]): The set of types (classes and datatypes) in the domain model (set() as default).
         associations (set[Association]): The set of associations in the domain model (set() as default).
         generalizations (set[Generalization]): The set of generalizations in the domain model (set() as default).
-        enumerations (set[Enumeration]): The set of enumerations in the domain model (set() as default).
         packages (set[Package]): The set of packages in the domain model (set() as default).
         constraints (set[Constraint]): The set of constraints in the domain model (set() as default).
     """
 
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None,
-                 generalizations: set[Generalization] = None, enumerations: set[Enumeration] = None,
-                 packages: set[Package] = None, constraints: set[Constraint] = None):
+                 generalizations: set[Generalization] = None, packages: set[Package] = None,
+                 constraints: set[Constraint] = None):
         super().__init__(name)
         self.types: set[Type] = types if types is not None else set()
         self.packages: set[Package] = packages if packages is not None else set()
         self.constraints: set[Constraint] = constraints if constraints is not None else set()
         self.associations: set[Association] = associations if associations is not None else set()
-        self.enumerations: set[Enumeration] = enumerations if enumerations is not None else set()
         self.generalizations: set[Generalization] = generalizations if generalizations is not None else set()
 
     @property
@@ -1187,26 +1184,9 @@ class DomainModel(Model):
         else:
             self.__generalizations = set()
 
-    @property
-    def enumerations(self) -> set[Enumeration]:
+    def get_enumerations(self) -> set[Enumeration]:
         """set[Enumeration]: Get the set of enumerations in the domain model."""
-        return self.__enumerations
-
-    @enumerations.setter
-    def enumerations(self, enumerations: set[Enumeration]):
-        """
-        set[Enumeration]: Set the set of enumerations in the domain model.
-        
-        Raises:
-            ValueError: if there are two enumerations with the same name.
-        """
-        if enumerations is not None:
-            names = [enumeration.name for enumeration in enumerations]
-            if len(names) != len(set(names)):
-                raise ValueError("The model cannot have two enumerations with the same name")
-            self.__enumerations = enumerations
-        else:
-            self.__enumerations = set()
+        return {element for element in self.types if isinstance(element, Enumeration)}
 
     @property
     def packages(self) -> set[Package]:

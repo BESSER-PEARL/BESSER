@@ -126,6 +126,8 @@ TimeType = PrimitiveDataType("time")
 DateType = PrimitiveDataType("date")
 DateTimeType = PrimitiveDataType("datetime")
 TimeDeltaType = PrimitiveDataType("timedelta")
+primitive_data_types = {StringType, IntegerType, FloatType, BooleanType,
+                        TimeType, DateType, DateTimeType, TimeDeltaType}
 
 class EnumerationLiteral(NamedElement):
     """Class representing an enumeration literal.
@@ -1140,18 +1142,16 @@ class DomainModel(Model):
     @types.setter
     def types(self, types: set[Type]):
         """
-        set[Type]: Set the set of types in the domain model.
+        set[Type]: Set the set of types in the domain model, including primitive data types.
         
         Raises:
             ValueError: if there are two types with the same name.
         """
-        if types is not None:
-            names = [type.name for type in types]
-            if len(names) != len(set(names)):
-                raise ValueError("The model cannot have two types with the same name")
-            self.__types = types
-        else:
-            self.__types = set()
+        types = types | primitive_data_types
+        names = [type.name for type in types]
+        if len(names) != len(set(names)):
+            raise ValueError("The model cannot have two types with the same name")
+        self.__types = types
 
     @property
     def associations(self) -> set[Association]:
@@ -1277,6 +1277,3 @@ class DomainModel(Model):
             f'Package({self.name}, {self.types}, {self.associations}, {self.generalizations}, '
             f'{self.enumerations}, {self.packages}, {self.constraints})'
         )
-
-
-#Predfined primitive types

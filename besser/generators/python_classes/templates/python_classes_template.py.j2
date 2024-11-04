@@ -26,7 +26,7 @@ class {{ enum.name }}(Enum):
 # Classes are defined here
 ############################################
 {# Two newlines are added here unconditionally #}
-{% for class in domain.get_classes() -%}
+{% for class in domain.get_classes() %}
 class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC){% endif %}:
     def __init__({{ class_parameters.init_parameters(class) }}):
         {{ class_parameters.init_parameters_definition(class) }}

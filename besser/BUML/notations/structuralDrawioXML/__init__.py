@@ -1,1 +1,1 @@
-from .drawio_xml_to_buml import *
+from .drawio_to_buml import *

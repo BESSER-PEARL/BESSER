@@ -26,7 +26,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
         # Add enums to TYPES dictionary
-        for enum in model.enumerations:
+        for enum in model.get_enumerations():
             self.TYPES[enum.name] = f"Enum('{enum.name}')"
 
     def generate(self):

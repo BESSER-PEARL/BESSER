@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod 
+from abc import ABC 
 from typing import Any, Union
 
 # constant
@@ -483,11 +483,11 @@ class Method(TypedElement):
     """
 
     def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False,
-                 parameters: set[Parameter] = set(), type: Type = None, owner: Type = None,
+                 parameters: set[Parameter] = None, type: Type = None, owner: Type = None,
                  code: str = ""):
         super().__init__(name, type, visibility)
         self.is_abstract: bool = is_abstract
-        self.parameters: set[Parameter] = parameters
+        self.parameters: set[Parameter] = parameters if parameters is not None else set()
         self.owner: Type = owner
         self.code: str = code
 

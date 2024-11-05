@@ -1,0 +1,1 @@
+from .structural_drawio_to_buml import *

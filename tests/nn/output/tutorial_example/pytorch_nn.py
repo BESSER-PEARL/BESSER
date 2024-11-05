@@ -9,12 +9,12 @@ from sklearn.metrics import classification_report
 class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
-        self.l1 = nn.Conv2d(3, 32, kernel_size=(3, 3), stride=(1, 1), padding=0)
+        self.l1 = nn.Conv2d(in_channels=3, out_channels=32, kernel_size=(3, 3), stride=(1, 1), padding=0)
         self.relu_activ = nn.ReLU()
         self.l2 = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0)
-        self.l3 = nn.Conv2d(32, 64, kernel_size=(3, 3), stride=(1, 1), padding=0)
+        self.l3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(3, 3), stride=(1, 1), padding=0)
         self.l4 = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0)
-        self.l5 = nn.Conv2d(64, 64, kernel_size=(3, 3), stride=(1, 1), padding=0)
+        self.l5 = nn.Conv2d(in_channels=64, out_channels=64, kernel_size=(3, 3), stride=(1, 1), padding=0)
         self.l6 = nn.Flatten(start_dim=1, end_dim=-1)
         self.l7 = nn.Linear(in_features=1024, out_features=64)
         self.l8 = nn.Linear(in_features=64, out_features=10)
@@ -113,8 +113,8 @@ report = classification_report(true_labels, predicted_labels, output_dict=True)
 for metric in metrics:
     metric_list = []
     for class_label in report.keys():
-        if class_label != 'macro avg' and class_label != 'weighted avg' and class_label != 'accuracy':
-            print(f"{metric.capitalize()} for class {class_label}:", report[class_label][metric])
+        if class_label != "macro avg" and class_label != "weighted avg" and class_label != "accuracy":
+            print(f"{metric.capitalize()} for class {class_label}: {report[class_label][metric]}")
             metric_list.append(report[class_label][metric])
     print(f"Average {metric.capitalize()}: {(sum(metric_list) / len(metric_list)):.2f}")
     print(f"Accuracy: {report['accuracy']}")

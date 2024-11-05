@@ -1,30 +1,8 @@
 from tests.object.library_object import library_model, object_model
-from besser.BUML.notations.ocl.BOCLLexer import BOCLLexer
-from besser.BUML.notations.ocl.BOCLParser import BOCLParser
-from besser.BUML.notations.ocl.BOCLListener import BOCLListener
-from besser.BUML.notations.ocl.RootHandler import Root_Handler
-from antlr4 import *
-
-class OCLParser():
-      def __init__(self, dm, om) :
-            self.dm = dm
-            self.om = om
-            
-      def parse (self, ocl):
-        input_stream = InputStream(ocl.expression)
-        rootHandler = Root_Handler(ocl,self.dm,self.om)
-        lexer = BOCLLexer(input_stream)
-        stream = CommonTokenStream(lexer)
-        parser = BOCLParser(stream)
-        tree = parser.oclFile()
-        listener = BOCLListener(rootHandler)
-        walker = ParseTreeWalker()
-        walker.walk(listener,tree)
-
-        return True
+from besser.BUML.notations.ocl.OCLParserWrapper import OCLParserWrapper
 
 def test1():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
     cons = list(library_model.constraints)
     constraint = cons[0]
     print("Query: " + str(constraint.expression),end = ": ")
@@ -41,7 +19,7 @@ def test1():
     assert res == True
 
 def test2():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
     cons = list(library_model.constraints)
     constraint = cons[1]
     print("Query: " + str(constraint.expression),end = ": ")
@@ -58,7 +36,7 @@ def test2():
     assert res == True
 
 def test3():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
 
     cons = list(library_model.constraints)
     constraint = cons[2]
@@ -76,7 +54,7 @@ def test3():
     assert res == True
 
 def test4():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
 
     cons = list(library_model.constraints)
     constraint = cons[3]
@@ -94,7 +72,7 @@ def test4():
     assert res == True
 
 def test5():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
 
     cons = list(library_model.constraints)
     constraint = cons[4]
@@ -112,7 +90,7 @@ def test5():
     assert res == True
 
 def test6():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
 
     cons = list(library_model.constraints)
     constraint = cons[4]
@@ -130,7 +108,7 @@ def test6():
     assert res == True
 
 def test7():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
 
     cons = list(library_model.constraints)
     constraint = cons[5]
@@ -148,7 +126,7 @@ def test7():
     assert res == True
 
 def test8():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
 
     cons = list(library_model.constraints)
     constraint = cons[6]
@@ -167,7 +145,7 @@ def test8():
     assert res == True
 
 def test9():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
 
     cons = list(library_model.constraints)
     constraint = cons[7]
@@ -185,7 +163,7 @@ def test9():
     assert res == True
 
 def test10():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
 
     cons = list(library_model.constraints)
     constraint = cons[8]
@@ -203,7 +181,7 @@ def test10():
     assert res == True
 
 def test11():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
 
     cons = list(library_model.constraints)
     constraint = cons[9]
@@ -221,7 +199,7 @@ def test11():
     assert res == True
 
 def test12():
-    parser = OCLParser(library_model, object_model)
+    parser = OCLParserWrapper(library_model, object_model)
 
     cons = list(library_model.constraints)
     constraint = cons[10]

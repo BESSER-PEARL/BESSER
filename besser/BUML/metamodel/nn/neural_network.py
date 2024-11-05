@@ -1061,9 +1061,9 @@ class LayerModifier(Layer):
             f'{self.name_layer_input}, {self.input_reused})'
         )
         
-class NormalisationLayer(LayerModifier):
+class NormalizationLayer(LayerModifier):
     """
-    Represents a type of layer that applies normalisation techniques.
+    Represents a type of layer that applies normalization techniques.
 
     Args:
         name (str): The name of the layer.
@@ -1088,13 +1088,13 @@ class NormalisationLayer(LayerModifier):
 
     def __repr__(self):
         return (
-            f'NormalisationLayer({self.name}, {self.actv_func}, '
+            f'NormalizationLayer({self.name}, {self.actv_func}, '
             f'{self.name_layer_input}, {self.input_reused})'
         )
         
-class BatchNormLayer(NormalisationLayer):
+class BatchNormLayer(NormalizationLayer):
     """
-    Represents a type of layer that normalises inputs within mini-batches to 
+    Represents a type of layer that normalizes inputs within mini-batches to 
     maintain consistent mean and variance, enhancing training speed and 
     stability.
     
@@ -1104,7 +1104,7 @@ class BatchNormLayer(NormalisationLayer):
         num_features (int): The number of channels or features in each input 
             sample.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the input 
-            data to be normalised using batch normalisation.
+            data to be normalized using batch normalization.
         name_layer_input (str): The name of the layer from which the inputs 
             originate.
         input_reused (bool): Whether the input to this layer is reused as 
@@ -1117,7 +1117,7 @@ class BatchNormLayer(NormalisationLayer):
         num_features (int): The number of channels or features in each input 
             sample.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the input 
-            data to be normalised using batch normalisation.
+            data to be normalized using batch normalization.
         name_layer_input (str): Inherited from Layer. The name of the layer 
             from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to this 
@@ -1142,13 +1142,13 @@ class BatchNormLayer(NormalisationLayer):
 
     @property
     def dimension(self) -> str:
-        """str: Get the dimensionality of the input data to be normalised."""
+        """str: Get the dimensionality of the input data to be normalized."""
         return self.__dimension
 
     @dimension.setter
     def dimension(self, dimension: str):
         """
-        str: Set the dimensionality of the input data to be normalised.
+        str: Set the dimensionality of the input data to be normalized.
         
         Raises:
             ValueError: If the dimensionality of the input data is none of 
@@ -1166,9 +1166,9 @@ class BatchNormLayer(NormalisationLayer):
             f'{self.name_layer_input}, {self.input_reused})'
         )
 
-class LayerNormLayer(NormalisationLayer):
+class LayerNormLayer(NormalizationLayer):
     """
-    Represents a type of layer that normalises the inputs across 
+    Represents a type of layer that normalizes the inputs across 
     the features of a single data sample, rather than across 
     the batch, to stabilize and accelerate training by reducing internal 
     covariate shift.
@@ -1176,7 +1176,7 @@ class LayerNormLayer(NormalisationLayer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        normalised_shape (List[int]): A list refering to the dimensions or 
+        normalized_shape (List[int]): A list refering to the dimensions or 
             axis indices over which layer normalization is applied, 
             specifying which parts of the tensor are normalized.
         name_layer_input (str): The name of the layer from which the inputs 
@@ -1188,7 +1188,7 @@ class LayerNormLayer(NormalisationLayer):
         name (str): Inherited from Layer. It represents the name of the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        normalised_shape (List[int]): A list refering to the dimensions or 
+        normalized_shape (List[int]): A list refering to the dimensions or 
             axis indices over which layer normalization is applied, 
             specifying which parts of the tensor are normalized.
         name_layer_input (str): Inherited from Layer. The name of the layer 
@@ -1196,32 +1196,32 @@ class LayerNormLayer(NormalisationLayer):
         input_reused (bool): Inherited from Layer. Whether the input to this 
             layer is reused as input to another layer.
     """
-    def __init__(self, name: str, normalised_shape: List[int], 
+    def __init__(self, name: str, normalized_shape: List[int], 
                  actv_func: str = None, name_layer_input: str = None, 
                  input_reused: bool = False):
         super().__init__(name, actv_func, name_layer_input, input_reused)
-        self.normalised_shape: List[int] = normalised_shape
+        self.normalized_shape: List[int] = normalized_shape
 
     @property
-    def normalised_shape(self) -> List[int]:
+    def normalized_shape(self) -> List[int]:
         """
         List[int]: Get the list containing the dimensions or axis indices over
             which layer normalization is applied. 
         """
-        return self.__normalised_shape
+        return self.__normalized_shape
 
-    @normalised_shape.setter
-    def normalised_shape(self, normalised_shape: List[int]):
+    @normalized_shape.setter
+    def normalized_shape(self, normalized_shape: List[int]):
         """
         List[int]: Set the list containing the dimensions or axis indices over
             which layer normalization is applied. 
         """
-        self.__normalised_shape = normalised_shape
+        self.__normalized_shape = normalized_shape
 
     def __repr__(self):
         return (
             f'LayerNormLayer({self.name}, {self.actv_func}, '
-            f'{self.normalised_shape}, {self.name_layer_input}, '
+            f'{self.normalized_shape}, {self.name_layer_input}, '
             f'{self.input_reused})'
         )
 
@@ -2155,8 +2155,8 @@ class Configuration:
             the entire dataset during the training, with each epoch 
             consisting of one iteration through all data samples.
         learning_rate (float): The step size used to update the model 
-            parameters during optimisation.
-        optimiser (str): The method or algorithm used to adjust the model 
+            parameters during optimization.
+        optimizer (str): The method or algorithm used to adjust the model 
             parameters iteratively during training to minimize the loss 
             function and improve model performance.
         loss_function (str): The method used to calculate the difference 
@@ -2165,7 +2165,7 @@ class Configuration:
         metrics List[str]: Quantitative measures used to evaluate 
             the performance of NN models.
         weight_decay (float): It represents the strength of L2 regularisation 
-            applied to the model's parameters during optimisation.
+            applied to the model's parameters during optimization.
         momentum (float): It represents a hyperparameter in optimization 
             that helps speed up training by using past gradients to smooth 
             out updates.
@@ -2177,8 +2177,8 @@ class Configuration:
             the entire dataset during the training, with each epoch 
             consisting of one iteration through all data samples.
         learning_rate (float): The step size used to update the model 
-            parameters during optimisation.
-        optimiser (str): The method or algorithm used to adjust the model 
+            parameters during optimization.
+        optimizer (str): The method or algorithm used to adjust the model 
             parameters iteratively during training to minimize the loss 
             function and improve model performance.
         loss_function (str): The method used to calculate the difference 
@@ -2187,18 +2187,18 @@ class Configuration:
         metrics List[str]: Quantitative measures used to evaluate 
             the performance of NN models.
         weight_decay (float): It represents the strength of L2 regularisation 
-            applied to the model's parameters during optimisation.
+            applied to the model's parameters during optimization.
         momentum (float): It represents a hyperparameter in optimization 
             that helps speed up training by using past gradients to smooth 
             out updates.
     """
     def __init__(self, batch_size: int, epochs: int, learning_rate: float, 
-                 optimiser: str, loss_function: str, metrics: List[str], 
+                 optimizer: str, loss_function: str, metrics: List[str], 
                  weight_decay: float = 0, momentum: float = 0):
         self.batch_size: int = batch_size
         self.epochs: int = epochs
         self.learning_rate: float = learning_rate
-        self.optimiser: str = optimiser
+        self.optimizer: str = optimizer
         self.loss_function: str = loss_function
         self.metrics: List[str] = metrics
         self.weight_decay: float = weight_decay
@@ -2240,7 +2240,7 @@ class Configuration:
     def learning_rate(self) -> float:
         """
         float: Get the step size used to update the model parameters during 
-            optimisation.
+            optimization.
         """
         return self.__learning_rate
 
@@ -2248,32 +2248,32 @@ class Configuration:
     def learning_rate(self, learning_rate: float):
         """
         float: Set step size used to update the model parameters during 
-            optimisation.
+            optimization.
         """
         self.__learning_rate = learning_rate
 
     @property
-    def optimiser(self) -> str:
+    def optimizer(self) -> str:
         """
         str: Get the algorithm used to adjust the model parameters 
             iteratively during training to minimize the loss function.
         """
-        return self.__optimiser
+        return self.__optimizer
 
-    @optimiser.setter
-    def optimiser(self, optimiser: str):
+    @optimizer.setter
+    def optimizer(self, optimizer: str):
         """
         str: Set the algorithm used to adjust the model parameters 
             iteratively during training to minimize the loss function.
         
         Raises:
-            ValueError: If optimiser is not one of the allowed 
+            ValueError: If optimizer is not one of the allowed 
             options: 'sgd', 'adam', 'adamW' and 'adagrad'
         """
 
-        if optimiser not in ['sgd', 'adam', 'adamW', 'adagrad']:
-            raise ValueError("Invalid value of optimiser")
-        self.__optimiser = optimiser
+        if optimizer not in ['sgd', 'adam', 'adamW', 'adagrad']:
+            raise ValueError("Invalid value of optimizer")
+        self.__optimizer = optimizer
 
     @property
     def loss_function(self) -> str:
@@ -2342,7 +2342,7 @@ class Configuration:
     def weight_decay(self) -> float:
         """
         float: Get the strength of L2 regularisation applied during 
-            optimisation.
+            optimization.
         """
         return self.__weight_decay
 
@@ -2350,7 +2350,7 @@ class Configuration:
     def weight_decay(self, weight_decay: float):
         """
         float: Set the strength of L2 regularisation applied during 
-            optimisation.
+            optimization.
         """
         self.__weight_decay = weight_decay
 
@@ -2372,7 +2372,7 @@ class Configuration:
     def __repr__(self):
         return (
             f'Configuration({self.batch_size}, {self.epochs}, '
-            f'{self.learning_rate}, {self.optimiser}, {self.loss_function}, '
+            f'{self.learning_rate}, {self.optimizer}, {self.loss_function}, '
             f'{self.metrics}, {self.weight_decay}, {self.momentum})'
         )
 

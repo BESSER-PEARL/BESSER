@@ -25,24 +25,24 @@
     {%- endif -%}
 {% endmacro -%}
 
-{%- macro get_optimiser(model) %}
-    {%- if model.configuration.optimiser == "sgd" -%}
-    {% set optimiser_name = "torch.optim.SGD" %}
-    {%- elif model.configuration.optimiser == "adam" -%}
-    {% set optimiser_name = "torch.optim.Adam" %}
-    {%- elif model.configuration.optimiser == "adamW" -%}
-    {% set optimiser_name = "torch.optim.AdamW" %}
+{%- macro get_optimizer(model) %}
+    {%- if model.configuration.optimizer == "sgd" -%}
+    {% set optimizer_name = "torch.optim.SGD" %}
+    {%- elif model.configuration.optimizer == "adam" -%}
+    {% set optimizer_name = "torch.optim.Adam" %}
+    {%- elif model.configuration.optimizer == "adamW" -%}
+    {% set optimizer_name = "torch.optim.AdamW" %}
     {%- else -%}
-    {% set optimiser_name = "torch.optim.Adagrad" %}
+    {% set optimizer_name = "torch.optim.Adagrad" %}
     {%- endif -%}
     {%- if model.configuration.weight_decay != 0 and model.configuration.momentum != 0 -%}
-    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }}, momentum={{ model.configuration.momentum }}) 
+    {{ optimizer_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }}, momentum={{ model.configuration.momentum }}) 
     {%- elif model.configuration.weight_decay != 0 -%}
-    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }}) 
+    {{ optimizer_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }}) 
     {%- elif model.configuration.momentum != 0 -%}
-    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }}) 
+    {{ optimizer_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }}) 
     {%- else -%}
-    {{ optimiser_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }})
+    {{ optimizer_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }})
     {%- endif -%}
 {% endmacro -%}
 
@@ -107,7 +107,7 @@ for epoch in range({{ model.configuration.epochs }}):
     for i, data in enumerate(train_loader, 0):
         inputs, labels = data
         # Zero the gradients to prepare for backward pass
-        optimiser.zero_grad()
+        optimizer.zero_grad()
         outputs = {{ model.name }}(inputs)
         # Compute the loss 
         {%- if prediction_task == "regression" %}
@@ -119,7 +119,7 @@ for epoch in range({{ model.configuration.epochs }}):
         loss = criterion(outputs, labels)
         loss.backward()
         # Update model parameters based on computed gradients
-        optimiser.step()
+        optimizer.step()
         running_loss += loss.item()
         total_loss += loss.item()
         if i % 200 == 199:    # Print every 200 mini-batches

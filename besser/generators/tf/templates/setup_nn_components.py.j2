@@ -27,27 +27,27 @@
     {{ loss_function }}
 {% endmacro -%}
 
-{%- macro get_optimiser(model) %}
-    {%- if model.configuration.optimiser == "sgd" -%}
-    {% set optimiser_name = "tf.keras.optimizers.SGD" %}
-    {%- elif model.configuration.optimiser == "adam" -%}
-    {% set optimiser_name = "tf.keras.optimizers.Adam" %}
-    {%- elif model.configuration.optimiser == "adamW" -%}
-    {% set optimiser_name = "tf.keras.optimizers.AdamW" %}
+{%- macro get_optimizer(model) %}
+    {%- if model.configuration.optimizer == "sgd" -%}
+    {% set optimizer_name = "tf.keras.optimizers.SGD" %}
+    {%- elif model.configuration.optimizer == "adam" -%}
+    {% set optimizer_name = "tf.keras.optimizers.Adam" %}
+    {%- elif model.configuration.optimizer == "adamW" -%}
+    {% set optimizer_name = "tf.keras.optimizers.AdamW" %}
     {%- else -%}
-    {% set optimiser_name = "tf.keras.optimizers.Adagrad" %}
+    {% set optimizer_name = "tf.keras.optimizers.Adagrad" %}
     {%- endif -%}
-    {%- if model.configuration.momentum != 0 and model.configuration.optimiser == "sgd" -%}
+    {%- if model.configuration.momentum != 0 and model.configuration.optimizer == "sgd" -%}
     {%- if model.configuration.weight_decay != 0 -%}
-    {{ optimiser_name }}(learning_rate={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }}, weight_decay={{ model.configuration.weight_decay }})
+    {{ optimizer_name }}(learning_rate={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }}, weight_decay={{ model.configuration.weight_decay }})
     {%- else -%}
-    {{ optimiser_name }}(learning_rate={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }})
+    {{ optimizer_name }}(learning_rate={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }})
     {%- endif -%}
-    {%- elif model.configuration.optimiser != "sgd" -%}
+    {%- elif model.configuration.optimizer != "sgd" -%}
     {%- if model.configuration.weight_decay != 0 -%}
-    {{ optimiser_name }}(learning_rate={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }})
+    {{ optimizer_name }}(learning_rate={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }})
     {%- else -%}
-    {{ optimiser_name }}(learning_rate={{ model.configuration.learning_rate }})
+    {{ optimizer_name }}(learning_rate={{ model.configuration.learning_rate }})
     {%- endif -%}
     {%- endif -%}
 {% endmacro -%}

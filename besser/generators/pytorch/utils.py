@@ -89,8 +89,16 @@ def setup_cnn(layer: Layer, modules_details: Dict) -> str:
         my_layer = f"self.{layer.name} = nn.Conv1d(in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size={layer.kernel_dim[0]}, stride={layer.stride_dim[0]}, padding={layer.padding_amount})"
     elif layer.__class__.__name__ == "Conv1D":
         my_layer = f"self.{layer.name} = nn.Conv1d(in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size={layer.kernel_dim[0]}, stride={layer.stride_dim[0]}, padding={layer.padding_amount})"
+    elif layer.__class__.__name__ == "Conv2D" and layer.permute_dim:
+        permute = TensorOp(name=f"{layer.name}_op", type="permute", permute_dim=[0, 3, 1, 2])
+        modules_details = get_tensorop_out_variable(permute, modules_details)
+        my_layer = f"self.{layer.name} = nn.Conv2d(in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size=({layer.kernel_dim[0]}, {layer.kernel_dim[1]}), stride=({layer.stride_dim[0]}, {layer.stride_dim[1]}), padding={layer.padding_amount})"
     elif layer.__class__.__name__ == "Conv2D":
         my_layer = f"self.{layer.name} = nn.Conv2d(in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size=({layer.kernel_dim[0]}, {layer.kernel_dim[1]}), stride=({layer.stride_dim[0]}, {layer.stride_dim[1]}), padding={layer.padding_amount})"
+    elif layer.__class__.__name__ == "Conv3D" and layer.permute_dim:
+        permute = TensorOp(name=f"{layer.name}_op", type="permute", permute_dim=[0, 4, 1, 2, 3])
+        modules_details = get_tensorop_out_variable(permute, modules_details)
+        my_layer = f"self.{layer.name} = nn.Conv3d(in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size=({layer.kernel_dim[0]}, {layer.kernel_dim[1]}, {layer.kernel_dim[2]}), stride=({layer.stride_dim[0]}, {layer.stride_dim[1]}, {layer.stride_dim[2]}), padding={layer.padding_amount})"
     elif layer.__class__.__name__ == "Conv3D":
         my_layer = f"self.{layer.name} = nn.Conv3d(in_channels={layer.in_channels}, out_channels={layer.out_channels}, kernel_size=({layer.kernel_dim[0]}, {layer.kernel_dim[1]}, {layer.kernel_dim[2]}), stride=({layer.stride_dim[0]}, {layer.stride_dim[1]}, {layer.stride_dim[2]}), padding={layer.padding_amount})"
     elif layer.__class__.__name__ == "PoolingLayer":

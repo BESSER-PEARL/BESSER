@@ -54,11 +54,11 @@ IMAGE_SIZE = ({{ train_data.image.shape[0] }}, {{ train_data.image.shape[1] }})
 {%- set _ = transformations.append("transforms.Resize(IMAGE_SIZE)")%}
 {%- set _ = transformations.append("transforms.ToTensor()") %}
 
-{%- if train_data.image.normalize %}
+        {%- if train_data.image.normalize %}
 mean, std = compute_mean_std(r"{{ train_data.path_data }}", num_samples=100,
                              target_size=IMAGE_SIZE)
 {%- set _ = transformations.append("transforms.Normalize(mean, std)")%}
-{%- endif %}
+        {%- endif %}
 transform = transforms.Compose([
     {{ transformations | join(', \n\t') }}
     ])
@@ -167,18 +167,18 @@ metrics = {{ model.configuration.metrics }}
 report = classification_report(true_labels, predicted_labels, output_dict=True)
 for metric in metrics:
     {%- if prediction_task == "binary" %}
-    print(f"{metric.capitalize()}:", report['1'][metric])
-    {%- elif prediction_task == 'multi_class' %}
+    print(f"{metric.capitalize()}: {report['1'][metric]}")
+    {%- elif prediction_task == "multi_class" %}
     metric_list = []
     for class_label in report.keys():
-        if class_label != 'macro avg' and class_label != 'weighted avg' and class_label != 'accuracy':
-            print(f"{metric.capitalize()} for class {class_label}:", report[class_label][metric])
+        if class_label != "macro avg" and class_label != "weighted avg" and class_label != "accuracy":
+            print(f"{metric.capitalize()} for class {class_label}: {report[class_label][metric]}")
             metric_list.append(report[class_label][metric])
     print(f"Average {metric.capitalize()}: {(sum(metric_list) / len(metric_list)):.2f}")
     print(f"Accuracy: {report['accuracy']}")
     {%- endif -%}
 {%- else %}
 mae = mean_absolute_error(true_labels, predicted_labels)
-print("Mean Absolute Error (MAE):", mae)
+print(f"Mean Absolute Error (MAE): {mae}")
 {%- endif -%}
 {% endmacro -%}

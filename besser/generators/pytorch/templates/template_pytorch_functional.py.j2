@@ -1,7 +1,7 @@
 {%- import "setup_nn_components.py.j2" as nn_components -%}
 {%- set ti = namespace(torch_imported=False) -%}
 import torch.nn as nn
-{% if model.train_data is not none %}import torch {%- set ti.torch_imported = True -%}
+{% if model.train_data is not none %}import torch {%- set ti.torch_imported = True %}
 {% if model.train_data.input_format == "images" %}from torchvision import datasets, transforms 
 from besser.generators.pytorch.utils import compute_mean_std{%- endif %}
 {% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report 

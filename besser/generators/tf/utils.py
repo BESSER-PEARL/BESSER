@@ -38,7 +38,7 @@ def setup_general_layer(layer: Layer) -> str:
 def setup_layer_modifier(layer: Layer) -> str:
     if layer.__class__.mro()[1].__name__ == "NormalizationLayer":
         if layer.__class__.__name__ == "BatchNormLayer":
-            my_layer = f"self.{layer.name} = layers.LayerNormalization()"
+            my_layer = f"self.{layer.name} = layers.BatchNormalization()"
         elif layer.__class__.__name__ == "LayerNormLayer":
             if layer.normalized_shape[1] != None:
                 if layer.normalized_shape[2] != None:

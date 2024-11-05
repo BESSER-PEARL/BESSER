@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod 
+from abc import ABC
 from datetime import datetime, timedelta
 from typing import Any
 import time
@@ -285,7 +285,7 @@ class Multiplicity:
         int: Set the minimum multiplicity 
         
         Raises:
-            ValueError: (Invalid min multiplicity) if the minimun multiplicity is less than 0.
+            ValueError: (Invalid min multiplicity) if the minimum multiplicity is less than 0.
         """
         if min_multiplicity < 0:
             raise ValueError("Invalid min multiplicity")
@@ -303,7 +303,7 @@ class Multiplicity:
         
         Raises:
             ValueError: (Invalid max multiplicity) if the maximum multiplicity is less than 0 or
-            less than minimun multiplicity.
+            less than minimum multiplicity.
         """
         if max_multiplicity == "*":
             max_multiplicity = UNLIMITED_MAX_MULTIPLICITY
@@ -387,42 +387,42 @@ class Property(TypedElement):
 
     @property
     def is_composite(self) -> bool:
-        """bool: Get wheter the property is composite."""
+        """bool: Get whether the property is composite."""
         return self.__is_composite
 
     @is_composite.setter
     def is_composite(self, is_composite: bool):
-        """bool: Set wheter the property is composite."""
+        """bool: Set whether the property is composite."""
         self.__is_composite = is_composite
 
     @property
     def is_navigable(self) -> bool:
-        """bool: Get wheter the property is navigable."""
+        """bool: Get whether the property is navigable."""
         return self.__is_navigable
 
     @is_navigable.setter
     def is_navigable(self, is_navigable: bool):
-        """bool: Set wheter the property is navigable."""
+        """bool: Set whether the property is navigable."""
         self.__is_navigable = is_navigable
 
     @property
     def is_id(self) -> bool:
-        """bool: Get wheter the property is an id."""
+        """bool: Get whether the property is an id."""
         return self.__is_id
 
     @is_id.setter
     def is_id(self, is_id: bool):
-        """bool: Set wheter the property is an id."""
+        """bool: Set whether the property is an id."""
         self.__is_id = is_id
 
     @property
     def is_read_only(self) -> bool:
-        """bool: Get wheter the property is read only."""
+        """bool: Get whether the property is read only."""
         return self.__is_read_only
 
     @is_read_only.setter
     def is_read_only(self, is_read_only: bool):
-        """bool: Set wheter the property is read only."""
+        """bool: Set whether the property is read only."""
         self.__is_read_only = is_read_only
 
     def __repr__(self):
@@ -502,12 +502,12 @@ class Method(TypedElement):
 
     @property
     def is_abstract(self) -> bool:
-        """bool: Get wheter the method is abstract."""
+        """bool: Get whether the method is abstract."""
         return self.__is_abstract
 
     @is_abstract.setter
     def is_abstract(self, is_abstract: bool):
-        """bool: Set wheter the method is abstract."""
+        """bool: Set whether the method is abstract."""
         self.__is_abstract = is_abstract
 
     @property
@@ -671,22 +671,22 @@ class Class(Type):
 
     @property
     def is_abstract(self) -> bool:
-        """bool: Get wheter the class is abstract."""
+        """bool: Get whether the class is abstract."""
         return self.__is_abstract
 
     @is_abstract.setter
     def is_abstract(self, is_abstract: bool):
-        """bool: Set wheter the class is abstract."""
+        """bool: Set whether the class is abstract."""
         self.__is_abstract = is_abstract
 
     @property
     def is_read_only(self) -> bool:
-        """bool: Get wheter the class is read only."""
+        """bool: Get whether the class is read only."""
         return self.__is_read_only
 
     @is_read_only.setter
     def is_read_only(self, is_read_only: bool):
-        """bool: Set wheter the class is read only."""
+        """bool: Set whether the class is read only."""
         self.__is_read_only = is_read_only
 
     @property

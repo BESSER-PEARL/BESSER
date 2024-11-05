@@ -12,6 +12,14 @@ The latest stable version of BESSER is available in the Python Package Index (Py
 
     $ pip install besser
 
+BESSER can be used with any of the popular IDEs for Python development such as `VScode <https://code.visualstudio.com/>`_,
+`PyCharm <https://www.jetbrains.com/pycharm/>`_, `Sublime Text <https://www.sublimetext.com/>`_, etc.
+
+.. image:: img/vscode.png
+  :width: 700
+  :alt: VSCode
+  :align: center
+
 Building From Source
 --------------------
 To obtain the full code, including examples and tests, you can clone the git repository.

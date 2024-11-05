@@ -85,5 +85,5 @@ You should get output like this:
 
 
 
-Now that you have a model defined with B-UML, you can use our :doc:`../../generators`, or even build your own for a target technology.
+Now that you have a model defined with B-UML, you can use our :doc:`../../generators`, or even build your own for a target technology. 
 

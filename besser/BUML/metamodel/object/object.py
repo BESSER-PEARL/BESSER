@@ -128,7 +128,7 @@ class Object(Instance):
         return ends
 
     def __repr__(self):
-         return f'Object({self.name}, {self.classifier}, {self.slots})'
+        return f'Object({self.name}, {self.classifier}, {self.slots})'
 
 
 class DataValue(Instance):
@@ -149,8 +149,8 @@ class DataValue(Instance):
 
     @property
     def value(self):
-       """Method to retrieve Value"""
-       return self.__value
+        """Method to retrieve Value"""
+        return self.__value
 
     @value.setter
     def value(self, val):
@@ -178,8 +178,8 @@ class LinkEnd(NamedElement):
 
     @property
     def association_end(self):
-       """Property: Method to retrieve the association end"""
-       return self.__association_end
+        """Property: Method to retrieve the association end"""
+        return self.__association_end
 
     @association_end.setter
     def association_end(self, association_end: Property):
@@ -188,8 +188,8 @@ class LinkEnd(NamedElement):
 
     @property
     def object(self):
-       """Object: Method to retrieve the object"""
-       return self.__object
+        """Object: Method to retrieve the object"""
+        return self.__object
 
     @object.setter
     def object(self, object: Object):
@@ -217,8 +217,8 @@ class Link(NamedElement):
     
     @property
     def association(self):
-       """Association: Method to retrieve the association"""
-       return self.__association
+        """Association: Method to retrieve the association"""
+        return self.__association
 
     @association.setter
     def association(self, association: Association):
@@ -227,8 +227,8 @@ class Link(NamedElement):
 
     @property
     def connections(self):
-       """list[LinkEnd]: Method to retrieve the connections"""
-       return self.__connections
+        """list[LinkEnd]: Method to retrieve the connections"""
+        return self.__connections
 
     @connections.setter
     def connections(self, connections: list[LinkEnd]):
@@ -242,7 +242,7 @@ class Link(NamedElement):
 
     def add_to_connection(self,linkEnd):
         """Method to add linkend"""
-        self.connection.append(linkEnd)
+        self.connections.append(linkEnd)
 
 class ObjectModel(NamedElement):
     """ An object model is the root element that comprises a number of instances and links.
@@ -264,8 +264,8 @@ class ObjectModel(NamedElement):
 
     @property
     def instances(self):
-       """Association: Method to retrieve the instances"""
-       return self.__instances
+        """Association: Method to retrieve the instances"""
+        return self.__instances
 
     @instances.setter
     def instances(self, instances: set[Instance]):
@@ -274,8 +274,8 @@ class ObjectModel(NamedElement):
 
     @property
     def links(self):
-       """Association: Method to retrieve the links"""
-       return self.__links
+        """Association: Method to retrieve the links"""
+        return self.__links
 
     @links.setter
     def links(self, links: set[Instance]):

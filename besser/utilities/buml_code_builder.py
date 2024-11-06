@@ -55,18 +55,21 @@ def domain_model_to_code(model: DomainModel, file_path: str):
             # Write attributes
             for attr in cls.attributes:
                 attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, attr.type.name)
+                visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
                 f.write(f"{cls.name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
-                       f"type={attr_type}, visibility=\"{attr.visibility}\")\n")
+                       f"type={attr_type}{visibility_str})\n")
 
             # Write methods
             for method in cls.methods:
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, method.type.name) if method.type else None
+                visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
+                
                 if method_type:
-                    f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\", "
-                            f"visibility=\"{method.visibility}\", parameters={{}}, type={method_type})\n")
+                    f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\""
+                           f"{visibility_str}, parameters={{}}, type={method_type})\n")
                 else:
-                    f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\", "
-                            f"visibility=\"{method.visibility}\", parameters={{}})\n")
+                    f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\""
+                           f"{visibility_str}, parameters={{}})\n")
 
             # Write assignments
             if cls.attributes:

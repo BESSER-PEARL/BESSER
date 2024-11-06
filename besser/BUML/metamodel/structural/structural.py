@@ -167,7 +167,7 @@ class EnumerationLiteral(NamedElement):
 
     def __repr__(self):
         return f"EnumerationLiteral({self.name})"
-    
+
 class Enumeration(DataType):
     """Class representing an enumeration.
 
@@ -176,16 +176,18 @@ class Enumeration(DataType):
 
     Args:
         name (str): The name of the enumeration data type.
-        literals (set[EnumerationLiteral]): Set of enumeration literals associated with the enumeration.
+        literals (set[EnumerationLiteral]): Set of enumeration literals associated 
+                 with the enumeration (None as default).
 
     Attributes:
         name (str): Inherited from DataType, represents the name of the enumeration.
-        literals (set[EnumerationLiteral]): Represents a set of enumeration literals associated with the enumeration.
+        literals (set[EnumerationLiteral]): Represents a set of enumeration literals 
+                 associated with the enumeration (None as default).
     """
 
-    def __init__(self, name: str, literals: set[EnumerationLiteral]):
+    def __init__(self, name: str, literals: set[EnumerationLiteral]=None):
         super().__init__(name)
-        self.literals: set[EnumerationLiteral] = literals
+        self.literals: set[EnumerationLiteral] = literals if literals is not None else set()
 
     @property
     def literals(self) -> set[EnumerationLiteral]:
@@ -209,6 +211,18 @@ class Enumeration(DataType):
             self.__literals = literals
         else:
             self.__literals = set()
+
+    def add_literal(self, literal: EnumerationLiteral):
+        """
+        Add an enumeration literal to the set.
+        
+        Raises:
+            ValueError: if the enumeration literal name already exist.
+        """
+        if self.literals is not None:
+            if literal.name in [literal.name for literal in self.literals]:
+                raise ValueError(f"An enumeration cannot have two literals with the same name: '{literal.name}'")
+        self.literals.add(literal)
 
     def __repr__(self):
         return f"Enumeration({self.name}, {self.literals})"
@@ -515,14 +529,33 @@ class Method(TypedElement):
             ValueError: if two parameters have the same name.
         """
         if parameters is not None:
-            names = [parameter.name for parameter in parameters]
-            if len(names) != len(set(names)):
-                raise ValueError("A method cannot have two parameters with the same name")
+            names_seen = set()
+            duplicates = set()
+
             for parameter in parameters:
+                if parameter.name in names_seen:
+                    duplicates.add(parameter.name)
+                names_seen.add(parameter.name)
                 parameter.owner = self
+
+            if duplicates:
+                raise ValueError(f"A method cannot have parameters with duplicate names: {', '.join(duplicates)}")
+
             self.__parameters = parameters
         else:
             self.__parameters = set()
+
+    def add_parameter(self, parameter: Parameter):
+        """
+        Parameter: Add a parameter to the set of class parameters.
+        
+        Raises:
+            ValueError: if the parameter name already exist.
+        """
+        if self.parameters is not None:
+            if parameter.name in [parameter.name for parameter in self.parameters]:
+                raise ValueError(f"A method cannot have two parameters with the same name: '{parameter.name}'")
+        self.parameters.add(parameter)
 
     @property
     def owner(self) -> Type:
@@ -605,12 +638,24 @@ class Class(Type):
             ValueError: if two attributes are id.
         """
         if attributes is not None:
-            names = [attribute.name for attribute in attributes]
-            if len(names) != len(set(names)):
-                raise ValueError("A class cannot have two attributes with the same name")
-            id_counter = sum(attribute.is_id for attribute in attributes)
+            names_seen = set()
+            duplicates = set()
+            id_counter = 0
+
+            for attribute in attributes:
+                if attribute.name in names_seen:
+                    duplicates.add(attribute.name)
+                names_seen.add(attribute.name)
+
+                if attribute.is_id:
+                    id_counter += 1
+
+            if duplicates:
+                raise ValueError(f"A class cannot have attributes with duplicate names: {', '.join(duplicates)}")
+
             if id_counter > 1:
-                raise ValueError("A class cannot have two id attributes")
+                raise ValueError("A class cannot have more than one attribute marked as 'id'")
+
             for attribute in attributes:
                 attribute.owner = self
             self.__attributes = attributes
@@ -631,14 +676,35 @@ class Class(Type):
             ValueError: if two methods have the same name.
         """
         if methods is not None:
-            names = [method.name for method in methods]
-            if len(names) != len(set(names)):
-                raise ValueError("A class cannot have two methods with the same name")
+            names_seen = set()
+            duplicates = set()
+
+            for method in methods:
+                if method.name in names_seen:
+                    duplicates.add(method.name)
+                names_seen.add(method.name)
+
+            if duplicates:
+                raise ValueError(f"A class cannot have methods with duplicate names: {', '.join(duplicates)}")
+
             for method in methods:
                 method.owner = self
             self.__methods = methods
         else:
             self.__methods = set()
+
+    def add_method(self, method: Method):
+        """
+        Method: Add a method to the set of class methods.
+        
+        Raises:
+            ValueError: if the method name already exist.
+        """
+        if self.methods is not None:
+            if method.name in [method.name for method in self.methods]:
+                raise ValueError(f"A class cannot have two methods with the same name: '{method.name}'")
+        method.owner = self
+        self.methods.add(method)
 
     def all_attributes(self) -> set[Property]:
         """set[Property]: Get all attributes, including inherited ones."""
@@ -654,7 +720,7 @@ class Class(Type):
         """
         if self.attributes is not None:
             if attribute.name in [attribute.name for attribute in self.attributes]:
-                raise ValueError("A class cannot have two attributes with the same name")
+                raise ValueError(f"A class cannot have two attributes with the same name: '{attribute.name}'")
         attribute.owner = self
         self.attributes.add(attribute)
 
@@ -1145,10 +1211,27 @@ class DomainModel(Model):
             ValueError: if there are two types with the same name.
         """
         types = types | primitive_data_types
-        names = [type.name for type in types]
-        if len(names) != len(set(names)):
-            raise ValueError("The model cannot have two types with the same name")
+        names_seen = set()
+        duplicates = set()
+
+        for type_ in types:
+            if type_.name in names_seen:
+                duplicates.add(type_.name)
+            names_seen.add(type_.name)
+
+        if duplicates:
+            raise ValueError(f"The model cannot have types with duplicate names: {', '.join(duplicates)}")
         self.__types = types
+
+    def get_type_by_name(self, type_name: str) -> Type:
+        """Type: Gets an Type by name."""
+        return next(
+            (type_element for type_element in self.types if type_element.name == type_name), None
+            )
+
+    def add_type(self, type_: Type):
+        """Type: Add a type (Class or DataType) to the set of types of the model."""
+        self.types = self.types | {type_}
 
     @property
     def associations(self) -> set[Association]:
@@ -1164,12 +1247,24 @@ class DomainModel(Model):
             ValueError: if there are two associations with the same name.
         """
         if associations is not None:
-            names = [association.name for association in associations]
-            if len(names) != len(set(names)):
-                raise ValueError("The model cannot have two associations with the same name")
+            names_seen = set()
+            duplicates = set()
+
+            for association in associations:
+                if association.name in names_seen:
+                    duplicates.add(association.name)
+                names_seen.add(association.name)
+
+            if duplicates:
+                raise ValueError(f"The model cannot have associations with duplicate names: {', '.join(duplicates)}")
+
             self.__associations = associations
         else:
             self.__associations = set()
+
+    def add_association(self, association: Association):
+        """Association: Add an association to the set of associations of the model."""
+        self.associations = self.associations | {association}
 
     @property
     def generalizations(self) -> set[Generalization]:
@@ -1183,6 +1278,10 @@ class DomainModel(Model):
             self.__generalizations = generalizations
         else:
             self.__generalizations = set()
+
+    def add_generalization(self, generalization: Generalization):
+        """Generalization: Add a generalization to the set of generalizations of the model."""
+        self.generalizations = self.generalizations | {generalization}
 
     def get_enumerations(self) -> set[Enumeration]:
         """set[Enumeration]: Get the set of enumerations in the domain model."""
@@ -1202,9 +1301,17 @@ class DomainModel(Model):
             ValueError: if there are two packages with the same name.
         """
         if packages is not None:
-            names = [package.name for package in packages]
-            if len(names) != len(set(names)):
-                raise ValueError("The model cannot have two packages with the same name")
+            names_seen = set()
+            duplicates = set()
+
+            for package in packages:
+                if package.name in names_seen:
+                    duplicates.add(package.name)
+                names_seen.add(package.name)
+
+            if duplicates:
+                raise ValueError(f"The model cannot have packages with duplicate names: {', '.join(duplicates)}")
+
             self.__packages = packages
         else:
             self.__packages = set()

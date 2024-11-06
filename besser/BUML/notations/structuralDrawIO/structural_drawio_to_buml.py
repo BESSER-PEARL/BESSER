@@ -341,7 +341,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
               "startArrow=diamondThin" in style and "startFill=0" in style
               or "endArrow=diamondThin" in style and "endFill=0" in style
               or "endArrow=open;endFill=1" in style):
-            
+            forced_source_multiplicity = None
+            forced_target_multiplicity = None
             if "startArrow=diamondThin" in style:
                 forced_source_multiplicity = Multiplicity(1, 1)
             elif "endArrow=diamondThin" in style:
@@ -448,7 +449,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
 
         elif source and target and ("startArrow=diamondThin" in style and "startFill=1"
               in style or "endArrow=diamondThin" in style and "endFill=1" in style):
-
+            forced_source_multiplicity = None
+            forced_target_multiplicity = None
             if "startArrow=diamondThin" in style:
                 forced_source_multiplicity = Multiplicity(1, 1)
             elif "endArrow=diamondThin" in style:

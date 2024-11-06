@@ -18,14 +18,6 @@ PRIMITIVE_TYPE_MAPPING = {
 }
 
 def domain_model_to_code(model: DomainModel, file_path: str):
-    """
-    Save B-UML model to a Python file.
-
-    Args:
-        model: The DomainModel to save
-        file_path: Path where the file should be saved
-    """
-    # Create output directory if needed
     output_dir = os.path.dirname(file_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -46,16 +38,14 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         for enum in model.get_enumerations():
             f.write(f"{enum.name}: Enumeration = Enumeration(\n")
             f.write(f"    name=\"{enum.name}\",\n")
-            literals_str = ", ".join([f"EnumerationLiteral(name=\"{lit.name}\")" \
-                                      for lit in enum.literals])
+            literals_str = ", ".join([f"EnumerationLiteral(name=\"{lit.name}\")" for lit in enum.literals])
             f.write(f"    literals={{{literals_str}}}\n")
             f.write(")\n\n")
 
-        # Write classes (but skip enums that were incorrectly detected as classes)
+        # Write classes
         f.write("# Classes\n")
         for cls in model.get_classes():
-            if not cls.name.startswith("<<Enum>>"):  # Skip enum classes
-                f.write(f"{cls.name} = Class(name=\"{cls.name}\")\n")
+            f.write(f"{cls.name} = Class(name=\"{cls.name}\")\n")
         f.write("\n")
 
         # Write class members
@@ -64,7 +54,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
 
             # Write attributes
             for attr in cls.attributes:
-                attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, attr.type.name)  # Check primitive type
+                attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, attr.type.name)
                 f.write(f"{cls.name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
                        f"type={attr_type}, visibility=\"{attr.visibility}\")\n")
 
@@ -87,27 +77,37 @@ def domain_model_to_code(model: DomainModel, file_path: str):
                 f.write(f"{cls.name}.methods={{{methods_str}}}\n")
             f.write("\n")
 
-        # Write associations
+# Write relationships
         if model.associations:
             f.write("# Relationships\n")
             for assoc in model.associations:
                 ends_str = []
                 for end in assoc.ends:
+                    # Determine max value for multiplicity
                     max_value = '"*"' if end.multiplicity.max == "*" else end.multiplicity.max
-                    ends_str.append(f"Property(name=\"{end.name}\", type={end.type.name}, "
-                                    f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value}),"
-                                    f"is_navigable={end.is_navigable}, is_composite={end.is_composite})")
-                f.write(f"{assoc.name}: BinaryAssociation = BinaryAssociation(name=\"{assoc.name}\""
-                        f", ends={{{', '.join(ends_str)}}})\n")
+                    # Build each property string with all attributes on the same line
+                    end_str = (f"Property(name=\"{end.name}\", type={end.type.name}, "
+                             f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value})"
+                             f"{', is_navigable=' + str(end.is_navigable) if end.is_navigable is not True else ''}"
+                             f"{', is_composite=True' if end.is_composite is True else ''})")
+                    ends_str.append(end_str)
+        
+                # Write the BinaryAssociation with each property on a new line
+                f.write(
+                    f"{assoc.name}: BinaryAssociation = BinaryAssociation(\n"
+                    f"    name=\"{assoc.name}\",\n"
+                    f"    ends={{\n        {',\n        '.join(ends_str)}\n    }}\n"
+                    f")\n"
+                )
             f.write("\n")
+        
 
-         # Write generalizations
+        # Write generalizations
         if model.generalizations:
             f.write("# Generalizations\n")
             for gen in model.generalizations:
                 f.write(f"gen_{gen.specific.name}_{gen.general.name} = Generalization"
-                        f"(general={gen.general.name},"
-                        f"specific={gen.specific.name})\n")
+                        f"(general={gen.general.name}, specific={gen.specific.name})\n")
             f.write("\n")
 
         # Write domain model
@@ -123,8 +123,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         else:
             f.write("    associations={},\n")
         if model.generalizations:
-            f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' \
-                                                       for gen in model.generalizations)}}}\n")
+            f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in model.generalizations)}}}\n")
         else:
             f.write("    generalizations={}\n")
         f.write(")\n")

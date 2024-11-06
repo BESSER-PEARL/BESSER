@@ -22,7 +22,7 @@ def test_model_duplicated_names():
         class1: Type = Type(name="name1")
         class2: Type = Type(name="name1")
         model: DomainModel = DomainModel(name="mymodel", types={class1, class2}, associations = None, packages = None, constraints = None)
-    assert "same name" in str(excinfo.value)
+    assert "The model cannot have types with duplicate names: name1" in str(excinfo.value)
 
 
 # Testing attributes initialization
@@ -78,7 +78,7 @@ def test_duplicated_name_class():
         attribute1: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
         attribute2: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
         class1 = Class(name="name1", attributes={attribute1, attribute2})
-    assert "A class cannot have two attributes with the same name" in str(excinfo.value)
+    assert "A class cannot have attributes with duplicate names: attribute1" in str(excinfo.value)
 
 # Testing for no more than one id attribute in class
 def test_more_than_one_id_class():
@@ -87,7 +87,7 @@ def test_more_than_one_id_class():
         attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"), is_id=True)
         attribute2: Property = Property(name="attribute2", type=PrimitiveDataType("int"), is_id=True)
         class1 = Class(name="name1", attributes={attribute1, attribute2})
-    assert "A class cannot have two id attributes" in str(excinfo.value)
+    assert "A class cannot have more than one attribute marked as 'id'" in str(excinfo.value)
 
 def test_association_initialization():
     class1: Class = Class(name="name1", attributes=set())
@@ -195,4 +195,4 @@ def test_parameters_same_name():
         parameter1: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="str"))
         parameter2: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="int"))
         method: Method = Method(name='method_1', is_abstract=True, parameters={parameter1, parameter2})
-    assert "A method cannot have two parameters with the same name" in str(excinfo.value)
+    assert "A method cannot have parameters with duplicate names: parameter_1" in str(excinfo.value)

@@ -46,15 +46,9 @@ def structural_drawio_to_buml(drawio_file_path: str, buml_model_file_name: str =
     buml_model, _ = generate_buml_from_xml(drawio_file_path)
 
     if save_buml:
-        # Create output directory if needed
-        output_dir = "buml"
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-
         # Save model to Python file
-        output_file_path = os.path.join(output_dir, buml_model_file_name + ".py")
+        output_file_path = os.path.join("buml", buml_model_file_name + ".py")
         save_buml_to_file(buml_model, output_file_path)
-        print(f"BUML model saved to {output_file_path}")
 
     return buml_model
 
@@ -156,17 +150,16 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             if "<p" in value and "<b>" in value:
                 # Format: <p><b><<Enum>></b></p><p><b>EnumName</b></p>
                 b_tags = re.findall(r'<b>(.*?)</b>', value)
-                
+
                 # Find the name by looking for a <b> tag that doesn't contain "Enum"
                 for tag in b_tags:
                     if "Enum" not in tag and "&lt;&lt;Enum&gt;&gt;" not in tag:
                         enum_name = tag
                         break
-                
                 # Initialize the list for this enum
                 if enum_name:
                     model_elements['enumerations'][enum_name] = []
-                    
+
                     # Extract literals from the same value
                     p_tags = re.findall(r'<p[^>]*>(.*?)</p>', value)
                     for p_tag in p_tags:
@@ -175,21 +168,20 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                             if clean_literal:
                                 model_elements['enumerations'][enum_name].append(clean_literal)
                 else:
-                    warnings.warn("Enum found without a name in value: {}".format(value))
+                    warnings.warn(f"Enum found without a name in value: {value}")
                 #print(f"\nEnumeration found: {enum_name}")
             elif "<br>" in value:
                 # Format: <<Enum>><br>EnumName
                 parts = value.split("<br>")
                 enum_name = parts[-1]
-                
+
                 # Clean the enum name
                 enum_name = clean_html_tags(enum_name.replace("&lt;&lt;Enum&gt;&gt;", "")
                                              .replace("<<Enum>>", "")
                                              .replace("«Enum»", "")).strip()
-                
+
                 if enum_name:
                     model_elements['enumerations'][enum_name] = []
-                    
                     # Find literals in child cells
                     for literal_cell in root.findall(f".//mxCell[@parent='{cell_id}']"):
                         literal_value = literal_cell.get('value', '')
@@ -198,17 +190,14 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                             if clean_literal:
                                 model_elements['enumerations'][enum_name].append(clean_literal)
                 else:
-                    warnings.warn("Enum found without a name in value: {}".format(value))
-                #print(f"\nEnumeration found: {enum_name}")
+                    warnings.warn(f"Enum found without a name in value: {value}")
             else:
         # Format: <<Enum>>EnumName
                 enum_name = value.replace("&lt;&lt;Enum&gt;&gt;", "").replace("<<Enum>>", "").replace("«Enum»", "").strip()
-                
                 if enum_name:
                     model_elements['enumerations'][enum_name] = []
                 else:
-                    warnings.warn("Enum found without a name in value: {}".format(value))
-    
+                    warnings.warn(f"Enum found without a name in value: {value}")
             continue  # Skip processing this cell as a class
 
         # Process classes (only if not an enumeration)
@@ -218,6 +207,10 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                 class_match = re.search(r'<b>(.*?)</b>', value)
                 if class_match:
                     class_name = clean_html_tags(class_match.group(1))
+                    if not class_name or class_name.lower() == "class":
+                        warnings.warn(f"Invalid class name: '{class_name}'. Class name cannot be empty or 'class'."
+                                      f"Skipping class")
+                        continue
                     model_elements['classes'][class_name] = {
                         'attributes': [],
                         'methods': []
@@ -229,30 +222,37 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                         field = clean_html_tags(match.group(1).strip())
                         if field and field != class_name:  # Skip class name
                             if '(' in field:  # Method
-                                visibility = "+" if field.startswith("+ ") else "-" if field.startswith("- ") else "+"
+                                visibility = "+" if field.startswith("+ ") else "-" \
+                                    if field.startswith("- ") else "+"
                                 method_str = field.lstrip("+ -")
-                                method_match = re.match(r"(.*?)\((.*?)\)(?:\s*:\s*(.*))?", method_str)
+                                method_match = re.match(r"(.*?)\((.*?)\)(?:\s*:\s*(.*))?",\
+                                                         method_str)
                                 if method_match:
                                     method_name = method_match.group(1).strip()
                                     params_str = method_match.group(2).strip()
-                                    return_type = method_match.group(3).strip() if method_match.group(3) else None
+                                    return_type = method_match.group(3).strip() \
+                                    if method_match.group(3) else None
                                     model_elements['classes'][class_name]['methods'].append(
                                         (visibility, method_name, params_str, return_type)
                                     )
 
                             else:  # Attribute
-                                visibility = "+" if field.startswith("+ ") else "-" if field.startswith("- ") else "+"
+                                visibility = "+" if field.startswith("+ ") else "-" \
+                                    if field.startswith("- ") else "+"
                                 attr_str = field.lstrip("+ -")
                                 if ':' in attr_str:
                                     name, type_str = attr_str.split(':', 1)
                                     model_elements['classes'][class_name]['attributes'].append(
                                         (visibility, name.strip(), type_str.strip())
                                     )
-                                    #print(f"Attribute found: {name} ({type_str})")
 
             # Swimlane format class
             elif style and "swimlane" in style:
                 class_name = clean_html_tags(value.strip())
+                if not class_name or class_name.lower() == "class":
+                    warnings.warn(f"Invalid class name: '{class_name}'. Class name cannot be empty or 'class'."
+                                  f"Skipping class")
+                    continue
                 #print(f"\nProcessing class: {class_name}")
                 if class_name:
                     model_elements['classes'][class_name] = {
@@ -273,24 +273,27 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                     clean_value = clean_html_tags(value.strip())
                     if clean_value:
                         if '(' in clean_value:  # Method
-                            visibility = "+" if clean_value.startswith("+ ") else "-" if clean_value.startswith("- ") else "+"
+                            visibility = "+" if clean_value.startswith("+ ") else "-" \
+                                if clean_value.startswith("- ") else "+"
                             method_str = clean_value.lstrip("+ -")
                             method_match = re.match(r"(.*?)\((.*?)\)(?:\s*:\s*(.*))?", method_str)
                             if method_match:
                                 method_name = method_match.group(1).strip()
                                 params_str = method_match.group(2).strip()
-                                return_type = method_match.group(3).strip() if method_match.group(3) else None
+                                return_type = method_match.group(3).strip() \
+                                    if method_match.group(3) else None
                                 model_elements['classes'][parent_class]['methods'].append(
                                     (visibility, method_name, [], return_type)
                                 )
                         elif ':' in clean_value:  # Attribute
-                            visibility = "+" if clean_value.startswith("+ ") else "-" if clean_value.startswith("- ") else "+"
+                            visibility = "+" if clean_value.startswith("+ ") else "-" \
+                                if clean_value.startswith("- ") else "+"
                             attr_str = clean_value.lstrip("+ -")
                             name, type_str = attr_str.split(':', 1)
                             model_elements['classes'][parent_class]['attributes'].append(
                                 (visibility, name.strip(), type_str.strip())
                             )
-                            #print(f"Attribute found: {name} ({type_str})")
+
 
     # Process edges and associations
     for cell in root.findall(".//mxCell"):
@@ -302,64 +305,37 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
         if source and target and "endArrow=block" in style and "endFill=0" in style:
             source_cell = graph_data['cells'].get(source, {})
             target_cell = graph_data['cells'].get(target, {})
-            
-            # Get source class name
-            source_value = source_cell.get('value', '')
-            source_class = None
-            if '<b>' in source_value:
-                class_match = re.search(r'<b>(.*?)</b>', source_value)
-                if class_match:
-                    source_class = clean_html_tags(class_match.group(1))
-            else:
-                source_class = clean_html_tags(source_value)
-            
-            # Get target class name
-            target_value = target_cell.get('value', '')
-            target_class = None
-            if '<b>' in target_value:
-                class_match = re.search(r'<b>(.*?)</b>', target_value)
-                if class_match:
-                    target_class = clean_html_tags(class_match.group(1))
-            else:
-                target_class = clean_html_tags(target_value)
+
+            source_class = extract_class_name(source_cell.get('value', ''))
+            target_class = extract_class_name(target_cell.get('value', ''))
+
+            if not source_cell:
+                print(f"Error: Source cell {source} not found for connection")
+                continue
+            if not target_cell:
+                print(f"Error: Target cell {target} not found for connection")
+                continue
 
             if source_class and target_class:
                 model_elements['generalizations'].append({
                     'specific': source_class.strip(),
                     'general': target_class.strip()
                 })
-                print(f"Generalization found: {source_class} -> {target_class}")
 
         # Handle one-way associations (filled arrow)
-        elif source and target and "endArrow=block" in style and "endFill=1" in style:
-            # Get source and target classes
-            source_class = None
-            target_class = None
-            
-           # Get source class name
-            source_value = source_cell.get('value', '')
-            source_class = None
-            if '<b>' in source_value:
-                class_match = re.search(r'<b>(.*?)</b>', source_value)
-                if class_match:
-                    source_class = clean_html_tags(class_match.group(1))
-            else:
-                source_class = clean_html_tags(source_value)
-            
-            # Get target class name
-            target_value = target_cell.get('value', '')
-            target_class = None
-            if '<b>' in target_value:
-                class_match = re.search(r'<b>(.*?)</b>', target_value)
-                if class_match:
-                    target_class = clean_html_tags(class_match.group(1))
-            else:
-                target_class = clean_html_tags(target_value)
+        elif source and target and ("endArrow=block" in style and "endFill=1" in style or\
+              "startArrow=diamondThin" in style and "startFill=0" in style):
 
+            source_cell = graph_data['cells'].get(source, {})
+            target_cell = graph_data['cells'].get(target, {})
+
+            source_class = extract_class_name(source_cell.get('value', ''))
+            target_class = extract_class_name(target_cell.get('value', ''))
+        
             # Get role labels
             source_label = "parent"  # Default role name
-            target_label = "child_non_navigable"  # Default role name 
-            
+            target_label = "child_non_navigable"  # Default role name
+
             # Initialize default multiplicities
             source_multiplicity = Multiplicity(1, '*')  # Default multiplicity
             target_multiplicity = Multiplicity(1, '*')  # Default multiplicity
@@ -372,7 +348,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                         geometry = label_cell.find(".//mxGeometry")
                         if geometry is not None:
                             x = float(geometry.get('x', 0))
-                            
+
                             # Handle multiplicity labels
                             if label_value[0].isdigit() or label_value[0] == '*':
                                 multiplicity_str = clean_html_tags(label_value)
@@ -380,33 +356,37 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(0, '*')
                                 elif '..' in multiplicity_str:
                                     lower, upper = multiplicity_str.split('..')
-                                    multiplicity = Multiplicity(int(lower), upper if upper == '*' else int(upper))
+                                    multiplicity = Multiplicity(int(lower), upper \
+                                                                if upper == '*' else int(upper))
                                 else:
-                                    multiplicity = Multiplicity(int(multiplicity_str), int(multiplicity_str))
-                                
+                                    multiplicity = Multiplicity(int(multiplicity_str),\
+                                                                 int(multiplicity_str))
+
                                 if x < 0:
                                     source_multiplicity = multiplicity
                                 else:
                                     target_multiplicity = multiplicity
-                            
+
                             # Handle role labels
                             else:
                                 clean_value = clean_html_tags(label_value)
                                 # Check for multiplicity in role name [0..*] format
-                                multiplicity_match = re.search(r'\[(\d+\.\.\d+|\d+\.\.\*|\d+|\*)\]', clean_value)
+                                multiplicity_match = re.search\
+                                    (r'\[(\d+\.\.\d+|\d+\.\.\*|\d+|\*)\]', clean_value)
                                 if multiplicity_match:
                                     mult_str = multiplicity_match.group(1)
                                     if mult_str == '*':
                                         multiplicity = Multiplicity(0, '*')
                                     elif '..' in mult_str:
                                         lower, upper = mult_str.split('..')
-                                        multiplicity = Multiplicity(int(lower), upper if upper == '*' else int(upper))
+                                        multiplicity = Multiplicity(int(lower), upper \
+                                                                    if upper == '*' else int(upper))
                                     else:
                                         multiplicity = Multiplicity(int(mult_str), int(mult_str))
                                     clean_value = clean_value.split('[')[0].strip()
                                 else:
                                     multiplicity = Multiplicity(1, '*')  # Default multiplicity
-                                
+
                                 if x < 0:
                                     source_label = clean_value
                                     source_multiplicity = multiplicity
@@ -430,34 +410,18 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                     'navigable': False
 
                 })
-        elif source and target and "startArrow=diamondThin" in style and "endArrow=open" in style:
+        elif source and target and "startArrow=diamondThin" in style and "endArrow=open"\
+              in style and "startFill=1" in style:
             # Get source and target classes
-            source_class = None
-            target_class = None
-            
-           # Get source class name
-            source_value = source_cell.get('value', '')
-            source_class = None
-            if '<b>' in source_value:
-                class_match = re.search(r'<b>(.*?)</b>', source_value)
-                if class_match:
-                    source_class = clean_html_tags(class_match.group(1))
-            else:
-                source_class = clean_html_tags(source_value)
-            
-            # Get target class name
-            target_value = target_cell.get('value', '')
-            target_class = None
-            if '<b>' in target_value:
-                class_match = re.search(r'<b>(.*?)</b>', target_value)
-                if class_match:
-                    target_class = clean_html_tags(class_match.group(1))
-            else:
-                target_class = clean_html_tags(target_value)
+            source_cell = graph_data['cells'].get(source, {})
+            target_cell = graph_data['cells'].get(target, {})
+
+            source_class = extract_class_name(source_cell.get('value', ''))
+            target_class = extract_class_name(target_cell.get('value', ''))
 
             # Get role labels
             source_label = "parent_composite"  # Default role name
-            target_label = "child"  # Default role name 
+            target_label = "child"  # Default role name
             # Initialize default multiplicities
             source_multiplicity = Multiplicity(1, '*')  # Default multiplicity
             target_multiplicity = Multiplicity(1, '*')  # Default multiplicity
@@ -470,7 +434,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                         geometry = label_cell.find(".//mxGeometry")
                         if geometry is not None:
                             x = float(geometry.get('x', 0))
-                            
+
                             # Handle multiplicity labels
                             if label_value[0].isdigit() or label_value[0] == '*':
                                 multiplicity_str = clean_html_tags(label_value)
@@ -478,33 +442,37 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(0, '*')
                                 elif '..' in multiplicity_str:
                                     lower, upper = multiplicity_str.split('..')
-                                    multiplicity = Multiplicity(int(lower), upper if upper == '*' else int(upper))
+                                    multiplicity = Multiplicity(int(lower), upper \
+                                                                if upper == '*' else int(upper))
                                 else:
-                                    multiplicity = Multiplicity(int(multiplicity_str), int(multiplicity_str))
-                                
+                                    multiplicity = Multiplicity(int(multiplicity_str),\
+                                                                 int(multiplicity_str))
+
                                 if x < 0:
                                     source_multiplicity = multiplicity
                                 else:
                                     target_multiplicity = multiplicity
-                            
+
                             # Handle role labels
                             else:
                                 clean_value = clean_html_tags(label_value)
                                 # Check for multiplicity in role name [0..*] format
-                                multiplicity_match = re.search(r'\[(\d+\.\.\d+|\d+\.\.\*|\d+|\*)\]', clean_value)
+                                multiplicity_match = re.search\
+                                    (r'\[(\d+\.\.\d+|\d+\.\.\*|\d+|\*)\]', clean_value)
                                 if multiplicity_match:
                                     mult_str = multiplicity_match.group(1)
                                     if mult_str == '*':
                                         multiplicity = Multiplicity(0, '*')
                                     elif '..' in mult_str:
                                         lower, upper = mult_str.split('..')
-                                        multiplicity = Multiplicity(int(lower), upper if upper == '*' else int(upper))
+                                        multiplicity = Multiplicity(int(lower), upper \
+                                                                    if upper == '*' else int(upper))
                                     else:
                                         multiplicity = Multiplicity(int(mult_str), int(mult_str))
                                     clean_value = clean_value.split('[')[0].strip()
                                 else:
                                     multiplicity = Multiplicity(1, '*')  # Default multiplicity
-                                
+
                                 if x < 0:
                                     source_label = clean_value + "_composite"
                                     source_multiplicity = multiplicity
@@ -531,35 +499,16 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
         # Handle binary associations (edges with labels)
         if source and target and "endArrow=none" in style:
             # Get source and target classes
-            source_class = None
-            target_class = None
-            
-            # Find source class
             source_cell = root.find(f".//mxCell[@id='{source}']")
-            if source_cell is not None:
-                source_value = source_cell.get('value', '')
-                if 'swimlane' in source_cell.get('style', ''):
-                    source_class = clean_html_tags(source_value)
-                else:
-                    class_match = re.search(r'<b>(.*?)</b>', source_value)
-                    if class_match:
-                        source_class = clean_html_tags(class_match.group(1))
-            
-            # Find target class
             target_cell = root.find(f".//mxCell[@id='{target}']")
-            if target_cell is not None:
-                target_value = target_cell.get('value', '')
-                if 'swimlane' in target_cell.get('style', ''):
-                    target_class = clean_html_tags(target_value)
-                else:
-                    class_match = re.search(r'<b>(.*?)</b>', target_value)
-                    if class_match:
-                        target_class = clean_html_tags(class_match.group(1))
+
+            source_class = extract_class_name(source_cell.get('value', ''))
+            target_class = extract_class_name(target_cell.get('value', ''))
 
             # Get role labels
             source_label = "parent"  # Default role name
             target_label = "child"   # Default role name
-            
+
             # Initialize default multiplicities
             source_multiplicity = Multiplicity(1, '*')  # Default multiplicity
             target_multiplicity = Multiplicity(1, '*')  # Default multiplicity
@@ -572,7 +521,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                         geometry = label_cell.find(".//mxGeometry")
                         if geometry is not None:
                             x = float(geometry.get('x', 0))
-                            
+
                             # Handle multiplicity labels
                             if label_value[0].isdigit() or label_value[0] == '*':
                                 multiplicity_str = clean_html_tags(label_value)
@@ -580,33 +529,37 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(0, '*')
                                 elif '..' in multiplicity_str:
                                     lower, upper = multiplicity_str.split('..')
-                                    multiplicity = Multiplicity(int(lower), upper if upper == '*' else int(upper))
+                                    multiplicity = Multiplicity(int(lower), upper \
+                                                                if upper == '*' else int(upper))
                                 else:
-                                    multiplicity = Multiplicity(int(multiplicity_str), int(multiplicity_str))
-                                
+                                    multiplicity = Multiplicity(int(multiplicity_str), \
+                                                                int(multiplicity_str))
+
                                 if x < 0:
                                     source_multiplicity = multiplicity
                                 else:
                                     target_multiplicity = multiplicity
-                            
+
                             # Handle role labels
                             else:
                                 clean_value = clean_html_tags(label_value)
                                 # Check for multiplicity in role name [0..*] format
-                                multiplicity_match = re.search(r'\[(\d+\.\.\d+|\d+\.\.\*|\d+|\*)\]', clean_value)
+                                multiplicity_match = re.search\
+                                    (r'\[(\d+\.\.\d+|\d+\.\.\*|\d+|\*)\]', clean_value)
                                 if multiplicity_match:
                                     mult_str = multiplicity_match.group(1)
                                     if mult_str == '*':
                                         multiplicity = Multiplicity(0, '*')
                                     elif '..' in mult_str:
                                         lower, upper = mult_str.split('..')
-                                        multiplicity = Multiplicity(int(lower), upper if upper == '*' else int(upper))
+                                        multiplicity = Multiplicity(int(lower), upper \
+                                                                    if upper == '*' else int(upper))
                                     else:
                                         multiplicity = Multiplicity(int(mult_str), int(mult_str))
                                     clean_value = clean_value.split('[')[0].strip()
                                 else:
                                     multiplicity = Multiplicity(1, '*')  # Default multiplicity
-                                
+
                                 if x < 0:
                                     source_label = clean_value
                                     source_multiplicity = multiplicity
@@ -628,11 +581,9 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                     'multiplicity': target_multiplicity,
                     'visibility': 'public'
                 })
-                
-                # Add debug print
-                #print(f"\nAssociation found:")
-                #print(f"  Source: {source_class} (role: {source_label}, multiplicity: {source_multiplicity})")
-                #print(f"  Target: {target_class} (role: {target_label}, multiplicity: {target_multiplicity})")
+             
+            
+
     return (model_elements['classes'], model_elements['enumerations'],
             model_elements['associations'], model_elements['generalizations'],
             graph_data['cells'])
@@ -657,8 +608,6 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
     buml_associations = set()
     buml_generalizations = []
     association_properties = {}
-
-
 
 
     # Create enumerations
@@ -713,8 +662,9 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     if method_match:
                         method_name = method_match.group(1).strip()
                         params_str = method_match.group(2).strip()
-                        return_type = method_match.group(3).strip() if method_match.group(3) else None
-                        
+                        return_type = method_match.group(3).strip() \
+                            if method_match.group(3) else None
+
                         # Parse parameters
                         parameters = []
                         if params_str:
@@ -732,9 +682,9 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                                         'name': param.strip(),
                                         'type': 'str'  # default type
                                     })
-                        
+
                         method_data = (visibility, method_name, parameters, return_type)
-                
+
                 if len(method_data) == 4:  # New format with all components
                     visibility, method_name, parameters, return_type = method_data
                     visibility = "public" if visibility == "+" else "private"
@@ -749,7 +699,7 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                             type_obj = buml_classes[param_type]
                         else:
                             type_obj = PRIMITIVE_TYPE_MAPPING.get(param_type.lower(), "StringType")
-                        
+
                         param_obj = Parameter(
                             name=param['name'],
                             type=type_obj
@@ -765,7 +715,8 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                         elif return_type in buml_classes:
                             return_type_obj = buml_classes[return_type]
                         else:
-                            return_type_obj = PRIMITIVE_TYPE_MAPPING.get(return_type.lower(), "StringType")
+                            return_type_obj = PRIMITIVE_TYPE_MAPPING.get\
+                                (return_type.lower(), "StringType")
                     else:
                         return_type_obj = None
 
@@ -794,6 +745,15 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
             class1 = buml_classes.get(assoc1['class'])
             class2 = buml_classes.get(assoc2['class'])
 
+            if not class1:
+                print(f"Error: Association references non-existent class '{assoc1['class']}'."
+                      f"Make sure you are connecting to a valid class, not an attribute, method, or enumeration.")
+                continue
+            if not class2:
+                print(f"Error: Association references non-existent class '{assoc2['class']}'."
+                      f"Make sure you are connecting to a valid class, not an attribute, method, or enumeration.")
+                continue
+
             if class1 and class2:
                 assoc_property_1 = Property(
                     name=assoc1['name'].split('[')[0].strip(),
@@ -812,16 +772,21 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     is_navigable=assoc2.get('navigable', True)  # Default to True if not specified
                 )
 
-                # Create and add the binary association
-                association_name = f"{class1.name}_{class2.name}"
-                                   # Append '_composite' if the association is composite
+                # Base association name
+                base_name = f"{class1.name}_{class2.name}"
                 if assoc_property_1.is_composite:
-                    association_name += "_composite"
-                # Append '_non_navigable' if the association is non-navigable
+                    base_name += "_composite"
                 elif not assoc_property_2.is_navigable:
-                    association_name += "_non_navigable"
+                    base_name += "_non_navigable"
                 else:
-                    association_name += "_association"
+                    base_name += "_association"
+
+                # Check for existing associations with the same name
+                association_name = base_name
+                counter = 1
+                while any(assoc.name == association_name for assoc in buml_associations):
+                    association_name = f"{base_name}_{counter}"
+                    counter += 1
 
                 binary_assoc = BinaryAssociation(
                     name=association_name,
@@ -832,9 +797,10 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                 association_properties[assoc2['name']] = assoc_property_2
 
                 # Add debug print
-                print(f"\nBinary Association created: {association_name}")
-                for end in binary_assoc.ends:
-                    mult_str = f"{end.multiplicity.min}..{'*' if end.multiplicity.max == '*' else end.multiplicity.max}"
+                #print(f"\nBinary Association created: {association_name}")
+                #for end in binary_assoc.ends:
+                #    mult_str = f"{end.multiplicity.min}..
+                # {'*' if end.multiplicity.max == '*' else end.multiplicity.max}"
     # Create generalizations
     for gen in generalizations:
         specific_class = buml_classes.get(gen['specific'])
@@ -843,7 +809,7 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
         if specific_class and general_class:
             buml_generalization = Generalization(general=general_class, specific=specific_class)
             buml_generalizations.append(buml_generalization)
-    
+
 
     # Create domain model with associations
     domain_model = DomainModel(
@@ -856,12 +822,20 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
     #print(f"\nDomain Model created: {domain_model}")
     return domain_model, association_properties
 
-def save_buml_to_file(model: DomainModel, file_name: str):
+def save_buml_to_file(model: DomainModel, file_path: str):
     """
     Save B-UML model to a Python file.
-    """
 
-    with open(file_name, 'w', encoding='utf-8') as f:
+    Args:
+        model: The DomainModel to save
+        file_path: Path where the file should be saved
+    """
+    # Create output directory if needed
+    output_dir = os.path.dirname(file_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    with open(file_path, 'w', encoding='utf-8') as f:
         # Write imports
         f.write("# Generated B-UML Model\n")
         f.write("from besser.BUML.metamodel.structural import (\n")
@@ -877,7 +851,8 @@ def save_buml_to_file(model: DomainModel, file_name: str):
         for enum in model.get_enumerations():
             f.write(f"{enum.name}: Enumeration = Enumeration(\n")
             f.write(f"    name=\"{enum.name}\",\n")
-            literals_str = ", ".join([f"EnumerationLiteral(name=\"{lit.name}\")" for lit in enum.literals])
+            literals_str = ", ".join([f"EnumerationLiteral(name=\"{lit.name}\")" \
+                                      for lit in enum.literals])
             f.write(f"    literals={{{literals_str}}}\n")
             f.write(")\n\n")
 
@@ -885,23 +860,23 @@ def save_buml_to_file(model: DomainModel, file_name: str):
         f.write("# Classes\n")
         for cls in model.get_classes():
             if not cls.name.startswith("<<Enum>>"):  # Skip enum classes
-                f.write(f"{cls.name}= Class(name=\"{cls.name}\")\n")  # "Class = Class(name=\"{cls.name}\")\n")
+                f.write(f"{cls.name} = Class(name=\"{cls.name}\")\n")
         f.write("\n")
 
         # Write class members
         for cls in model.get_classes():
             f.write(f"# {cls.name} class attributes and methods\n")
-            
+
             # Write attributes
             for attr in cls.attributes:
                 f.write(f"{cls.name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
                        f"type={attr.type}, visibility=\"{attr.visibility}\")\n")
-            
+
             # Write methods
             for method in cls.methods:
                 f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\", "
-                       f"visibility=\"{method.visibility}\", parameters={{}}, type={method.type})\n")
-            
+                    f"visibility=\"{method.visibility}\", parameters={{}}, type={method.type})\n")
+
             # Write assignments
             if cls.attributes:
                 attrs_str = ", ".join([f"{cls.name}_{attr.name}" for attr in cls.attributes])
@@ -919,10 +894,10 @@ def save_buml_to_file(model: DomainModel, file_name: str):
                 for end in assoc.ends:
                     max_value = '"*"' if end.multiplicity.max == "*" else end.multiplicity.max
                     ends_str.append(f"Property(name=\"{end.name}\", type={end.type.name}, "
-                                  f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value}),"
-                                  f"is_navigable={end.is_navigable}, is_composite={end.is_composite})")
-                f.write(f"{assoc.name}: BinaryAssociation = BinaryAssociation(name=\"{assoc.name}\", "
-                       f"ends={{{', '.join(ends_str)}}})\n")
+                                f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value}),"
+                              f"is_navigable={end.is_navigable}, is_composite={end.is_composite})")
+                f.write(f"{assoc.name}: BinaryAssociation = BinaryAssociation(name=\"{assoc.name}\""
+                       f",ends={{{', '.join(ends_str)}}})\n")
             f.write("\n")
 
 
@@ -930,21 +905,47 @@ def save_buml_to_file(model: DomainModel, file_name: str):
         if model.generalizations:
             f.write("# Generalizations\n")
             for gen in model.generalizations:
-                f.write(f"gen_{gen.specific.name}_{gen.general.name} = Generalization(general={gen.general.name}, "
+                f.write(f"gen_{gen.specific.name}_{gen.general.name} = Generalization"
+                        f"(general={gen.general.name},"
                        f"specific={gen.specific.name})\n")
             f.write("\n")
-            
+
         # Write domain model
         f.write("# Domain Model\n")
         f.write("domain_model = DomainModel(\n")
         f.write("    name=\"Generated Model\",\n")
-        f.write(f"    types={{{', '.join(cls.name for cls in model.get_classes())} {', '.join(enum.name for enum in model.get_enumerations())}}},\n")
+        class_names = ', '.join(cls.name for cls in model.get_classes())
+        enum_names = ', '.join(enum.name for enum in model.get_enumerations())
+        types_str = f"{class_names}{', ' + enum_names if enum_names else ''}"
+        f.write(f"    types={{{types_str}}},\n")
         if model.associations:
             f.write(f"    associations={{{', '.join(assoc.name for assoc in model.associations)}}},\n")
         else:
             f.write("    associations={},\n")
         if model.generalizations:
-            f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in model.generalizations)}}}\n")
+            f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' \
+                                                   for gen in model.generalizations)}}}\n")
         else:
             f.write("    generalizations={}\n")
         f.write(")\n")
+
+    print(f"BUML model saved to {file_path}")
+
+def extract_class_name(cell_value: str) -> str:
+    """
+    Extract class name from a cell value, handling both HTML and plain text formats.
+    
+    Args:
+        cell_value: The value from the cell, which may contain HTML tags
+        
+    Returns:
+        The extracted class name as a string
+    """
+    if not cell_value:
+        return None
+        
+    if '<b>' in cell_value:
+        class_match = re.search(r'<b>(.*?)</b>', cell_value)
+        if class_match:
+            return clean_html_tags(class_match.group(1))
+    return clean_html_tags(cell_value)

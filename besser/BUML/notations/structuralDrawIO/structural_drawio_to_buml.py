@@ -246,6 +246,12 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     model_elements['classes'][class_name]['attributes'].append(
                                         (visibility, name.strip(), type_str.strip())
                                     )
+                                else:
+                                    # Attribute with only a name, no type
+                                    name = attr_str.strip()
+                                    model_elements['classes'][class_name]['attributes'].append(
+                                        (visibility, name, "StringType")  # None for type if not specified
+                                    )
 
             # Swimlane format class
             elif style and "swimlane" in style:
@@ -293,6 +299,13 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                             name, type_str = attr_str.split(':', 1)
                             model_elements['classes'][parent_class]['attributes'].append(
                                 (visibility, name.strip(), type_str.strip())
+                            )
+                        elif clean_value.isalpha() or clean_value.replace(" ", "").isalpha():
+                            visibility = "+" if clean_value.startswith("+ ") else "-" \
+                                if clean_value.startswith("- ") else "+"
+                            name = clean_value.lstrip("+ -").strip()
+                            model_elements['classes'][parent_class]['attributes'].append(
+                            (visibility, name, "StringType")
                             )
 
     # Process edges and associations

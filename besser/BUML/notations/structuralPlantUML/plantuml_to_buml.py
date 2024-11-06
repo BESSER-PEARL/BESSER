@@ -1,5 +1,5 @@
 from antlr4 import CommonTokenStream, FileStream, ParseTreeWalker
-from besser.BUML.notations.structuralDrawioXML import save_buml_to_file
+from besser.utilities.buml_code_builder import domain_model_to_code
 from besser.BUML.metamodel.structural import DomainModel
 from .PlantUMLLexer import PlantUMLLexer
 from .PlantUMLParser import PlantUMLParser
@@ -24,5 +24,5 @@ def plantuml_to_buml(plantUML_model_path:str, buml_file_path:str = None):
     walker.walk(listen, parse_tree)
     domain_model: DomainModel = listen.get_buml_model()
     if buml_file_path is not None:
-        save_buml_to_file(model=domain_model, file_name=buml_file_path)
+        domain_model_to_code(model=domain_model, file_name=buml_file_path)
     return domain_model

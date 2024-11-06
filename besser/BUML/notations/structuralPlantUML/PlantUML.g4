@@ -10,7 +10,7 @@ element             : skinParam | class | relationship | enumeration ;
 
 skinParam           : 'skinparam' 'groupInheritance' INT NL ;
 
-class               : (abstract | 'class') ID extends? '{' NL
+class               : (abstract | 'class') ID extends? '{' NL*
                       (attribute | method)*
                       '}' NL ;
 

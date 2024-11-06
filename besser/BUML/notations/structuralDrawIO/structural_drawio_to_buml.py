@@ -295,7 +295,6 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                 (visibility, name.strip(), type_str.strip())
                             )
 
-
     # Process edges and associations
     for cell in root.findall(".//mxCell"):
         source = cell.get('source')
@@ -324,8 +323,15 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                 })
 
         # Handle one-way associations (filled arrow)
-        elif source and target and ("endArrow=block" in style and "endFill=1" in style or\
-              "startArrow=diamondThin" in style and "startFill=0" in style):
+        elif source and target and ((("endArrow=block" and "edgeStyle=orthogonalEdgeStyle") or "endArrow=open") in style and "endFill=1" in style or
+              "startArrow=diamondThin" in style and "startFill=0" in style
+              or "endArrow=diamondThin" in style and "endFill=0" in style
+              or "endArrow=open;endFill=1" in style):
+            
+            if "endArrow=block" in style or "endArrow=open" in style or "startArrow=diamondThin" in style:
+                start = True
+            else:
+                start = False
 
             source_cell = graph_data['cells'].get(source, {})
             target_cell = graph_data['cells'].get(target, {})
@@ -334,8 +340,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             target_class = extract_class_name(target_cell.get('value', ''))
         
             # Get role labels
-            source_label = "parent"  # Default role name
-            target_label = "child_non_navigable"  # Default role name
+            source_label = "parent_non_navigable" if start else "parent"
+            target_label = "child_non_navigable" if not start else "child"
 
             # Initialize default multiplicities
             source_multiplicity = Multiplicity(1, '*')  # Default multiplicity
@@ -357,6 +363,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(0, '*')
                                 elif '..' in multiplicity_str:
                                     lower, upper = multiplicity_str.split('..')
+                                    if upper == 'n':
+                                        upper = '*'
                                     multiplicity = Multiplicity(int(lower), upper \
                                                                 if upper == '*' else int(upper))
                                 else:
@@ -380,6 +388,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                         multiplicity = Multiplicity(0, '*')
                                     elif '..' in mult_str:
                                         lower, upper = mult_str.split('..')
+                                        if upper == 'n':
+                                            upper = '*'
                                         multiplicity = Multiplicity(int(lower), upper \
                                                                     if upper == '*' else int(upper))
                                     else:
@@ -389,30 +399,42 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(1, '*')  # Default multiplicity
 
                                 if x < 0:
-                                    source_label = clean_value
+                                    source_label = clean_value + "_non_navigable" if start else clean_value
                                     source_multiplicity = multiplicity
                                 else:
-                                    target_label = clean_value + "_non_navigable"
+                                    target_label = clean_value + "_non_navigable" if not start else clean_value
                                     target_multiplicity = multiplicity
 
             # Add the association if both classes are found
             if source_class and target_class:
-                model_elements['associations'].append({
+                source_assoc = {
                     'name': source_label,
                     'class': source_class,
                     'multiplicity': source_multiplicity,
                     'visibility': 'public'
-                })
-                model_elements['associations'].append({
+                }
+                if start:
+                    source_assoc['navigable'] = False
+                target_assoc = {
                     'name': target_label,
                     'class': target_class,
                     'multiplicity': target_multiplicity,
                     'visibility': 'public',
-                    'navigable': False
+                }
+                if not start:
+                    target_assoc['navigable'] = False
 
-                })
-        elif source and target and "startArrow=diamondThin" in style and "endArrow=open"\
-              in style and "startFill=1" in style:
+                model_elements['associations'].append(source_assoc)
+                model_elements['associations'].append(target_assoc)
+
+        elif source and target and ("startArrow=diamondThin" in style and "startFill=1"
+              in style or "endArrow=diamondThin" in style and "endFill=1" in style):
+
+            if "startArrow=diamondThin" in style and "startFill=1" in style:
+                start = True
+            else:
+                start = False
+
             # Get source and target classes
             source_cell = graph_data['cells'].get(source, {})
             target_cell = graph_data['cells'].get(target, {})
@@ -421,8 +443,12 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             target_class = extract_class_name(target_cell.get('value', ''))
 
             # Get role labels
-            source_label = "parent_composite"  # Default role name
-            target_label = "child"  # Default role name
+            if start:
+                source_label = "parent_composite"  # Default role name
+                target_label = "child"  # Default role name
+            else:
+                source_label = "parent"  # Default role name
+                target_label = "child_composite"  # Default role name
             # Initialize default multiplicities
             source_multiplicity = Multiplicity(1, '*')  # Default multiplicity
             target_multiplicity = Multiplicity(1, '*')  # Default multiplicity
@@ -443,6 +469,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(0, '*')
                                 elif '..' in multiplicity_str:
                                     lower, upper = multiplicity_str.split('..')
+                                    if upper == 'n':
+                                        upper = '*'
                                     multiplicity = Multiplicity(int(lower), upper \
                                                                 if upper == '*' else int(upper))
                                 else:
@@ -466,6 +494,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                         multiplicity = Multiplicity(0, '*')
                                     elif '..' in mult_str:
                                         lower, upper = mult_str.split('..')
+                                    if upper == 'n':
+                                        upper = '*'
                                         multiplicity = Multiplicity(int(lower), upper \
                                                                     if upper == '*' else int(upper))
                                     else:
@@ -475,30 +505,38 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(1, '*')  # Default multiplicity
 
                                 if x < 0:
-                                    source_label = clean_value + "_composite"
+                                    source_label = clean_value + "_composite" if start else clean_value
                                     source_multiplicity = multiplicity
                                 else:
-                                    target_label = clean_value
+                                    target_label = clean_value + "_composite" if not start else clean_value
                                     target_multiplicity = multiplicity
 
             # Add the association if both classes are found
             if source_class and target_class:
-                model_elements['associations'].append({
+                source_assoc = {
                     'name': source_label,
                     'class': source_class,
                     'multiplicity': source_multiplicity,
-                    'visibility': 'public',
-                    'composite' : True
-                })
-                model_elements['associations'].append({
+                    'visibility': 'public'
+                }
+                if start:
+                    source_assoc['composite'] = True
+
+                target_assoc = {
                     'name': target_label,
                     'class': target_class,
                     'multiplicity': target_multiplicity,
-                    'visibility': 'public',
+                    'visibility': 'public'
+                }
+                if not start:
+                    target_assoc['composite'] = True
 
-                })
+                model_elements['associations'].append(source_assoc)
+                model_elements['associations'].append(target_assoc)
+
         # Handle binary associations (edges with labels)
-        if source and target and "endArrow=none" in style:
+        if source and target and "endArrow=none" in style or \
+            "endArrow=block;startArrow=block" in style :
             # Get source and target classes
             source_cell = root.find(f".//mxCell[@id='{source}']")
             target_cell = root.find(f".//mxCell[@id='{target}']")
@@ -530,6 +568,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(0, '*')
                                 elif '..' in multiplicity_str:
                                     lower, upper = multiplicity_str.split('..')
+                                    if upper == 'n':
+                                        upper = '*'
                                     multiplicity = Multiplicity(int(lower), upper \
                                                                 if upper == '*' else int(upper))
                                 else:
@@ -553,6 +593,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                         multiplicity = Multiplicity(0, '*')
                                     elif '..' in mult_str:
                                         lower, upper = mult_str.split('..')
+                                        if upper == 'n':
+                                            upper = '*'
                                         multiplicity = Multiplicity(int(lower), upper \
                                                                     if upper == '*' else int(upper))
                                     else:
@@ -758,18 +800,18 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
             if class1 and class2:
                 assoc_property_1 = Property(
                     name=assoc1['name'].split('[')[0].strip(),
-                    owner=class1,
-                    type=class2,
+                    type=class1,
                     multiplicity=assoc1['multiplicity'] or Multiplicity(1, "*"),
                     visibility=assoc1['visibility'],
-                    is_composite=assoc1.get('composite', False)
+                    is_composite=assoc1.get('composite', False),
+                    is_navigable=assoc1.get('navigable', True) 
                 )
                 assoc_property_2 = Property(
                     name=assoc2['name'].split('[')[0].strip(),
-                    owner=class2,
-                    type=class1,
+                    type=class2,
                     multiplicity=assoc2['multiplicity'] or Multiplicity(1, "*"),
                     visibility=assoc2['visibility'],
+                    is_composite=assoc2.get('composite', False),
                     is_navigable=assoc2.get('navigable', True)  # Default to True if not specified
                 )
 

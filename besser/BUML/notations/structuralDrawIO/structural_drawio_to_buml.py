@@ -342,6 +342,12 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
               or "endArrow=diamondThin" in style and "endFill=0" in style
               or "endArrow=open;endFill=1" in style):
             
+            if "startArrow=diamondThin" in style:
+                forced_source_multiplicity = Multiplicity(1, 1)
+            elif "endArrow=diamondThin" in style:
+                forced_target_multiplicity = Multiplicity(1, 1)
+                
+
             if "endArrow=block" in style or "endArrow=open" in style or "startArrow=diamondThin" in style:
                 start = True
             else:
@@ -357,8 +363,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             target_label = f"{target_class}_end"
 
             # Initialize default multiplicities
-            source_multiplicity = Multiplicity(1, '*')  # Default multiplicity
-            target_multiplicity = Multiplicity(1, '*')  # Default multiplicity
+            source_multiplicity = Multiplicity(1, 1)  # Default multiplicity
+            target_multiplicity = Multiplicity(1, 1)  # Default multiplicity
 
             # Find edge labels
             for label_cell in root.findall(f".//mxCell[@parent='{cell.get('id')}']"):
@@ -413,10 +419,10 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
 
                                 if x < 0:
                                     source_label = clean_value + "_non_navigable" if start else clean_value
-                                    source_multiplicity = multiplicity
+                                    source_multiplicity = multiplicity if not forced_source_multiplicity else forced_source_multiplicity
                                 else:
                                     target_label = clean_value + "_non_navigable" if not start else clean_value
-                                    target_multiplicity = multiplicity
+                                    target_multiplicity = multiplicity if not forced_target_multiplicity else forced_target_multiplicity
 
             # Add the association if both classes are found
             if source_class and target_class:
@@ -443,6 +449,11 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
         elif source and target and ("startArrow=diamondThin" in style and "startFill=1"
               in style or "endArrow=diamondThin" in style and "endFill=1" in style):
 
+            if "startArrow=diamondThin" in style:
+                forced_source_multiplicity = Multiplicity(1, 1)
+            elif "endArrow=diamondThin" in style:
+                forced_target_multiplicity = Multiplicity(1, 1)
+
             if "startArrow=diamondThin" in style and "startFill=1" in style:
                 start = True
             else:
@@ -459,8 +470,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             source_label = f"{source_class}_end"
             target_label = f"{target_class}_end"
             # Initialize default multiplicities
-            source_multiplicity = Multiplicity(1, '*')  # Default multiplicity
-            target_multiplicity = Multiplicity(1, '*')  # Default multiplicity
+            source_multiplicity = Multiplicity(1, 1)  # Default multiplicity
+            target_multiplicity = Multiplicity(1, 1)  # Default multiplicity
 
             # Find edge labels
             for label_cell in root.findall(f".//mxCell[@parent='{cell.get('id')}']"):
@@ -515,10 +526,10 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
 
                                 if x < 0:
                                     source_label = clean_value + "_composite" if start else clean_value
-                                    source_multiplicity = multiplicity
+                                    source_multiplicity = multiplicity if not forced_source_multiplicity else forced_source_multiplicity
                                 else:
                                     target_label = clean_value + "_composite" if not start else clean_value
-                                    target_multiplicity = multiplicity
+                                    target_multiplicity = multiplicity if not forced_target_multiplicity else forced_target_multiplicity
 
             # Add the association if both classes are found
             if source_class and target_class:
@@ -558,8 +569,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             target_label = f"{target_class}_end"
 
             # Initialize default multiplicities
-            source_multiplicity = Multiplicity(1, '*')  # Default multiplicity
-            target_multiplicity = Multiplicity(1, '*')  # Default multiplicity
+            source_multiplicity = Multiplicity(1, 1)  # Default multiplicity
+            target_multiplicity = Multiplicity(1, 1)  # Default multiplicity
 
             # Find edge labels
             for label_cell in root.findall(f".//mxCell[@parent='{cell.get('id')}']"):

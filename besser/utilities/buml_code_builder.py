@@ -1,6 +1,21 @@
 import os
-from besser.BUML.metamodel.structural.structural import DomainModel
+from besser.BUML.metamodel.structural.structural import (DomainModel, StringType, IntegerType,
+                                                          FloatType, BooleanType, TimeType,
+                                                          DateType, DateTimeType, TimeDeltaType)
 
+PRIMITIVE_TYPE_MAPPING = {
+    'str': 'StringType',
+    'string': 'StringType', 
+    'int': 'IntegerType',
+    'integer': 'IntegerType',
+    'float': 'FloatType',
+    'bool': 'BooleanType',
+    'boolean': 'BooleanType',
+    'time': 'TimeType',
+    'date': 'DateType',
+    'datetime': 'DateTimeType',
+    'timedelta': 'TimeDeltaType'
+}
 
 def domain_model_to_code(model: DomainModel, file_path: str):
     """
@@ -49,13 +64,19 @@ def domain_model_to_code(model: DomainModel, file_path: str):
 
             # Write attributes
             for attr in cls.attributes:
+                attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, attr.type.name)  # Check primitive type
                 f.write(f"{cls.name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
-                       f"type={attr.type}, visibility=\"{attr.visibility}\")\n")
+                       f"type={attr_type}, visibility=\"{attr.visibility}\")\n")
 
             # Write methods
             for method in cls.methods:
-                f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\", "
-                    f"visibility=\"{method.visibility}\", parameters={{}}, type={method.type})\n")
+                method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, method.type.name) if method.type else None
+                if method_type:
+                    f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\", "
+                            f"visibility=\"{method.visibility}\", parameters={{}}, type={method_type})\n")
+                else:
+                    f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\", "
+                            f"visibility=\"{method.visibility}\", parameters={{}})\n")
 
             # Write assignments
             if cls.attributes:
@@ -74,12 +95,11 @@ def domain_model_to_code(model: DomainModel, file_path: str):
                 for end in assoc.ends:
                     max_value = '"*"' if end.multiplicity.max == "*" else end.multiplicity.max
                     ends_str.append(f"Property(name=\"{end.name}\", type={end.type.name}, "
-                                f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value}),"
-                              f"is_navigable={end.is_navigable}, is_composite={end.is_composite})")
+                                    f"multiplicity=Multiplicity({end.multiplicity.min}, {max_value}),"
+                                    f"is_navigable={end.is_navigable}, is_composite={end.is_composite})")
                 f.write(f"{assoc.name}: BinaryAssociation = BinaryAssociation(name=\"{assoc.name}\""
-                       f",ends={{{', '.join(ends_str)}}})\n")
+                        f", ends={{{', '.join(ends_str)}}})\n")
             f.write("\n")
-
 
          # Write generalizations
         if model.generalizations:
@@ -87,7 +107,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
             for gen in model.generalizations:
                 f.write(f"gen_{gen.specific.name}_{gen.general.name} = Generalization"
                         f"(general={gen.general.name},"
-                       f"specific={gen.specific.name})\n")
+                        f"specific={gen.specific.name})\n")
             f.write("\n")
 
         # Write domain model
@@ -104,7 +124,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
             f.write("    associations={},\n")
         if model.generalizations:
             f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' \
-                                                   for gen in model.generalizations)}}}\n")
+                                                       for gen in model.generalizations)}}}\n")
         else:
             f.write("    generalizations={}\n")
         f.write(")\n")

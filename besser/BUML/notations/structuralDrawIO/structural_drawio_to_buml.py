@@ -12,23 +12,23 @@ import re
 import warnings
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Multiplicity, BinaryAssociation,
-    Enumeration, EnumerationLiteral, Generalization, Method, Parameter,
+    Enumeration, EnumerationLiteral, Generalization, Method, Parameter, StringType, IntegerType, FloatType, BooleanType, TimeType, DateType, DateTimeType, TimeDeltaType
 )
 from besser.utilities import domain_model_to_code
 
 # Map primitive type strings to their corresponding type classes
 PRIMITIVE_TYPE_MAPPING = {
-    'str': "StringType",
-    'string': "StringType", 
-    'int': "IntegerType",
-    'integer': "IntegerType",
-    'float': "FloatType",
-    'bool': "BooleanType",
-    'boolean': "BooleanType",
-    'time': "TimeType",
-    'date': "DateType",
-    'datetime': "DateTimeType",
-    'timedelta': "TimeDeltaType"
+    'str': StringType,
+    'string': StringType, 
+    'int': IntegerType,
+    'integer': IntegerType,
+    'float': FloatType,
+    'bool': BooleanType,
+    'boolean': BooleanType,
+    'time': TimeType,
+    'date': DateType,
+    'datetime': DateTimeType,
+    'timedelta': TimeDeltaType
 }
 
 def structural_drawio_to_buml(drawio_file_path: str, buml_model_file_name: str = "buml_model", \
@@ -250,7 +250,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     # Attribute with only a name, no type
                                     name = attr_str.strip()
                                     model_elements['classes'][class_name]['attributes'].append(
-                                        (visibility, name, "StringType")  # None for type if not specified
+                                        (visibility, name, "str")  # None for type if not specified
                                     )
 
             # Swimlane format class
@@ -305,7 +305,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                 if clean_value.startswith("- ") else "+"
                             name = clean_value.lstrip("+ -").strip()
                             model_elements['classes'][parent_class]['attributes'].append(
-                            (visibility, name, "StringType")
+                            (visibility, name, "str")  # None for type if not specified
                             )
 
     # Process edges and associations
@@ -675,8 +675,13 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
         buml_enum = Enumeration(name=enum_name, literals=enum_literals)
         buml_enumerations[enum_name] = buml_enum
 
-    # Create classes
+    # First create all empty classes
+    for class_name in classes.keys():
+        buml_classes[class_name] = Class(name=class_name)
+
+    # Then populate classes with attributes and methods
     for class_name, class_data in classes.items():
+        buml_class = buml_classes[class_name]
         buml_attributes = set()
         buml_methods = set()
 
@@ -691,14 +696,12 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     #print(f": {buml_enumerations}")
                     # First check if it's an enumeration or class
                     if attr_type in buml_enumerations:
-                        type_obj = buml_enumerations[attr_type].name
-                    elif attr_type in buml_classes:
+                        type_obj = buml_enumerations[attr_type]
+                    elif attr_type in classes.keys():  # Check if class exists in original classes dict
                         type_obj = buml_classes[attr_type]
                     else:
                         # Convert primitive type string to actual type class
-                        attr_type_lower = attr_type.lower()
-                        type_obj = PRIMITIVE_TYPE_MAPPING.get(attr_type_lower, "StringType")
-                        print(f"Type not found for attribute: {attr_name}")
+                        type_obj = PRIMITIVE_TYPE_MAPPING.get(attr_type.lower(), StringType)
 
                     buml_attribute = Property(
                         name=attr_name,
@@ -706,7 +709,7 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                         visibility=visibility
                     )
                     buml_attributes.add(buml_attribute)
-                    #print(f"Attribute created: {buml_attribute}")
+
 
         # Create methods
         if 'methods' in class_data:
@@ -736,7 +739,7 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                                 else:
                                     parameters.append({
                                         'name': param.strip(),
-                                        'type': 'str'  # default type
+                                        'type': StringType
                                     })
 
                         method_data = (visibility, method_name, parameters, return_type)
@@ -751,10 +754,10 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                         param_type = param['type']
                         if param_type in buml_enumerations:
                             type_obj = buml_enumerations[param_type]
-                        elif param_type in buml_classes:
+                        elif param_type in classes.keys():
                             type_obj = buml_classes[param_type]
                         else:
-                            type_obj = PRIMITIVE_TYPE_MAPPING.get(param_type.lower(), "StringType")
+                            type_obj = PRIMITIVE_TYPE_MAPPING.get(param_type.lower(), StringType)
 
                         param_obj = Parameter(
                             name=param['name'],
@@ -768,11 +771,12 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     if return_type:
                         if return_type in buml_enumerations:
                             return_type_obj = buml_enumerations[return_type]
-                        elif return_type in buml_classes:
+                        elif return_type in classes.keys():
                             return_type_obj = buml_classes[return_type]
                         else:
-                            return_type_obj = PRIMITIVE_TYPE_MAPPING.get\
-                                (return_type.lower(), "StringType")
+                            return_type_obj = PRIMITIVE_TYPE_MAPPING.get(return_type.lower())
+                        if return_type_obj is None:
+                            raise ValueError(f"Unknown return type '{return_type}'. It must be an enumeration, class, or primitive type.")
                     else:
                         return_type_obj = None
 
@@ -784,13 +788,9 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     )
                     buml_methods.add(buml_method)
 
-        # Create class
-        buml_class = Class(
-            name=class_name,
-            attributes=buml_attributes,
-            methods=buml_methods
-        )
-        buml_classes[class_name] = buml_class
+        # Update the class with its attributes and methods
+        buml_class.attributes = buml_attributes
+        buml_class.methods = buml_methods
 
     # Create associations
     for i in range(0, len(associations), 2):

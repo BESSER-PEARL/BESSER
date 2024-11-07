@@ -436,14 +436,14 @@ class ConvolutionalLayer(CNN):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        in_channels (int): The number of channels in the input image.
-        out_channels (int): The number of channels produced by 
-            the convolution.
         kernel_dim (List[int]): A list containing the dimensions of 
             the convolving or pooling kernel (i.e., [depth, height, width]).
         stride_dim (List[int]): A list containing the dimensions of 
             the stride of the convolution or pooling (i.e., [depth, height, 
             width]).
+        in_channels (int): The number of channels in the input image.
+        out_channels (int): The number of channels produced by 
+            the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
         permute_dim (bool): Whether the dimensions of the input need to be 
@@ -458,15 +458,15 @@ class ConvolutionalLayer(CNN):
         name (str): Inherited from Layer. It represents the name of the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        in_channels (int): The number of channels in the input image.
-        out_channels (int): The number of channels produced by 
-            the convolution.
         kernel_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the convolving or pooling kernel (i.e., [depth, 
             height, width]).
         stride_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
+        in_channels (int): The number of channels in the input image.
+        out_channels (int): The number of channels produced by 
+            the convolution.
         padding_amount (int): Inherited from CNN. The amount of padding added 
             to the input.
         padding_type (str): Inherited from CNN. The type of padding applied 
@@ -480,8 +480,8 @@ class ConvolutionalLayer(CNN):
             layer is reused as input to another layer.
     """
         
-    def __init__(self, name: str, in_channels: int, out_channels: int, 
-                 kernel_dim: List[int], stride_dim: List[int], 
+    def __init__(self, name: str, kernel_dim: List[int], out_channels: int, 
+                 stride_dim: List[int], in_channels: int = None, 
                  padding_amount: int = 0, padding_type: str = "valid",
                  actv_func: str = None, name_layer_input: str = None, 
                  input_reused: bool = False, permute_dim: bool = False):
@@ -530,9 +530,9 @@ class ConvolutionalLayer(CNN):
 
     def __repr__(self):
         return (
-            f'ConvolutionaLayer({self.name}, {self.actv_func}, '
-            f'{self.in_channels}, {self.out_channels}, {self.kernel_dim}, '
-            f'{self.stride_dim}, {self.padding_amount}, {self.padding_type}, '
+            f'ConvolutionaLayer({self.name}, {self.kernel_dim}, '
+            f'{self.out_channels}, {self.stride_dim}, {self.in_channels}, '
+            f'{self.padding_amount}, {self.padding_type}, {self.actv_func}, '
             f'{self.name_layer_input}, {self.input_reused}, {self.permute_dim})'
         )
    
@@ -543,13 +543,13 @@ class Conv1D(ConvolutionalLayer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        in_channels (int): The number of channels in the input image.
-        out_channels (int): The number of channels produced by 
-            the convolution.
         kernel_dim (List[int]): A list containing the dimensions of 
             the convolving or pooling kernel (i.e., [depth, height, width]).
         stride_dim (List[int]): A list containing the dimensions of the stride
             of the convolution or pooling (i.e., [depth, height, width]).
+            in_channels (int): The number of channels in the input image.
+        out_channels (int): The number of channels produced by 
+            the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
         permute_dim (bool): Whether the dimensions of the input need to be 
@@ -564,16 +564,16 @@ class Conv1D(ConvolutionalLayer):
         name (str): Inherited from Layer. It represents the name of the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        in_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels in the input image.
-        out_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels produced by the convolution.
         kernel_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the convolving or pooling kernel 
             (i.e., [depth, height, width]).
         stride_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
+        in_channels (int): Inherited from ConvolutionalLayer. It represents 
+            the number of channels in the input image.
+        out_channels (int): Inherited from ConvolutionalLayer. It represents 
+            the number of channels produced by the convolution.
         padding_amount (int): Inherited from CNN. It represents the amount of
             padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type of 
@@ -586,13 +586,13 @@ class Conv1D(ConvolutionalLayer):
         input_reused (bool): Inherited from Layer. Whether the input to this 
             layer is reused as input to another layer.
     """
-    def __init__(self, name: str, in_channels: int, out_channels: int, 
-                 kernel_dim: List[int], stride_dim: List[int] = [1], 
+    def __init__(self, name: str, kernel_dim: List[int], out_channels: int, 
+                 stride_dim: List[int] = [1], in_channels: int = None, 
                  padding_amount: int = 0, padding_type: str = "valid",
                  actv_func: str = None, name_layer_input: str = None, 
                  input_reused: bool = False, permute_dim: bool = False):
-        super().__init__(name, in_channels, out_channels, kernel_dim, 
-                         stride_dim, padding_amount, padding_type,
+        super().__init__(name, kernel_dim, out_channels, 
+                         stride_dim, in_channels, padding_amount, padding_type,
                          actv_func, name_layer_input, input_reused, permute_dim)
     
     @property
@@ -634,8 +634,8 @@ class Conv1D(ConvolutionalLayer):
 
     def __repr__(self):
         return (
-            f'Conv1D({self.name}, {self.actv_func}, {self.in_channels}, '
-            f'{self.out_channels}, {self.kernel_dim}, {self.stride_dim}, ' 
+            f'Conv1D({self.name}, {self.actv_func}, {self.kernel_dim}, '
+            f'{self.out_channels}, {self.stride_dim}, {self.in_channels}, ' 
             f'{self.padding_amount}, {self.padding_type}, '
             f'{self.name_layer_input}, {self.input_reused}, {self.permute_dim})'
         )
@@ -647,14 +647,14 @@ class Conv2D(ConvolutionalLayer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        in_channels (int): The number of channels in the input image.
-        out_channels (int): The number of channels produced by 
-            the convolution.
         kernel_dim (List[int]): A list containing the dimensions of 
             the convolving or pooling kernel (i.e., [depth, height, width]).
         stride_dim (List[int]): A list containing the dimensions of 
             the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
+        in_channels (int): The number of channels in the input image.
+        out_channels (int): The number of channels produced by 
+            the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.  
         permute_dim (bool): Whether the dimensions of the input need to be 
@@ -669,16 +669,16 @@ class Conv2D(ConvolutionalLayer):
         name (str): Inherited from Layer. It represents the name of the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        in_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels in the input image.
-        out_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels produced by the convolution.
         kernel_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the convolving or pooling kernel 
             (i.e., [depth, height, width]).
         stride_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
+        in_channels (int): Inherited from ConvolutionalLayer. It represents 
+            the number of channels in the input image.
+        out_channels (int): Inherited from ConvolutionalLayer. It represents 
+            the number of channels produced by the convolution.
         padding_amount (int): Inherited from CNN. It represents the amount of 
             padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type of 
@@ -691,13 +691,13 @@ class Conv2D(ConvolutionalLayer):
         input_reused (bool): Inherited from Layer. Whether the input to this 
             layer is reused as input to another layer.
     """
-    def __init__(self, name: str, in_channels: int, out_channels: int, 
-                 kernel_dim: List[int], stride_dim: List[int] = [1, 1],  
+    def __init__(self, name: str, kernel_dim: List[int], out_channels: int, 
+                 stride_dim: List[int] = [1, 1], in_channels: int = None,  
                  padding_amount: int = 0, padding_type: str = "valid", 
                  actv_func: str = None, name_layer_input: str = None, 
                  input_reused: bool = False, permute_dim: bool = False):
-        super().__init__(name, in_channels, out_channels, kernel_dim, 
-                         stride_dim, padding_amount, padding_type,
+        super().__init__(name, kernel_dim, out_channels, stride_dim, 
+                         in_channels, padding_amount, padding_type,
                          actv_func, name_layer_input, input_reused, permute_dim) 
     
     @property
@@ -739,10 +739,10 @@ class Conv2D(ConvolutionalLayer):
 
     def __repr__(self):
         return (
-            f'Conv2D({self.name}, {self.actv_func}, {self.in_channels}, '
-            f'{self.out_channels}, {self.kernel_dim}, {self.stride_dim}, '
-            f'{self.padding_amount}, {self.padding_type}, '
-            f'{self.name_layer_input}, {self.input_reused}, {self.permute_dim})'
+            f'Conv2D({self.name}, {self.kernel_dim}, {self.out_channels}, '
+            f'{self.stride_dim}, {self.in_channels}, {self.padding_amount}, '
+            f'{self.padding_type}, {self.actv_func}, {self.name_layer_input}, '
+            f'{self.input_reused}, {self.permute_dim})'
         )
             
 class Conv3D(ConvolutionalLayer):
@@ -752,14 +752,14 @@ class Conv3D(ConvolutionalLayer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        in_channels (int): The number of channels in the input image.
-        out_channels (int): The number of channels produced by 
-            the convolution.
         kernel_dim (List[int]): A list containing the dimensions of 
             the convolving or pooling kernel (i.e., [depth, height, width]).
         stride_dim (List[int]): A list containing the dimensions of 
             the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
+        in_channels (int): The number of channels in the input image.
+        out_channels (int): The number of channels produced by 
+            the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
         permute_dim (bool): Whether the dimensions of the input need to be 
@@ -774,16 +774,16 @@ class Conv3D(ConvolutionalLayer):
         name (str): Inherited from Layer. It represents the name of the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        in_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels in the input image.
-        out_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels produced by the convolution.
         kernel_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the convolving or pooling kernel 
             (i.e., [depth, height, width]).
         stride_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
+        in_channels (int): Inherited from ConvolutionalLayer. It represents 
+            the number of channels in the input image.
+        out_channels (int): Inherited from ConvolutionalLayer. It represents 
+            the number of channels produced by the convolution.
         padding_amount (int): Inherited from CNN. It represents the amount of 
             padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type of 
@@ -796,13 +796,13 @@ class Conv3D(ConvolutionalLayer):
         input_reused (bool): Inherited from Layer. Whether the input to this 
             layer is reused as input to another layer.
     """
-    def __init__(self, name: str, in_channels: int, out_channels: int, 
-                 kernel_dim: List[int], stride_dim: List[int] = [1, 1, 1], 
+    def __init__(self, name: str, kernel_dim: List[int], out_channels: int, 
+                 stride_dim: List[int] = [1, 1, 1], in_channels: int = None, 
                  padding_amount: int = 0, padding_type: str = "valid", 
                  actv_func: str = None, name_layer_input: str = None, 
                  input_reused: bool = False, permute_dim: bool = False):
-        super().__init__(name, in_channels, out_channels, kernel_dim, 
-                         stride_dim, padding_amount, padding_type,
+        super().__init__(name, kernel_dim, out_channels, stride_dim, 
+                         in_channels, padding_amount, padding_type,
                          actv_func, name_layer_input, input_reused, permute_dim)
     
     @property
@@ -842,9 +842,9 @@ class Conv3D(ConvolutionalLayer):
 
     def __repr__(self):
         return (
-            f'Conv3D({self.name}, {self.actv_func}, {self.in_channels}, '
-            f'{self.out_channels}, {self.kernel_dim}, {self.stride_dim}, '
-            f'{self.padding_amount}, {self.padding_type}, '
+            f'Conv3D({self.name}, {self.kernel_dim}, {self.out_channels}, '
+            f'{self.stride_dim}, {self.in_channels}, {self.padding_amount}, '
+            f'{self.padding_type}, {self.actv_func}, '
             f'{self.name_layer_input}, {self.input_reused}, {self.permute_dim})'
         )
 
@@ -1323,8 +1323,8 @@ class RNN(Layer):
         return_type (str): Whether to return the hidden states, the last output
         in the output sequence or the full sequence.
     """
-    def __init__(self, name: str, input_size: int, hidden_size: int, 
-                 return_type: str, bidirectional: bool = False, 
+    def __init__(self, name: str, hidden_size: int, return_type: str, 
+                 input_size: int = None, bidirectional: bool = False, 
                  dropout: float = 0.0, batch_first: bool = True, 
                  permute_dim: bool = False, actv_func: str = None, 
                  name_layer_input: str = None, input_reused: bool = False):
@@ -1431,10 +1431,9 @@ class RNN(Layer):
 
     def __repr__(self):
         return (
-            f'RNN({self.name}, {self.actv_func}, {self.input_size}, '
-            f'{self.hidden_size}, {self.return_type}, '
-            f'{self.bidirectional}, {self.dropout}, '
-            f'{self.batch_first}, {self.permute_dim}, '
+            f'RNN({self.name}, {self.hidden_size}, {self.return_type}, '
+            f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
+            f'{self.batch_first}, {self.permute_dim}, {self.actv_func}, '
             f'{self.name_layer_input}, {self.input_reused})'
         )
 
@@ -1492,22 +1491,21 @@ class SimpleRNNLayer(RNN):
         return_type (str): Inherited from RNN. Whether to return the hidden
         states, the last output in the output sequence or the full sequence.
     """
-    def __init__(self, name: str, input_size: int, hidden_size: int,
-                 return_type: str, bidirectional: bool = False, 
+    def __init__(self, name: str, hidden_size: int, return_type: str, 
+                 input_size: int = None, bidirectional: bool = False, 
                  dropout: float = 0.0, batch_first: bool = True, 
                  actv_func: str = None, permute_dim: bool = False, 
                  name_layer_input: str = None, input_reused: bool = False):
-        super().__init__(name, input_size, hidden_size, return_type, 
+        super().__init__(name, hidden_size, return_type, input_size, 
                          bidirectional, dropout, batch_first, permute_dim, 
                          actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
-            f'SimpleRNNLayer({self.name}, {self.actv_func}, '
-            f'{self.input_size}, {self.hidden_size}, {self.return_type}, '
-            f'{self.bidirectional}, {self.dropout}, {self.batch_first}, '
-            f'{self.permute_dim}, {self.name_layer_input}, '
-            f'{self.input_reused})'
+            f'SimpleRNNLayer({self.name}, {self.hidden_size}, {self.return_type}, '
+            f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
+            f'{self.batch_first}, {self.permute_dim}, {self.actv_func}, '
+            f'{self.name_layer_input}, {self.input_reused})'
         )
     
 
@@ -1564,21 +1562,21 @@ class LSTMLayer(RNN):
         return_type (str): Inherited from RNN. Whether to return the hidden
         states, the last output in the output sequence or the full sequence.
     """
-    def __init__(self, name: str, input_size: int, hidden_size: int, 
-                 return_type: str, bidirectional: bool = False, 
+    def __init__(self, name: str, hidden_size: int, return_type: str, 
+                 input_size: int = None, bidirectional: bool = False, 
                  dropout: float = 0.0, batch_first: bool = True, 
                  permute_dim: bool = False, actv_func: str = None, 
                  name_layer_input: str = None, input_reused: bool = False):
-        super().__init__(name, input_size, hidden_size, return_type, 
+        super().__init__(name, hidden_size, return_type, input_size, 
                          bidirectional, dropout, batch_first, permute_dim, 
                          actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
-            f'LSTMLayer({self.name}, {self.actv_func}, {self.input_size}, '
-            f'{self.hidden_size}, {self.return_type}, '
-            f'{self.bidirectional}, {self.dropout}, {self.batch_first}, '
-            f'{self.permute_dim}, {self.name_layer_input}, {self.input_reused})'
+            f'LSTMLayer({self.name}, {self.hidden_size}, {self.return_type}, '
+            f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
+            f'{self.batch_first}, {self.permute_dim}, {self.actv_func}, '
+            f'{self.name_layer_input}, {self.input_reused})'
         )
         
 
@@ -1635,22 +1633,21 @@ class GRULayer(RNN):
         return_type (str): Inherited from RNN. Whether to return the hidden
         states, the last output in the output sequence or the full sequence.
     """
-    def __init__(self, name: str, input_size: int, hidden_size: int, 
-                 return_type: str,
-                 bidirectional: bool = False, dropout: float = 0.0, 
-                 batch_first: bool = True, permute_dim: bool = False,
-                 actv_func: str = None, name_layer_input: str = None, 
-                 input_reused: bool = False):
-        super().__init__(name, input_size, hidden_size, return_type, 
+    def __init__(self, name: str, hidden_size: int, return_type: str, 
+                 input_size: int = None, bidirectional: bool = False, 
+                 dropout: float = 0.0, batch_first: bool = True, 
+                 permute_dim: bool = False, actv_func: str = None, 
+                 name_layer_input: str = None, input_reused: bool = False):
+        super().__init__(name, hidden_size, return_type, input_size, 
                          bidirectional, dropout, batch_first, permute_dim, 
                          actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
-            f'GRULayer({self.name}, {self.actv_func}, {self.input_size}, '
-            f'{self.hidden_size}, {self.return_type}, '
-            f'{self.bidirectional}, {self.dropout}, {self.batch_first}, '
-            f'{self.permute_dim}, {self.name_layer_input}, {self.input_reused})'
+            f'GRULayer({self.name}, {self.hidden_size}, {self.return_type}, '
+            f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
+            f'{self.batch_first}, {self.permute_dim}, {self.actv_func}, '
+            f'{self.name_layer_input}, {self.input_reused})'
         )
 
 class GeneralLayer(Layer):
@@ -1711,7 +1708,7 @@ class LinearLayer(GeneralLayer):
         input_reused (bool): Inherited from Layer. Whether the input to this 
             layer is reused as input to another layer.
     """
-    def __init__(self, name: str, in_features: int, out_features: int, 
+    def __init__(self, name: str, out_features: int, in_features: int = None, 
                  actv_func: str = None, name_layer_input: str = None, 
                  input_reused: bool = False):
         super().__init__(name, actv_func, name_layer_input, input_reused)
@@ -1740,8 +1737,8 @@ class LinearLayer(GeneralLayer):
 
     def __repr__(self):
         return (
-            f'LinearLayer({self.name}, {self.actv_func}, {self.in_features}, ' 
-            f'{self.out_features}, {self.name_layer_input}, '
+            f'LinearLayer({self.name}, {self.actv_func}, {self.out_features}, ' 
+            f'{self.in_features}, {self.name_layer_input}, '
             f'{self.input_reused})'
         )
 

@@ -302,14 +302,13 @@ def loss_with_weight_decay(base_loss_fn, weight_decay):
     return loss_fn
 
 
-def preprocess_image(image_path, target_size=None):
+def preprocess_image(image_path, target_size):
     image = Image.open(image_path)
-    if target_size:
-        image = image.resize(target_size)
+    image = image.resize(target_size)
     np_image = np.array(image.convert('RGB'), dtype=np.float32)
     return np_image
 
-def compute_mean_std(image_dir, num_samples=100, target_size=(256, 256), resize=False):
+def compute_mean_std(image_dir, num_samples=100, target_size=(256, 256)):
     image_files = [os.path.join(root, file)
                    for root, _, files in os.walk(image_dir)
                    for file in files]
@@ -317,7 +316,7 @@ def compute_mean_std(image_dir, num_samples=100, target_size=(256, 256), resize=
     
     all_pixels = []
     for file in sampled_files:
-        np_image = preprocess_image(file, target_size if resize else None)
+        np_image = preprocess_image(file, target_size)
         all_pixels.append(np_image.reshape(-1, 3))
     
     all_pixels = np.concatenate(all_pixels)

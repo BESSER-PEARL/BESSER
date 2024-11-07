@@ -56,17 +56,11 @@
 {%- macro prepare_data(train_data, test_data, configuration) -%}
     {%- if train_data.input_format == "images" -%}
 IMAGE_SIZE = ({{ train_data.image.shape[0] }}, {{ train_data.image.shape[1] }})
-        {%- set resize = namespace(flag=False) %}
-        {%- if train_data.image is not none -%}
-            {%- if train_data.image.resize is true -%}
-{% set resize = namespace(flag=True) %}
-            {%- endif -%}
-        {%- endif %}
 
 # Function to load and preprocess images
 {%- if train_data.image.normalize %}
 scale, mean, std = compute_mean_std(r"{{ train_data.path_data }}", num_samples=100,
-                                target_size=IMAGE_SIZE, resize={{ resize.flag }})
+                                target_size=IMAGE_SIZE)
 def preprocess_image(image, label, scale, mean, std):
     if scale:
         image = tf.cast(image, tf.float32) / 255.0
@@ -75,7 +69,7 @@ def preprocess_image(image, label, scale, mean, std):
 
 {%- else %}
 scale, _, _ = compute_mean_std(r"{{ train_data.path_data }}", num_samples=100,
-                                target_size=IMAGE_SIZE, resize={{ resize.flag }})
+                                target_size=IMAGE_SIZE)
 def preprocess_image(image, label, scale):
     if scale:
         image = tf.cast(image, tf.float32) / 255.0
@@ -108,7 +102,7 @@ train_loader = load_dataset(r"{{ train_data.path_data }}", "train")
 test_loader = load_dataset(r"{{ test_data.path_data }}", "test")
 
    {%- else -%}
-    def load_data(csv_file):
+    def load_dataset(csv_file):
     # Load data from CSV file
     data = pd.read_csv(csv_file)
     # Extract features and targets
@@ -122,8 +116,8 @@ test_loader = load_dataset(r"{{ test_data.path_data }}", "test")
     return dataset
 
 # Load training and test data
-train_dataset = load_data(r"{{ train_data.path_data }}")
-test_dataset = load_data(r"{{ test_data.path_data }}")
+train_dataset = load_dataset(r"{{ train_data.path_data }}")
+test_dataset = load_dataset(r"{{ test_data.path_data }}")
 
 # Create data loaders
 def create_data_loader(dataset, mode):

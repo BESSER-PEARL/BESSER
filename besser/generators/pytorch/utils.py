@@ -279,7 +279,11 @@ def get_tensorop_syntax(tensorOp, modules_details):
         tensors = ', '.join(tensors)
         ts_op_synt = f"torch.cat(({tensors}), dim={tensorOp.concatenate_dim})"
     elif tensorOp.type == "transpose":
-        transpose_dim = ", ".join([str(i) for i in tensorOp.transpose_dim])
+        if len(tensorOp.transpose_dim)>2:
+            tr_dim = [i for i in range(len(tensorOp.transpose_dim)) if i!=tensorOp.transpose_dim[i]]
+        else:
+            tr_dim = tensorOp.transpose_dim
+        transpose_dim = ", ".join([str(i) for i in tr_dim])
         ts_op_synt = f"{prev_out_variable}.transpose({transpose_dim})"
     elif tensorOp.type == "permute":
         permute_dim = ", ".join([str(i) for i in tensorOp.permute_dim])

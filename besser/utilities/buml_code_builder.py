@@ -38,9 +38,12 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         for enum in model.get_enumerations():
             f.write(f"{enum.name}: Enumeration = Enumeration(\n")
             f.write(f"    name=\"{enum.name}\",\n")
-            literals_str = ", ".join([f"EnumerationLiteral(name=\"{lit.name}\")" for lit in enum.literals])
-            f.write(f"    literals={{{literals_str}}}\n")
-            f.write(")\n\n")
+            literals_str = ",\n\t\t\t".join([f"EnumerationLiteral(name=\"{lit.name}\")" for lit in enum.literals])
+            f.write(
+                f"    literals={{\n"
+                f"            {literals_str}"
+                f"\n    }}")
+            f.write("\n)\n\n")
 
         # Write classes
         f.write("# Classes\n")
@@ -103,7 +106,6 @@ def domain_model_to_code(model: DomainModel, file_path: str):
                     f")\n"
                 )
             f.write("\n")
-        
 
         # Write generalizations
         if model.generalizations:

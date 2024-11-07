@@ -24,5 +24,5 @@ def plantuml_to_buml(plantUML_model_path:str, buml_file_path:str = None):
     walker.walk(listen, parse_tree)
     domain_model: DomainModel = listen.get_buml_model()
     if buml_file_path is not None:
-        domain_model_to_code(model=domain_model, file_name=buml_file_path)
+        domain_model_to_code(model=domain_model, file_path=buml_file_path)
     return domain_model

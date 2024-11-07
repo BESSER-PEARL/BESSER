@@ -1,3 +1,4 @@
+import warnings
 from besser.BUML.metamodel.structural import DomainModel, Class, Multiplicity, Property, \
     BinaryAssociation, Generalization, Enumeration, EnumerationLiteral, Method, Parameter
 from .PlantUMLParser import PlantUMLParser
@@ -170,8 +171,20 @@ class BUMLGenerationListener(PlantUMLListener):
 
         if ctx.ID(2) is None:
             assoc_name = cl_left.name + "_" + cl_right.name
+            warnings.warn(
+                f"No name was provided for the association between '{cl_left.name}' and "
+                f"'{cl_right.name}'. A default name '{assoc_name}' will be auto-assigned.", 
+                UserWarning
+            )
         else:
             assoc_name = ctx.ID(2).getText()
+            for type_ in self.__buml_model.types:
+                if type_.name.lower() == assoc_name.lower():
+                    warnings.warn(
+                        f"The association name '{assoc_name}' is identical or similar to "
+                        f"the class/enumeration/type '{type_.name}', which may cause issues "
+                        f"with some code generators.", UserWarning
+                    )
 
         if ctx.unidirectional():
             unidirectional_ctx = ctx.unidirectional()

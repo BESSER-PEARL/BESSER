@@ -144,66 +144,49 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
         }
 
         # Skip processing as class if it's an enumeration
-        if value and ("&lt;&lt;Enum&gt;&gt;" in value or "<<Enum>>" in value or "«Enum»" in value or 
-                     "&lt;&lt;Enumeration&gt;&gt;" in value or "<<Enumeration>>" in value or "«Enumeration»" in value or 
-                     "Enumeration" in value): # "&lt;&lt;Enum&gt;&gt;&#xa;asa
+        if value and is_enumeration(value):
+            print(f"Enum found: {value}")
             # Extract enum name and literals...
             enum_name = ""
-            #print(f"\nProcessing cell: {value}")
             if "<p" in value and "<b>" in value:
                 # Format: <p><b><<Enum>></b></p><p><b>EnumName</b></p>
                 b_tags = re.findall(r'<b>(.*?)</b>', value)
 
-                # Find the name by looking for a <b> tag that doesn't contain "Enum"
+                # Find the name by looking for a <b> tag that doesn't contain enum indicators
                 for tag in b_tags:
-                    if ("Enum" not in tag and "&lt;&lt;Enum&gt;&gt;" not in tag and 
-                        "<<Enum>>" not in tag and "«Enum»" not in tag and
-                        "Enumeration" not in tag and "&lt;&lt;Enumeration&gt;&gt;" not in tag and 
-                        "<<Enumeration>>" not in tag and "«Enumeration»" not in tag):
+                    if not is_enumeration(tag):
                         enum_name = tag
                         break
-                # Initialize the list for this enum
-                if enum_name:
-                    model_elements['enumerations'][enum_name] = []
-
-                    # Extract literals from the same value
-                    p_tags = re.findall(r'<p[^>]*>(.*?)</p>', value)
-                    for p_tag in p_tags:
-                        if "<b>" not in p_tag and p_tag.strip() and "<br>" not in p_tag and "<hr" not in p_tag:
-                            clean_literal = clean_html_tags(p_tag.lstrip("+-")).strip()
-                            if clean_literal:
-                                model_elements['enumerations'][enum_name].append(clean_literal)
-                else:
-                    print(f"Enum found without a name in value: {value}")
-
+                        
+                # Extract literals from the HTML content if they exist
+                literals = re.findall(r'<hr[^>]*>.*?<p[^>]*>(.*?)</p>', value)
+                model_elements['enumerations'][enum_name] = []
+                for literal in literals:
+                    clean_literal = clean_html_tags(literal)
+                    if clean_literal and not is_enumeration(clean_literal) and clean_literal != '<br>':
+                        model_elements['enumerations'][enum_name].append(clean_literal)
+                        
             elif "<br>" in value:
                 # Format: <<Enum>><br>EnumName
                 parts = value.split("<br>")
-                enum_name = parts[-1]
-
-                # Clean the enum name
-                enum_name = clean_html_tags(enum_name.replace("&lt;&lt;Enum&gt;&gt;", "")
-                                             .replace("<<Enum>>", "")
-                                             .replace("«Enum»", "")).strip()
-
-                if enum_name:
-                    model_elements['enumerations'][enum_name] = []
-                    # Find literals in child cells
-                    for literal_cell in root.findall(f".//mxCell[@parent='{cell_id}']"):
-                        literal_value = literal_cell.get('value', '')
-                        if literal_value:
-                            clean_literal = clean_html_tags(literal_value.lstrip("+-")).strip()
-                            if clean_literal:
-                                model_elements['enumerations'][enum_name].append(clean_literal)
-                else:
-                    print(f"Enum found without a name in value: {value}")
+                enum_name = clean_enumeration_name(parts[-1])
+                model_elements['enumerations'][enum_name] = []
             else:
-        # Format: <<Enum>>EnumName
-                enum_name = value.replace("&lt;&lt;Enum&gt;&gt;", "").replace("<<Enum>>", "").replace("«Enum»", "").strip()
-                if enum_name:
-                    model_elements['enumerations'][enum_name] = []
-                else:
-                    print(f"Enum found without a name in value: {value}")
+                # Format: <<Enum>>EnumName
+                enum_name = clean_enumeration_name(value)
+                model_elements['enumerations'][enum_name] = []
+
+            if enum_name:
+                # Process additional literals from child cells (for both formats)
+                cell_id = cell.get('id')
+                for literal_cell in root.findall(f".//mxCell[@parent='{cell_id}']"):
+                    literal_value = literal_cell.get('value', '')
+                    if literal_value and not is_enumeration(literal_value):
+                        clean_literal = clean_html_tags(literal_value)
+                        if clean_literal:
+                            model_elements['enumerations'][enum_name].append(clean_literal)
+            else:
+                print(f"Enum found without a name in value: {value}")
             continue  # Skip processing this cell as a class
 
         # Process classes (only if not an enumeration)
@@ -940,3 +923,32 @@ def extract_class_name(cell_value: str) -> str:
         if class_match:
             return clean_html_tags(class_match.group(1))
     return clean_html_tags(cell_value)
+
+def is_enumeration(value: str) -> bool:
+    """Check if a value represents an enumeration using various notations."""
+    enum_patterns = [
+        "&lt;&lt;Enum&gt;&gt;", "<<Enum>>", "«Enum»",
+        "&lt;&lt;enum&gt;&gt;", "<<enum>>", "«enum»",
+        "&lt;&lt;Enumeration&gt;&gt;", "<<Enumeration>>", "«Enumeration»",
+        "&lt;&lt;enumeration&gt;&gt;", "<<enumeration>>", "«enumeration»",
+        "Enumeration", "enumeration"
+    ]
+    return any(pattern in value for pattern in enum_patterns)
+
+def clean_enumeration_name(value: str) -> str:
+    """Remove enumeration stereotypes and clean the name."""
+    replacements = [
+        ("&lt;&lt;Enum&gt;&gt;", ""), ("<<Enum>>", ""), ("«Enum»", ""),
+        ("&lt;&lt;enum&gt;&gt;", ""), ("<<enum>>", ""), ("«enum»", ""),
+        ("&lt;&lt;Enumeration&gt;&gt;", ""), ("<<Enumeration>>", ""), ("«Enumeration»", ""),
+        ("&lt;&lt;enumeration&gt;&gt;", ""), ("<<enumeration>>", ""), ("«enumeration»", ""),
+        ("&amp;lt;&amp;lt;Enum&amp;gt;&amp;gt;", ""),
+        ("&amp;lt;&amp;lt;enum&amp;gt;&amp;gt;", ""),
+        ("&amp;lt;&amp;lt;Enumeration&amp;gt;&amp;gt;", ""),
+        ("&amp;lt;&amp;lt;enumeration&amp;gt;&amp;gt;", ""),
+        ("Enumeration", ""), ("enumeration", "")
+    ]
+    result = value
+    for old, new in replacements:
+        result = result.replace(old, new)
+    return result.strip()

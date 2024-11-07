@@ -16,6 +16,7 @@ class BUMLGenerationListener(PlantUMLListener):
         self.__buml_model = None
 
     def get_buml_model(self):
+        """DomainModel: Retrieves the B-UML model instance."""
         return self.__buml_model
 
     def enterDomainModel(self, ctx: PlantUMLParser.DomainModelContext):
@@ -173,7 +174,7 @@ class BUMLGenerationListener(PlantUMLListener):
             assoc_name = cl_left.name + "_" + cl_right.name
             warnings.warn(
                 f"No name was provided for the association between '{cl_left.name}' and "
-                f"'{cl_right.name}'. A default name '{assoc_name}' will be auto-assigned.", 
+                f"'{cl_right.name}'. A default name '{assoc_name}' will be auto-assigned.",
                 UserWarning
             )
         else:

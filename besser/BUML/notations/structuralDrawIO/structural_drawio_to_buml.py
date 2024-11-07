@@ -936,7 +936,7 @@ def extract_literals_from_html(value: str) -> list:
     literals = []
     matches = re.findall(r'<hr[^>]*>.*?<p[^>]*>(.*?)</p>', value)
     for literal in matches:
-        clean_literal = clean_html_tags(literal)
+        clean_literal = clean_html_tags(literal).lstrip('-').strip()
         if clean_literal and not is_enumeration(clean_literal) and clean_literal != '<br>':
             literals.append(clean_literal)
     return literals
@@ -947,7 +947,7 @@ def extract_literals_from_cells(root: ET.Element, cell_id: str) -> list:
     for literal_cell in root.findall(f".//mxCell[@parent='{cell_id}']"):
         literal_value = literal_cell.get('value', '')
         if literal_value and not is_enumeration(literal_value):
-            clean_literal = clean_html_tags(literal_value)
+            clean_literal = clean_html_tags(literal_value).lstrip('-').strip()
             if clean_literal:
                 literals.append(clean_literal)
     return literals

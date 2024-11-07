@@ -145,49 +145,25 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
 
         # Skip processing as class if it's an enumeration
         if value and is_enumeration(value):
-            print(f"Enum found: {value}")
-            # Extract enum name and literals...
             enum_name = ""
+            literals = []
+            
             if "<p" in value and "<b>" in value:
-                # Format: <p><b><<Enum>></b></p><p><b>EnumName</b></p>
-                b_tags = re.findall(r'<b>(.*?)</b>', value)
-
-                # Find the name by looking for a <b> tag that doesn't contain enum indicators
-                for tag in b_tags:
-                    if not is_enumeration(tag):
-                        enum_name = tag
-                        break
-                        
-                # Extract literals from the HTML content if they exist
-                literals = re.findall(r'<hr[^>]*>.*?<p[^>]*>(.*?)</p>', value)
-                model_elements['enumerations'][enum_name] = []
-                for literal in literals:
-                    clean_literal = clean_html_tags(literal)
-                    if clean_literal and not is_enumeration(clean_literal) and clean_literal != '<br>':
-                        model_elements['enumerations'][enum_name].append(clean_literal)
-                        
+                enum_name = extract_enum_name_from_html(value)
+                literals.extend(extract_literals_from_html(value))
             elif "<br>" in value:
-                # Format: <<Enum>><br>EnumName
                 parts = value.split("<br>")
                 enum_name = clean_enumeration_name(parts[-1])
-                model_elements['enumerations'][enum_name] = []
             else:
-                # Format: <<Enum>>EnumName
                 enum_name = clean_enumeration_name(value)
-                model_elements['enumerations'][enum_name] = []
 
             if enum_name:
-                # Process additional literals from child cells (for both formats)
-                cell_id = cell.get('id')
-                for literal_cell in root.findall(f".//mxCell[@parent='{cell_id}']"):
-                    literal_value = literal_cell.get('value', '')
-                    if literal_value and not is_enumeration(literal_value):
-                        clean_literal = clean_html_tags(literal_value)
-                        if clean_literal:
-                            model_elements['enumerations'][enum_name].append(clean_literal)
+                model_elements['enumerations'][enum_name] = literals
+                # Add any additional literals from child cells
+                literals.extend(extract_literals_from_cells(root, cell.get('id')))
             else:
                 print(f"Enum found without a name in value: {value}")
-            continue  # Skip processing this cell as a class
+            continue
 
         # Process classes (only if not an enumeration)
         if value:
@@ -214,15 +190,11 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                 visibility = "+" if field.startswith("+ ") else "-" \
                                     if field.startswith("- ") else "+"
                                 method_str = field.lstrip("+ -")
-                                method_match = re.match(r"(.*?)\((.*?)\)(?:\s*:\s*(.*))?",\
-                                                         method_str)
-                                if method_match:
-                                    method_name = method_match.group(1).strip()
-                                    params_str = method_match.group(2).strip()
-                                    return_type = method_match.group(3).strip() \
-                                    if method_match.group(3) else None
+                                method_name, params_str, return_type = process_method_string(method_str)
+                                if method_name:
+                                    parameters = parse_parameters(params_str)
                                     model_elements['classes'][class_name]['methods'].append(
-                                        (visibility, method_name, params_str, return_type)
+                                        (visibility, method_name, parameters, return_type)
                                     )
 
                             else:  # Attribute
@@ -952,3 +924,62 @@ def clean_enumeration_name(value: str) -> str:
     for old, new in replacements:
         result = result.replace(old, new)
     return result.strip()
+
+def extract_enum_name_from_html(value: str) -> str:
+    """Extract enumeration name from HTML formatted value."""
+    b_tags = re.findall(r'<b>(.*?)</b>', value)
+    for tag in b_tags:
+        if not is_enumeration(tag):
+            return tag
+    return ""
+
+def extract_literals_from_html(value: str) -> list:
+    """Extract enumeration literals from HTML content."""
+    literals = []
+    matches = re.findall(r'<hr[^>]*>.*?<p[^>]*>(.*?)</p>', value)
+    for literal in matches:
+        clean_literal = clean_html_tags(literal)
+        if clean_literal and not is_enumeration(clean_literal) and clean_literal != '<br>':
+            literals.append(clean_literal)
+    return literals
+
+def extract_literals_from_cells(root: ET.Element, cell_id: str) -> list:
+    """Extract enumeration literals from child cells."""
+    literals = []
+    for literal_cell in root.findall(f".//mxCell[@parent='{cell_id}']"):
+        literal_value = literal_cell.get('value', '')
+        if literal_value and not is_enumeration(literal_value):
+            clean_literal = clean_html_tags(literal_value)
+            if clean_literal:
+                literals.append(clean_literal)
+    return literals
+
+def process_method_string(method_str: str) -> tuple:
+    """Process method string to extract name, parameters, and return type."""
+    method_match = re.match(r"(.*?)\((.*?)\)(?:\s*:\s*(.*))?", method_str.strip())
+    if method_match:
+        method_name = method_match.group(1).strip()
+        params_str = method_match.group(2).strip()
+        return_type = method_match.group(3).strip() if method_match.group(3) else None
+        return method_name, params_str, return_type
+    return None, None, None
+
+def parse_parameters(params_str: str) -> list:
+    """Parse parameter string into list of parameter dictionaries."""
+    parameters = []
+    if params_str:
+        param_list = params_str.split(',')
+        for param in param_list:
+            param = param.strip()
+            if ':' in param:
+                param_name, param_type = param.split(':')
+                parameters.append({
+                    'name': param_name.strip(),
+                    'type': param_type.strip()
+                })
+            else:
+                parameters.append({
+                    'name': param.strip(),
+                    'type': StringType
+                })
+    return parameters

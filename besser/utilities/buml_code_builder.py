@@ -119,7 +119,8 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         f.write("    name=\"Generated Model\",\n")
         class_names = ', '.join(cls.name for cls in model.get_classes())
         enum_names = ', '.join(enum.name for enum in model.get_enumerations())
-        types_str = f"{class_names}{', ' + enum_names if enum_names else ''}"
+        types_str = (f"{class_names}, {enum_names}" if class_names and enum_names else 
+                    class_names or enum_names)
         f.write(f"    types={{{types_str}}},\n")
         if model.associations:
             f.write(f"    associations={{{', '.join(assoc.name for assoc in model.associations)}}},\n")

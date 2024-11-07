@@ -12,7 +12,7 @@ nn_model.add_layer(DropoutLayer(name="l3", rate=0.2))
 nn_model.add_layer(LinearLayer(name="l4", in_features=128, out_features=1))
 
 parameters: Configuration = Configuration(batch_size=6, epochs=40, 
-                                    learning_rate=0.001, optimiser="adam", 
+                                    learning_rate=0.001, optimizer="adam", 
                                     loss_function="mse", metrics=["mae"])
 
 nn_model.add_configuration(parameters)

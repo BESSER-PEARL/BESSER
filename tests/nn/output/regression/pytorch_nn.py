@@ -46,10 +46,10 @@ test_dataset = load_data(r"dataset\BostonHousingTest.csv")
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=6, shuffle=True)
 test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=6, shuffle=False)
 
-# Define the network, loss function, and optimiser
+# Define the network, loss function, and optimizer
 my_model = NeuralNetwork()
 criterion = nn.MSELoss()
-optimiser = torch.optim.Adam(my_model.parameters(), lr=0.001)
+optimizer = torch.optim.Adam(my_model.parameters(), lr=0.001)
 
 # Train the neural network
 print('##### Training the model')
@@ -61,7 +61,7 @@ for epoch in range(40):
     for i, data in enumerate(train_loader, 0):
         inputs, labels = data
         # Zero the gradients to prepare for backward pass
-        optimiser.zero_grad()
+        optimizer.zero_grad()
         outputs = my_model(inputs)
         # Compute the loss
         labels = labels.unsqueeze(1)
@@ -69,7 +69,7 @@ for epoch in range(40):
         loss = criterion(outputs, labels)
         loss.backward()
         # Update model parameters based on computed gradients
-        optimiser.step()
+        optimizer.step()
         running_loss += loss.item()
         total_loss += loss.item()
         if i % 200 == 199:    # Print every 200 mini-batches
@@ -105,4 +105,4 @@ print(f"Test Loss: {average_loss:.3f}")
 # Calculate the metrics
 metrics = ['mae']
 mae = mean_absolute_error(true_labels, predicted_labels)
-print("Mean Absolute Error (MAE):", mae)
+print(f"Mean Absolute Error (MAE): {mae}")

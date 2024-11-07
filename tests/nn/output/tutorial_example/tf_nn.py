@@ -36,7 +36,7 @@ IMAGE_SIZE = (32, 32)
 
 # Function to load and preprocess images
 scale, _, _ = compute_mean_std(r"dataset\cifar10\train", num_samples=100,
-                                target_size=IMAGE_SIZE, resize=False)
+                                target_size=IMAGE_SIZE)
 def preprocess_image(image, label, scale):
     if scale:
         image = tf.cast(image, tf.float32) / 255.0
@@ -64,7 +64,7 @@ train_loader = load_dataset(r"dataset\cifar10\train", "train")
 test_loader = load_dataset(r"dataset\cifar10\test", "test")
 
 
-# Define the network, loss function, and optimiser
+# Define the network, loss function, and optimizer
 my_model = NeuralNetwork()
 criterion = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
 

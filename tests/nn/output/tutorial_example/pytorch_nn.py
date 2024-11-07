@@ -54,10 +54,10 @@ test_dataset = datasets.ImageFolder(root=r"dataset\cifar10\test", transform=tran
 train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=32, shuffle=True)
 test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=32, shuffle=False)
 
-# Define the network, loss function, and optimiser
+# Define the network, loss function, and optimizer
 my_model = NeuralNetwork()
 criterion = nn.CrossEntropyLoss()
-optimiser = torch.optim.Adam(my_model.parameters(), lr=0.001)
+optimizer = torch.optim.Adam(my_model.parameters(), lr=0.001)
 
 # Train the neural network
 print('##### Training the model')
@@ -69,13 +69,13 @@ for epoch in range(10):
     for i, data in enumerate(train_loader, 0):
         inputs, labels = data
         # Zero the gradients to prepare for backward pass
-        optimiser.zero_grad()
+        optimizer.zero_grad()
         outputs = my_model(inputs)
         # Compute the loss
         loss = criterion(outputs, labels)
         loss.backward()
         # Update model parameters based on computed gradients
-        optimiser.step()
+        optimizer.step()
         running_loss += loss.item()
         total_loss += loss.item()
         if i % 200 == 199:    # Print every 200 mini-batches

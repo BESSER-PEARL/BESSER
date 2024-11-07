@@ -24,7 +24,7 @@ class NeuralNetwork(tf.keras.Model):
 
 
 # Dataset preparation
-def load_data(csv_file):
+def load_dataset(csv_file):
     # Load data from CSV file
     data = pd.read_csv(csv_file)
     # Extract features and targets
@@ -38,8 +38,8 @@ def load_data(csv_file):
     return dataset
 
 # Load training and test data
-train_dataset = load_data(r"dataset\BostonHousingTrain.csv")
-test_dataset = load_data(r"dataset\BostonHousingTest.csv")
+train_dataset = load_dataset(r"dataset\BostonHousingTrain.csv")
+test_dataset = load_dataset(r"dataset\BostonHousingTest.csv")
 
 # Create data loaders
 def create_data_loader(dataset, mode):
@@ -54,7 +54,7 @@ train_loader = create_data_loader(train_dataset, "train")
 test_loader = create_data_loader(test_dataset, "test")
 
 
-# Define the network, loss function, and optimiser
+# Define the network, loss function, and optimizer
 my_model = NeuralNetwork()
 criterion = tf.keras.losses.MeanSquaredError()
 

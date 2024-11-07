@@ -1,5 +1,5 @@
 from besser.BUML.metamodel.nn import NN, Conv2D, PoolingLayer, \
-    FlattenLayer, LinearLayer, Configuration, Label, Image, Dataset
+    FlattenLayer, LinearLayer, Configuration, Image, Dataset
 from besser.generators.pytorch.pytorch_code_generator import PytorchGenerator
 from besser.generators.tf.tf_code_generator import TFGenerator
 
@@ -24,7 +24,7 @@ nn_model.add_layer(LinearLayer(name="l8", in_features=64,
                                out_features=10))
 
 configuration: Configuration = Configuration(batch_size=32, epochs=10, 
-                                    learning_rate=0.001, optimiser="adam", 
+                                    learning_rate=0.001, optimizer="adam", 
                                     metrics=["f1-score"], 
                                     loss_function="crossentropy")
 

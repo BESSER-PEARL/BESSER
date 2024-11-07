@@ -1,0 +1,23 @@
+{# Template for class parameters #}
+{%- macro init_parameters(class) %}self
+    {%- for attribute in class.all_attributes() %}, {{ attribute.name }}: {{ attribute.type.name }}{% endfor %}
+    {%- for end in class.association_ends() if end.is_navigable == True %}, {{ end.name }}: {% if end.multiplicity.max > 1 %}set["{{ end.type.name }}"]
+    {%- else %}"{{ end.type.name }}"{%- endif %}{%- endfor %}
+    {%- for parent in class.all_parents() %}
+    {%- for end in parent.association_ends() if end.is_navigable == True %}, {{ end.name }}: {% if end.multiplicity.max > 1 %}set["{{ end.type.name }}"]
+    {%- else %}"{{ end.type.name }}"{%- endif %}{%- endfor %}
+    {%- endfor %}
+{%- endmacro %}
+{%- macro init_parameters_definition(class)%}
+        {%- if class.inherited_attributes() %}super().__init__(
+            {%- for attr in class.inherited_attributes() %}{{attr.name}}{{ ", " if not loop.last else "" }}
+            {%- endfor %}
+            {%- for parent in class.all_parents() %}
+            {%- for end in parent.association_ends() if end.is_navigable == True %}, {{ end.name }}{% endfor %}
+            {%- endfor %})
+        {% endif %}
+        {%- for attribute in class.attributes %}self.{{ attribute.name }} = {{ attribute.name }}
+        {% endfor -%}
+        {% for end in class.association_ends() %}{% if end.is_navigable == True %}self.{{ end.name }} = {{ end.name }} 
+        {% endif %}{% endfor -%}
+{% endmacro -%}

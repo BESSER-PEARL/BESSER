@@ -1,0 +1,29 @@
+{% import "class_parameters.py.j2" as class_parameters %}
+from datetime import datetime, date, time
+import pytest
+{% set ns = namespace(abstract_found=false) -%}
+{% for class in classes -%}
+    {% if class.is_abstract -%}
+        {% set ns.abstract_found = true -%}
+    {% endif -%}
+{% endfor -%}
+{% if ns.abstract_found -%}
+from abc import ABC, abstractmethod
+{% endif -%}
+{# Two newlines are added here unconditionally #}
+{% for class in classes %}
+
+    {%- for attribute in class.attributes %}
+def test_{{ attribute.name }}_{{class.name}}():
+    from classes import {{class.name}}
+    assert hasattr({{class.name}},'{{ attribute.name }}')
+    {% endfor -%}
+{% for end in class.association_ends() %}{% if end.is_navigable == True %}
+def test_{{end.name}}_{{class.name}}():
+    from classes import {{class.name}}
+    assert hasattr({{class.name}},'{{ end.name }}')
+{% endif -%}{% endfor -%}
+
+
+
+{% endfor %}

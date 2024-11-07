@@ -144,7 +144,9 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
         }
 
         # Skip processing as class if it's an enumeration
-        if value and ("&lt;&lt;Enum&gt;&gt;" in value or "<<Enum>>" in value or "«Enum»" in value): # "&lt;&lt;Enum&gt;&gt;&#xa;asa
+        if value and ("&lt;&lt;Enum&gt;&gt;" in value or "<<Enum>>" in value or "«Enum»" in value or 
+                     "&lt;&lt;Enumeration&gt;&gt;" in value or "<<Enumeration>>" in value or "«Enumeration»" in value or 
+                     "Enumeration" in value): # "&lt;&lt;Enum&gt;&gt;&#xa;asa
             # Extract enum name and literals...
             enum_name = ""
             #print(f"\nProcessing cell: {value}")
@@ -154,7 +156,10 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
 
                 # Find the name by looking for a <b> tag that doesn't contain "Enum"
                 for tag in b_tags:
-                    if "Enum" not in tag and "&lt;&lt;Enum&gt;&gt;" not in tag:
+                    if ("Enum" not in tag and "&lt;&lt;Enum&gt;&gt;" not in tag and 
+                        "<<Enum>>" not in tag and "«Enum»" not in tag and
+                        "Enumeration" not in tag and "&lt;&lt;Enumeration&gt;&gt;" not in tag and 
+                        "<<Enumeration>>" not in tag and "«Enumeration»" not in tag):
                         enum_name = tag
                         break
                 # Initialize the list for this enum
@@ -206,8 +211,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             # HTML format class
             if value.startswith("<p") and "<b>" in value:
                 class_match = re.search(r'<b>(.*?)</b>', value)
-                if class_match:
-                    class_name = clean_html_tags(class_match.group(1))
+                class_name = clean_html_tags(class_match.group(1)) if class_match else None
                 if not class_name:
                     raise ValueError(f"Invalid class name: '{class_name}'. Class name cannot be empty. Skipping class")
                 elif class_name.lower() == "class":
@@ -354,11 +358,23 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             else:
                 start = False
 
+            # Get source and target cells
             source_cell = graph_data['cells'].get(source, {})
             target_cell = graph_data['cells'].get(target, {})
 
+            # Extract class names, checking parent if not a class
             source_class = extract_class_name(source_cell.get('value', ''))
+            if not ('swimlane' in source_cell.get('style', '') or '<b>' in source_cell.get('value', '')):
+                source_parent = graph_data['cells'].get(source_cell.get('parent', ''), {})
+                if 'swimlane' in source_parent.get('style', ''):
+                    source_class = extract_class_name(source_parent.get('value', ''))
+
             target_class = extract_class_name(target_cell.get('value', ''))
+            if not ('swimlane' in target_cell.get('style', '') or '<b>' in target_cell.get('value', '')):
+                target_parent = graph_data['cells'].get(target_cell.get('parent', ''), {})
+                if 'swimlane' in target_parent.get('style', ''):
+                    target_class = extract_class_name(target_parent.get('value', ''))
+
             # Get role labels
             source_label = f"{source_class}_end"
             target_label = f"{target_class}_end"
@@ -416,7 +432,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                         multiplicity = Multiplicity(int(mult_str), int(mult_str))
                                     clean_value = clean_value.split('[')[0].strip()
                                 else:
-                                    multiplicity = Multiplicity(1, '*')  # Default multiplicity
+                                    multiplicity = Multiplicity(1, 1)  # Default multiplicity
 
                                 if x < 0:
                                     source_label = clean_value + "_non_navigable" if start else clean_value
@@ -461,13 +477,23 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             else:
                 start = False
 
-            # Get source and target classes
+            # Get source and target cells
             source_cell = graph_data['cells'].get(source, {})
             target_cell = graph_data['cells'].get(target, {})
 
+            # Extract class names, checking parent if not a class
             source_class = extract_class_name(source_cell.get('value', ''))
-            target_class = extract_class_name(target_cell.get('value', ''))
+            if not ('swimlane' in source_cell.get('style', '') or '<b>' in source_cell.get('value', '')):
+                source_parent = graph_data['cells'].get(source_cell.get('parent', ''), {})
+                if 'swimlane' in source_parent.get('style', ''):
+                    source_class = extract_class_name(source_parent.get('value', ''))
 
+            target_class = extract_class_name(target_cell.get('value', ''))
+            if not ('swimlane' in target_cell.get('style', '') or '<b>' in target_cell.get('value', '')):
+                target_parent = graph_data['cells'].get(target_cell.get('parent', ''), {})
+                if 'swimlane' in target_parent.get('style', ''):
+                    target_class = extract_class_name(target_parent.get('value', ''))
+            
             # Get role labels
             source_label = f"{source_class}_end"
             target_label = f"{target_class}_end"
@@ -524,7 +550,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                         multiplicity = Multiplicity(int(mult_str), int(mult_str))
                                     clean_value = clean_value.split('[')[0].strip()
                                 else:
-                                    multiplicity = Multiplicity(1, '*')  # Default multiplicity
+                                    multiplicity = Multiplicity(1, 1)  # Default multiplicity
 
                                 if x < 0:
                                     source_label = clean_value + "_composite" if start else clean_value
@@ -564,7 +590,16 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             target_cell = root.find(f".//mxCell[@id='{target}']")
 
             source_class = extract_class_name(source_cell.get('value', ''))
+            if not ('swimlane' in source_cell.get('style', '') or '<b>' in source_cell.get('value', '')):
+                source_parent = root.find(f".//mxCell[@id='{source_cell.get('parent')}']")
+                if source_parent is not None and 'swimlane' in source_parent.get('style', ''):
+                    source_class = extract_class_name(source_parent.get('value', ''))
+
             target_class = extract_class_name(target_cell.get('value', ''))
+            if not ('swimlane' in target_cell.get('style', '') or '<b>' in target_cell.get('value', '')):
+                target_parent = root.find(f".//mxCell[@id='{target_cell.get('parent')}']")
+                if target_parent is not None and 'swimlane' in target_parent.get('style', ''):
+                    target_class = extract_class_name(target_parent.get('value', ''))
 
             # Get role labels
             source_label = f"{source_class}_end"
@@ -623,7 +658,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                         multiplicity = Multiplicity(int(mult_str), int(mult_str))
                                     clean_value = clean_value.split('[')[0].strip()
                                 else:
-                                    multiplicity = Multiplicity(1, '*')  # Default multiplicity
+                                    multiplicity = Multiplicity(1, 1)  # Default multiplicity
 
                                 if x < 0:
                                     source_label = clean_value

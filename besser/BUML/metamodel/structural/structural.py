@@ -1,4 +1,4 @@
-from abc import ABC 
+from abc import ABC
 from typing import Any, Union
 
 # constant
@@ -79,12 +79,9 @@ class DataType(Type):
         name (str): Inherited from NamedElement, represents the name of the data type.
     """
 
-    def __init__(self, name: str):
-        super().__init__(name)
-
     def __repr__(self):
         return f"DataType({self.name})"
-    
+
 class PrimitiveDataType(DataType):
     """Class representing a primitive data type.
 
@@ -98,9 +95,6 @@ class PrimitiveDataType(DataType):
         name (str): Inherited from NamedElement, represents the name of the primitive data type.
     """
 
-    def __init__(self, name: str):
-        super().__init__(name)
-
     @NamedElement.name.setter
     def name(self, name: str):
         """
@@ -108,15 +102,16 @@ class PrimitiveDataType(DataType):
         
         Raises:
             ValueError: If an invalid primitive data type is provided.
-                        Allowed values are int, float, str, bool, time, date, datetime, and timedelta.
+                        Allowed values are int, float, str, bool, time, date, 
+                        datetime, and timedelta.
         """
         if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
             raise ValueError("Invalid primitive data type")
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
-    
+
     def __repr__(self):
         return f"PrimitiveDataType({self.name})"
-    
+
 # Define instances of PrimitiveDataType
 StringType = PrimitiveDataType("str")
 IntegerType = PrimitiveDataType("int")
@@ -260,10 +255,12 @@ class TypedElement(NamedElement):
 
     @property
     def type(self) -> Type:
+        """Type: Get the type of the typed element."""
         return self.__type
 
     @type.setter
     def type(self, type: Type):
+        """Type: Set the type of the typed element."""
         self.__type = type
 
 class Multiplicity:
@@ -901,8 +898,6 @@ class BinaryAssociation(Association):
         ends (set[Property]): Inherited from NamedElement, represents the set of ends related to the binary association.
     """
 
-    def __init__(self, name: str, ends: set[Property]):
-        super().__init__(name, ends)
 
     @Association.ends.setter
     def ends(self, ends: set[Property]):

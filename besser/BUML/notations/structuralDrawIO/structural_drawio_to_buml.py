@@ -7,9 +7,8 @@ associations, generalizations, attributes, methods and their relationships.
 """
 
 import os
-import xml.etree.ElementTree as ET
 import re
-import warnings
+import xml.etree.ElementTree as ET
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Multiplicity, BinaryAssociation,
     Enumeration, EnumerationLiteral, Generalization, Method, Parameter, StringType, IntegerType, FloatType, BooleanType, TimeType, DateType, DateTimeType, TimeDeltaType
@@ -145,7 +144,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
         if value and is_enumeration(value):
             enum_name = ""
             literals = []
-            
+
             if "<p" in value and "<b>" in value:
                 enum_name = extract_enum_name_from_html(value)
                 literals.extend(extract_literals_from_html(value))
@@ -304,7 +303,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                 forced_source_multiplicity = Multiplicity(1, 1)
             elif "endArrow=diamondThin" in style:
                 forced_target_multiplicity = Multiplicity(1, 1)
-                
+
 
             if "endArrow=block" in style or "endArrow=open" in style or "startArrow=diamondThin" in style:
                 start = True
@@ -318,14 +317,14 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             # Extract class names, checking parent if not a class
             source_class = extract_class_name(source_cell.get('value', ''))
             if not ('swimlane' in source_cell.get('style', '') or '<b>' in source_cell.get('value', '')):
-                source_parent = graph_data['cells'].get(source_cell.get('parent', ''), {})
-                if 'swimlane' in source_parent.get('style', ''):
+                source_parent = graph_data['cells'].get(source_cell.get('parent', ''))
+                if source_parent and 'swimlane' in source_parent.get('style', ''):
                     source_class = extract_class_name(source_parent.get('value', ''))
 
             target_class = extract_class_name(target_cell.get('value', ''))
             if not ('swimlane' in target_cell.get('style', '') or '<b>' in target_cell.get('value', '')):
-                target_parent = graph_data['cells'].get(target_cell.get('parent', ''), {})
-                if 'swimlane' in target_parent.get('style', ''):
+                target_parent = graph_data['cells'].get(target_cell.get('parent', ''))
+                if target_parent and 'swimlane' in target_parent.get('style', ''):
                     target_class = extract_class_name(target_parent.get('value', ''))
 
             # Get role labels
@@ -446,7 +445,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                 target_parent = graph_data['cells'].get(target_cell.get('parent', ''), {})
                 if 'swimlane' in target_parent.get('style', ''):
                     target_class = extract_class_name(target_parent.get('value', ''))
-            
+
             # Get role labels
             source_label = f"{source_class}_end"
             target_label = f"{target_class}_end"
@@ -634,8 +633,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                     'multiplicity': target_multiplicity,
                     'visibility': 'public'
                 })
-             
-            
+
 
     return (model_elements['classes'], model_elements['enumerations'],
             model_elements['associations'], model_elements['generalizations'],
@@ -673,7 +671,7 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
         buml_enumerations[enum_name] = buml_enum
 
     # First create all empty classes
-    for class_name in classes.keys():
+    for class_name in classes:
         buml_classes[class_name] = Class(name=class_name)
 
     # Then populate classes with attributes and methods
@@ -694,10 +692,9 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     # First check if it's an enumeration or class
                     if attr_type in buml_enumerations:
                         type_obj = buml_enumerations[attr_type]
-                    elif attr_type in classes.keys():  # Check if class exists in original classes dict
+                    elif attr_type in classes:  # Check if class exists in original classes dict
                         type_obj = buml_classes[attr_type]
                     else:
-                        # Convert primitive type string to actual type class
                         type_obj = PRIMITIVE_TYPE_MAPPING.get(attr_type.lower(), StringType)
 
                     buml_attribute = Property(
@@ -751,7 +748,7 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                         param_type = param['type']
                         if param_type in buml_enumerations:
                             type_obj = buml_enumerations[param_type]
-                        elif param_type in classes.keys():
+                        elif param_type in classes:
                             type_obj = buml_classes[param_type]
                         else:
                             type_obj = PRIMITIVE_TYPE_MAPPING.get(param_type.lower(), StringType)
@@ -768,12 +765,12 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     if return_type:
                         if return_type in buml_enumerations:
                             return_type_obj = buml_enumerations[return_type]
-                        elif return_type in classes.keys():
+                        elif return_type in classes:
                             return_type_obj = buml_classes[return_type]
                         else:
                             return_type_obj = PRIMITIVE_TYPE_MAPPING.get(return_type.lower())
-                        if return_type_obj is None:
-                            raise ValueError(f"Unknown return type '{return_type}'. It must be an enumeration, class, or primitive type.")
+                            if return_type_obj is None:
+                                raise ValueError(f"Unknown return type '{return_type}'. It must be an enumeration, class, or primitive type.")
                     else:
                         return_type_obj = None
 
@@ -814,7 +811,7 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     multiplicity=assoc1['multiplicity'] or Multiplicity(1, "*"),
                     visibility=assoc1['visibility'],
                     is_composite=assoc1.get('composite', False),
-                    is_navigable=assoc1.get('navigable', True) 
+                    is_navigable=assoc1.get('navigable', True)
                 )
                 assoc_property_2 = Property(
                     name=assoc2['name'].split('[')[0].strip(),
@@ -887,7 +884,7 @@ def extract_class_name(cell_value: str) -> str:
     """
     if not cell_value:
         return None
-        
+
     if '<b>' in cell_value:
         class_match = re.search(r'<b>(.*?)</b>', cell_value)
         if class_match:

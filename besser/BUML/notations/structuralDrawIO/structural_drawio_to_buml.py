@@ -304,6 +304,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             elif "endArrow=diamondThin" in style:
                 forced_target_multiplicity = Multiplicity(1, 1)
 
+            association_name_source = None
+            association_name_target = None
 
             if "endArrow=block" in style or "endArrow=open" in style or "startArrow=diamondThin" in style:
                 start = True
@@ -387,10 +389,20 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(1, 1)  # Default multiplicity
 
                                 if x < 0:
-                                    source_label = clean_value + "_non_navigable" if start else clean_value
+                                    # If it starts with capital, it's an association name
+                                    if clean_value and clean_value[0].isupper():
+                                        association_name_source = clean_value
+                                        source_label = f"{source_class}_end"
+                                    else:
+                                        source_label = clean_value + "_non_navigable" if start else clean_value
                                     source_multiplicity = multiplicity if not forced_source_multiplicity else forced_source_multiplicity
                                 else:
-                                    target_label = clean_value + "_non_navigable" if not start else clean_value
+                                    # If it starts with capital, it's an association name
+                                    if clean_value and clean_value[0].isupper():
+                                        association_name_target = clean_value
+                                        target_label = f"{target_class}_end"
+                                    else:
+                                        target_label = clean_value + "_non_navigable" if not start else clean_value
                                     target_multiplicity = multiplicity if not forced_target_multiplicity else forced_target_multiplicity
 
             # Add the association if both classes are found
@@ -403,6 +415,9 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                 }
                 if start:
                     source_assoc['navigable'] = False
+                if association_name_source:
+                    source_assoc['association_name'] = association_name_source
+                    
                 target_assoc = {
                     'name': target_label,
                     'class': target_class,
@@ -411,6 +426,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                 }
                 if not start:
                     target_assoc['navigable'] = False
+                if association_name_target:
+                    target_assoc['association_name'] = association_name_target
 
                 model_elements['associations'].append(source_assoc)
                 model_elements['associations'].append(target_assoc)
@@ -419,6 +436,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
               in style or "endArrow=diamondThin" in style and "endFill=1" in style):
             forced_source_multiplicity = None
             forced_target_multiplicity = None
+            association_name_source = None
+            association_name_target = None
             if "startArrow=diamondThin" in style:
                 forced_source_multiplicity = Multiplicity(1, 1)
             elif "endArrow=diamondThin" in style:
@@ -505,10 +524,20 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(1, 1)  # Default multiplicity
 
                                 if x < 0:
-                                    source_label = clean_value + "_composite" if start else clean_value
+                                    # If it starts with capital, it's an association name
+                                    if clean_value and clean_value[0].isupper():
+                                        association_name_source = clean_value
+                                        source_label = f"{source_class}_end"
+                                    else:
+                                        source_label = clean_value + "_composite" if start else clean_value
                                     source_multiplicity = multiplicity if not forced_source_multiplicity else forced_source_multiplicity
                                 else:
-                                    target_label = clean_value + "_composite" if not start else clean_value
+                                    # If it starts with capital, it's an association name
+                                    if clean_value and clean_value[0].isupper():
+                                        association_name_target = clean_value
+                                        target_label = f"{target_class}_end"
+                                    else:
+                                        target_label = clean_value + "_composite" if not start else clean_value
                                     target_multiplicity = multiplicity if not forced_target_multiplicity else forced_target_multiplicity
 
             # Add the association if both classes are found
@@ -521,6 +550,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                 }
                 if start:
                     source_assoc['composite'] = True
+                if association_name_source:
+                    source_assoc['association_name'] = association_name_source
 
                 target_assoc = {
                     'name': target_label,
@@ -530,6 +561,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                 }
                 if not start:
                     target_assoc['composite'] = True
+                if association_name_target:
+                    target_assoc['association_name'] = association_name_target
 
                 model_elements['associations'].append(source_assoc)
                 model_elements['associations'].append(target_assoc)
@@ -540,7 +573,8 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             # Get source and target classes
             source_cell = root.find(f".//mxCell[@id='{source}']")
             target_cell = root.find(f".//mxCell[@id='{target}']")
-
+            association_name_source = None
+            association_name_target = None
             source_class = extract_class_name(source_cell.get('value', ''))
             if not ('swimlane' in source_cell.get('style', '') or '<b>' in source_cell.get('value', '')):
                 source_parent = root.find(f".//mxCell[@id='{source_cell.get('parent')}']")
@@ -613,26 +647,43 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                     multiplicity = Multiplicity(1, 1)  # Default multiplicity
 
                                 if x < 0:
-                                    source_label = clean_value
+                                    # If it starts with capital, it's an association name
+                                    if clean_value and clean_value[0].isupper():
+                                        association_name_source = clean_value
+                                        source_label = f"{source_class}_end"
+                                    else:
+                                        source_label = clean_value
                                     source_multiplicity = multiplicity
                                 else:
-                                    target_label = clean_value
+                                    # If it starts with capital, it's an association name
+                                    if clean_value and clean_value[0].isupper():
+                                        association_name_target = clean_value
+                                        target_label = f"{target_class}_end"
+                                    else:
+                                        target_label = clean_value
                                     target_multiplicity = multiplicity
 
             # Add the association if both classes are found
             if source_class and target_class:
-                model_elements['associations'].append({
+                source_assoc = {
                     'name': source_label,
                     'class': source_class,
                     'multiplicity': source_multiplicity,
                     'visibility': 'public'
-                })
-                model_elements['associations'].append({
+                }
+                if association_name_source:
+                    source_assoc['association_name'] = association_name_source
+                model_elements['associations'].append(source_assoc)
+
+                target_assoc = {
                     'name': target_label,
                     'class': target_class,
                     'multiplicity': target_multiplicity,
                     'visibility': 'public'
-                })
+                }
+                if association_name_target is not None:
+                    target_assoc['association_name'] = association_name_target
+                model_elements['associations'].append(target_assoc)
 
 
     return (model_elements['classes'], model_elements['enumerations'],
@@ -819,17 +870,22 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     multiplicity=assoc2['multiplicity'] or Multiplicity(1, "*"),
                     visibility=assoc2['visibility'],
                     is_composite=assoc2.get('composite', False),
-                    is_navigable=assoc2.get('navigable', True)  # Default to True if not specified
+                    is_navigable=assoc2.get('navigable', True)
                 )
 
+                association_name_user = assoc1.get('association_name') or assoc2.get('association_name')
+
                 # Base association name
-                base_name = f"{class1.name}_{class2.name}"
-                if assoc_property_1.is_composite:
-                    base_name += "_composite"
-                elif not assoc_property_2.is_navigable:
-                    base_name += "_non_navigable"
+                if association_name_user:
+                    base_name = association_name_user
                 else:
-                    base_name += "_association"
+                    base_name = f"{class1.name}_{class2.name}"
+                    if assoc_property_1.is_composite:
+                        base_name += "_composite"
+                    elif not assoc_property_2.is_navigable:
+                        base_name += "_non_navigable"
+                    else:
+                        base_name += "_association"
 
                 # Check for existing associations with the same name
                 association_name = base_name

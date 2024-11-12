@@ -111,7 +111,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
                 f.write(
                     f"{assoc.name}: BinaryAssociation = BinaryAssociation(\n"
                     f"    name=\"{assoc.name}\",\n"
-                    f"    ends={{\n        {',\n        '.join(ends_str)}\n    }}\n"
+                    f"    ends={{\n        {',        '.join(ends_str)}\n    }}\n"
                     f")\n"
                 )
             f.write("\n")

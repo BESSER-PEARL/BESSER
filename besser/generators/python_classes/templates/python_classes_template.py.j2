@@ -1,7 +1,7 @@
 {% import "class_parameters.py.j2" as class_parameters %}
 from datetime import datetime, date, time
 {% set ns = namespace(abstract_found=false) -%}
-{% for class in classes -%}
+{% for class in domain.get_classes() -%}
     {% if class.is_abstract -%}
         {% set ns.abstract_found = true -%}
     {% endif -%}    
@@ -9,8 +9,24 @@ from datetime import datetime, date, time
 {% if ns.abstract_found -%}
 from abc import ABC, abstractmethod
 {% endif -%}
+
+############################################
+# Enumerations are defined here
+############################################
+
+{% for enum in domain.get_enumerations() -%}
+class {{ enum.name }}(Enum):
+{% for literal in enum.literals %}
+    {{ literal.name }} = "{{ literal.name }}"
+{% endfor %}
+
+{% endfor -%}
+
+############################################
+# Classes are defined here
+############################################
 {# Two newlines are added here unconditionally #}
-{% for class in classes %}
+{% for class in domain.get_classes() %}
 class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC){% endif %}:
     def __init__({{ class_parameters.init_parameters(class) }}):
         {{ class_parameters.init_parameters_definition(class) }}

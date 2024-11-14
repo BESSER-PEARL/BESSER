@@ -10,3 +10,4 @@ BESSER provides several grammars to create B-UML models. Check out our three gra
    plantuml_object
    ocl_grammar
    deployment_grammar
+   drawio_structural

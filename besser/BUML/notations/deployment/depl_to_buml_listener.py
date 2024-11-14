@@ -1,9 +1,19 @@
 from .deploymentParser import deploymentParser
 from .deploymentListener import deploymentListener
-from besser.BUML.notations.structuralPlantUML import list_to_str
 
 class Deployment_BUML_Listener(deploymentListener):
+    """
+    Listener for parsing deployment-related models and writing the corresponding B-UML code.
 
+    This class extends `deploymentListener` and overrides methods for handling different components
+    of a deployment model.
+    It writes the parsed deployment architecture into a specified output stream in the B-UML
+    model format.
+
+    Attributes:
+        output (TextIO): The output stream where the B-UML model code is written.
+        __cluster_list (list): A list to keep track of clusters in the deployment model.
+    """
 
     def __init__(self, output):
         self.output = output
@@ -103,8 +113,22 @@ class Deployment_BUML_Listener(deploymentListener):
     def exitPublicCluster(self, ctx: deploymentParser.PublicClusterContext):
         text = ")\n"
         self.output.write(text)
-    
+
     def exitArchitecture(self, ctx: deploymentParser.ArchitectureContext):
         text = "\n# Deployment architecture model definition\n"
         text += "deployment_model : DeploymentModel = DeploymentModel(name=\"deployment_model\", clusters=" + list_to_str(self.__cluster_list) + ")\n"
         self.output.write(text)
+
+def list_to_str(elements:list):
+    """
+        Method to transform a list of elements to string
+
+        Args:
+           elements (list): The list to transform.
+    """
+    if len(elements) == 0:
+        str_list = "set()"
+    else:
+        str_list = ", ".join(elements)
+        str_list = "{" + str_list + "}"
+    return str_list

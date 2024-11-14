@@ -1,12 +1,10 @@
 import os
-import shutil
 from besser.BUML.metamodel.structural import DomainModel
 from besser.BUML.notations.structuralPlantUML import plantuml_to_buml
 
 model_dir = os.path.dirname(os.path.abspath(__file__))
 model_path = os.path.join(model_dir, "test.plantuml")
 modeltest: DomainModel = plantuml_to_buml(plantUML_model_path=model_path)
-shutil.rmtree("buml")
 
 # Test the classes of the BUML output model
 def test_classes():
@@ -48,8 +46,8 @@ def test_methods():
 
 # Test the attributes of a class
 def test_enumeration():
-    assert len(modeltest.enumerations) == 1
-    for enum in modeltest.enumerations:
+    assert len(modeltest.get_enumerations()) == 1
+    for enum in modeltest.get_enumerations():
         assert enum.name == "ContactM"
         assert len(enum.literals) == 3
 

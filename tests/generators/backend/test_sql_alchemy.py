@@ -1,5 +1,7 @@
 import pytest
 import os
+import importlib.util
+import sys
 from sqlalchemy import create_engine, Table, Column, Integer, String, ForeignKey, MetaData, select, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship, scoped_session
@@ -30,7 +32,16 @@ def generation():
     sqlalchemy_model.generate()
 
 generation()
-from output.sql_alchemy import *
+
+spec = importlib.util.spec_from_file_location("sql_alchemy", "output/sql_alchemy.py")
+sql_alchemy = importlib.util.module_from_spec(spec)
+sys.modules["sql_alchemy"] = sql_alchemy
+spec.loader.exec_module(sql_alchemy)
+
+
+
+from sql_alchemy import Base, name1, name2, name_assoc
+import shutil
 
 # Fixture for database setup
 @pytest.fixture(scope='module')
@@ -109,3 +120,5 @@ def test_delete_relationship(setup_database):
 
     session.close()
     os.remove(output_file)
+    # Delete the folder and file after importing
+    shutil.rmtree('output')

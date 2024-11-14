@@ -25,6 +25,9 @@ class SQLAlchemyGenerator(GeneratorInterface):
         
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
+        # Add enums to TYPES dictionary
+        for enum in model.get_enumerations():
+            self.TYPES[enum.name] = f"Enum('{enum.name}')"
 
     def generate(self):
         """
@@ -41,6 +44,11 @@ class SQLAlchemyGenerator(GeneratorInterface):
         env = Environment(loader=FileSystemLoader(templates_path))
         template = env.get_template('sql_alchemy_template.py.j2')
         with open(file_path, mode="w") as f:
-            generated_code = template.render(classes=self.model.classes_sorted_by_inheritance(), types=self.TYPES, associations=self.model.associations)
+            generated_code = template.render(
+                classes=self.model.classes_sorted_by_inheritance(),
+                types=self.TYPES,
+                associations=self.model.associations,
+                enumerations=self.model.get_enumerations()
+            )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

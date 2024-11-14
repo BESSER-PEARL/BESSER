@@ -1,21 +1,24 @@
-from typing import List
-from typing import Optional
-from sqlalchemy import create_engine
-from sqlalchemy import Column
-from sqlalchemy import ForeignKey
-from sqlalchemy import String
-from sqlalchemy import Table
-from sqlalchemy import Text
-from sqlalchemy.orm import column_property
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.orm import Mapped
-from sqlalchemy.orm import mapped_column
-from sqlalchemy.orm import relationship
-from sqlalchemy import Boolean, String, Date, Time, DateTime, Float, Integer
+from typing import List, Optional
+from sqlalchemy import (
+    create_engine, Column, ForeignKey, Table, Text, Boolean, String, Date, 
+    Time, DateTime, Float, Integer, Enum
+)
+from sqlalchemy.orm import (
+    column_property, DeclarativeBase, Mapped, mapped_column, relationship
+)
 from datetime import datetime, time, date
 
 class Base(DeclarativeBase):
     pass
+
+# Enum definitions
+{% for enum in enumerations %}
+class {{ enum.name }}(Enum):
+    {% for literal in enum.literals %}
+    {{ literal.name }} = "{{ literal.name }}"
+    {%- endfor %}
+
+{% endfor %}
 
 # Tables definition for many-to-many relationships
 

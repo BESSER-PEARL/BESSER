@@ -11,10 +11,11 @@ def test_model_initialization():
     class1: Type = Type(name="element1")
     class2: Type = Type(name="element2")
     model: DomainModel = DomainModel(name="mymodel", types={class1, class2}, associations = None, packages = None, constraints = None)
-    assert len(model.types) == 2
+    assert class1 in model.types
+    assert class2 in model.types
     model_empty: DomainModel = DomainModel(name="mymodel", types = None, associations = None, packages = None, constraints = None)
-    assert len(model_empty.types) == 0
-
+    assert class1 not in model_empty.types
+    assert class2 not in model_empty.types
 
 # Testing the WFR for duplicate names in a model
 def test_model_duplicated_names():
@@ -22,7 +23,7 @@ def test_model_duplicated_names():
         class1: Type = Type(name="name1")
         class2: Type = Type(name="name1")
         model: DomainModel = DomainModel(name="mymodel", types={class1, class2}, associations = None, packages = None, constraints = None)
-    assert "same name" in str(excinfo.value)
+    assert "The model cannot have types with duplicate names: name1" in str(excinfo.value)
 
 
 # Testing attributes initialization
@@ -78,7 +79,7 @@ def test_duplicated_name_class():
         attribute1: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
         attribute2: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
         class1 = Class(name="name1", attributes={attribute1, attribute2})
-    assert "A class cannot have two attributes with the same name" in str(excinfo.value)
+    assert "A class cannot have attributes with duplicate names: attribute1" in str(excinfo.value)
 
 # Testing for no more than one id attribute in class
 def test_more_than_one_id_class():
@@ -87,7 +88,7 @@ def test_more_than_one_id_class():
         attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"), is_id=True)
         attribute2: Property = Property(name="attribute2", type=PrimitiveDataType("int"), is_id=True)
         class1 = Class(name="name1", attributes={attribute1, attribute2})
-    assert "A class cannot have two id attributes" in str(excinfo.value)
+    assert "A class cannot have more than one attribute marked as 'id'" in str(excinfo.value)
 
 def test_association_initialization():
     class1: Class = Class(name="name1", attributes=set())

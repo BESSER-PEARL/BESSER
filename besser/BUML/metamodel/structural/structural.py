@@ -1,6 +1,6 @@
 from abc import ABC
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Union
 import time
  
 # constant
@@ -99,12 +99,9 @@ class DataType(Type):
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, timestamp: int = None):
-        super().__init__(name, timestamp)
-
     def __repr__(self):
         return f"DataType({self.name})"
-    
+
 class PrimitiveDataType(DataType):
     """Class representing a primitive data type.
 
@@ -120,9 +117,6 @@ class PrimitiveDataType(DataType):
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
-    def __init__(self, name: str, timestamp: int = None):
-        super().__init__(name, timestamp)
-
     @NamedElement.name.setter
     def name(self, name: str):
         """
@@ -130,14 +124,29 @@ class PrimitiveDataType(DataType):
         
         Raises:
             ValueError: If an invalid primitive data type is provided.
-                        Allowed values are int, float, str, bool, time, date, datetime, and timedelta.
+                        Allowed values are int, float, str, bool, time, date, 
+                        datetime, and timedelta.
         """
         if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
             raise ValueError("Invalid primitive data type")
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
-    
+
     def __repr__(self):
         return f"PrimitiveDataType({self.name}, {self.timestamp})"
+
+# Define instances of PrimitiveDataType
+StringType = PrimitiveDataType("str")
+IntegerType = PrimitiveDataType("int")
+FloatType = PrimitiveDataType("float")
+BooleanType = PrimitiveDataType("bool")
+TimeType = PrimitiveDataType("time")
+DateType = PrimitiveDataType("date")
+DateTimeType = PrimitiveDataType("datetime")
+TimeDeltaType = PrimitiveDataType("timedelta")
+primitive_data_types = {StringType, IntegerType, FloatType, BooleanType,
+                        TimeType, DateType, DateTimeType, TimeDeltaType}
+
+
     
 class EnumerationLiteral(NamedElement):
     """Class representing an enumeration literal.
@@ -224,6 +233,18 @@ class Enumeration(DataType):
         else:
             self.__literals = set()
 
+    def add_literal(self, literal: EnumerationLiteral):
+        """
+        Add an enumeration literal to the set.
+        
+        Raises:
+            ValueError: if the enumeration literal name already exist.
+        """
+        if self.literals is not None:
+            if literal.name in [literal.name for literal in self.literals]:
+                raise ValueError(f"An enumeration cannot have two literals with the same name: '{literal.name}'")
+        self.literals.add(literal)
+
     def __repr__(self):
         return f"Enumeration({self.name}, {self.literals}, {self.timestamp})"
 
@@ -233,7 +254,7 @@ class TypedElement(NamedElement):
 
     Args:
         name (str): The name of the typed element.
-        type (Type): The data type of the typed element.
+        type (Type, str): The data type of the typed element.
         visibility (str): Determines the kind of visibility of the typed element (public as default).
         timestamp (datetime): Object creation datetime (default is current time).
 
@@ -242,18 +263,34 @@ class TypedElement(NamedElement):
         visibility (str): Inherited from NamedElement, represents the visibility of the typed element (public as default).
         type (Type): The data type of the typed element.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
+        type (Type, str): The data type of the typed element.
     """
 
-    def __init__(self, name: str, type: Type, timestamp: int = None, visibility: str="public"):
+    type_mapping = {
+        "str": StringType,
+        "string": StringType,
+        "int": IntegerType,
+        "float": FloatType,
+        "bool": BooleanType,
+        "time": TimeType,
+        "date": DateType,
+        "datetime": DateTimeType,
+        "timedelta": TimeDeltaType
+    }
+
+        
+    def __init__(self, name: str, type: Union[Type, str], timestamp: int = None, visibility: str="public"):
         super().__init__(name, timestamp, visibility)
-        self.type: Type = type
+        self.type = self.type_mapping.get(type, type)
 
     @property
     def type(self) -> Type:
+        """Type: Get the type of the typed element."""
         return self.__type
 
     @type.setter
     def type(self, type: Type):
+        """Type: Set the type of the typed element."""
         self.__type = type
 
 class Multiplicity:
@@ -315,6 +352,7 @@ class Multiplicity:
 
     def __repr__(self):
         return f'Multiplicity({self.min}, {self.max})'
+
 
 # Properties are owned by a class or an association and point to a type with a multiplicity
 class Property(TypedElement):
@@ -492,11 +530,11 @@ class Method(TypedElement):
     """
 
     def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False,
-                 parameters: set[Parameter] = set(), type: Type = None, owner: Type = None,
+                 parameters: set[Parameter] = None, type: Type = None, owner: Type = None,
                  code: str = "", timestamp: int = None):
         super().__init__(name, type, timestamp, visibility)
         self.is_abstract: bool = is_abstract
-        self.parameters: set[Parameter] = parameters
+        self.parameters: set[Parameter] = parameters if parameters is not None else set()
         self.owner: Type = owner
         self.code: str = code
 
@@ -524,14 +562,33 @@ class Method(TypedElement):
             ValueError: if two parameters have the same name.
         """
         if parameters is not None:
-            names = [parameter.name for parameter in parameters]
-            if len(names) != len(set(names)):
-                raise ValueError("A method cannot have two parameters with the same name")
+            names_seen = set()
+            duplicates = set()
+
             for parameter in parameters:
+                if parameter.name in names_seen:
+                    duplicates.add(parameter.name)
+                names_seen.add(parameter.name)
                 parameter.owner = self
+
+            if duplicates:
+                raise ValueError(f"A method cannot have parameters with duplicate names: {', '.join(duplicates)}")
+
             self.__parameters = parameters
         else:
             self.__parameters = set()
+
+    def add_parameter(self, parameter: Parameter):
+        """
+        Parameter: Add a parameter to the set of class parameters.
+        
+        Raises:
+            ValueError: if the parameter name already exist.
+        """
+        if self.parameters is not None:
+            if parameter.name in [parameter.name for parameter in self.parameters]:
+                raise ValueError(f"A method cannot have two parameters with the same name: '{parameter.name}'")
+        self.parameters.add(parameter)
 
     @property
     def owner(self) -> Type:
@@ -616,12 +673,24 @@ class Class(Type):
             ValueError: if two attributes are id.
         """
         if attributes is not None:
-            names = [attribute.name for attribute in attributes]
-            if len(names) != len(set(names)):
-                raise ValueError("A class cannot have two attributes with the same name")
-            id_counter = sum(attribute.is_id for attribute in attributes)
+            names_seen = set()
+            duplicates = set()
+            id_counter = 0
+
+            for attribute in attributes:
+                if attribute.name in names_seen:
+                    duplicates.add(attribute.name)
+                names_seen.add(attribute.name)
+
+                if attribute.is_id:
+                    id_counter += 1
+
+            if duplicates:
+                raise ValueError(f"A class cannot have attributes with duplicate names: {', '.join(duplicates)}")
+
             if id_counter > 1:
-                raise ValueError("A class cannot have two id attributes")
+                raise ValueError("A class cannot have more than one attribute marked as 'id'")
+
             for attribute in attributes:
                 attribute.owner = self
             self.__attributes = attributes
@@ -642,14 +711,35 @@ class Class(Type):
             ValueError: if two methods have the same name.
         """
         if methods is not None:
-            names = [method.name for method in methods]
-            if len(names) != len(set(names)):
-                raise ValueError("A class cannot have two methods with the same name")
+            names_seen = set()
+            duplicates = set()
+
+            for method in methods:
+                if method.name in names_seen:
+                    duplicates.add(method.name)
+                names_seen.add(method.name)
+
+            if duplicates:
+                raise ValueError(f"A class cannot have methods with duplicate names: {', '.join(duplicates)}")
+
             for method in methods:
                 method.owner = self
             self.__methods = methods
         else:
             self.__methods = set()
+
+    def add_method(self, method: Method):
+        """
+        Method: Add a method to the set of class methods.
+        
+        Raises:
+            ValueError: if the method name already exist.
+        """
+        if self.methods is not None:
+            if method.name in [method.name for method in self.methods]:
+                raise ValueError(f"A class cannot have two methods with the same name: '{method.name}'")
+        method.owner = self
+        self.methods.add(method)
 
     def all_attributes(self) -> set[Property]:
         """set[Property]: Get all attributes, including inherited ones."""
@@ -665,7 +755,7 @@ class Class(Type):
         """
         if self.attributes is not None:
             if attribute.name in [attribute.name for attribute in self.attributes]:
-                raise ValueError("A class cannot have two attributes with the same name")
+                raise ValueError(f"A class cannot have two attributes with the same name: '{attribute.name}'")
         attribute.owner = self
         self.attributes.add(attribute)
 
@@ -849,9 +939,6 @@ class BinaryAssociation(Association):
         ends (set[Property]): Inherited from NamedElement, represents the set of ends related to the binary association.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
-
-    def __init__(self, name: str, ends: set[Property], timestamp: int = None):
-        super().__init__(name, ends, timestamp)
 
     @Association.ends.setter
     def ends(self, ends: set[Property]):
@@ -1147,7 +1234,6 @@ class DomainModel(Model):
         types (set[Type]): The set of types (classes and datatypes) in the domain model (set() as default).
         associations (set[Association]): The set of associations in the domain model (set() as default).
         generalizations (set[Generalization]): The set of generalizations in the domain model (set() as default).
-        enumerations (set[Enumeration]): The set of enumerations in the domain model (set() as default).
         packages (set[Package]): The set of packages in the domain model (set() as default).
         constraints (set[Constraint]): The set of constraints in the domain model (set() as default).
         timestamp (datetime): Object creation datetime (default is current time).
@@ -1157,14 +1243,13 @@ class DomainModel(Model):
         types (set[Type]): The set of types (classes and datatypes) in the domain model (set() as default).
         associations (set[Association]): The set of associations in the domain model (set() as default).
         generalizations (set[Generalization]): The set of generalizations in the domain model (set() as default).
-        enumerations (set[Enumeration]): The set of enumerations in the domain model (set() as default).
         packages (set[Package]): The set of packages in the domain model (set() as default).
         constraints (set[Constraint]): The set of constraints in the domain model (set() as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
     """
 
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None,
-                 generalizations: set[Generalization] = None, enumerations: set[Enumeration] = None,
+                 generalizations: set[Generalization] = None,
                  packages: set[Package] = None, constraints: set[Constraint] = None,
                  timestamp: int = None):
         super().__init__(name, timestamp)
@@ -1172,7 +1257,6 @@ class DomainModel(Model):
         self.packages: set[Package] = packages if packages is not None else set()
         self.constraints: set[Constraint] = constraints if constraints is not None else set()
         self.associations: set[Association] = associations if associations is not None else set()
-        self.enumerations: set[Enumeration] = enumerations if enumerations is not None else set()
         self.generalizations: set[Generalization] = generalizations if generalizations is not None else set()
 
     @property
@@ -1183,18 +1267,33 @@ class DomainModel(Model):
     @types.setter
     def types(self, types: set[Type]):
         """
-        set[Type]: Set the set of types in the domain model.
+        set[Type]: Set the set of types in the domain model, including primitive data types.
         
         Raises:
             ValueError: if there are two types with the same name.
         """
-        if types is not None:
-            names = [type.name for type in types]
-            if len(names) != len(set(names)):
-                raise ValueError("The model cannot have two types with the same name")
-            self.__types = types
-        else:
-            self.__types = set()
+        types = types | primitive_data_types
+        names_seen = set()
+        duplicates = set()
+
+        for type_ in types:
+            if type_.name in names_seen:
+                duplicates.add(type_.name)
+            names_seen.add(type_.name)
+
+        if duplicates:
+            raise ValueError(f"The model cannot have types with duplicate names: {', '.join(duplicates)}")
+        self.__types = types
+
+    def get_type_by_name(self, type_name: str) -> Type:
+        """Type: Gets an Type by name."""
+        return next(
+            (type_element for type_element in self.types if type_element.name == type_name), None
+            )
+
+    def add_type(self, type_: Type):
+        """Type: Add a type (Class or DataType) to the set of types of the model."""
+        self.types = self.types | {type_}
 
     @property
     def associations(self) -> set[Association]:
@@ -1210,12 +1309,24 @@ class DomainModel(Model):
             ValueError: if there are two associations with the same name.
         """
         if associations is not None:
-            names = [association.name for association in associations]
-            if len(names) != len(set(names)):
-                raise ValueError("The model cannot have two associations with the same name")
+            names_seen = set()
+            duplicates = set()
+
+            for association in associations:
+                if association.name in names_seen:
+                    duplicates.add(association.name)
+                names_seen.add(association.name)
+
+            if duplicates:
+                raise ValueError(f"The model cannot have associations with duplicate names: {', '.join(duplicates)}")
+
             self.__associations = associations
         else:
             self.__associations = set()
+
+    def add_association(self, association: Association):
+        """Association: Add an association to the set of associations of the model."""
+        self.associations = self.associations | {association}
 
     @property
     def generalizations(self) -> set[Generalization]:
@@ -1230,26 +1341,13 @@ class DomainModel(Model):
         else:
             self.__generalizations = set()
 
-    @property
-    def enumerations(self) -> set[Enumeration]:
-        """set[Enumeration]: Get the set of enumerations in the domain model."""
-        return self.__enumerations
+    def add_generalization(self, generalization: Generalization):
+        """Generalization: Add a generalization to the set of generalizations of the model."""
+        self.generalizations = self.generalizations | {generalization}
 
-    @enumerations.setter
-    def enumerations(self, enumerations: set[Enumeration]):
-        """
-        set[Enumeration]: Set the set of enumerations in the domain model.
-        
-        Raises:
-            ValueError: if there are two enumerations with the same name.
-        """
-        if enumerations is not None:
-            names = [enumeration.name for enumeration in enumerations]
-            if len(names) != len(set(names)):
-                raise ValueError("The model cannot have two enumerations with the same name")
-            self.__enumerations = enumerations
-        else:
-            self.__enumerations = set()
+    def get_enumerations(self) -> set[Enumeration]:
+        """set[Enumeration]: Get the set of enumerations in the domain model."""
+        return {element for element in self.types if isinstance(element, Enumeration)}
 
     @property
     def packages(self) -> set[Package]:
@@ -1265,9 +1363,17 @@ class DomainModel(Model):
             ValueError: if there are two packages with the same name.
         """
         if packages is not None:
-            names = [package.name for package in packages]
-            if len(names) != len(set(names)):
-                raise ValueError("The model cannot have two packages with the same name")
+            names_seen = set()
+            duplicates = set()
+
+            for package in packages:
+                if package.name in names_seen:
+                    duplicates.add(package.name)
+                names_seen.add(package.name)
+
+            if duplicates:
+                raise ValueError(f"The model cannot have packages with duplicate names: {', '.join(duplicates)}")
+
             self.__packages = packages
         else:
             self.__packages = set()
@@ -1332,5 +1438,5 @@ class DomainModel(Model):
     def __repr__(self):
         return (
             f'Package({self.name}, {self.types}, {self.associations}, {self.generalizations}, '
-            f'{self.enumerations}, {self.packages}, {self.constraints}, {self.timestamp})'
+            f'{self.packages}, {self.constraints}, {self.timestamp})'
         )

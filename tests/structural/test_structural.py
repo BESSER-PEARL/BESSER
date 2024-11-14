@@ -1,5 +1,6 @@
 import pytest
 from besser.BUML.metamodel.structural import *
+from besser.utilities import sort_by_timestamp
 
 def test_named_element():
     named_element: NamedElement = NamedElement(name="element1")
@@ -195,4 +196,41 @@ def test_parameters_same_name():
         parameter1: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="str"))
         parameter2: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="int"))
         method: Method = Method(name='method_1', is_abstract=True, parameters={parameter1, parameter2})
-    assert "A method cannot have parameters with duplicate names: parameter_1" in str(excinfo.value)
+    assert "A method cannot have two parameters with the same name" in str(excinfo.value)
+
+# Testing sort attributes by timestamp
+def test_sort_parameters():
+    attribute1: Property = Property(name="attribute_1", type=PrimitiveDataType(name="str"))
+    attribute2: Property = Property(name="attribute_2", type=PrimitiveDataType(name="int"))
+    attribute3: Property = Property(name="attribute_3", type=PrimitiveDataType(name="int"))
+    cls: Class = Class(name="class", attributes={attribute1, attribute2, attribute3})
+    attributes = sort_by_timestamp(cls.attributes)
+    assert len(attributes) == 3
+    assert type(attributes) == list
+    assert attributes[0] == attribute1
+    assert attributes[1] == attribute2
+    assert attributes[2] == attribute3
+
+# Testing the classes_sorted_by_inheritance method
+def test_classes_sorted_by_inheritance():
+    cl1 = Class(name="c1")
+    cl2 = Class(name="c2")
+    cl3 = Class(name="c3")
+    cl4 = Class(name="c4")
+    cl5 = Class(name="c5")
+    cl6 = Class(name="c6")
+    cl7 = Class(name="c7")
+    h1 = Generalization(general=cl7, specific=cl6)
+    h2 = Generalization(general=cl6, specific=cl5)
+    h3 = Generalization(general=cl5, specific=cl4)
+    h4 = Generalization(general=cl4, specific=cl2)
+    h5 = Generalization(general=cl4, specific=cl3)
+    h6 = Generalization(general=cl3, specific=cl2)
+    h7 = Generalization(general=cl2, specific=cl1)
+    model = DomainModel(name="model", types={cl1,cl2,cl3,cl4,cl5,cl6,cl7}, generalizations={h1,h2,h3,h4,h5,h6,h7})
+    classes = model.classes_sorted_by_inheritance()
+    assert len(classes) == 7
+    assert classes[0] == cl7
+    assert classes[2] == cl5
+    assert classes[4] == cl3
+    assert classes[6] == cl1

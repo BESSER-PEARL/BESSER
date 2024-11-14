@@ -281,6 +281,11 @@ class StateMachine(Model):
         return None
 
     def set_global_fallback_body(self, body: Body) -> None:
+        """Set the global fallback body for all states in the state machine.
+
+        Args:
+            body (Body): The fallback body to be set for all states.
+        """
         for state in self.states:
             state.fallback_body = body
 
@@ -336,3 +341,4 @@ class Session:
             transition (Transition): the transition that points to the state to move
         """
         pass
+

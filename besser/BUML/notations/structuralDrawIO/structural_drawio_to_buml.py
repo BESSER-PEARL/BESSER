@@ -303,8 +303,41 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                                 params_str = method_match.group(2).strip()
                                 return_type = method_match.group(3).strip() \
                                     if method_match.group(3) else None
+                                # Parse parameters properly
+                                parameters = []
+                                if params_str:
+                                    param_list = [p.strip() for p in params_str.split(',')]
+                                    for param in param_list:
+                                        if '=' in param:  # Handle default values
+                                            param_parts = param.split('=')
+                                            param_name_type = param_parts[0].strip()
+                                            default_value = param_parts[1].strip().strip('"\'')
+                                            if ':' in param_name_type:
+                                                param_name, param_type = param_name_type.split(':')
+                                                parameters.append({
+                                                    'name': param_name.strip(),
+                                                    'type': param_type.strip(),
+                                                    'default': default_value
+                                                })
+                                            else:
+                                                parameters.append({
+                                                    'name': param_name_type,
+                                                    'type': 'str',
+                                                    'default': default_value
+                                                })
+                                        elif ':' in param:  # Handle type annotations
+                                            param_name, param_type = param.split(':')
+                                            parameters.append({
+                                                'name': param_name.strip(),
+                                                'type': param_type.strip()
+                                            })
+                                        else:  # Handle plain parameters
+                                            parameters.append({
+                                                'name': param.strip(),
+                                                'type': 'str'
+                                            })
                                 model_elements['classes'][parent_class]['methods'].append(
-                                    (visibility, method_name, [], return_type)
+                                    (visibility, method_name, parameters, return_type)
                                 )
                         elif ':' in clean_value:  # Attribute
                             visibility = "+" if clean_value.startswith("+ ") else "-" \
@@ -853,7 +886,16 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     # Convert parameters
                     buml_parameters = set()
                     for param in parameters:
+                        param_name = param['name']
                         param_type = param['type']
+                        
+                        # Si le nom contient encore le type (comme "str sms"), on le sépare
+                        if ' ' in param_name:
+                            type_str, param_name = param_name.split(' ', 1)
+                            # On utilise le type explicite s'il est spécifié
+                            if param_type == 'str':
+                                param_type = type_str.lower()
+                        
                         if param_type in buml_enumerations:
                             type_obj = buml_enumerations[param_type]
                         elif param_type in classes:
@@ -862,7 +904,7 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                             type_obj = PRIMITIVE_TYPE_MAPPING.get(param_type.lower(), StringType)
 
                         param_obj = Parameter(
-                            name=param['name'],
+                            name=param_name,
                             type=type_obj
                         )
                         if 'default' in param:
@@ -1102,16 +1144,36 @@ def parse_parameters(params_str: str) -> list:
         param_list = params_str.split(',')
         for param in param_list:
             param = param.strip()
+            
+            # Check for default value
+            default_value = None
+            if '=' in param:
+                param_parts = param.split('=')
+                param = param_parts[0].strip()
+                default_value = param_parts[1].strip().strip('"\'')  # Remove quotes
+            
+            # Check for type annotation
             if ':' in param:
                 param_name, param_type = param.split(':')
                 parameters.append({
                     'name': param_name.strip(),
-                    'type': param_type.strip()
+                    'type': param_type.strip(),
+                    'default': default_value
                 })
             else:
+                # Handle cases like "str sms"
+                parts = param.split()
+                if len(parts) > 1:
+                    param_type = parts[0]
+                    param_name = ' '.join(parts[1:])
+                else:
+                    param_type = 'str'
+                    param_name = param
+                
                 parameters.append({
-                    'name': param.strip(),
-                    'type': StringType
+                    'name': param_name.strip(),
+                    'type': param_type,
+                    'default': default_value
                 })
     return parameters
 

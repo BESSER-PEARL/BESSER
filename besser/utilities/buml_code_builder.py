@@ -75,13 +75,23 @@ def domain_model_to_code(model: DomainModel, file_path: str):
             for method in cls.methods:
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, method.type.name) if method.type else None
                 visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
+                
+                # Build parameters dictionary
+                params = {}
+                if method.parameters:
+                    for param in method.parameters:
+                        param_type = PRIMITIVE_TYPE_MAPPING.get(param.type.name, param.type.name)
+                        default_str = f", default_value='{param.default_value}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
+                        params[param.name] = f"Parameter(name='{param.name}', type={param_type}{default_str})"
+                
+                params_str = "{" + ", ".join(f"'{name}': {param}" for name, param in params.items()) + "}"
 
                 if method_type:
                     f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\""
-                           f"{visibility_str}, parameters={{}}, type={method_type})\n")
+                           f"{visibility_str}, parameters={params_str}, type={method_type})\n")
                 else:
                     f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\""
-                           f"{visibility_str}, parameters={{}})\n")
+                           f"{visibility_str}, parameters={params_str})\n")
 
             # Write assignments
             if cls.attributes:

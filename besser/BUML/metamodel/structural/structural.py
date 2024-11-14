@@ -835,7 +835,7 @@ class Class(Type):
         return None
 
     def __repr__(self):
-        return f'Class({self.name}, {self.attributes})'
+        return f'Class({self.name}, {self.attributes}, {self.methods})'
 
 class Association(NamedElement):
     """Represents an association between classes.

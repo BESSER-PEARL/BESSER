@@ -145,21 +145,33 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             enum_name = ""
             literals = []
 
-            if "<p" in value and "<b>" in value:
-                enum_name = extract_enum_name_from_html(value)
-                literals.extend(extract_literals_from_html(value))
+            # Extract enum name
+            if "<div>" in value:
+                parts = value.split("<div>")
+                for part in parts:
+                    clean_part = clean_html_tags(part).strip()
+                    if clean_part and not is_enumeration(clean_part):
+                        enum_name = clean_part
+                        break
             elif "<br>" in value:
                 parts = value.split("<br>")
-                enum_name = clean_enumeration_name(parts[-1])
+                enum_name = clean_enumeration_name(parts[1].strip())
             else:
                 enum_name = clean_enumeration_name(value)
 
             if enum_name:
-                model_elements['enumerations'][enum_name] = literals
-                # Add any additional literals from child cells
-                literals.extend(extract_literals_from_cells(root, cell.get('id')))
+                model_elements['enumerations'][enum_name] = []
+                # Extract literals from child cells
+                for literal_cell in root.findall(f".//mxCell[@parent='{cell_id}']"):
+                    literal_value = literal_cell.get('value', '')
+                    if literal_value:
+                        # Use the modified extract_literals_from_html function
+                        literals = extract_literals_from_html(literal_value)
+                        for literal in literals:
+                            if literal and not is_enumeration(literal):
+                                model_elements['enumerations'][enum_name].append(literal)
             else:
-                print(f"Enum found without a name in value: {value}")
+                print(f"Warning: Enum found without a name in value: {value}")
             continue
 
         # Process classes (only if not an enumeration)
@@ -1042,11 +1054,24 @@ def extract_enum_name_from_html(value: str) -> str:
 def extract_literals_from_html(value: str) -> list:
     """Extract enumeration literals from HTML content."""
     literals = []
-    matches = re.findall(r'<hr[^>]*>.*?<p[^>]*>(.*?)</p>', value)
-    for literal in matches:
-        clean_literal = clean_html_tags(literal).lstrip('-').strip()
-        if clean_literal and not is_enumeration(clean_literal) and clean_literal != '<br>':
-            literals.append(clean_literal)
+    
+    # Handle div-separated literals
+    if '<div>' in value:
+        # Split by div tags and clean each part
+        parts = value.split('</div>')
+        for part in parts:
+            # Clean the part from remaining div tags and other HTML
+            clean_part = clean_html_tags(part).strip()
+            if clean_part and not is_enumeration(clean_part) and clean_part != '<br>':
+                literals.append(clean_part)
+    else:
+        # Handle other formats (unchanged)
+        matches = re.findall(r'<hr[^>]*>.*?<p[^>]*>(.*?)</p>', value)
+        for literal in matches:
+            clean_literal = clean_html_tags(literal).lstrip('-').strip()
+            if clean_literal and not is_enumeration(clean_literal) and clean_literal != '<br>':
+                literals.append(clean_literal)
+    
     return literals
 
 def extract_literals_from_cells(root: ET.Element, cell_id: str) -> list:
@@ -1089,3 +1114,51 @@ def parse_parameters(params_str: str) -> list:
                     'type': StringType
                 })
     return parameters
+
+def extract_attributes_from_html(value: str) -> list:
+    """Extract class attributes from HTML content."""
+    attributes = []
+    
+    # Handle div-separated attributes
+    if '<div>' in value:
+        parts = value.split('</div>')
+        for part in parts:
+            # Clean the part from HTML tags
+            clean_part = clean_html_tags(part).strip()
+            if clean_part and clean_part != '<br>':
+                # Parse attribute
+                attr_parts = clean_part.split(':')
+                attr_name = attr_parts[0].strip().lstrip('+')
+                attr_type = attr_parts[1].strip() if len(attr_parts) > 1 else 'str'
+                attributes.append((attr_name, attr_type))
+    else:
+        # Handle single line attributes
+        attr_parts = clean_html_tags(value).split(':')
+        attr_name = attr_parts[0].strip().lstrip('+')
+        attr_type = attr_parts[1].strip() if len(attr_parts) > 1 else 'str'
+        attributes.append((attr_name, attr_type))
+    
+    return attributes
+
+def process_class_attributes(cell_value: str) -> list:
+    """Process class attributes and return a list of Property objects."""
+    properties = []
+    
+    attributes = extract_attributes_from_html(cell_value)
+    for attr_name, attr_type in attributes:
+        # Map type strings to actual types
+        type_mapping = {
+            'str': StringType,
+            'int': IntegerType,
+            'float': FloatType,
+            'bool': BooleanType,
+            'time': TimeType,
+            'date': DateType,
+            'datetime': DateTimeType,
+            'timedelta': TimeDeltaType
+        }
+        
+        attr_type_obj = type_mapping.get(attr_type, StringType)
+        properties.append(Property(name=attr_name, type=attr_type_obj))
+    
+    return properties

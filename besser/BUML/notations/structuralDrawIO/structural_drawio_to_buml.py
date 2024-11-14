@@ -163,52 +163,97 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             continue
 
         # Process classes (only if not an enumeration)
-        if value:
-            # HTML format class
-            if value.startswith("<p") and "<b>" in value:
-                class_match = re.search(r'<b>(.*?)</b>', value)
-                class_name = clean_html_tags(class_match.group(1)) if class_match else None
+        if value and not is_enumeration(value):
+            if is_class_style(style, value):
+                class_name = extract_class_name(value)
                 if not class_name:
-                    raise ValueError(f"Invalid class name: '{class_name}'. Class name cannot be empty. Skipping class")
+                    continue
                 elif class_name.lower() == "class":
                     class_name = f"_{class_name}"
 
-                    model_elements['classes'][class_name] = {
-                        'attributes': [],
-                        'methods': []
-                    }
-                    #print(f"\nProcessing class: {class_name}")
-                    # Parse attributes and methods from HTML
-                    field_matches = re.finditer(r'<p[^>]*>([^<]*)</p>', value)
-                    for match in field_matches:
-                        field = clean_html_tags(match.group(1).strip())
-                        if field and field != class_name:  # Skip class name
-                            if '(' in field:  # Method
-                                visibility = "+" if field.startswith("+ ") else "-" \
-                                    if field.startswith("- ") else "+"
-                                method_str = field.lstrip("+ -")
-                                method_name, params_str, return_type = process_method_string(method_str)
-                                if method_name:
-                                    parameters = parse_parameters(params_str)
-                                    model_elements['classes'][class_name]['methods'].append(
-                                        (visibility, method_name, parameters, return_type)
-                                    )
+                model_elements['classes'][class_name] = {
+                    'attributes': [],
+                    'methods': []
+                }
 
-                            else:  # Attribute
-                                visibility = "+" if field.startswith("+ ") else "-" \
-                                    if field.startswith("- ") else "+"
-                                attr_str = field.lstrip("+ -")
-                                if ':' in attr_str:
-                                    name, type_str = attr_str.split(':', 1)
-                                    model_elements['classes'][class_name]['attributes'].append(
-                                        (visibility, name.strip(), type_str.strip())
-                                    )
-                                else:
-                                    # Attribute with only a name, no type
-                                    name = attr_str.strip()
-                                    model_elements['classes'][class_name]['attributes'].append(
-                                        (visibility, name, "str")  # None for type if not specified
-                                    )
+                # Parse attributes and methods based on format
+                if value.startswith("<p") and "margin-top:4px" in value:
+                    # Handle new HTML format
+                    sections = value.split('<hr size="1"')
+                    for section in sections[1:]:  # Skip the class name section
+                        if '<p style="margin:0px;margin-left:4px;">' in section:
+                            field = clean_html_tags(re.search(r'<p[^>]*>(.*?)</p>', section).group(1))
+                            if field:
+                                if '(' in field:  # Method
+                                    visibility = "+" if field.startswith("+ ") else "-" \
+                                        if field.startswith("- ") else "+"
+                                    method_str = field.lstrip("+ -")
+                                    method_name, params_str, return_type = process_method_string(method_str)
+                                    if method_name:
+                                        parameters = parse_parameters(params_str)
+                                        model_elements['classes'][class_name]['methods'].append(
+                                            (visibility, method_name, parameters, return_type)
+                                        )
+                                else:  # Attribute
+                                    visibility = "+" if field.startswith("+ ") else "-" \
+                                        if field.startswith("- ") else "+"
+                                    attr_str = field.lstrip("+ -")
+                                    if ':' in attr_str:
+                                        name, type_str = attr_str.split(':', 1)
+                                        model_elements['classes'][class_name]['attributes'].append(
+                                            (visibility, name.strip(), type_str.strip())
+                                        )
+                                    else:
+                                        name = attr_str.strip()
+                                        model_elements['classes'][class_name]['attributes'].append(
+                                            (visibility, name, "str")
+                                        )
+                else:
+                    # Original HTML format handling (unchanged)
+                    if value.startswith("<p") and "<b>" in value:
+                        class_match = re.search(r'<b>(.*?)</b>', value)
+                        class_name = clean_html_tags(class_match.group(1)) if class_match else None
+                        if not class_name:
+                            raise ValueError(f"Invalid class name: '{class_name}'. Class name cannot be empty. Skipping class")
+                        elif class_name.lower() == "class":
+                            class_name = f"_{class_name}"
+
+                            model_elements['classes'][class_name] = {
+                                'attributes': [],
+                                'methods': []
+                            }
+                            #print(f"\nProcessing class: {class_name}")
+                            # Parse attributes and methods from HTML
+                            field_matches = re.finditer(r'<p[^>]*>([^<]*)</p>', value)
+                            for match in field_matches:
+                                field = clean_html_tags(match.group(1).strip())
+                                if field and field != class_name:  # Skip class name
+                                    if '(' in field:  # Method
+                                        visibility = "+" if field.startswith("+ ") else "-" \
+                                            if field.startswith("- ") else "+"
+                                        method_str = field.lstrip("+ -")
+                                        method_name, params_str, return_type = process_method_string(method_str)
+                                        if method_name:
+                                            parameters = parse_parameters(params_str)
+                                            model_elements['classes'][class_name]['methods'].append(
+                                                (visibility, method_name, parameters, return_type)
+                                            )
+
+                                    else:  # Attribute
+                                        visibility = "+" if field.startswith("+ ") else "-" \
+                                            if field.startswith("- ") else "+"
+                                        attr_str = field.lstrip("+ -")
+                                        if ':' in attr_str:
+                                            name, type_str = attr_str.split(':', 1)
+                                            model_elements['classes'][class_name]['attributes'].append(
+                                                (visibility, name.strip(), type_str.strip())
+                                            )
+                                        else:
+                                            # Attribute with only a name, no type
+                                            name = attr_str.strip()
+                                            model_elements['classes'][class_name]['attributes'].append(
+                                                (visibility, name, "str")  # None for type if not specified
+                                            )
 
             # Swimlane format class
             elif style and "swimlane" in style:
@@ -928,23 +973,33 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
     #print(f"\nDomain Model created: {domain_model}")
     return domain_model, association_properties
 
+def is_class_style(style: str, value: str) -> bool:
+    """Check if the cell represents a class based on its style and value."""
+    return (
+        'swimlane' in style 
+        or '<b>' in value 
+        or (style and 'verticalAlign=top;align=left;overflow=fill' in style)
+    )
+
 def extract_class_name(cell_value: str) -> str:
     """
     Extract class name from a cell value, handling both HTML and plain text formats.
-    
-    Args:
-        cell_value: The value from the cell, which may contain HTML tags
-        
-    Returns:
-        The extracted class name as a string
     """
     if not cell_value:
         return None
 
+    # Handle HTML format with <b> tags
     if '<b>' in cell_value:
         class_match = re.search(r'<b>(.*?)</b>', cell_value)
         if class_match:
             return clean_html_tags(class_match.group(1))
+    
+    # Handle HTML format with margin-top style
+    if 'margin-top:4px' in cell_value:
+        class_match = re.search(r'<b>(.*?)</b>', cell_value)
+        if class_match:
+            return clean_html_tags(class_match.group(1))
+    
     return clean_html_tags(cell_value)
 
 def is_enumeration(value: str) -> bool:

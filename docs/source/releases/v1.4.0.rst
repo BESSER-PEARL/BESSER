@@ -1,0 +1,19 @@
+Version 1.4.0
+=============
+
+
+New features
+------------
+
+* DrawIO to BUML: Convert DrawIO structural diagrams to BUML, supporting advanced UML class notations, associations, and enumerations.
+* BUML to File: Export BUML models directly to files with improved structure and formatting.
+* PlantUML to BUML: Redesigned integration.
+
+Improvements
+------------
+
+* Code Generators: Python, Pydantic, Django, and Backend generators now include support for enumerations.
+* Timestamp Attribute: Added support for a timestamp attribute and utilities for sorting by timestamp.
+* File paths are generated using `os.path.join` to ensure compatibility across platforms.
+* Refactored `TypedElement` to use class attributes for type mapping and include predefined data types such as `StringType`, `IntegerType`, and more.
+

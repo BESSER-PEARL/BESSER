@@ -20,7 +20,7 @@ must be imported for this Library modeling example.
 .. code-block:: python
 
     from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
-        PrimitiveDataType, Multiplicity, BinaryAssociation
+        StringType, IntegerType, DateType, Multiplicity, BinaryAssociation
 
 Now, we can define the attributes, classes, relationships, and other elements of the model. The following is the definition 
 of the *Book* class including its attributes.
@@ -28,9 +28,9 @@ of the *Book* class including its attributes.
 .. code-block:: python
 
     # Book attributes definition
-    title: Property = Property(name="title", owner=None, type=PrimitiveDataType("str"))
-    pages: Property = Property(name="pages", owner=None, type=PrimitiveDataType("int"))
-    release: Property = Property(name="release", owner=None, type=PrimitiveDataType("date"))
+    title: Property = Property(name="title", owner=None, type=StringType)
+    pages: Property = Property(name="pages", owner=None, type=IntegerType)
+    release: Property = Property(name="release", owner=None, type=DateType)
 
     # Book class definition
     book: Class = Class (name="Book", attributes={title, pages, release})

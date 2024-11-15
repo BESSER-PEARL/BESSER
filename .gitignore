@@ -1,8 +1,10 @@
 __pycache__/
 
-# pipenv
+# virtual env
 Pipfile
 Pipfile.lock
+besser_venv/
+.env
 
 # package
 /dist/
@@ -21,4 +23,3 @@ besser/.idea/workspace.xml
 *.iml
 .idea/inspectionProfiles/profiles_settings.xml
 *.xml
-besser_venv/

@@ -1,6 +1,7 @@
 
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
-    PrimitiveDataType, Multiplicity, BinaryAssociation,Constraint
+    Multiplicity, BinaryAssociation,Constraint,\
+    StringType, IntegerType, DateType
 from besser.BUML.metamodel.object import *
 import datetime
 
@@ -8,27 +9,22 @@ import datetime
 #   Library - structural model definition   #
 #############################################
 
-# Primitive DataTypes
-t_int: PrimitiveDataType = PrimitiveDataType("int")
-t_str: PrimitiveDataType = PrimitiveDataType("str")
-t_date: PrimitiveDataType = PrimitiveDataType("date")
-
 # Library attributes definition
-library_name: Property = Property(name="name", type=t_str)
-address: Property = Property(name="address", type=t_str)
+library_name: Property = Property(name="name", type=StringType)
+address: Property = Property(name="address", type=StringType)
 # Library class definition
 library: Class = Class (name="Library", attributes={library_name, address})
 
 # Book attributes definition
-title: Property = Property(name="title", type=t_str)
-pages: Property = Property(name="pages", type=t_int)
-release: Property = Property(name="release", type=t_date)
+title: Property = Property(name="title", type=StringType)
+pages: Property = Property(name="pages", type=IntegerType)
+release: Property = Property(name="release", type=DateType)
 # Book class definition
 book: Class = Class (name="Book", attributes={title, pages, release})
 
 # Author attributes definition
-author_name: Property = Property(name="name", type=t_str)
-email: Property = Property(name="email", type=t_str)
+author_name: Property = Property(name="name", type=StringType)
+email: Property = Property(name="email", type=StringType)
 # Author class definition
 author: Class = Class (name="Author", attributes={author_name, email})
 
@@ -109,29 +105,29 @@ library_model : DomainModel = DomainModel(name="Library model", types={library, 
 
 
 # Library object attributes
-library_obj_name: AttributeLink = AttributeLink(attribute=library_name, value=DataValue(classifier=t_str, value="Library test"))
-library_obj_address: AttributeLink = AttributeLink(attribute=address, value=DataValue(classifier=t_str, value="street 123"))
+library_obj_name: AttributeLink = AttributeLink(attribute=library_name, value=DataValue(classifier=StringType, value="Library test"))
+library_obj_address: AttributeLink = AttributeLink(attribute=address, value=DataValue(classifier=StringType, value="street 123"))
 # Library object
 library_obj: Object = Object(name="Library Object", classifier=library, slots=[library_obj_name, library_obj_address])
 
 # Book object attributes
-book_obj_name: AttributeLink = AttributeLink(attribute=title, value=DataValue(classifier=t_str, value="Book tittle"))
-book_obj_pages: AttributeLink = AttributeLink(attribute=pages, value=DataValue(classifier=t_int, value=100))
-book_obj_release: AttributeLink = AttributeLink(attribute=release, value=DataValue(classifier=t_date, value=datetime.datetime(2020, 3, 15)))
+book_obj_name: AttributeLink = AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book tittle"))
+book_obj_pages: AttributeLink = AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=100))
+book_obj_release: AttributeLink = AttributeLink(attribute=release, value=DataValue(classifier=DateType, value=datetime.datetime(2020, 3, 15)))
 # Book object
 book_obj: Object = Object(name="Book Object", classifier=book, slots=[book_obj_name, book_obj_pages])
 
 # Book_2 object attributes
 
-book_obj_name_2: AttributeLink = AttributeLink(attribute=title, value=DataValue(classifier=t_str, value="Book tittle_2"))
-book_obj_pages_2: AttributeLink = AttributeLink(attribute=pages, value=DataValue(classifier=t_int, value=400))
-book_obj_release_2: AttributeLink = AttributeLink(attribute=release, value=DataValue(classifier=t_date, value=datetime.datetime(2024, 3, 15)))
+book_obj_name_2: AttributeLink = AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book tittle_2"))
+book_obj_pages_2: AttributeLink = AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=400))
+book_obj_release_2: AttributeLink = AttributeLink(attribute=release, value=DataValue(classifier=DateType, value=datetime.datetime(2024, 3, 15)))
 # Book object
 book_obj_2: Object = Object(name="Book 2 Object", classifier=book, slots=[book_obj_name_2, book_obj_pages_2])
 
 # Author object attributes
-author_obj_name: AttributeLink = AttributeLink(attribute=author_name, value=DataValue(classifier=t_str, value="John Doe"))
-author_obj_email: AttributeLink = AttributeLink(attribute=email, value=DataValue(classifier=t_str, value="john@doe.com"))
+author_obj_name: AttributeLink = AttributeLink(attribute=author_name, value=DataValue(classifier=StringType, value="John Doe"))
+author_obj_email: AttributeLink = AttributeLink(attribute=email, value=DataValue(classifier=StringType, value="john@doe.com"))
 # Author object
 author_obj: Object = Object(name="Author Object", classifier=author, slots=[author_obj_name, author_obj_email])
 

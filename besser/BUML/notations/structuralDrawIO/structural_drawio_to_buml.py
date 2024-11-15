@@ -140,6 +140,20 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
             'parent': parent
         }
 
+        # Check for enumeration in swimlane format
+        if style and 'swimlane' in style and is_enumeration(value):
+            enum_name = clean_enumeration_name(value.split('\n')[1] if '\n' in value else value)
+            if enum_name:
+                model_elements['enumerations'][enum_name] = []
+                # Find all child cells (literals)
+                for literal_cell in root.findall(f".//mxCell[@parent='{cell_id}']"):
+                    literal_value = literal_cell.get('value', '')
+                    if literal_value and not is_enumeration(literal_value):
+                        clean_literal = clean_html_tags(literal_value).strip()
+                        if clean_literal:
+                            model_elements['enumerations'][enum_name].append(clean_literal)
+            continue
+
         # Skip processing as class if it's an enumeration
         if value and is_enumeration(value):
             enum_name = ""
@@ -1065,24 +1079,38 @@ def is_enumeration(value: str) -> bool:
         "&lt;&lt;enumeration&gt;&gt;", "<<enumeration>>", "«enumeration»",
         "Enumeration", "enumeration"
     ]
+    # Handle multi-line values (swimlane format)
+    if '\n' in value:
+        first_line = value.split('\n')[0]
+        return any(pattern in first_line for pattern in enum_patterns)
     return any(pattern in value for pattern in enum_patterns)
 
 def clean_enumeration_name(value: str) -> str:
     """Remove enumeration stereotypes and clean the name."""
+    # Handle HTML encoded characters first
+    value = value.replace('&lt;', '<').replace('&gt;', '>')
+    
     replacements = [
-        ("&lt;&lt;Enum&gt;&gt;", ""), ("<<Enum>>", ""), ("«Enum»", ""),
-        ("&lt;&lt;enum&gt;&gt;", ""), ("<<enum>>", ""), ("«enum»", ""),
-        ("&lt;&lt;Enumeration&gt;&gt;", ""), ("<<Enumeration>>", ""), ("«Enumeration»", ""),
-        ("&lt;&lt;enumeration&gt;&gt;", ""), ("<<enumeration>>", ""), ("«enumeration»", ""),
-        ("&amp;lt;&amp;lt;Enum&amp;gt;&amp;gt;", ""),
-        ("&amp;lt;&amp;lt;enum&amp;gt;&amp;gt;", ""),
-        ("&amp;lt;&amp;lt;Enumeration&amp;gt;&amp;gt;", ""),
-        ("&amp;lt;&amp;lt;enumeration&amp;gt;&amp;gt;", ""),
+        ("<<Enum>>", ""), ("«Enum»", ""),
+        ("<<enum>>", ""), ("«enum»", ""),
+        ("<<Enumeration>>", ""), ("«Enumeration»", ""),
+        ("<<enumeration>>", ""), ("«enumeration»", ""),
         ("Enumeration", ""), ("enumeration", "")
     ]
+    
     result = value
     for old, new in replacements:
         result = result.replace(old, new)
+    
+    # Clean any remaining HTML and whitespace
+    result = clean_html_tags(result)
+    
+    # If there are multiple lines, take the last non-empty line
+    if '\n' in result:
+        lines = [line.strip() for line in result.split('\n') if line.strip()]
+        if lines:
+            result = lines[-1]
+    
     return result.strip()
 
 def extract_enum_name_from_html(value: str) -> str:

@@ -196,7 +196,7 @@ def test_parameters_same_name():
         parameter1: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="str"))
         parameter2: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="int"))
         method: Method = Method(name='method_1', is_abstract=True, parameters={parameter1, parameter2})
-    assert "A method cannot have two parameters with the same name" in str(excinfo.value)
+    assert "A method cannot have parameters with duplicate names: parameter_1" in str(excinfo.value)
 
 # Testing sort attributes by timestamp
 def test_sort_parameters():

@@ -17,6 +17,11 @@ from besser.BUML.metamodel.structural import DomainModel, Class, Property, Primi
 
 BASE_URL = "http://localhost:8000"
 
+# Add this decorator to filter out the specific deprecation warning
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:The 'app' shortcut is now deprecated.:DeprecationWarning"
+)
+
 def run_tests():
     pytest.main([__file__])
 

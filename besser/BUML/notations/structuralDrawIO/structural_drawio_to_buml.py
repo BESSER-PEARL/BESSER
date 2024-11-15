@@ -30,23 +30,22 @@ PRIMITIVE_TYPE_MAPPING = {
     'timedelta': TimeDeltaType
 }
 
-def structural_drawio_to_buml(drawio_file_path: str, buml_model_file_name: str = None) -> DomainModel:
+def structural_drawio_to_buml(drawio_file_path: str, buml_file_path: str = None) -> DomainModel:
     """
     Transform a Draw.io structural model into a B-UML model.
 
     Args:
         drawio_file_path: Path to the Draw.io file containing the UML diagram
-        buml_model_file_name: Name for the output B-UML model file (default: None)
+        buml_file_path: Path for the output B-UML model file (default: None)
 
     Returns:
         DomainModel: The generated B-UML model object
     """
     buml_model, _ = generate_buml_from_xml(drawio_file_path)
 
-    if buml_model_file_name:
+    if buml_file_path:
         # Save model to Python file
-        output_file_path = os.path.join("buml", buml_model_file_name)
-        domain_model_to_code(buml_model, output_file_path)
+        domain_model_to_code(buml_model, buml_file_path)
 
     return buml_model
 

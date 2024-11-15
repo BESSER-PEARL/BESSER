@@ -197,18 +197,21 @@ class Enumeration(DataType):
 
     Args:
         name (str): The name of the enumeration data type.
-        literals (set[EnumerationLiteral]): Set of enumeration literals associated with the enumeration.
+        literals (set[EnumerationLiteral]): Set of enumeration literals associated with the 
+                enumeration (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         name (str): Inherited from DataType, represents the name of the enumeration.
-        literals (set[EnumerationLiteral]): Represents a set of enumeration literals associated with the enumeration.
-        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
+        literals (set[EnumerationLiteral]): Represents a set of enumeration literals associated 
+                with the enumeration (None as default).
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is 
+                current time).
     """
 
-    def __init__(self, name: str, literals: set[EnumerationLiteral], timestamp: int = None):
+    def __init__(self, name: str, literals: set[EnumerationLiteral] = None, timestamp: int = None):
         super().__init__(name, timestamp)
-        self.literals: set[EnumerationLiteral] = literals
+        self.literals: set[EnumerationLiteral] = literals if literals is not None else set()
 
     @property
     def literals(self) -> set[EnumerationLiteral]:

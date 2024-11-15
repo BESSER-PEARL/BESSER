@@ -20,7 +20,7 @@ must be imported for this Library modeling example.
 .. code-block:: python
 
     from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
-        StringType, IntegerType, DateType, Multiplicity, BinaryAssociation
+         Multiplicity, BinaryAssociation, StringType, IntegerType, DateType
 
 Now, we can define the attributes, classes, relationships, and other elements of the model. The following is the definition 
 of the *Book* class including its attributes.
@@ -34,6 +34,9 @@ of the *Book* class including its attributes.
 
     # Book class definition
     book: Class = Class (name="Book", attributes={title, pages, release})
+
+In this example, we are importing and using ``StringTypeng``, ``IntegerType``, and ``DateType`` as primitive data types. But BESSER
+also provides additional data types including ``FloatType``, ``BooleanType``, ``TimeType``, ``DateTimeType``, and ``TimeDeltaType``
 
 Different types of relationships can be specified with B-UML such as associations (including binary associations), generalizations, 
 generalization sets, and class associations. Using the ``BynaryAssociation`` class, we can specify the relationship between *Library* 

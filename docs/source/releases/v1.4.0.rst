@@ -5,15 +5,15 @@ Version 1.4.0
 New features
 ------------
 
-* DrawIO to BUML: Convert DrawIO structural diagrams to BUML, supporting advanced UML class notations, associations, and enumerations.
-* BUML to File: Export BUML models directly to files with improved structure and formatting.
-* PlantUML to BUML: Redesigned integration.
+* DrawIO to B-UML: Convert DrawIO structural diagrams to B-UML, supporting advanced UML class notations, associations, and enumerations.
+* B-UML to File: Export B-UML models directly to files as Python-based code.
+* Sort by timestamp: The new ``sort_by_timestamp`` feature enables you to retrieve an ordered list of objects in BESSER (e.g., classes or attributes), sorted by their creation date.
 
 Improvements
 ------------
 
 * Code Generators: Python, Pydantic, Django, and Backend generators now include support for enumerations.
-* Timestamp Attribute: Added support for a timestamp attribute and utilities for sorting by timestamp.
+* PlantUML to BUML: Parser modified to return the B-UML model and optionally generates the Python-based code using the B-UML to File feature.
+* Structural metamodel: two parameters added to the NamedElement class. ``time_stamp`` to store the creation date and time of the element, and ``synonyms`` to store alternative names or variations for the named object.
 * File paths are generated using `os.path.join` to ensure compatibility across platforms.
-* Refactored `TypedElement` to use class attributes for type mapping and include predefined data types such as `StringType`, `IntegerType`, and more.
-
+* Predefined primitive data types included such as `StringType`, `IntegerType`, and more.

@@ -8,15 +8,6 @@ def test_named_element():
     named_element: NamedElement = NamedElement(name="element1")
     assert named_element.name == "element1"
 
-
-# Testing the WFR for duplicate names in a model
-def test_model_duplicated_names():
-    with pytest.raises(ValueError) as excinfo:
-        class1: Type = Type(name="name1")
-        class2: Type = Type(name="name1")
-        model: DomainModel = DomainModel(name="mymodel", types={class1, class2}, associations = None, packages = None, constraints = None)
-    assert "same name" in str(excinfo.value)
-
 # Test: Do not have two modules with the same name in an application.
 def test_unique_module_names():
     module1: Module = Module(name="module1", screens=[])

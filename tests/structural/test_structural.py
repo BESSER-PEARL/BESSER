@@ -1,5 +1,6 @@
 import pytest
 from besser.BUML.metamodel.structural import *
+from besser.utilities import sort_by_timestamp
 
 def test_named_element():
     named_element: NamedElement = NamedElement(name="element1")
@@ -10,10 +11,11 @@ def test_model_initialization():
     class1: Type = Type(name="element1")
     class2: Type = Type(name="element2")
     model: DomainModel = DomainModel(name="mymodel", types={class1, class2}, associations = None, packages = None, constraints = None)
-    assert len(model.types) == 2
+    assert class1 in model.types
+    assert class2 in model.types
     model_empty: DomainModel = DomainModel(name="mymodel", types = None, associations = None, packages = None, constraints = None)
-    assert len(model_empty.types) == 0
-
+    assert class1 not in model_empty.types
+    assert class2 not in model_empty.types
 
 # Testing the WFR for duplicate names in a model
 def test_model_duplicated_names():
@@ -21,7 +23,7 @@ def test_model_duplicated_names():
         class1: Type = Type(name="name1")
         class2: Type = Type(name="name1")
         model: DomainModel = DomainModel(name="mymodel", types={class1, class2}, associations = None, packages = None, constraints = None)
-    assert "same name" in str(excinfo.value)
+    assert "The model cannot have types with duplicate names: name1" in str(excinfo.value)
 
 
 # Testing attributes initialization
@@ -77,7 +79,7 @@ def test_duplicated_name_class():
         attribute1: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
         attribute2: Property = Property(name="attribute1", owner=None, type=PrimitiveDataType("int"), multiplicity=Multiplicity(0, 1))
         class1 = Class(name="name1", attributes={attribute1, attribute2})
-    assert "A class cannot have two attributes with the same name" in str(excinfo.value)
+    assert "A class cannot have attributes with duplicate names: attribute1" in str(excinfo.value)
 
 # Testing for no more than one id attribute in class
 def test_more_than_one_id_class():
@@ -86,7 +88,7 @@ def test_more_than_one_id_class():
         attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"), is_id=True)
         attribute2: Property = Property(name="attribute2", type=PrimitiveDataType("int"), is_id=True)
         class1 = Class(name="name1", attributes={attribute1, attribute2})
-    assert "A class cannot have two id attributes" in str(excinfo.value)
+    assert "A class cannot have more than one attribute marked as 'id'" in str(excinfo.value)
 
 def test_association_initialization():
     class1: Class = Class(name="name1", attributes=set())
@@ -189,9 +191,56 @@ def test_method_initialization():
     assert method.name == "method_1"
     assert method.type.name == "class_1"
 
+# Testing parameters with repeated name
 def test_parameters_same_name():
     with pytest.raises(ValueError) as excinfo:
         parameter1: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="str"))
         parameter2: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="int"))
         method: Method = Method(name='method_1', is_abstract=True, parameters={parameter1, parameter2})
-    assert "A method cannot have two parameters with the same name" in str(excinfo.value)
+    assert "A method cannot have parameters with duplicate names: parameter_1" in str(excinfo.value)
+
+# Testing sort attributes by timestamp
+def test_sort_attributes():
+    attribute1: Property = Property(name="attribute_1", type=PrimitiveDataType(name="str"))
+    attribute2: Property = Property(name="attribute_2", type=PrimitiveDataType(name="int"))
+    attribute3: Property = Property(name="attribute_3", type=PrimitiveDataType(name="int"))
+    cls: Class = Class(name="class", attributes={attribute1, attribute2, attribute3})
+    attributes = sort_by_timestamp(cls.attributes)
+    assert len(attributes) == 3
+    assert type(attributes) == list
+    assert attributes[0] == attribute1
+    assert attributes[1] == attribute2
+    assert attributes[2] == attribute3
+
+# Testing the classes_sorted_by_inheritance method
+def test_classes_sorted_by_inheritance():
+    cl1 = Class(name="c1")
+    cl2 = Class(name="c2")
+    cl3 = Class(name="c3")
+    cl4 = Class(name="c4")
+    cl5 = Class(name="c5")
+    cl6 = Class(name="c6")
+    cl7 = Class(name="c7")
+    h1 = Generalization(general=cl7, specific=cl6)
+    h2 = Generalization(general=cl6, specific=cl5)
+    h3 = Generalization(general=cl5, specific=cl4)
+    h4 = Generalization(general=cl4, specific=cl2)
+    h5 = Generalization(general=cl4, specific=cl3)
+    h6 = Generalization(general=cl3, specific=cl2)
+    h7 = Generalization(general=cl2, specific=cl1)
+    model = DomainModel(name="model", types={cl1,cl2,cl3,cl4,cl5,cl6,cl7}, generalizations={h1,h2,h3,h4,h5,h6,h7})
+    classes = model.classes_sorted_by_inheritance()
+    assert len(classes) == 7
+    assert classes[0] == cl7
+    assert classes[2] == cl5
+    assert classes[4] == cl3
+    assert classes[6] == cl1
+
+# Testing synonyms of a Named Element
+'''def test_synonyms():
+    class_a: Class = Class(name="Library", synonyms=["synonym1", "synonym2", "synonym3"])
+    assert len(class_a.synonyms) == 3
+    assert class_a.synonyms[0] == "synonym1"
+    assert class_a.synonyms[1] == "synonym2"
+    assert class_a.synonyms[2] == "synonym3"
+'''

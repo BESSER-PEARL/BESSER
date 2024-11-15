@@ -6,7 +6,7 @@ if "." in __name__:
 else:
     from BOCLParser import BOCLParser
 import inspect
-from besser.BUML.metamodel.ocl.rules import OperationCallExpression
+from besser.BUML.metamodel.ocl.ocl import OperationCallExpression
 
 
 # This class defines a complete listener for a parse tree produced by BOCLParser.
@@ -641,8 +641,6 @@ class BOCLListener(ParseTreeListener):
     def exitSYMMETRICDIFFERENCE(self, ctx: BOCLParser.SYMMETRICDIFFERENCEContext):
         self.rootHandler.add_to_root(self.coll_data.pop())
 
-        pass
-
     # Enter a parse tree produced by BOCLParser#FIRST.
     def enterFIRST(self, ctx: BOCLParser.FIRSTContext):
         if self.debug:
@@ -653,10 +651,8 @@ class BOCLListener(ParseTreeListener):
         if len(self.coll_data) > 0:
             self.rootHandler.handle_adding_to_root(self.coll_data.pop())
         self.rootHandler.handle_adding_to_root(op_call_exp)
-
         # print(inspect.stack()[0][3])
-        pass
-
+      
     # Exit a parse tree produced by BOCLParser#FIRST.
     def exitFIRST(self, ctx: BOCLParser.FIRSTContext):
         pass

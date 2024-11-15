@@ -10,97 +10,100 @@ else:
 
 def serializedATN():
     return [
-        4,1,44,254,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,
+        4,1,44,259,2,0,7,0,2,1,7,1,2,2,7,2,2,3,7,3,2,4,7,4,2,5,7,5,2,6,7,
         6,2,7,7,7,2,8,7,8,2,9,7,9,2,10,7,10,2,11,7,11,2,12,7,12,2,13,7,13,
         2,14,7,14,2,15,7,15,2,16,7,16,2,17,7,17,2,18,7,18,2,19,7,19,2,20,
         7,20,2,21,7,21,2,22,7,22,2,23,7,23,2,24,7,24,1,0,1,0,1,0,5,0,54,
-        8,0,10,0,12,0,57,9,0,1,0,1,0,1,1,1,1,1,1,1,1,3,1,65,8,1,1,2,1,2,
-        1,2,1,2,1,2,1,3,1,3,3,3,74,8,3,1,3,1,3,3,3,78,8,3,1,3,1,3,1,3,1,
-        3,5,3,84,8,3,10,3,12,3,87,9,3,1,3,1,3,1,3,1,4,1,4,3,4,94,8,4,1,5,
-        1,5,3,5,98,8,5,1,6,1,6,3,6,102,8,6,1,6,1,6,1,6,1,6,3,6,108,8,6,1,
-        6,3,6,111,8,6,1,6,1,6,1,6,3,6,116,8,6,1,6,1,6,1,7,1,7,1,8,3,8,123,
-        8,8,1,8,1,8,3,8,127,8,8,1,9,3,9,130,8,9,1,9,3,9,133,8,9,3,9,135,
-        8,9,1,9,1,9,3,9,139,8,9,1,9,3,9,142,8,9,3,9,144,8,9,1,10,3,10,147,
-        8,10,1,10,3,10,150,8,10,3,10,152,8,10,1,10,1,10,3,10,156,8,10,1,
-        10,3,10,159,8,10,3,10,161,8,10,1,11,1,11,1,11,3,11,166,8,11,1,11,
-        1,11,1,11,1,12,1,12,1,12,1,13,1,13,1,13,1,13,3,13,178,8,13,1,13,
-        1,13,1,14,1,14,1,15,3,15,185,8,15,1,15,1,15,1,15,1,15,1,15,1,16,
-        3,16,193,8,16,1,16,3,16,196,8,16,1,16,1,16,1,16,1,16,1,16,3,16,203,
-        8,16,3,16,205,8,16,1,16,1,16,1,16,3,16,210,8,16,1,16,1,16,1,17,1,
-        17,1,17,1,17,1,17,3,17,219,8,17,1,18,3,18,222,8,18,1,18,1,18,3,18,
-        226,8,18,1,19,1,19,3,19,230,8,19,1,20,1,20,1,20,1,20,1,20,5,20,237,
-        8,20,10,20,12,20,240,9,20,1,20,1,20,1,20,1,21,1,21,1,21,1,22,1,22,
-        1,23,1,23,1,24,1,24,1,24,0,0,25,0,2,4,6,8,10,12,14,16,18,20,22,24,
-        26,28,30,32,34,36,38,40,42,44,46,48,0,5,2,0,39,39,41,41,1,0,38,40,
-        1,0,21,24,1,0,25,33,1,0,34,35,271,0,50,1,0,0,0,2,64,1,0,0,0,4,66,
-        1,0,0,0,6,73,1,0,0,0,8,91,1,0,0,0,10,97,1,0,0,0,12,99,1,0,0,0,14,
-        119,1,0,0,0,16,122,1,0,0,0,18,134,1,0,0,0,20,151,1,0,0,0,22,162,
-        1,0,0,0,24,170,1,0,0,0,26,173,1,0,0,0,28,181,1,0,0,0,30,184,1,0,
-        0,0,32,192,1,0,0,0,34,213,1,0,0,0,36,221,1,0,0,0,38,229,1,0,0,0,
-        40,231,1,0,0,0,42,244,1,0,0,0,44,247,1,0,0,0,46,249,1,0,0,0,48,251,
-        1,0,0,0,50,51,5,36,0,0,51,55,5,43,0,0,52,54,3,2,1,0,53,52,1,0,0,
-        0,54,57,1,0,0,0,55,53,1,0,0,0,55,56,1,0,0,0,56,58,1,0,0,0,57,55,
-        1,0,0,0,58,59,5,37,0,0,59,1,1,0,0,0,60,65,3,4,2,0,61,65,3,6,3,0,
-        62,65,3,10,5,0,63,65,3,40,20,0,64,60,1,0,0,0,64,61,1,0,0,0,64,62,
-        1,0,0,0,64,63,1,0,0,0,65,3,1,0,0,0,66,67,5,1,0,0,67,68,5,2,0,0,68,
-        69,5,39,0,0,69,70,5,43,0,0,70,5,1,0,0,0,71,74,3,8,4,0,72,74,5,3,
-        0,0,73,71,1,0,0,0,73,72,1,0,0,0,74,75,1,0,0,0,75,77,5,38,0,0,76,
-        78,3,24,12,0,77,76,1,0,0,0,77,78,1,0,0,0,78,79,1,0,0,0,79,80,5,4,
-        0,0,80,85,5,43,0,0,81,84,3,30,15,0,82,84,3,32,16,0,83,81,1,0,0,0,
-        83,82,1,0,0,0,84,87,1,0,0,0,85,83,1,0,0,0,85,86,1,0,0,0,86,88,1,
-        0,0,0,87,85,1,0,0,0,88,89,5,5,0,0,89,90,5,43,0,0,90,7,1,0,0,0,91,
-        93,5,6,0,0,92,94,5,3,0,0,93,92,1,0,0,0,93,94,1,0,0,0,94,9,1,0,0,
-        0,95,98,3,12,6,0,96,98,3,22,11,0,97,95,1,0,0,0,97,96,1,0,0,0,98,
-        11,1,0,0,0,99,101,5,38,0,0,100,102,3,26,13,0,101,100,1,0,0,0,101,
-        102,1,0,0,0,102,107,1,0,0,0,103,108,3,14,7,0,104,108,3,16,8,0,105,
-        108,3,18,9,0,106,108,3,20,10,0,107,103,1,0,0,0,107,104,1,0,0,0,107,
-        105,1,0,0,0,107,106,1,0,0,0,108,110,1,0,0,0,109,111,3,26,13,0,110,
-        109,1,0,0,0,110,111,1,0,0,0,111,112,1,0,0,0,112,115,5,38,0,0,113,
-        114,5,7,0,0,114,116,5,38,0,0,115,113,1,0,0,0,115,116,1,0,0,0,116,
-        117,1,0,0,0,117,118,5,43,0,0,118,13,1,0,0,0,119,120,5,8,0,0,120,
-        15,1,0,0,0,121,123,5,9,0,0,122,121,1,0,0,0,122,123,1,0,0,0,123,124,
-        1,0,0,0,124,126,5,8,0,0,125,127,5,10,0,0,126,125,1,0,0,0,126,127,
-        1,0,0,0,127,17,1,0,0,0,128,130,5,11,0,0,129,128,1,0,0,0,129,130,
-        1,0,0,0,130,135,1,0,0,0,131,133,5,9,0,0,132,131,1,0,0,0,132,133,
-        1,0,0,0,133,135,1,0,0,0,134,129,1,0,0,0,134,132,1,0,0,0,135,136,
-        1,0,0,0,136,143,5,8,0,0,137,139,5,10,0,0,138,137,1,0,0,0,138,139,
-        1,0,0,0,139,144,1,0,0,0,140,142,5,11,0,0,141,140,1,0,0,0,141,142,
-        1,0,0,0,142,144,1,0,0,0,143,138,1,0,0,0,143,141,1,0,0,0,144,19,1,
-        0,0,0,145,147,5,41,0,0,146,145,1,0,0,0,146,147,1,0,0,0,147,152,1,
-        0,0,0,148,150,5,9,0,0,149,148,1,0,0,0,149,150,1,0,0,0,150,152,1,
-        0,0,0,151,146,1,0,0,0,151,149,1,0,0,0,152,153,1,0,0,0,153,160,5,
-        8,0,0,154,156,5,10,0,0,155,154,1,0,0,0,155,156,1,0,0,0,156,161,1,
-        0,0,0,157,159,5,41,0,0,158,157,1,0,0,0,158,159,1,0,0,0,159,161,1,
-        0,0,0,160,155,1,0,0,0,160,158,1,0,0,0,161,21,1,0,0,0,162,165,5,38,
-        0,0,163,166,5,12,0,0,164,166,5,13,0,0,165,163,1,0,0,0,165,164,1,
-        0,0,0,166,167,1,0,0,0,167,168,5,38,0,0,168,169,5,43,0,0,169,23,1,
-        0,0,0,170,171,5,14,0,0,171,172,5,38,0,0,172,25,1,0,0,0,173,174,5,
-        44,0,0,174,177,3,28,14,0,175,176,5,15,0,0,176,178,3,28,14,0,177,
-        175,1,0,0,0,177,178,1,0,0,0,178,179,1,0,0,0,179,180,5,44,0,0,180,
-        27,1,0,0,0,181,182,7,0,0,0,182,29,1,0,0,0,183,185,3,44,22,0,184,
-        183,1,0,0,0,184,185,1,0,0,0,185,186,1,0,0,0,186,187,5,38,0,0,187,
-        188,5,7,0,0,188,189,3,38,19,0,189,190,5,43,0,0,190,31,1,0,0,0,191,
-        193,3,44,22,0,192,191,1,0,0,0,192,193,1,0,0,0,193,195,1,0,0,0,194,
-        196,3,48,24,0,195,194,1,0,0,0,195,196,1,0,0,0,196,197,1,0,0,0,197,
-        198,5,38,0,0,198,204,5,16,0,0,199,202,3,34,17,0,200,201,5,17,0,0,
-        201,203,3,34,17,0,202,200,1,0,0,0,202,203,1,0,0,0,203,205,1,0,0,
-        0,204,199,1,0,0,0,204,205,1,0,0,0,205,206,1,0,0,0,206,209,5,18,0,
-        0,207,208,5,7,0,0,208,210,3,38,19,0,209,207,1,0,0,0,209,210,1,0,
-        0,0,210,211,1,0,0,0,211,212,5,43,0,0,212,33,1,0,0,0,213,214,5,38,
-        0,0,214,215,5,7,0,0,215,218,3,38,19,0,216,217,5,19,0,0,217,219,3,
-        36,18,0,218,216,1,0,0,0,218,219,1,0,0,0,219,35,1,0,0,0,220,222,5,
-        44,0,0,221,220,1,0,0,0,221,222,1,0,0,0,222,223,1,0,0,0,223,225,7,
-        1,0,0,224,226,5,44,0,0,225,224,1,0,0,0,225,226,1,0,0,0,226,37,1,
-        0,0,0,227,230,3,46,23,0,228,230,5,38,0,0,229,227,1,0,0,0,229,228,
-        1,0,0,0,230,39,1,0,0,0,231,232,5,20,0,0,232,233,5,38,0,0,233,234,
-        5,4,0,0,234,238,5,43,0,0,235,237,3,42,21,0,236,235,1,0,0,0,237,240,
-        1,0,0,0,238,236,1,0,0,0,238,239,1,0,0,0,239,241,1,0,0,0,240,238,
-        1,0,0,0,241,242,5,5,0,0,242,243,5,43,0,0,243,41,1,0,0,0,244,245,
-        5,38,0,0,245,246,5,43,0,0,246,43,1,0,0,0,247,248,7,2,0,0,248,45,
-        1,0,0,0,249,250,7,3,0,0,250,47,1,0,0,0,251,252,7,4,0,0,252,49,1,
-        0,0,0,39,55,64,73,77,83,85,93,97,101,107,110,115,122,126,129,132,
-        134,138,141,143,146,149,151,155,158,160,165,177,184,192,195,202,
-        204,209,218,221,225,229,238
+        8,0,10,0,12,0,57,9,0,1,0,1,0,1,1,1,1,1,1,1,1,3,1,65,8,1,1,1,4,1,
+        68,8,1,11,1,12,1,69,1,2,1,2,1,2,1,2,1,2,1,3,1,3,3,3,79,8,3,1,3,1,
+        3,3,3,83,8,3,1,3,1,3,5,3,87,8,3,10,3,12,3,90,9,3,1,3,1,3,5,3,94,
+        8,3,10,3,12,3,97,9,3,1,3,1,3,1,4,1,4,3,4,103,8,4,1,5,1,5,3,5,107,
+        8,5,1,6,1,6,3,6,111,8,6,1,6,1,6,1,6,1,6,3,6,117,8,6,1,6,3,6,120,
+        8,6,1,6,1,6,1,6,3,6,125,8,6,1,7,1,7,1,8,3,8,130,8,8,1,8,1,8,3,8,
+        134,8,8,1,9,3,9,137,8,9,1,9,3,9,140,8,9,3,9,142,8,9,1,9,1,9,3,9,
+        146,8,9,1,9,3,9,149,8,9,3,9,151,8,9,1,10,3,10,154,8,10,1,10,3,10,
+        157,8,10,3,10,159,8,10,1,10,1,10,3,10,163,8,10,1,10,3,10,166,8,10,
+        3,10,168,8,10,1,11,1,11,1,11,3,11,173,8,11,1,11,1,11,1,12,1,12,1,
+        12,1,13,1,13,1,13,1,13,3,13,184,8,13,1,13,1,13,1,14,1,14,1,15,3,
+        15,191,8,15,1,15,1,15,1,15,1,15,1,15,1,16,3,16,199,8,16,1,16,3,16,
+        202,8,16,1,16,1,16,1,16,1,16,1,16,3,16,209,8,16,3,16,211,8,16,1,
+        16,1,16,1,16,3,16,216,8,16,1,16,1,16,1,17,1,17,1,17,1,17,1,17,3,
+        17,225,8,17,1,18,3,18,228,8,18,1,18,1,18,3,18,232,8,18,1,19,1,19,
+        3,19,236,8,19,1,20,1,20,1,20,1,20,1,20,5,20,243,8,20,10,20,12,20,
+        246,9,20,1,20,1,20,1,21,1,21,1,21,1,22,1,22,1,23,1,23,1,24,1,24,
+        1,24,0,0,25,0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,
+        38,40,42,44,46,48,0,5,2,0,39,39,41,41,1,0,38,40,1,0,21,24,1,0,25,
+        33,1,0,34,35,278,0,50,1,0,0,0,2,64,1,0,0,0,4,71,1,0,0,0,6,78,1,0,
+        0,0,8,100,1,0,0,0,10,106,1,0,0,0,12,108,1,0,0,0,14,126,1,0,0,0,16,
+        129,1,0,0,0,18,141,1,0,0,0,20,158,1,0,0,0,22,169,1,0,0,0,24,176,
+        1,0,0,0,26,179,1,0,0,0,28,187,1,0,0,0,30,190,1,0,0,0,32,198,1,0,
+        0,0,34,219,1,0,0,0,36,227,1,0,0,0,38,235,1,0,0,0,40,237,1,0,0,0,
+        42,249,1,0,0,0,44,252,1,0,0,0,46,254,1,0,0,0,48,256,1,0,0,0,50,51,
+        5,36,0,0,51,55,5,43,0,0,52,54,3,2,1,0,53,52,1,0,0,0,54,57,1,0,0,
+        0,55,53,1,0,0,0,55,56,1,0,0,0,56,58,1,0,0,0,57,55,1,0,0,0,58,59,
+        5,37,0,0,59,1,1,0,0,0,60,65,3,4,2,0,61,65,3,6,3,0,62,65,3,10,5,0,
+        63,65,3,40,20,0,64,60,1,0,0,0,64,61,1,0,0,0,64,62,1,0,0,0,64,63,
+        1,0,0,0,65,67,1,0,0,0,66,68,5,43,0,0,67,66,1,0,0,0,68,69,1,0,0,0,
+        69,67,1,0,0,0,69,70,1,0,0,0,70,3,1,0,0,0,71,72,5,1,0,0,72,73,5,2,
+        0,0,73,74,5,39,0,0,74,75,5,43,0,0,75,5,1,0,0,0,76,79,3,8,4,0,77,
+        79,5,3,0,0,78,76,1,0,0,0,78,77,1,0,0,0,79,80,1,0,0,0,80,82,5,38,
+        0,0,81,83,3,24,12,0,82,81,1,0,0,0,82,83,1,0,0,0,83,84,1,0,0,0,84,
+        88,5,4,0,0,85,87,5,43,0,0,86,85,1,0,0,0,87,90,1,0,0,0,88,86,1,0,
+        0,0,88,89,1,0,0,0,89,95,1,0,0,0,90,88,1,0,0,0,91,94,3,30,15,0,92,
+        94,3,32,16,0,93,91,1,0,0,0,93,92,1,0,0,0,94,97,1,0,0,0,95,93,1,0,
+        0,0,95,96,1,0,0,0,96,98,1,0,0,0,97,95,1,0,0,0,98,99,5,5,0,0,99,7,
+        1,0,0,0,100,102,5,6,0,0,101,103,5,3,0,0,102,101,1,0,0,0,102,103,
+        1,0,0,0,103,9,1,0,0,0,104,107,3,12,6,0,105,107,3,22,11,0,106,104,
+        1,0,0,0,106,105,1,0,0,0,107,11,1,0,0,0,108,110,5,38,0,0,109,111,
+        3,26,13,0,110,109,1,0,0,0,110,111,1,0,0,0,111,116,1,0,0,0,112,117,
+        3,14,7,0,113,117,3,16,8,0,114,117,3,18,9,0,115,117,3,20,10,0,116,
+        112,1,0,0,0,116,113,1,0,0,0,116,114,1,0,0,0,116,115,1,0,0,0,117,
+        119,1,0,0,0,118,120,3,26,13,0,119,118,1,0,0,0,119,120,1,0,0,0,120,
+        121,1,0,0,0,121,124,5,38,0,0,122,123,5,7,0,0,123,125,5,38,0,0,124,
+        122,1,0,0,0,124,125,1,0,0,0,125,13,1,0,0,0,126,127,5,8,0,0,127,15,
+        1,0,0,0,128,130,5,9,0,0,129,128,1,0,0,0,129,130,1,0,0,0,130,131,
+        1,0,0,0,131,133,5,8,0,0,132,134,5,10,0,0,133,132,1,0,0,0,133,134,
+        1,0,0,0,134,17,1,0,0,0,135,137,5,11,0,0,136,135,1,0,0,0,136,137,
+        1,0,0,0,137,142,1,0,0,0,138,140,5,9,0,0,139,138,1,0,0,0,139,140,
+        1,0,0,0,140,142,1,0,0,0,141,136,1,0,0,0,141,139,1,0,0,0,142,143,
+        1,0,0,0,143,150,5,8,0,0,144,146,5,10,0,0,145,144,1,0,0,0,145,146,
+        1,0,0,0,146,151,1,0,0,0,147,149,5,11,0,0,148,147,1,0,0,0,148,149,
+        1,0,0,0,149,151,1,0,0,0,150,145,1,0,0,0,150,148,1,0,0,0,151,19,1,
+        0,0,0,152,154,5,41,0,0,153,152,1,0,0,0,153,154,1,0,0,0,154,159,1,
+        0,0,0,155,157,5,9,0,0,156,155,1,0,0,0,156,157,1,0,0,0,157,159,1,
+        0,0,0,158,153,1,0,0,0,158,156,1,0,0,0,159,160,1,0,0,0,160,167,5,
+        8,0,0,161,163,5,10,0,0,162,161,1,0,0,0,162,163,1,0,0,0,163,168,1,
+        0,0,0,164,166,5,41,0,0,165,164,1,0,0,0,165,166,1,0,0,0,166,168,1,
+        0,0,0,167,162,1,0,0,0,167,165,1,0,0,0,168,21,1,0,0,0,169,172,5,38,
+        0,0,170,173,5,12,0,0,171,173,5,13,0,0,172,170,1,0,0,0,172,171,1,
+        0,0,0,173,174,1,0,0,0,174,175,5,38,0,0,175,23,1,0,0,0,176,177,5,
+        14,0,0,177,178,5,38,0,0,178,25,1,0,0,0,179,180,5,44,0,0,180,183,
+        3,28,14,0,181,182,5,15,0,0,182,184,3,28,14,0,183,181,1,0,0,0,183,
+        184,1,0,0,0,184,185,1,0,0,0,185,186,5,44,0,0,186,27,1,0,0,0,187,
+        188,7,0,0,0,188,29,1,0,0,0,189,191,3,44,22,0,190,189,1,0,0,0,190,
+        191,1,0,0,0,191,192,1,0,0,0,192,193,5,38,0,0,193,194,5,7,0,0,194,
+        195,3,38,19,0,195,196,5,43,0,0,196,31,1,0,0,0,197,199,3,44,22,0,
+        198,197,1,0,0,0,198,199,1,0,0,0,199,201,1,0,0,0,200,202,3,48,24,
+        0,201,200,1,0,0,0,201,202,1,0,0,0,202,203,1,0,0,0,203,204,5,38,0,
+        0,204,210,5,16,0,0,205,208,3,34,17,0,206,207,5,17,0,0,207,209,3,
+        34,17,0,208,206,1,0,0,0,208,209,1,0,0,0,209,211,1,0,0,0,210,205,
+        1,0,0,0,210,211,1,0,0,0,211,212,1,0,0,0,212,215,5,18,0,0,213,214,
+        5,7,0,0,214,216,3,38,19,0,215,213,1,0,0,0,215,216,1,0,0,0,216,217,
+        1,0,0,0,217,218,5,43,0,0,218,33,1,0,0,0,219,220,5,38,0,0,220,221,
+        5,7,0,0,221,224,3,38,19,0,222,223,5,19,0,0,223,225,3,36,18,0,224,
+        222,1,0,0,0,224,225,1,0,0,0,225,35,1,0,0,0,226,228,5,44,0,0,227,
+        226,1,0,0,0,227,228,1,0,0,0,228,229,1,0,0,0,229,231,7,1,0,0,230,
+        232,5,44,0,0,231,230,1,0,0,0,231,232,1,0,0,0,232,37,1,0,0,0,233,
+        236,3,46,23,0,234,236,5,38,0,0,235,233,1,0,0,0,235,234,1,0,0,0,236,
+        39,1,0,0,0,237,238,5,20,0,0,238,239,5,38,0,0,239,240,5,4,0,0,240,
+        244,5,43,0,0,241,243,3,42,21,0,242,241,1,0,0,0,243,246,1,0,0,0,244,
+        242,1,0,0,0,244,245,1,0,0,0,245,247,1,0,0,0,246,244,1,0,0,0,247,
+        248,5,5,0,0,248,41,1,0,0,0,249,250,5,38,0,0,250,251,5,43,0,0,251,
+        43,1,0,0,0,252,253,7,2,0,0,253,45,1,0,0,0,254,255,7,3,0,0,255,47,
+        1,0,0,0,256,257,7,4,0,0,257,49,1,0,0,0,41,55,64,69,78,82,88,93,95,
+        102,106,110,116,119,124,129,133,136,139,141,145,148,150,153,156,
+        158,162,165,167,172,183,190,198,201,208,210,215,224,227,231,235,
+        244
     ]
 
 class PlantUMLParser ( Parser ):
@@ -315,6 +318,12 @@ class PlantUMLParser ( Parser ):
             return self.getTypedRuleContext(PlantUMLParser.EnumerationContext,0)
 
 
+        def NL(self, i:int=None):
+            if i is None:
+                return self.getTokens(PlantUMLParser.NL)
+            else:
+                return self.getToken(PlantUMLParser.NL, i)
+
         def getRuleIndex(self):
             return PlantUMLParser.RULE_element
 
@@ -333,32 +342,42 @@ class PlantUMLParser ( Parser ):
 
         localctx = PlantUMLParser.ElementContext(self, self._ctx, self.state)
         self.enterRule(localctx, 2, self.RULE_element)
+        self._la = 0 # Token type
         try:
+            self.enterOuterAlt(localctx, 1)
             self.state = 64
             self._errHandler.sync(self)
             token = self._input.LA(1)
             if token in [1]:
-                self.enterOuterAlt(localctx, 1)
                 self.state = 60
                 self.skinParam()
                 pass
             elif token in [3, 6]:
-                self.enterOuterAlt(localctx, 2)
                 self.state = 61
                 self.class_()
                 pass
             elif token in [38]:
-                self.enterOuterAlt(localctx, 3)
                 self.state = 62
                 self.relationship()
                 pass
             elif token in [20]:
-                self.enterOuterAlt(localctx, 4)
                 self.state = 63
                 self.enumeration()
                 pass
             else:
                 raise NoViableAltException(self)
+
+            self.state = 67 
+            self._errHandler.sync(self)
+            _la = self._input.LA(1)
+            while True:
+                self.state = 66
+                self.match(PlantUMLParser.NL)
+                self.state = 69 
+                self._errHandler.sync(self)
+                _la = self._input.LA(1)
+                if not (_la==43):
+                    break
 
         except RecognitionException as re:
             localctx.exception = re
@@ -402,13 +421,13 @@ class PlantUMLParser ( Parser ):
         self.enterRule(localctx, 4, self.RULE_skinParam)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 66
+            self.state = 71
             self.match(PlantUMLParser.T__0)
-            self.state = 67
+            self.state = 72
             self.match(PlantUMLParser.T__1)
-            self.state = 68
+            self.state = 73
             self.match(PlantUMLParser.INT)
-            self.state = 69
+            self.state = 74
             self.match(PlantUMLParser.NL)
         except RecognitionException as re:
             localctx.exception = re
@@ -429,12 +448,6 @@ class PlantUMLParser ( Parser ):
         def ID(self):
             return self.getToken(PlantUMLParser.ID, 0)
 
-        def NL(self, i:int=None):
-            if i is None:
-                return self.getTokens(PlantUMLParser.NL)
-            else:
-                return self.getToken(PlantUMLParser.NL, i)
-
         def abstract(self):
             return self.getTypedRuleContext(PlantUMLParser.AbstractContext,0)
 
@@ -442,6 +455,12 @@ class PlantUMLParser ( Parser ):
         def extends(self):
             return self.getTypedRuleContext(PlantUMLParser.ExtendsContext,0)
 
+
+        def NL(self, i:int=None):
+            if i is None:
+                return self.getTokens(PlantUMLParser.NL)
+            else:
+                return self.getToken(PlantUMLParser.NL, i)
 
         def attribute(self, i:int=None):
             if i is None:
@@ -478,60 +497,66 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 73
+            self.state = 78
             self._errHandler.sync(self)
             token = self._input.LA(1)
             if token in [6]:
-                self.state = 71
+                self.state = 76
                 self.abstract()
                 pass
             elif token in [3]:
-                self.state = 72
+                self.state = 77
                 self.match(PlantUMLParser.T__2)
                 pass
             else:
                 raise NoViableAltException(self)
 
-            self.state = 75
+            self.state = 80
             self.match(PlantUMLParser.ID)
-            self.state = 77
+            self.state = 82
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==14:
-                self.state = 76
+                self.state = 81
                 self.extends()
 
 
-            self.state = 79
+            self.state = 84
             self.match(PlantUMLParser.T__3)
-            self.state = 80
-            self.match(PlantUMLParser.NL)
-            self.state = 85
+            self.state = 88
+            self._errHandler.sync(self)
+            _la = self._input.LA(1)
+            while _la==43:
+                self.state = 85
+                self.match(PlantUMLParser.NL)
+                self.state = 90
+                self._errHandler.sync(self)
+                _la = self._input.LA(1)
+
+            self.state = 95
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while (((_la) & ~0x3f) == 0 and ((1 << _la) & 326448971776) != 0):
-                self.state = 83
+                self.state = 93
                 self._errHandler.sync(self)
-                la_ = self._interp.adaptivePredict(self._input,4,self._ctx)
+                la_ = self._interp.adaptivePredict(self._input,6,self._ctx)
                 if la_ == 1:
-                    self.state = 81
+                    self.state = 91
                     self.attribute()
                     pass
 
                 elif la_ == 2:
-                    self.state = 82
+                    self.state = 92
                     self.method()
                     pass
 
 
-                self.state = 87
+                self.state = 97
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
 
-            self.state = 88
+            self.state = 98
             self.match(PlantUMLParser.T__4)
-            self.state = 89
-            self.match(PlantUMLParser.NL)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -570,13 +595,13 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 91
+            self.state = 100
             self.match(PlantUMLParser.T__5)
-            self.state = 93
+            self.state = 102
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==3:
-                self.state = 92
+                self.state = 101
                 self.match(PlantUMLParser.T__2)
 
 
@@ -623,18 +648,18 @@ class PlantUMLParser ( Parser ):
         localctx = PlantUMLParser.RelationshipContext(self, self._ctx, self.state)
         self.enterRule(localctx, 10, self.RULE_relationship)
         try:
-            self.state = 97
+            self.state = 106
             self._errHandler.sync(self)
-            la_ = self._interp.adaptivePredict(self._input,7,self._ctx)
+            la_ = self._interp.adaptivePredict(self._input,9,self._ctx)
             if la_ == 1:
                 self.enterOuterAlt(localctx, 1)
-                self.state = 95
+                self.state = 104
                 self.association()
                 pass
 
             elif la_ == 2:
                 self.enterOuterAlt(localctx, 2)
-                self.state = 96
+                self.state = 105
                 self.inheritance()
                 pass
 
@@ -662,9 +687,6 @@ class PlantUMLParser ( Parser ):
                 return self.getTokens(PlantUMLParser.ID)
             else:
                 return self.getToken(PlantUMLParser.ID, i)
-
-        def NL(self):
-            return self.getToken(PlantUMLParser.NL, 0)
 
         def bidirectional(self):
             return self.getTypedRuleContext(PlantUMLParser.BidirectionalContext,0)
@@ -710,62 +732,60 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 99
+            self.state = 108
             self.match(PlantUMLParser.ID)
-            self.state = 101
-            self._errHandler.sync(self)
-            _la = self._input.LA(1)
-            if _la==44:
-                self.state = 100
-                localctx.c_left = self.cardinality()
-
-
-            self.state = 107
-            self._errHandler.sync(self)
-            la_ = self._interp.adaptivePredict(self._input,9,self._ctx)
-            if la_ == 1:
-                self.state = 103
-                self.bidirectional()
-                pass
-
-            elif la_ == 2:
-                self.state = 104
-                self.unidirectional()
-                pass
-
-            elif la_ == 3:
-                self.state = 105
-                self.aggregation()
-                pass
-
-            elif la_ == 4:
-                self.state = 106
-                self.composition()
-                pass
-
-
             self.state = 110
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==44:
                 self.state = 109
+                localctx.c_left = self.cardinality()
+
+
+            self.state = 116
+            self._errHandler.sync(self)
+            la_ = self._interp.adaptivePredict(self._input,11,self._ctx)
+            if la_ == 1:
+                self.state = 112
+                self.bidirectional()
+                pass
+
+            elif la_ == 2:
+                self.state = 113
+                self.unidirectional()
+                pass
+
+            elif la_ == 3:
+                self.state = 114
+                self.aggregation()
+                pass
+
+            elif la_ == 4:
+                self.state = 115
+                self.composition()
+                pass
+
+
+            self.state = 119
+            self._errHandler.sync(self)
+            _la = self._input.LA(1)
+            if _la==44:
+                self.state = 118
                 localctx.c_right = self.cardinality()
 
 
-            self.state = 112
+            self.state = 121
             self.match(PlantUMLParser.ID)
-            self.state = 115
+            self.state = 124
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==7:
-                self.state = 113
+                self.state = 122
                 self.match(PlantUMLParser.T__6)
-                self.state = 114
+                self.state = 123
                 self.match(PlantUMLParser.ID)
 
 
-            self.state = 117
-            self.match(PlantUMLParser.NL)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -803,7 +823,7 @@ class PlantUMLParser ( Parser ):
         self.enterRule(localctx, 14, self.RULE_bidirectional)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 119
+            self.state = 126
             self.match(PlantUMLParser.T__7)
         except RecognitionException as re:
             localctx.exception = re
@@ -845,21 +865,21 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 122
+            self.state = 129
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==9:
-                self.state = 121
+                self.state = 128
                 localctx.nav_l = self.match(PlantUMLParser.T__8)
 
 
-            self.state = 124
+            self.state = 131
             self.match(PlantUMLParser.T__7)
-            self.state = 126
+            self.state = 133
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==10:
-                self.state = 125
+                self.state = 132
                 localctx.nav_r = self.match(PlantUMLParser.T__9)
 
 
@@ -903,54 +923,54 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 134
+            self.state = 141
             self._errHandler.sync(self)
-            la_ = self._interp.adaptivePredict(self._input,16,self._ctx)
+            la_ = self._interp.adaptivePredict(self._input,18,self._ctx)
             if la_ == 1:
-                self.state = 129
+                self.state = 136
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if _la==11:
-                    self.state = 128
+                    self.state = 135
                     localctx.aggr_l = self.match(PlantUMLParser.T__10)
 
 
                 pass
 
             elif la_ == 2:
-                self.state = 132
+                self.state = 139
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if _la==9:
-                    self.state = 131
+                    self.state = 138
                     self.match(PlantUMLParser.T__8)
 
 
                 pass
 
 
-            self.state = 136
-            self.match(PlantUMLParser.T__7)
             self.state = 143
+            self.match(PlantUMLParser.T__7)
+            self.state = 150
             self._errHandler.sync(self)
-            la_ = self._interp.adaptivePredict(self._input,19,self._ctx)
+            la_ = self._interp.adaptivePredict(self._input,21,self._ctx)
             if la_ == 1:
-                self.state = 138
+                self.state = 145
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if _la==10:
-                    self.state = 137
+                    self.state = 144
                     self.match(PlantUMLParser.T__9)
 
 
                 pass
 
             elif la_ == 2:
-                self.state = 141
+                self.state = 148
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if _la==11:
-                    self.state = 140
+                    self.state = 147
                     localctx.aggr_r = self.match(PlantUMLParser.T__10)
 
 
@@ -1002,54 +1022,54 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 151
+            self.state = 158
             self._errHandler.sync(self)
-            la_ = self._interp.adaptivePredict(self._input,22,self._ctx)
+            la_ = self._interp.adaptivePredict(self._input,24,self._ctx)
             if la_ == 1:
-                self.state = 146
+                self.state = 153
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if _la==41:
-                    self.state = 145
+                    self.state = 152
                     localctx.comp_l = self.match(PlantUMLParser.ASTK)
 
 
                 pass
 
             elif la_ == 2:
-                self.state = 149
+                self.state = 156
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if _la==9:
-                    self.state = 148
+                    self.state = 155
                     self.match(PlantUMLParser.T__8)
 
 
                 pass
 
 
-            self.state = 153
-            self.match(PlantUMLParser.T__7)
             self.state = 160
+            self.match(PlantUMLParser.T__7)
+            self.state = 167
             self._errHandler.sync(self)
-            la_ = self._interp.adaptivePredict(self._input,25,self._ctx)
+            la_ = self._interp.adaptivePredict(self._input,27,self._ctx)
             if la_ == 1:
-                self.state = 155
+                self.state = 162
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if _la==10:
-                    self.state = 154
+                    self.state = 161
                     self.match(PlantUMLParser.T__9)
 
 
                 pass
 
             elif la_ == 2:
-                self.state = 158
+                self.state = 165
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if _la==41:
-                    self.state = 157
+                    self.state = 164
                     localctx.comp_r = self.match(PlantUMLParser.ASTK)
 
 
@@ -1079,9 +1099,6 @@ class PlantUMLParser ( Parser ):
             else:
                 return self.getToken(PlantUMLParser.ID, i)
 
-        def NL(self):
-            return self.getToken(PlantUMLParser.NL, 0)
-
         def getRuleIndex(self):
             return PlantUMLParser.RULE_inheritance
 
@@ -1102,26 +1119,24 @@ class PlantUMLParser ( Parser ):
         self.enterRule(localctx, 22, self.RULE_inheritance)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 162
+            self.state = 169
             self.match(PlantUMLParser.ID)
-            self.state = 165
+            self.state = 172
             self._errHandler.sync(self)
             token = self._input.LA(1)
             if token in [12]:
-                self.state = 163
+                self.state = 170
                 localctx.inh_left = self.match(PlantUMLParser.T__11)
                 pass
             elif token in [13]:
-                self.state = 164
+                self.state = 171
                 self.match(PlantUMLParser.T__12)
                 pass
             else:
                 raise NoViableAltException(self)
 
-            self.state = 167
+            self.state = 174
             self.match(PlantUMLParser.ID)
-            self.state = 168
-            self.match(PlantUMLParser.NL)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -1161,9 +1176,9 @@ class PlantUMLParser ( Parser ):
         self.enterRule(localctx, 24, self.RULE_extends)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 170
+            self.state = 176
             self.match(PlantUMLParser.T__13)
-            self.state = 171
+            self.state = 177
             self.match(PlantUMLParser.ID)
         except RecognitionException as re:
             localctx.exception = re
@@ -1217,21 +1232,21 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 173
+            self.state = 179
             self.match(PlantUMLParser.D_QUOTE)
-            self.state = 174
+            self.state = 180
             localctx.min_ = self.cardinalityVal()
-            self.state = 177
+            self.state = 183
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==15:
-                self.state = 175
+                self.state = 181
                 self.match(PlantUMLParser.T__14)
-                self.state = 176
+                self.state = 182
                 localctx.max_ = self.cardinalityVal()
 
 
-            self.state = 179
+            self.state = 185
             self.match(PlantUMLParser.D_QUOTE)
         except RecognitionException as re:
             localctx.exception = re
@@ -1276,7 +1291,7 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 181
+            self.state = 187
             _la = self._input.LA(1)
             if not(_la==39 or _la==41):
                 self._errHandler.recoverInline(self)
@@ -1334,21 +1349,21 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 184
+            self.state = 190
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if (((_la) & ~0x3f) == 0 and ((1 << _la) & 31457280) != 0):
-                self.state = 183
+                self.state = 189
                 self.visibility()
 
 
-            self.state = 186
+            self.state = 192
             self.match(PlantUMLParser.ID)
-            self.state = 187
+            self.state = 193
             self.match(PlantUMLParser.T__6)
-            self.state = 188
+            self.state = 194
             self.dType()
-            self.state = 189
+            self.state = 195
             self.match(PlantUMLParser.NL)
         except RecognitionException as re:
             localctx.exception = re
@@ -1413,57 +1428,57 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 192
+            self.state = 198
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if (((_la) & ~0x3f) == 0 and ((1 << _la) & 31457280) != 0):
-                self.state = 191
+                self.state = 197
                 self.visibility()
 
 
-            self.state = 195
+            self.state = 201
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==34 or _la==35:
-                self.state = 194
+                self.state = 200
                 self.modifier()
 
 
-            self.state = 197
+            self.state = 203
             localctx.name = self.match(PlantUMLParser.ID)
-            self.state = 198
-            self.match(PlantUMLParser.T__15)
             self.state = 204
+            self.match(PlantUMLParser.T__15)
+            self.state = 210
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==38:
-                self.state = 199
+                self.state = 205
                 self.parameter()
-                self.state = 202
+                self.state = 208
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if _la==17:
-                    self.state = 200
+                    self.state = 206
                     self.match(PlantUMLParser.T__16)
-                    self.state = 201
+                    self.state = 207
                     self.parameter()
 
 
 
 
-            self.state = 206
+            self.state = 212
             self.match(PlantUMLParser.T__17)
-            self.state = 209
+            self.state = 215
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==7:
-                self.state = 207
+                self.state = 213
                 self.match(PlantUMLParser.T__6)
-                self.state = 208
+                self.state = 214
                 self.dType()
 
 
-            self.state = 211
+            self.state = 217
             self.match(PlantUMLParser.NL)
         except RecognitionException as re:
             localctx.exception = re
@@ -1514,19 +1529,19 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 213
+            self.state = 219
             localctx.name = self.match(PlantUMLParser.ID)
-            self.state = 214
+            self.state = 220
             self.match(PlantUMLParser.T__6)
-            self.state = 215
+            self.state = 221
             self.dType()
-            self.state = 218
+            self.state = 224
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==19:
-                self.state = 216
+                self.state = 222
                 self.match(PlantUMLParser.T__18)
-                self.state = 217
+                self.state = 223
                 self.value()
 
 
@@ -1582,26 +1597,26 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 221
+            self.state = 227
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==44:
-                self.state = 220
+                self.state = 226
                 self.match(PlantUMLParser.D_QUOTE)
 
 
-            self.state = 223
+            self.state = 229
             _la = self._input.LA(1)
             if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 1924145348608) != 0)):
                 self._errHandler.recoverInline(self)
             else:
                 self._errHandler.reportMatch(self)
                 self.consume()
-            self.state = 225
+            self.state = 231
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             if _la==44:
-                self.state = 224
+                self.state = 230
                 self.match(PlantUMLParser.D_QUOTE)
 
 
@@ -1647,17 +1662,17 @@ class PlantUMLParser ( Parser ):
         localctx = PlantUMLParser.DTypeContext(self, self._ctx, self.state)
         self.enterRule(localctx, 38, self.RULE_dType)
         try:
-            self.state = 229
+            self.state = 235
             self._errHandler.sync(self)
             token = self._input.LA(1)
             if token in [25, 26, 27, 28, 29, 30, 31, 32, 33]:
                 self.enterOuterAlt(localctx, 1)
-                self.state = 227
+                self.state = 233
                 self.primitiveData()
                 pass
             elif token in [38]:
                 self.enterOuterAlt(localctx, 2)
-                self.state = 228
+                self.state = 234
                 self.match(PlantUMLParser.ID)
                 pass
             else:
@@ -1682,11 +1697,8 @@ class PlantUMLParser ( Parser ):
         def ID(self):
             return self.getToken(PlantUMLParser.ID, 0)
 
-        def NL(self, i:int=None):
-            if i is None:
-                return self.getTokens(PlantUMLParser.NL)
-            else:
-                return self.getToken(PlantUMLParser.NL, i)
+        def NL(self):
+            return self.getToken(PlantUMLParser.NL, 0)
 
         def enumLiteral(self, i:int=None):
             if i is None:
@@ -1716,28 +1728,26 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 231
+            self.state = 237
             self.match(PlantUMLParser.T__19)
-            self.state = 232
-            self.match(PlantUMLParser.ID)
-            self.state = 233
-            self.match(PlantUMLParser.T__3)
-            self.state = 234
-            self.match(PlantUMLParser.NL)
             self.state = 238
+            self.match(PlantUMLParser.ID)
+            self.state = 239
+            self.match(PlantUMLParser.T__3)
+            self.state = 240
+            self.match(PlantUMLParser.NL)
+            self.state = 244
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while _la==38:
-                self.state = 235
+                self.state = 241
                 self.enumLiteral()
-                self.state = 240
+                self.state = 246
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
 
-            self.state = 241
+            self.state = 247
             self.match(PlantUMLParser.T__4)
-            self.state = 242
-            self.match(PlantUMLParser.NL)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)
@@ -1780,9 +1790,9 @@ class PlantUMLParser ( Parser ):
         self.enterRule(localctx, 42, self.RULE_enumLiteral)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 244
+            self.state = 249
             self.match(PlantUMLParser.ID)
-            self.state = 245
+            self.state = 250
             self.match(PlantUMLParser.NL)
         except RecognitionException as re:
             localctx.exception = re
@@ -1822,7 +1832,7 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 247
+            self.state = 252
             _la = self._input.LA(1)
             if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 31457280) != 0)):
                 self._errHandler.recoverInline(self)
@@ -1867,7 +1877,7 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 249
+            self.state = 254
             _la = self._input.LA(1)
             if not((((_la) & ~0x3f) == 0 and ((1 << _la) & 17146314752) != 0)):
                 self._errHandler.recoverInline(self)
@@ -1912,7 +1922,7 @@ class PlantUMLParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 251
+            self.state = 256
             _la = self._input.LA(1)
             if not(_la==34 or _la==35):
                 self._errHandler.recoverInline(self)

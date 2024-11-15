@@ -30,6 +30,6 @@ class PythonGenerator(GeneratorInterface):
         env = Environment(loader=FileSystemLoader(templates_path))
         template = env.get_template('python_classes_template.py.j2')
         with open(file_path, mode="w") as f:
-            generated_code = template.render(classes=self.model.classes_sorted_by_inheritance())
+            generated_code = template.render(domain=self.model)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

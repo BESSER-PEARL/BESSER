@@ -15,13 +15,14 @@ Maintainers:
 
 We want to recognize the work of the contributors:
 
+* `Armen Sulejmani <https://github.com/Arm-Sl>`_
 * `Aaron Conrardy <https://github.com/Aran30>`_
 * `Fitash Ul-Haq <https://github.com/FitashUlHaq>`_
+* `Marcos Gomez <https://github.com/mgv99>`_
 * `Atefeh Nirumand <https://github.com/AtefehNirumandJazi>`_
-* `Armen Sulejmani <https://github.com/Arm-Sl>`_
+* `Nadia Daoudi <https://github.com/DaoudiNadia>`_
 * `Fedor Chikhachev <https://github.com/FChikh>`_
 * `Alisa Vorokhta <https://github.com/Vorokhalice>`_
-* `Marcos Gomez <https://github.com/mgv99>`_
 
 Contact
 -------

@@ -191,15 +191,16 @@ def test_method_initialization():
     assert method.name == "method_1"
     assert method.type.name == "class_1"
 
+# Testing parameters with repeated name
 def test_parameters_same_name():
     with pytest.raises(ValueError) as excinfo:
         parameter1: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="str"))
         parameter2: Parameter = Parameter(name="parameter_1", type=PrimitiveDataType(name="int"))
         method: Method = Method(name='method_1', is_abstract=True, parameters={parameter1, parameter2})
-    assert "A method cannot have two parameters with the same name" in str(excinfo.value)
+    assert "A method cannot have parameters with duplicate names: parameter_1" in str(excinfo.value)
 
 # Testing sort attributes by timestamp
-def test_sort_parameters():
+def test_sort_attributes():
     attribute1: Property = Property(name="attribute_1", type=PrimitiveDataType(name="str"))
     attribute2: Property = Property(name="attribute_2", type=PrimitiveDataType(name="int"))
     attribute3: Property = Property(name="attribute_3", type=PrimitiveDataType(name="int"))
@@ -234,3 +235,12 @@ def test_classes_sorted_by_inheritance():
     assert classes[2] == cl5
     assert classes[4] == cl3
     assert classes[6] == cl1
+
+# Testing synonyms of a Named Element
+'''def test_synonyms():
+    class_a: Class = Class(name="Library", synonyms=["synonym1", "synonym2", "synonym3"])
+    assert len(class_a.synonyms) == 3
+    assert class_a.synonyms[0] == "synonym1"
+    assert class_a.synonyms[1] == "synonym2"
+    assert class_a.synonyms[2] == "synonym3"
+'''

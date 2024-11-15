@@ -45,7 +45,7 @@ def structural_drawio_to_buml(drawio_file_path: str, buml_model_file_name: str =
 
     if buml_model_file_name:
         # Save model to Python file
-        output_file_path = os.path.join("buml", buml_model_file_name + ".py")
+        output_file_path = os.path.join("buml", buml_model_file_name)
         domain_model_to_code(buml_model, output_file_path)
 
     return buml_model

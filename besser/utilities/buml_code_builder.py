@@ -30,6 +30,8 @@ def domain_model_to_code(model: DomainModel, file_path: str):
     output_dir = os.path.dirname(file_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
+    if not file_path.endswith('.py'):
+        file_path += '.py'
 
     with open(file_path, 'w', encoding='utf-8') as f:
         # Write imports

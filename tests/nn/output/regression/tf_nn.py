@@ -1,9 +1,12 @@
+"""TensorFlow code generated based on BUML."""
+
 import tensorflow as tf
-from tensorflow.keras import layers
+from keras import layers
 
 
 from sklearn.metrics import mean_absolute_error 
 import pandas as pd
+
 
 
 # Define the network architecture
@@ -14,13 +17,16 @@ class NeuralNetwork(tf.keras.Model):
         self.l2 = layers.Dense(units=128, activation='relu')
         self.l3 = layers.Dropout(rate=0.2)
         self.l4 = layers.Dense(units=1, activation=None)
-    
+
+        
     def call(self, x):
         x = self.l1(x)
         x = self.l2(x)
         x = self.l3(x)
         x = self.l4(x)
         return x
+
+    
 
 
 # Dataset preparation
@@ -34,7 +40,8 @@ def load_dataset(csv_file):
     features_tensor = tf.convert_to_tensor(features)
     targets_tensor = tf.convert_to_tensor(targets)
     # Create a TensorFlow dataset
-    dataset = tf.data.Dataset.from_tensor_slices((features_tensor, targets_tensor))
+    dataset = tf.data.Dataset.from_tensor_slices((features_tensor, 
+                                                  targets_tensor))
     return dataset
 
 # Load training and test data
@@ -44,9 +51,9 @@ test_dataset = load_dataset(r"dataset\BostonHousingTest.csv")
 # Create data loaders
 def create_data_loader(dataset, mode):
     if mode == "train":
-        dataset = dataset.shuffle(buffer_size=10000)  # Shuffle the dataset
-    dataset = dataset.batch(6)  # Batch the dataset
-    dataset = dataset.prefetch(buffer_size=tf.data.AUTOTUNE)  # Prefetch for performance
+        dataset = dataset.shuffle(buffer_size=10000)
+    dataset = dataset.batch(6)
+    dataset = dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
     return dataset
 
 # Create data loaders
@@ -76,13 +83,19 @@ for epoch in range(40):
             loss = criterion(labels, outputs)
         # Compute gradients and update model parameters
         gradients = tape.gradient(loss, my_model.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, my_model.trainable_variables))
+        optimizer.apply_gradients(
+            zip(gradients, my_model.trainable_variables))
         total_loss += loss.numpy()
         running_loss += loss.numpy()
         if i % 200 == 199:  # Print every 200 mini-batches
-            print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 200))
+            print(
+                f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 200:.3f}"
+            )
             running_loss = 0.0
-    print('[%d] overall loss for epoch: %.3f' % (epoch + 1, total_loss / len(train_loader)))
+    print(
+        f"[{epoch + 1}] overall loss for epoch: "
+        f"{total_loss / len(train_loader):.3f}"
+    )
     total_loss = 0.0
 print('Training finished')
 

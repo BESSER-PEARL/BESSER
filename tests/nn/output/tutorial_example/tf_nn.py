@@ -1,10 +1,13 @@
+"""TensorFlow code generated based on BUML."""
+
 import tensorflow as tf
-from tensorflow.keras import layers
+from keras import layers
 
 
 from sklearn.metrics import classification_report 
 
-from besser.generators.tf.utils import compute_mean_std
+from besser.generators.nn.utils import compute_mean_std
+
 
 # Define the network architecture
 class NeuralNetwork(tf.keras.Model):
@@ -18,7 +21,8 @@ class NeuralNetwork(tf.keras.Model):
         self.l6 = layers.Flatten()
         self.l7 = layers.Dense(units=64, activation='relu')
         self.l8 = layers.Dense(units=10, activation=None)
-    
+
+        
     def call(self, x):
         x = self.l1(x)
         x = self.l2(x)
@@ -30,15 +34,17 @@ class NeuralNetwork(tf.keras.Model):
         x = self.l8(x)
         return x
 
+    
+
 
 # Dataset preparation
 IMAGE_SIZE = (32, 32)
 
 # Function to load and preprocess images
 scale, _, _ = compute_mean_std(r"dataset\cifar10\train", num_samples=100,
-                                target_size=IMAGE_SIZE)
-def preprocess_image(image, label, scale):
-    if scale:
+                               target_size=IMAGE_SIZE)
+def preprocess_image(image, label, to_scale):
+    if to_scale:
         image = tf.cast(image, tf.float32) / 255.0
     return image, label
 
@@ -48,12 +54,13 @@ def load_dataset(directory, mode):
     dataset = tf.keras.preprocessing.image_dataset_from_directory(
         directory=directory,
         label_mode="int",
-        image_size=IMAGE_SIZE, 
+        image_size=IMAGE_SIZE,
         batch_size=32,
         shuffle=True if mode == 'train' else False,
     )
     # Apply preprocessing
-    dataset = dataset.map(lambda image, label: preprocess_image(image, label, scale))
+    dataset = dataset.map(
+        lambda image, label: preprocess_image(image, label, scale))
     # Prefetch for performance optimization
     AUTOTUNE = tf.data.AUTOTUNE
     dataset = dataset.prefetch(buffer_size=AUTOTUNE)
@@ -81,7 +88,6 @@ for epoch in range(10):
         with tf.GradientTape() as tape:
             outputs = my_model(inputs, training=True)
             # Convert labels to one-hot encoding
-            
             if labels.shape.rank > 1 and labels.shape[-1] == 1:
                 labels = tf.squeeze(labels, axis=-1)
             labels = tf.cast(labels, dtype=tf.int32)
@@ -89,13 +95,19 @@ for epoch in range(10):
             loss = criterion(labels, outputs)
         # Compute gradients and update model parameters
         gradients = tape.gradient(loss, my_model.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, my_model.trainable_variables))
+        optimizer.apply_gradients(
+            zip(gradients, my_model.trainable_variables))
         total_loss += loss.numpy()
         running_loss += loss.numpy()
         if i % 200 == 199:  # Print every 200 mini-batches
-            print('[%d, %5d] loss: %.3f' % (epoch + 1, i + 1, running_loss / 200))
+            print(
+                f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 200:.3f}"
+            )
             running_loss = 0.0
-    print('[%d] overall loss for epoch: %.3f' % (epoch + 1, total_loss / len(train_loader)))
+    print(
+        f"[{epoch + 1}] overall loss for epoch: "
+        f"{total_loss / len(train_loader):.3f}"
+    )
     total_loss = 0.0
 print('Training finished')
 
@@ -122,12 +134,15 @@ print(f"Test Loss: {average_loss:.3f}")
 
 # Calculate the metrics
 metrics = ['f1-score']
-report = classification_report(true_labels, predicted_labels, output_dict=True)
+report = classification_report(true_labels, predicted_labels,
+                               output_dict=True)
 for metric in metrics:
     metric_list = []
     for class_label in report.keys():
-        if class_label != 'macro avg' and class_label != 'weighted avg' and class_label != 'accuracy':
-            print(f"{metric.capitalize()} for class {class_label}:", report[class_label][metric])
+        if class_label not in ('macro avg', 'weighted avg', 'accuracy'):
+            print(f"{metric.capitalize()} for class {class_label}:",
+                  report[class_label][metric])
             metric_list.append(report[class_label][metric])
-    print(f"Average {metric.capitalize()}: {(sum(metric_list) / len(metric_list)):.2f}")
+    metric_value = sum(metric_list) / len(metric_list)
+    print(f"Average {metric.capitalize()}: {metric_value:.2f}")
     print(f"Accuracy: {report['accuracy']}")

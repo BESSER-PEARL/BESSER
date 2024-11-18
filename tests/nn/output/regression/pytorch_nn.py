@@ -1,8 +1,11 @@
-import torch.nn as nn
+"""PyTorch code generated based on BUML."""
+
 import torch
+import pandas as pd
+from torch import nn
 
 from sklearn.metrics import mean_absolute_error 
-import pandas as pd
+
 
 # Define the network architecture
 class NeuralNetwork(nn.Module):
@@ -13,19 +16,20 @@ class NeuralNetwork(nn.Module):
         self.l2 = nn.Linear(in_features=64, out_features=128)
         self.l3 = nn.Dropout(p=0.2)
         self.l4 = nn.Linear(in_features=128, out_features=1)
-    
-    def forward(self, x): 
+
+
+    def forward(self, x):
         x = self.l1(x)
-        x = self.relu_activ(x) 
+        x = self.relu_activ(x)
         x = self.l2(x)
-        x = self.relu_activ(x) 
-        x = self.l3(x) 
+        x = self.relu_activ(x)
+        x = self.l3(x)
         x = self.l4(x)
         return x
 
 
 # Dataset preparation
-def load_data(csv_file):
+def load_dataset(csv_file):
     # Load data from CSV file
     data = pd.read_csv(csv_file)
     # Extract features and targets
@@ -39,12 +43,14 @@ def load_data(csv_file):
     return dataset
 
 # Loading data
-train_dataset = load_data(r"dataset\BostonHousingTrain.csv")
-test_dataset = load_data(r"dataset\BostonHousingTest.csv")
+train_dataset = load_dataset(r"dataset\BostonHousingTrain.csv")
+test_dataset = load_dataset(r"dataset\BostonHousingTest.csv")
 
 # Create data loaders
-train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=6, shuffle=True)
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=6, shuffle=False)
+train_loader = torch.utils.data.DataLoader(
+    dataset=train_dataset, batch_size=6, shuffle=True)
+test_loader = torch.utils.data.DataLoader(
+    dataset=test_dataset, batch_size=6, shuffle=False)
 
 # Define the network, loss function, and optimizer
 my_model = NeuralNetwork()
@@ -73,11 +79,14 @@ for epoch in range(40):
         running_loss += loss.item()
         total_loss += loss.item()
         if i % 200 == 199:    # Print every 200 mini-batches
-            print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 200))
+            print(
+                f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 200:.3f}"
+            )
             running_loss = 0.0
-    print('[%d] overall loss for epoch: %.3f' % (epoch + 1, total_loss / len(train_loader)))
-    
+    print(
+        f"[{epoch + 1}] overall loss for epoch: "
+        f"{total_loss / len(train_loader):.3f}"
+    )
 print('Training finished')
 
 # Evaluate the neural network

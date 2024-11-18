@@ -1,7 +1,10 @@
-import torch.nn as nn
+"""PyTorch code generated based on BUML."""
+
 import torch
-from torchvision import datasets, transforms 
-from besser.generators.pytorch.utils import compute_mean_std
+
+from torch import nn
+from torchvision import datasets, transforms
+
 from sklearn.metrics import classification_report 
 
 
@@ -18,19 +21,20 @@ class NeuralNetwork(nn.Module):
         self.l6 = nn.Flatten(start_dim=1, end_dim=-1)
         self.l7 = nn.Linear(in_features=1024, out_features=64)
         self.l8 = nn.Linear(in_features=64, out_features=10)
-    
-    def forward(self, x): 
+
+
+    def forward(self, x):
         x = self.l1(x)
-        x = self.relu_activ(x) 
-        x = self.l2(x) 
+        x = self.relu_activ(x)
+        x = self.l2(x)
         x = self.l3(x)
-        x = self.relu_activ(x) 
-        x = self.l4(x) 
+        x = self.relu_activ(x)
+        x = self.l4(x)
         x = self.l5(x)
-        x = self.relu_activ(x) 
-        x = self.l6(x) 
+        x = self.relu_activ(x)
+        x = self.l6(x)
         x = self.l7(x)
-        x = self.relu_activ(x) 
+        x = self.relu_activ(x)
         x = self.l8(x)
         return x
 
@@ -38,21 +42,26 @@ class NeuralNetwork(nn.Module):
 # Dataset preparation
 IMAGE_SIZE = (32, 32)
 transform = transforms.Compose([
-    transforms.Resize(IMAGE_SIZE), 
+    transforms.Resize(IMAGE_SIZE),
 	transforms.ToTensor()
     ])
 
 
 # Load the training dataset
-# Directory structure: root/class1/img1.jpg, root/class1/img2.jpg, root/class2/img1.jpg, ...
-train_dataset = datasets.ImageFolder(root=r"dataset\cifar10\train", transform=transform)
+# Directory structure: root/class1/img1.jpg, root/class1/img2.jpg,
+# root/class2/img1.jpg, ...
+train_dataset = datasets.ImageFolder(
+    root=r"dataset\cifar10\train", transform=transform)
 
 # Load the testing dataset that is in a similar directory structure
-test_dataset = datasets.ImageFolder(root=r"dataset\cifar10\test", transform=transform)
+test_dataset = datasets.ImageFolder(
+    root=r"dataset\cifar10\test", transform=transform)
 
 # Create data loaders
-train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size=32, shuffle=True)
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size=32, shuffle=False)
+train_loader = torch.utils.data.DataLoader(
+    dataset=train_dataset, batch_size=32, shuffle=True)
+test_loader = torch.utils.data.DataLoader(
+    dataset=test_dataset, batch_size=32, shuffle=False)
 
 # Define the network, loss function, and optimizer
 my_model = NeuralNetwork()
@@ -79,11 +88,14 @@ for epoch in range(10):
         running_loss += loss.item()
         total_loss += loss.item()
         if i % 200 == 199:    # Print every 200 mini-batches
-            print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 200))
+            print(
+                f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 200:.3f}"
+            )
             running_loss = 0.0
-    print('[%d] overall loss for epoch: %.3f' % (epoch + 1, total_loss / len(train_loader)))
-    
+    print(
+        f"[{epoch + 1}] overall loss for epoch: "
+        f"{total_loss / len(train_loader):.3f}"
+    )
 print('Training finished')
 
 # Evaluate the neural network
@@ -113,8 +125,10 @@ report = classification_report(true_labels, predicted_labels, output_dict=True)
 for metric in metrics:
     metric_list = []
     for class_label in report.keys():
-        if class_label != "macro avg" and class_label != "weighted avg" and class_label != "accuracy":
-            print(f"{metric.capitalize()} for class {class_label}: {report[class_label][metric]}")
+        if class_label not in ('macro avg', 'weighted avg', 'accuracy'):
+            print(f"{metric.capitalize()} for class {class_label}:",
+                  report[class_label][metric])
             metric_list.append(report[class_label][metric])
-    print(f"Average {metric.capitalize()}: {(sum(metric_list) / len(metric_list)):.2f}")
+    metric_value = sum(metric_list) / len(metric_list)
+    print(f"Average {metric.capitalize()}: {metric_value:.2f}")
     print(f"Accuracy: {report['accuracy']}")

@@ -1,7 +1,10 @@
+"""TensorFlow code generated based on BUML."""
+
 import tensorflow as tf
-from tensorflow.keras import layers
-from tensorflow.keras.models import Sequential
-import tensorflow_addons as tfa  
+from keras import layers
+from keras.models import Sequential
+import tensorflow_addons as tfa
+
 
 
 # Define the network architecture
@@ -52,11 +55,14 @@ class NeuralNetwork(tf.keras.Model):
             layers.Dropout(rate=0.5),
             layers.Dense(units=1000, activation=None),
         ])
-    
+
+        
     def call(self, x): 
         x = self.features(x)
         x = self.p1(x)
         x = self.f1(x) 
         x = self.classifier(x)
         return x
+
+    
 

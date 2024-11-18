@@ -1,5 +1,11 @@
-import torch.nn as nn
+"""PyTorch code generated based on BUML."""
+
 import torch
+
+from torch import nn
+
+ 
+
 
 # Define the network architecture
 class NeuralNetwork(nn.Module):
@@ -18,25 +24,26 @@ class NeuralNetwork(nn.Module):
         self.l10 = nn.Dropout(p=0.1)
         self.l11 = nn.Linear(in_features=400, out_features=1)
         self.sigmoid_activ = nn.Sigmoid()
-    
-    def forward(self, x): 
-        x = self.l1(x) 
+
+
+    def forward(self, x):
+        x = self.l1(x)
         x = self.l2(x)
-        x = x.permute(0, 2, 1) 
+        x = x.permute(0, 2, 1)
         x_1 = self.l3(x)
-        x_1 = self.relu_activ(x_1) 
-        x_1 = self.l4(x_1) 
+        x_1 = self.relu_activ(x_1)
+        x_1 = self.l4(x_1)
         x_2 = self.l5(x)
-        x_2 = self.relu_activ(x_2) 
+        x_2 = self.relu_activ(x_2)
         x_2 = self.l6(x_2)
-        x_2 = torch.cat((x_1, x_2), dim=1) 
+        x_2 = torch.cat((x_1, x_2), dim=1)
         x_2 = self.l7(x_2)
         x_2 = x_2.permute(0, 2, 1)
         x_2, _ = self.l8(x_2)
-        x_2 = x_2[:, -1, :] 
+        x_2 = x_2[:, -1, :]
         x_2 = self.l9(x_2)
-        x_2 = self.relu_activ(x_2) 
-        x_2 = self.l10(x_2) 
+        x_2 = self.relu_activ(x_2)
+        x_2 = self.l10(x_2)
         x_2 = self.l11(x_2)
         x_2 = self.sigmoid_activ(x_2)
         return x_2

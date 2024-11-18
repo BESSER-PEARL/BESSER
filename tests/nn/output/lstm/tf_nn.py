@@ -1,5 +1,8 @@
+"""TensorFlow code generated based on BUML."""
+
 import tensorflow as tf
-from tensorflow.keras import layers
+from keras import layers
+
 
 
 
@@ -14,7 +17,8 @@ class NeuralNetwork(tf.keras.Model):
         self.l4 = layers.LSTM(units=40, activation=None, dropout=0.2)
         self.l5 = layers.Dense(units=40, activation='relu')
         self.l6 = layers.Dense(units=2, activation='softmax')
-    
+
+        
     def call(self, x):
         x = self.l1(x)
         x = self.l2(x)
@@ -23,4 +27,6 @@ class NeuralNetwork(tf.keras.Model):
         x = self.l5(x)
         x = self.l6(x)
         return x
+
+    
 

@@ -1,4 +1,10 @@
-import torch.nn as nn
+"""PyTorch code generated based on BUML."""
+
+
+
+from torch import nn
+
+ 
 
 
 # Define the network architecture
@@ -31,11 +37,12 @@ class NeuralNetwork(nn.Module):
             nn.ReLU(),
             nn.Linear(in_features=4096, out_features=1000),
         )
-    
-    def forward(self, x): 
-        x = self.features(x) 
-        x = self.p1(x) 
-        x = self.f1(x) 
+
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.p1(x)
+        x = self.f1(x)
         x = self.classifier(x)
         return x
 

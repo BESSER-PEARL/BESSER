@@ -7,12 +7,15 @@ Argument:
 """
 
 import sys
-from tests.nn.torch2buml.ast_parser import ASTParserTorch
-from tests.nn.torch2buml.transform_functions import transform_layers
-from tests.nn.torch2buml.definitions import config_list, train_param_list, \
-    test_param_list, lookup_loss_func
-from tests.nn.code2buml.utils import parse_arguments_code2buml, code2buml
-
+from besser.generators.nn_reverse.torch2buml.ast_parser import ASTParserTorch
+from besser.generators.nn_reverse.torch2buml.transform_functions import (
+    transform_layers
+)
+from besser.generators.nn_reverse.torch2buml.definitions import config_list, \
+    train_param_list, test_param_list, lookup_loss_func
+from besser.generators.nn_reverse.code2buml.utils import (
+    parse_arguments_code2buml, code2buml
+)
 
 
 def main():

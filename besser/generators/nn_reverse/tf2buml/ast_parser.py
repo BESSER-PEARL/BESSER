@@ -4,7 +4,7 @@ neural network written in TensorFlow.
 """
 
 import ast
-from tests.nn.code2buml.ast_parser import ASTParser
+from besser.generators.nn_reverse.code2buml.ast_parser import ASTParser
 
 class ASTParserTF(ASTParser):
     """Class visiting and parsing TensorFlow code AST"""

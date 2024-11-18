@@ -2,10 +2,12 @@
 Helper functions to transform NN Torch code to BUML code.
 """
 
-from tests.nn.torch2buml.definitions import lookup_layers, \
-    lookup_layers_params, layers_fixed_params, lookup_actv_fun
-from tests.nn.code2buml.utils import handle_remaining_params
-
+from besser.generators.nn_reverse.torch2buml.definitions import (
+    lookup_layers, lookup_layers_params, layers_fixed_params, lookup_actv_fun
+)
+from besser.generators.nn_reverse.code2buml.utils import (
+    handle_remaining_params
+)
 
 def transform_layers(layers, inputs_outputs, layer_of_output,
                      modules, is_layer=True):

@@ -3,9 +3,13 @@ Module providing a class that extracts information from the AST of a
 neural network written in PyTorch.
 """
 import ast
-from tests.nn.code2buml.ast_parser import ASTParser
-from tests.nn.torch2buml.definitions import lookup_actv_fun, rnn_cnn_layers
-from tests.nn.torch2buml.transform_functions import transform_actv_func
+from besser.generators.nn_reverse.code2buml.ast_parser import ASTParser
+from besser.generators.nn_reverse.torch2buml.definitions import (
+    lookup_actv_fun, rnn_cnn_layers
+)
+from besser.generators.nn_reverse.torch2buml.transform_functions import (
+    transform_actv_func
+)
 
 class ASTParserTorch(ASTParser):
     """Class visiting and parsing PyTorch code AST"""

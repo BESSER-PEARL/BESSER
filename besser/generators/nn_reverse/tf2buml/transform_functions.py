@@ -2,11 +2,12 @@
 Helper functions to transform NN TensorFlow code to BUML code.
 """
 
-from tests.nn.tf2buml.definitions import lookup_layers, \
+from besser.generators.nn_reverse.tf2buml.definitions import lookup_layers, \
     lookup_layers_params, layers_fixed_params, rnn_cnn_layers, \
     layers_specific_params
-from tests.nn.code2buml.utils import handle_remaining_params
-
+from besser.generators.nn_reverse.code2buml.utils import (
+    handle_remaining_params
+)
 
 def transform_layers(layers, inputs_outputs, layer_of_output, is_layer):
     """

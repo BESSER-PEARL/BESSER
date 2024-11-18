@@ -1,66 +1,69 @@
-from __future__ import annotations
-from besser.BUML.metamodel.structural import BehaviorImplementation, NamedElement
-from typing import List, Self, Union
+"""
+This module defines the neural network metamodel.
+"""
 
-                                                                              
+from __future__ import annotations
+from typing import List, Self, Union
+from besser.BUML.metamodel.structural import BehaviorImplementation
+
+
+
 class TensorOp:
     """
-    This class represents a tensor operation. It encapsulates attributes such 
-    as the name and the type of the tensor operation.
+    This class represents a tensor operation. It encapsulates attributes
+    such as the name and the type of the tensor operation.
     
     Args:
         name (str): The name of the tensor operation.
         type (str): The type of the tensor operation.
-        concatenate_dim (int): The dimension along which the tensors will be 
-            concatenated with the cat operation.
-        layers_of_tensors (List[Union[str, float]]): The list that defines the
-            inputs of the tensor op. Elements of the list can be either names
-            of layers from which the tensors originate or scalar values.
-        reshape_dim (List[int]): A list specifying the new shape of the tensor
-            after the reshape operation.
-        transpose_dim (List[int]): A list specifying the transpose dimensions. 
-            Only relevant with the transpose operation.
-        permute_dim (List[int]): A list containing the desired ordering of 
-            dimensions. Only relevant with the permute operation.
-        after_activ_func(bool): Whether to perform the tensor operation after 
-            applying the activation function.
-        input_reused (bool): Whether the input to this tensor op is reused as 
-            input to another layer (or tensor op).
+        concatenate_dim (int): The dimension along which the tensors will
+            be concatenated with the cat operation.
+        layers_of_tensors (List[Union[str, float]]): The list that 
+            defines the inputs of the tensor op. Elements of the 
+            list can be either names of layers from which the tensors
+            originate or scalar values.
+        reshape_dim (List[int]): A list specifying the new shape of the 
+            tensor after the reshape operation.
+        transpose_dim (List[int]): A list specifying the transpose 
+            dimensions. Only relevant with the transpose operation.
+        permute_dim (List[int]): A list containing the desired ordering 
+            of dimensions. Only relevant with the permute operation.
+        input_reused (bool): Whether the input to this tensor op is 
+            reused as input to another layer (or tensor op).
 
     Attributes:
         name (str): The name of the tensor operation.
         type (str): The type of the tensor operation.
-        concatenate_dim (int): The dimension along which the tensors will be 
-            concatenated with the cat operation.
-        layers_of_tensors (List[Union[str, float]]): The list that defines the
-            inputs of the tensor op. Elements of the list can be either names
-            of layers from which the tensors originate or scalar values.
-        reshape_dim (List[int]): A list specifying the new shape of the tensor
-            after the reshape operation.
-        transpose_dim (List[int]): A list specifying the transpose dimensions.
-            Only relevant with the transpose operation.
-        permute_dim (List[int]): A list containing the desired ordering of 
-            dimensions. Only relevant with the permute operation.
-        after_activ_func(bool): Whether to perform the tensor operation after
-            applying the activation function.
-        input_reused (bool): Whether the input to this tensor op is reused as 
-            input to another layer (or tensor op).
+        concatenate_dim (int): The dimension along which the tensors 
+            will be concatenated with the cat operation.
+        layers_of_tensors (List[Union[str, float]]): The list that 
+            defines the inputs of the tensor op. Elements of the list
+            can be either names of layers from which the tensors 
+            originate or scalar values.
+        reshape_dim (List[int]): A list specifying the new shape of 
+            the tensor after the reshape operation.
+        transpose_dim (List[int]): A list specifying the transpose 
+            dimensions. Only relevant with the transpose operation.
+        permute_dim (List[int]): A list containing the desired 
+            ordering of dimensions. Only relevant with the permute 
+            operation.
+        input_reused (bool): Whether the input to this tensor op is 
+            reused as input to another layer (or tensor op).
     """
-    def __init__(self, name: str, type: str, concatenate_dim: int = None, 
-                 layers_of_tensors: List[Union[str, float]] = None, 
-                 reshape_dim: List[int] = None, 
-                 transpose_dim: List[int] = None, 
-                 permute_dim: List[int] = None, 
-                 after_activ_func: bool = True, input_reused: bool = False):
+    def __init__(self, name: str, tns_type: str, concatenate_dim: int = None,
+                 layers_of_tensors: List[Union[str, float]] = None,
+                 reshape_dim: List[int] = None,
+                 transpose_dim: List[int] = None,
+                 permute_dim: List[int] = None,
+                 input_reused: bool = False):
         self.name: str = name
         self.concatenate_dim: int = concatenate_dim
         self.layers_of_tensors: List[Union[str, float]] = layers_of_tensors
         self.reshape_dim: List[int] = reshape_dim
         self.transpose_dim: List[int] = transpose_dim
         self.permute_dim: List[int] = permute_dim
-        self.after_activ_func: bool = after_activ_func
         self.input_reused: bool = input_reused
-        self.type: str = type
+        self.tns_type: str = tns_type
 
     @property
     def name(self) -> str:
@@ -73,140 +76,128 @@ class TensorOp:
         self.__name = name
 
     @property
-    def type(self) -> str:
+    def tns_type(self) -> str:
         """str: Get the type of the tensorOp."""
-        return self.__type
+        return self.__tns_type
 
-    @type.setter
-    def type(self, type: str):
+    @tns_type.setter
+    def tns_type(self, tns_type: str):
         """
         str: Set the type of the tensorOp.
 
         Raises:
             ValueError: If the type is not one of the allowed options: 
-            'reshape', 'concatenate', 'multiply', 'matmultiply', 'permute' 
-            and transpose.
+            'reshape', 'concatenate', 'multiply', 'matmultiply', 
+            'permute' and transpose.
         """
-        if type not in [
+        if tns_type not in [
             'reshape', 'concatenate', 'multiply', 
             'matmultiply', 'permute', 'transpose'
         ]:
             raise ValueError("Invalid value of tensorOp type")
-        elif type == 'reshape' and self.reshape_dim == None:
+        elif tns_type == 'reshape' and self.reshape_dim is not None:
             raise ValueError("reshape_dim parameter cannot be None when type \
                              is 'reshape'")
-        elif type == 'concatenate':
-            if self.concatenate_dim == None:
+        elif tns_type == 'concatenate':
+            if self.concatenate_dim is None:
                 raise ValueError("concatenate_dim parameter cannot be None \
                                   when type is 'concatenate'")
-            elif self.layers_of_tensors == None:
+            elif self.layers_of_tensors is None:
                 raise ValueError("layers_of_tensors parameter cannot be None \
                                  when type is 'concatenate'")
-        elif type == 'multiply' and self.layers_of_tensors == None:
+        elif tns_type == 'multiply' and self.layers_of_tensors is None:
             raise ValueError("layers_of_tensors parameter cannot be None \
                              when type is 'multiply'")
-        elif type == 'matmultiply' and self.layers_of_tensors == None:
+        elif tns_type == 'matmultiply' and self.layers_of_tensors is None:
             raise ValueError("layers_of_tensors parameter cannot be None \
                               when type is 'matmultiply'")
-        elif type == 'permute' and self.permute_dim == None:
+        elif tns_type == 'permute' and self.permute_dim is None:
             raise ValueError("permute_dim parameter cannot be None when \
                              type is 'permute'")
-        elif type == 'transpose' and self.transpose_dim == None:
+        elif tns_type == 'transpose' and self.transpose_dim is None:
             raise ValueError("transpose_dim parameter cannot be None when \
                              type is 'transpose'")
 
-        self.__type = type
+        self.__tns_type = tns_type
 
     @property
     def concatenate_dim(self) -> int:
         """
-        int: Get the dimension along which the tensors will be concatenated 
-            with the cat operation.
+        int: Get the dimension along which the tensors will be 
+            concatenated with the cat operation.
         """
         return self.__concatenate_dim
 
     @concatenate_dim.setter
     def concatenate_dim(self, concatenate_dim: int):
         """
-        int: Set the dimension along which the tensors will be concatenated
-            with the cat operation.
+        int: Set the dimension along which the tensors will be 
+            concatenated with the cat operation.
         """
         self.__concatenate_dim = concatenate_dim
 
     @property
     def layers_of_tensors(self) -> List[Union[str, float]]:
         """
-        List[Union[str, float]]: Get the list that defines the inputs of the 
-            tensor op. Elements of the list can be either names of layers 
-            from which the tensors originate or scalar values.
+        List[Union[str, float]]: Get the list that defines the inputs
+            of the tensor op. Elements of the list can be either names
+            of layers from which the tensors originate or scalar values.
         """
         return self.__layers_of_tensors
 
     @layers_of_tensors.setter
     def layers_of_tensors(self, layers_of_tensors: List[Union[str, float]]):
         """
-        List[Union[str, float]]: Set the list of layers names from which the 
-            tensors, on which tensor ops are performed, originate.
+        List[Union[str, float]]: Set the list of layers names from which
+            the tensors, on which tensor ops are performed, originate.
         """
         self.__layers_of_tensors = layers_of_tensors
 
     @property
     def reshape_dim(self) -> List[int]:
         """
-        List[int]: Get the list specifying the new shape of the tensor after 
-            reshaping with the view operation.
+        List[int]: Get the list specifying the new shape of the tensor 
+            after reshaping with the view operation.
         """
         return self.__reshape_dim
 
     @reshape_dim.setter
     def reshape_dim(self, reshape_dim: List[int]):
         """
-        List[int]: Set the list specifying the new shape of the tensor after 
-            reshaping with the view operation.
+        List[int]: Set the list specifying the new shape of the tensor 
+            after reshaping with the view operation.
         """
         self.__reshape_dim = reshape_dim
 
     @property
     def transpose_dim(self) -> List[int]:
-        """List[int]: Get the list specifying the transpose dimensions."""
+        """
+        List[int]: Get the list specifying the transpose dimensions.
+        """
         return self.__transpose_dim
 
     @transpose_dim.setter
     def transpose_dim(self, transpose_dim: List[int]):
-        """List[int]: Set the list specifying the transpose dimensions."""
+        """
+        List[int]: Set the list specifying the transpose dimensions.
+        """
         self.__transpose_dim = transpose_dim
 
     @property
     def permute_dim(self) -> List[int]:
         """
-        List[int]: Get the list containing the desired ordering of dimensions
-            for permute operation.
+        List[int]: Get the list containing the desired ordering of 
+            dimensions for permute operation.
         """
         return self.__permute_dim
 
     @permute_dim.setter
     def permute_dim(self, permute_dim: List[int]):
         """
-        List[int]: Set the list containing the desired ordering of dimensions 
-            for permute operation.
+        List[int]: Set the list containing the desired ordering of 
+            dimensions for permute operation.
         """
         self.__permute_dim = permute_dim
-
-    @property
-    def after_activ_func(self) -> bool:
-        """
-        bool: Get whether to perform the tensor operation after applying the 
-            activation function.
-        """
-        return self.__after_activ_func
-
-    @after_activ_func.setter
-    def after_activ_func(self, after_activ_func: bool):
-        """
-        bool: Set whether to perform the tensor operation after applying 
-            the activation function.
-        """
-        self.__after_activ_func = after_activ_func
 
     @property
     def input_reused(self) -> bool:
@@ -226,10 +217,9 @@ class TensorOp:
 
     def __repr__(self):
         return (
-            f'TensorOp({self.name}, {self.type}, {self.concatenate_dim}, '
+            f'TensorOp({self.name}, {self.tns_type}, {self.concatenate_dim}, '
             f'{self.layers_of_tensors}, {self.reshape_dim}, '
-            f'{self.transpose_dim}, {self.permute_dim}, '
-            f'{self.after_activ_func}, {self.input_reused})'
+            f'{self.transpose_dim}, {self.permute_dim}, {self.input_reused})'
         )
 
 class Layer:
@@ -240,26 +230,26 @@ class Layer:
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
 
     Attributes:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
     """
-    def __init__(self, name: str, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
+    def __init__(self, name: str, actv_func: str = None,
+                 name_module_input: str = None, input_reused: bool = False):
         self.name: str = name
         self.actv_func: str = actv_func
-        self.name_layer_input: str = name_layer_input
+        self.name_module_input: str = name_module_input
         self.input_reused: bool = input_reused
-    
+
     @property
     def name(self) -> str:
         """str: Get the name of the layer."""
@@ -282,7 +272,8 @@ class Layer:
 
         Raises:
             ValueError: If the actv_func is not one of the allowed 
-            options: 'relu', 'leaky_rely', 'sigmoid', 'softmax' and 'tanh'
+            options: 'relu', 'leaky_rely', 'sigmoid', 'softmax' and 
+            'tanh'
         """
         if actv_func is not None and actv_func not in [
             'relu', 'leaky_relu', 'sigmoid', 'softmax', 'tanh'
@@ -291,14 +282,18 @@ class Layer:
         self.__actv_func = actv_func
 
     @property
-    def name_layer_input(self) -> str:
-        """str: Get the name of the layer from which the inputs originate."""
-        return self.__name_layer_input
+    def name_module_input(self) -> str:
+        """
+        str: Get the name of the layer from which the inputs originate.
+        """
+        return self.__name_module_input
 
-    @name_layer_input.setter
-    def name_layer_input(self, name_layer_input: str):
-        """str: Set the name of the layer from which the inputs originate."""
-        self.__name_layer_input = name_layer_input
+    @name_module_input.setter
+    def name_module_input(self, name_module_input: str):
+        """
+        str: Set the name of the layer from which the inputs originate.
+        """
+        self.__name_module_input = name_module_input
 
     @property
     def input_reused(self) -> bool:
@@ -315,11 +310,11 @@ class Layer:
             another layer.
         """
         self.__input_reused = input_reused
-    
+
     def __repr__(self):
         return (
             f'Layer({self.name}, {self.actv_func}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
 
 class CNN(Layer):
@@ -331,39 +326,42 @@ class CNN(Layer):
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
         kernel_dim (List[int]): A list containing the dimensions of 
-            the convolving or pooling kernel (i.e., [depth, height, width]).
-        stride_dim (List[int]): A list containing the dimensions of 
-            the stride of the convolution or pooling (i.e., [depth, height, 
+            the convolving or pooling kernel (i.e., [depth, height, 
             width]).
+        stride_dim (List[int]): A list containing the dimensions of 
+            the stride of the convolution or pooling (i.e., [depth, 
+            height, width]).
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
-        actv_func (str): Inherited from Layer. It represents the type of the 
-            activation function.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
+        actv_func (str): Inherited from Layer. It represents the type 
+            of the activation function.
         kernel_dim (List[int]): A list containing the dimensions of 
-            the convolving or pooling kernel (i.e., [depth, height, width]).
-        stride_dim (List[int]): A list containing the dimensions of 
-            the stride of the convolution or pooling (i.e., [depth, height, 
+            the convolving or pooling kernel (i.e., [depth, height, 
             width]).
+        stride_dim (List[int]): A list containing the dimensions of 
+            the stride of the convolution or pooling (i.e., [depth, 
+            height, width]).
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        name_module_input (str): Inherited from Layer. The name of 
+            the layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input 
+            to this layer is reused as input to another layer.
     """
 
-    def __init__(self, name: str, kernel_dim: List[int], 
-                 stride_dim: List[int], padding_amount: int = 0, 
-                 padding_type: str = "valid", actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
-        super().__init__(name, actv_func, name_layer_input, input_reused)
+    def __init__(self, name: str, kernel_dim: List[int],
+                 stride_dim: List[int], padding_amount: int = 0,
+                 padding_type: str = "valid", actv_func: str = None,
+                 name_module_input: str = None, input_reused: bool = False):
+        super().__init__(name, actv_func, name_module_input, input_reused)
         self.kernel_dim: List[int] = kernel_dim
         self.stride_dim: List[int] = stride_dim
         self.padding_amount: int = padding_amount
@@ -418,7 +416,7 @@ class CNN(Layer):
         """
 
         if padding_type not in ['same', 'valid']:
-            raise ValueError ("Invalid padding type")  
+            raise ValueError ("Invalid padding type")
         self.__padding_type = padding_type
 
 
@@ -426,7 +424,7 @@ class CNN(Layer):
         return (
             f'CNN({self.name}, {self.actv_func}, {self.kernel_dim}, '
             f'{self.stride_dim}, {self.padding_amount}, {self.padding_type}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
 
 class ConvolutionalLayer(CNN):
@@ -437,61 +435,62 @@ class ConvolutionalLayer(CNN):
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
         kernel_dim (List[int]): A list containing the dimensions of 
-            the convolving or pooling kernel (i.e., [depth, height, width]).
-        stride_dim (List[int]): A list containing the dimensions of 
-            the stride of the convolution or pooling (i.e., [depth, height, 
+            the convolving or pooling kernel (i.e., [depth, height, 
             width]).
+        stride_dim (List[int]): A list containing the dimensions of 
+            the stride of the convolution or pooling (i.e., [depth, 
+            height, width]).
         in_channels (int): The number of channels in the input image.
         out_channels (int): The number of channels produced by 
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
-        permute_dim (bool): Whether the dimensions of the input need to be 
-            permuted. Relevant for PyTorch. It is used to make PyTorch model
-            equivalent to TensorFlow model.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        permute_dim (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
         kernel_dim (List[int]): Inherited from CNN. A list containing 
-            the dimensions of the convolving or pooling kernel (i.e., [depth, 
-            height, width]).
+            the dimensions of the convolving or pooling kernel (i.e., 
+            [depth, height, width]).
         stride_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
         in_channels (int): The number of channels in the input image.
         out_channels (int): The number of channels produced by 
             the convolution.
-        padding_amount (int): Inherited from CNN. The amount of padding added 
-            to the input.
-        padding_type (str): Inherited from CNN. The type of padding applied 
-            to the input.
-        permute_dim (bool): Whether the dimensions of the input need to be 
-            permuted. Relevant for PyTorch. It is used to make PyTorch model
-            equivalent to TensorFlow model.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        padding_amount (int): Inherited from CNN. The amount of padding 
+            added to the input.
+        padding_type (str): Inherited from CNN. The type of padding 
+            applied to the input.
+        permute_dim (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input 
+            to this layer is reused as input to another layer.
     """
-        
-    def __init__(self, name: str, kernel_dim: List[int], out_channels: int, 
-                 stride_dim: List[int], in_channels: int = None, 
+
+    def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
+                 stride_dim: List[int], in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
-                 actv_func: str = None, name_layer_input: str = None, 
+                 actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_dim: bool = False):
-        super().__init__(name, kernel_dim, stride_dim, padding_amount, 
-                         padding_type, actv_func, name_layer_input, 
+        super().__init__(name, kernel_dim, stride_dim, padding_amount,
+                         padding_type, actv_func, name_module_input,
                          input_reused)
         self.in_channels: int = in_channels
         self.out_channels: int = out_channels
         self.permute_dim: bool = permute_dim
-        
 
     @property
     def in_channels(self) -> int:
@@ -505,12 +504,16 @@ class ConvolutionalLayer(CNN):
 
     @property
     def out_channels(self) -> int:
-        """int: Get the number of channels produced by the convolution."""
+        """
+        int: Get the number of channels produced by the convolution.
+        """
         return self.__out_channels
 
     @out_channels.setter
     def out_channels(self, out_channels: int):
-        """int: Set the number of channels produced by the convolution."""
+        """
+        int: Set the number of channels produced by the convolution.
+        """
         self.__out_channels = out_channels
 
     @property
@@ -533,35 +536,40 @@ class ConvolutionalLayer(CNN):
             f'ConvolutionaLayer({self.name}, {self.kernel_dim}, '
             f'{self.out_channels}, {self.stride_dim}, {self.in_channels}, '
             f'{self.padding_amount}, {self.padding_type}, {self.actv_func}, '
-            f'{self.name_layer_input}, {self.input_reused}, {self.permute_dim})'
+            f'{self.name_module_input}, {self.input_reused}, '
+            f'{self.permute_dim})'
         )
-   
+
 class Conv1D(ConvolutionalLayer):
     """
-    Represents a type of convolutional layer that applies a 1D convolution.
+    Represents a type of convolutional layer that applies a 1D 
+    convolution.
 
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
         kernel_dim (List[int]): A list containing the dimensions of 
-            the convolving or pooling kernel (i.e., [depth, height, width]).
-        stride_dim (List[int]): A list containing the dimensions of the stride
-            of the convolution or pooling (i.e., [depth, height, width]).
-            in_channels (int): The number of channels in the input image.
+            the convolving or pooling kernel (i.e., [depth, height, 
+            width]).
+        stride_dim (List[int]): A list containing the dimensions of 
+            the stride of the convolution or pooling (i.e., [depth, 
+            height, width]).
+        in_channels (int): The number of channels in the input image.
         out_channels (int): The number of channels produced by 
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
-        permute_dim (bool): Whether the dimensions of the input need to be 
-            permuted. Relevant for PyTorch. It is used to make PyTorch model
-            equivalent to TensorFlow model.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        permute_dim (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
         kernel_dim (List[int]): Inherited from CNN. A list containing 
@@ -570,31 +578,35 @@ class Conv1D(ConvolutionalLayer):
         stride_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
-        in_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels in the input image.
-        out_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels produced by the convolution.
-        padding_amount (int): Inherited from CNN. It represents the amount of
-            padding added to the input.
-        padding_type (str): Inherited from CNN. It represents the type of 
-            padding applied to the input. 
-        permute_dim (bool): Inherited from ConvolutionalLayer. Whether the 
-            dimensions of the input need to be permuted. Relevant for PyTorch. 
-            It is used to make PyTorch model equivalent to TensorFlow model. 
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        in_channels (int): Inherited from ConvolutionalLayer. It 
+            represents the number of channels in the input image.
+        out_channels (int): Inherited from ConvolutionalLayer. It 
+            represents the number of channels produced by the 
+            convolution.
+        padding_amount (int): Inherited from CNN. It represents the 
+            amount of padding added to the input.
+        padding_type (str): Inherited from CNN. It represents the type
+            of padding applied to the input. 
+        permute_dim (bool): Inherited from ConvolutionalLayer. Whether 
+            the dimensions of the input need to be permuted. Relevant 
+            for PyTorch. It is used to make PyTorch model equivalent to 
+            TensorFlow model. 
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, kernel_dim: List[int], out_channels: int, 
-                 stride_dim: List[int] = [1], in_channels: int = None, 
+    def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
+                 stride_dim: List[int] = None, in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
-                 actv_func: str = None, name_layer_input: str = None, 
+                 actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_dim: bool = False):
-        super().__init__(name, kernel_dim, out_channels, 
-                         stride_dim, in_channels, padding_amount, padding_type,
-                         actv_func, name_layer_input, input_reused, permute_dim)
-    
+        if stride_dim is None:
+            stride_dim = [1]
+        super().__init__(name, kernel_dim, out_channels, stride_dim,
+                         in_channels, padding_amount, padding_type, actv_func,
+                         name_module_input, input_reused, permute_dim)
+
     @property
     def kernel_dim(self) -> List[int]:
         """List[int]: Get the list of dimensions of the kernel."""
@@ -631,24 +643,26 @@ class Conv1D(ConvolutionalLayer):
         self.__stride_dim = stride_dim
 
 
-
     def __repr__(self):
         return (
             f'Conv1D({self.name}, {self.actv_func}, {self.kernel_dim}, '
             f'{self.out_channels}, {self.stride_dim}, {self.in_channels}, ' 
             f'{self.padding_amount}, {self.padding_type}, '
-            f'{self.name_layer_input}, {self.input_reused}, {self.permute_dim})'
+            f'{self.name_module_input}, {self.input_reused}, '
+            f'{self.permute_dim})'
         )
-        
+
 class Conv2D(ConvolutionalLayer):
     """
-    Represents a type of convolutional layer that applies a 2D convolution.
+    Represents a type of convolutional layer that applies a 2D 
+    convolution.
 
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
         kernel_dim (List[int]): A list containing the dimensions of 
-            the convolving or pooling kernel (i.e., [depth, height, width]).
+            the convolving or pooling kernel (i.e., [depth, height, 
+            width]).
         stride_dim (List[int]): A list containing the dimensions of 
             the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
@@ -657,16 +671,17 @@ class Conv2D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.  
-        permute_dim (bool): Whether the dimensions of the input need to be 
-            permuted. Relevant for PyTorch. It is used to make PyTorch model
-            equivalent to TensorFlow model.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        permute_dim (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused 
             as input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of the 
+            layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
         kernel_dim (List[int]): Inherited from CNN. A list containing 
@@ -675,31 +690,36 @@ class Conv2D(ConvolutionalLayer):
         stride_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
-        in_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels in the input image.
-        out_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels produced by the convolution.
-        padding_amount (int): Inherited from CNN. It represents the amount of 
-            padding added to the input.
-        padding_type (str): Inherited from CNN. It represents the type of 
-            padding applied to the input.
-        permute_dim (bool): Inherited from ConvolutionalLayer. Whether the 
-            dimensions of the input need to be permuted. Relevant for PyTorch. 
-            It is used to make PyTorch model equivalent to TensorFlow model.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        in_channels (int): Inherited from ConvolutionalLayer. It 
+            represents the number of channels in the input image.
+        out_channels (int): Inherited from ConvolutionalLayer. It 
+            represents the number of channels produced by the 
+            convolution.
+        padding_amount (int): Inherited from CNN. It represents the 
+            amount of padding added to the input.
+        padding_type (str): Inherited from CNN. It represents the 
+            type of padding applied to the input.
+        permute_dim (bool): Inherited from ConvolutionalLayer. Whether 
+            the dimensions of the input need to be permuted. Relevant 
+            for PyTorch. It is used to make PyTorch model equivalent to 
+            TensorFlow model.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, kernel_dim: List[int], out_channels: int, 
-                 stride_dim: List[int] = [1, 1], in_channels: int = None,  
-                 padding_amount: int = 0, padding_type: str = "valid", 
-                 actv_func: str = None, name_layer_input: str = None, 
+    def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
+                 stride_dim: List[int] = None, in_channels: int = None,
+                 padding_amount: int = 0, padding_type: str = "valid",
+                 actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_dim: bool = False):
-        super().__init__(name, kernel_dim, out_channels, stride_dim, 
+        if stride_dim is None:
+            stride_dim = [1, 1]
+        super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type,
-                         actv_func, name_layer_input, input_reused, permute_dim) 
-    
+                         actv_func, name_module_input, input_reused,
+                         permute_dim)
+
     @property
     def kernel_dim(self) -> List[int]:
         """List[int]: Get the list of dimensions of the kernel."""
@@ -736,24 +756,26 @@ class Conv2D(ConvolutionalLayer):
 
         self.__stride_dim = stride_dim
 
-
     def __repr__(self):
         return (
             f'Conv2D({self.name}, {self.kernel_dim}, {self.out_channels}, '
             f'{self.stride_dim}, {self.in_channels}, {self.padding_amount}, '
-            f'{self.padding_type}, {self.actv_func}, {self.name_layer_input}, '
-            f'{self.input_reused}, {self.permute_dim})'
+            f'{self.padding_type}, {self.actv_func}, '
+            f'{self.name_module_input}, {self.input_reused}, '
+            f'{self.permute_dim})'
         )
-            
+
 class Conv3D(ConvolutionalLayer):
     """
-    Represents a type of convolutional layer that applies a 3D convolution.
+    Represents a type of convolutional layer that applies a 3D 
+    convolution.
 
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
         kernel_dim (List[int]): A list containing the dimensions of 
-            the convolving or pooling kernel (i.e., [depth, height, width]).
+            the convolving or pooling kernel (i.e., [depth, height, 
+            width]).
         stride_dim (List[int]): A list containing the dimensions of 
             the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
@@ -762,16 +784,17 @@ class Conv3D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
-        permute_dim (bool): Whether the dimensions of the input need to be 
-            permuted. Relevant for PyTorch. It is used to make PyTorch model
-            equivalent to TensorFlow model.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        permute_dim (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
         kernel_dim (List[int]): Inherited from CNN. A list containing 
@@ -780,31 +803,36 @@ class Conv3D(ConvolutionalLayer):
         stride_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
-        in_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels in the input image.
-        out_channels (int): Inherited from ConvolutionalLayer. It represents 
-            the number of channels produced by the convolution.
-        padding_amount (int): Inherited from CNN. It represents the amount of 
-            padding added to the input.
-        padding_type (str): Inherited from CNN. It represents the type of 
-            padding applied to the input. 
-        permute_dim (bool): Inherited from ConvolutionalLayer. Whether the 
-            dimensions of the input need to be permuted. Relevant for PyTorch. 
-            It is used to make PyTorch model equivalent to TensorFlow model.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        in_channels (int): Inherited from ConvolutionalLayer. It 
+            represents the number of channels in the input image.
+        out_channels (int): Inherited from ConvolutionalLayer. It 
+            represents the number of channels produced by the 
+            convolution.
+        padding_amount (int): Inherited from CNN. It represents the 
+            amount of padding added to the input.
+        padding_type (str): Inherited from CNN. It represents the type 
+            of padding applied to the input. 
+        permute_dim (bool): Inherited from ConvolutionalLayer. Whether 
+            the dimensions of the input need to be permuted. Relevant 
+            for PyTorch. It is used to make PyTorch model equivalent to 
+            TensorFlow model.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, kernel_dim: List[int], out_channels: int, 
-                 stride_dim: List[int] = [1, 1, 1], in_channels: int = None, 
-                 padding_amount: int = 0, padding_type: str = "valid", 
-                 actv_func: str = None, name_layer_input: str = None, 
+    def __init__(self, name: str, kernel_dim: List[int], out_channels: int,
+                 stride_dim: List[int] = None, in_channels: int = None,
+                 padding_amount: int = 0, padding_type: str = "valid",
+                 actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False, permute_dim: bool = False):
-        super().__init__(name, kernel_dim, out_channels, stride_dim, 
+        if stride_dim is None:
+            stride_dim = [1, 1, 1]
+        super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type,
-                         actv_func, name_layer_input, input_reused, permute_dim)
-    
+                         actv_func, name_module_input, input_reused,
+                         permute_dim)
+
     @property
     def kernel_dim(self) -> List[int]:
         """List[int]: Get the list of dimensions of the kernel."""
@@ -845,7 +873,8 @@ class Conv3D(ConvolutionalLayer):
             f'Conv3D({self.name}, {self.kernel_dim}, {self.out_channels}, '
             f'{self.stride_dim}, {self.in_channels}, {self.padding_amount}, '
             f'{self.padding_type}, {self.actv_func}, '
-            f'{self.name_layer_input}, {self.input_reused}, {self.permute_dim})'
+            f'{self.name_module_input}, {self.input_reused}, '
+            f'{self.permute_dim})'
         )
 
 
@@ -856,10 +885,11 @@ class PoolingLayer(CNN):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        dimension (str): The dimensionality (1D, 2D, or 3D) of the pooling 
-            operation.
+        dimension (str): The dimensionality (1D, 2D, or 3D) of the 
+            pooling operation.
         kernel_dim (List[int]): A list containing the dimensions of 
-            the convolving or pooling kernel (i.e., [depth, height, width]).
+            the convolving or pooling kernel (i.e., [depth, height, 
+            width]).
         stride_dim (List[int]): A list containing the dimensions of 
             the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
@@ -870,25 +900,26 @@ class PoolingLayer(CNN):
             or 3D.
         output_dim (List[int]): The output dimensions of the adaptive 
             pooling operation. Only relevant for adaptive pooling.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of the 
+            layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        dimension (str): The dimensionality (1D, 2D, or 3D) of the pooling 
-            operation.
+        dimension (str): The dimensionality (1D, 2D, or 3D) of the 
+            pooling operation.
         kernel_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the convolving or pooling kernel 
             (i.e., [depth, height, width]).
         stride_dim (List[int]): Inherited from CNN. A list containing 
             the dimensions of the stride of the convolution or pooling 
             (i.e., [depth, height, width]).
-        padding_amount (int): Inherited from CNN. It represents the amount 
-            of padding added to the input.
+        padding_amount (int): Inherited from CNN. It represents the 
+            amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type of 
             padding applied to the input. 
         pooling_type (str): The type of pooling. Either average or max.
@@ -896,23 +927,25 @@ class PoolingLayer(CNN):
             or 3D.
         output_dim (List[int]): The output dimensions of the adaptive 
             pooling operation. Only relevant for adaptive pooling.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, pooling_type: str, dimension: str, 
-                 kernel_dim: List[int] = None, stride_dim: List[int] = None, 
-                 padding_amount: int = 0, padding_type: str = "valid", 
-                 output_dim: List[int] = [], actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
+    def __init__(self, name: str, pooling_type: str, dimension: str,
+                 kernel_dim: List[int] = None, stride_dim: List[int] = None,
+                 padding_amount: int = 0, padding_type: str = "valid",
+                 output_dim: List[int] = None, actv_func: str = None,
+                 name_module_input: str = None, input_reused: bool = False):
         self.pooling_type: str = pooling_type
         self.dimension: str = dimension
         self.output_dim: List[int] = output_dim
-        super().__init__(name, kernel_dim, stride_dim, padding_amount, 
-                         padding_type, actv_func, name_layer_input, 
+        if output_dim is None:
+            output_dim = []
+        super().__init__(name, kernel_dim, stride_dim, padding_amount,
+                         padding_type, actv_func, name_module_input,
                          input_reused)
-        
+
     @property
     def kernel_dim(self) -> List[int]:
         """List[int]: Get the list of dimensions of the kernel."""
@@ -950,7 +983,7 @@ class PoolingLayer(CNN):
         the dimensionality of the pooling operation.
         """
         if (
-            not self.pooling_type.startswith("adaptive") 
+            not self.pooling_type.startswith("adaptive")
             and stride_dim is not None
         ):
             if self.dimension == "1D" and len(stride_dim) != 1:
@@ -966,7 +999,7 @@ class PoolingLayer(CNN):
 
         elif stride_dim is None:
             self.__stride_dim = self.kernel_dim
-        else: 
+        else:
             self.__stride_dim = stride_dim
 
     @property
@@ -980,14 +1013,14 @@ class PoolingLayer(CNN):
         str: Set the type of pooling.
         
         Raises:
-            ValueError: If the pooling type provided is none of 
-            these: 'average', 'adaptive_average', 'max' or 'adaptive_max'.
+            ValueError: If the pooling type provided is none of these: 
+            'average', 'adaptive_average', 'max' or 'adaptive_max'.
         """
 
         if pooling_type not in [
             'average', 'adaptive_average', 'max', 'adaptive_max'
         ]:
-            raise ValueError ("Invalid pooling type")  
+            raise ValueError ("Invalid pooling type")
         self.__pooling_type = pooling_type
 
     @property
@@ -1006,17 +1039,21 @@ class PoolingLayer(CNN):
         """
 
         if dimension not in ['1D', '2D', '3D']:
-            raise ValueError ("Invalid pooling dimensionality")  
+            raise ValueError ("Invalid pooling dimensionality")
         self.__dimension = dimension
 
     @property
     def output_dim(self) -> List[int]:
-        """List[int]: Get the output dimensions of the adaptive pooling."""
+        """
+        List[int]: Get the output dimensions of the adaptive pooling.
+        """
         return self.__output_dim
 
     @output_dim.setter
     def output_dim(self, output_dim: List[int]):
-        """List[int]: Set the output dimensions of the adaptive pooling."""
+        """
+        List[int]: Set the output dimensions of the adaptive pooling.
+        """
         self.__output_dim = output_dim
 
     def __repr__(self):
@@ -1024,43 +1061,41 @@ class PoolingLayer(CNN):
             f'PoolingLayer({self.name}, {self.actv_func}, '
             f'{self.pooling_type}, {self.dimension}, {self.kernel_dim}, '
             f'{self.stride_dim}, {self.padding_amount}, {self.padding_type}, '
-            f'{self.output_dim}, {self.name_layer_input}, '
+            f'{self.output_dim}, {self.name_module_input}, '
             f'{self.input_reused})'
         )
-    
+
 class LayerModifier(Layer):
     """
-    Represents a type of layer that applies transformations or adjustments
-        to other layers, enhancing their behavior or performance.
+    Represents a type of layer that applies transformations or 
+        adjustments to other layers, enhancing their behavior or 
+        performance.
 
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        name_module_input (str): The name of the layer from which 
+            the inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of the 
+            layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to 
             this layer is reused as input to another layer.
     """
-    
-    def __init__(self, name: str, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
-        super().__init__(name, actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
             f'LayerModifier({self.name}, {self.actv_func}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
-        
+
 class NormalizationLayer(LayerModifier):
     """
     Represents a type of layer that applies normalization techniques.
@@ -1068,65 +1103,64 @@ class NormalizationLayer(LayerModifier):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
-        super().__init__(name, actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
             f'NormalizationLayer({self.name}, {self.actv_func}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
-        
+
 class BatchNormLayer(NormalizationLayer):
     """
-    Represents a type of layer that normalizes inputs within mini-batches to 
-    maintain consistent mean and variance, enhancing training speed and 
-    stability.
+    Represents a type of layer that normalizes inputs within mini-batches
+    to maintain consistent mean and variance, enhancing training speed 
+    and stability.
     
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        num_features (int): The number of channels or features in each input 
-            sample.
+        num_features (int): The number of channels or features in each 
+            input sample.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the input 
             data to be normalized using batch normalization.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        num_features (int): The number of channels or features in each input 
-            sample.
+        num_features (int): The number of channels or features in each 
+            input sample.
         dimension (str): The dimensionality (1D, 2D, or 3D) of the input 
             data to be normalized using batch normalization.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
     """
     def __init__(self, name: str, num_features: int, dimension: str,
-                 actv_func: str = None, name_layer_input: str = None, 
+                 actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False):
-        super().__init__(name, actv_func, name_layer_input, input_reused)
+        super().__init__(name, actv_func, name_module_input, input_reused)
         self.num_features: int = num_features
         self.dimension: str = dimension
 
@@ -1142,7 +1176,9 @@ class BatchNormLayer(NormalizationLayer):
 
     @property
     def dimension(self) -> str:
-        """str: Get the dimensionality of the input data to be normalized."""
+        """
+        str: Get the dimensionality of the input data to be normalized.
+        """
         return self.__dimension
 
     @dimension.setter
@@ -1151,19 +1187,19 @@ class BatchNormLayer(NormalizationLayer):
         str: Set the dimensionality of the input data to be normalized.
         
         Raises:
-            ValueError: If the dimensionality of the input data is none of 
-            these: '1D', '2D', or '3D'.
+            ValueError: If the dimensionality of the input data is none
+            of these: '1D', '2D', or '3D'.
         """
 
         if dimension not in ['1D', '2D', '3D']:
-            raise ValueError ("Invalid data dimensionality")  
+            raise ValueError ("Invalid data dimensionality")
         self.__dimension = dimension
 
     def __repr__(self):
         return (
             f'BatchNormLayer({self.name}, {self.actv_func}, '
             f'{self.num_features}, {self.dimension}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
 
 class LayerNormLayer(NormalizationLayer):
@@ -1176,52 +1212,53 @@ class LayerNormLayer(NormalizationLayer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        normalized_shape (List[int]): A list refering to the dimensions or 
-            axis indices over which layer normalization is applied, 
+        normalized_shape (List[int]): A list refering to the dimensions 
+            or axis indices over which layer normalization is applied, 
             specifying which parts of the tensor are normalized.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
-        input_reused (bool): Whether the input to this layer is reused as 
-            input to another layer.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
+        input_reused (bool): Whether the input to this layer is reused 
+            as input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        normalized_shape (List[int]): A list refering to the dimensions or 
-            axis indices over which layer normalization is applied, 
+        normalized_shape (List[int]): A list refering to the dimensions
+            or axis indices over which layer normalization is applied, 
             specifying which parts of the tensor are normalized.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, normalized_shape: List[int], 
-                 actv_func: str = None, name_layer_input: str = None, 
+    def __init__(self, name: str, normalized_shape: List[int],
+                 actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False):
-        super().__init__(name, actv_func, name_layer_input, input_reused)
+        super().__init__(name, actv_func, name_module_input, input_reused)
         self.normalized_shape: List[int] = normalized_shape
 
     @property
     def normalized_shape(self) -> List[int]:
         """
-        List[int]: Get the list containing the dimensions or axis indices over
-            which layer normalization is applied. 
+        List[int]: Get the list containing the dimensions or axis 
+            indices over which layer normalization is applied. 
         """
         return self.__normalized_shape
 
     @normalized_shape.setter
     def normalized_shape(self, normalized_shape: List[int]):
         """
-        List[int]: Set the list containing the dimensions or axis indices over
-            which layer normalization is applied. 
+        List[int]: Set the list containing the dimensions or axis 
+            indices over which layer normalization is applied. 
         """
         self.__normalized_shape = normalized_shape
 
     def __repr__(self):
         return (
             f'LayerNormLayer({self.name}, {self.actv_func}, '
-            f'{self.normalized_shape}, {self.name_layer_input}, '
+            f'{self.normalized_shape}, {self.name_module_input}, '
             f'{self.input_reused})'
         )
 
@@ -1235,23 +1272,24 @@ class DropoutLayer(LayerModifier):
         name (str): The name of the layer.
         rate (float): It represents a float between 0 and 1. Fraction of 
             the input units to drop. 
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
         rate (float): It represents a float between 0 and 1. Fraction of 
             the input units to drop. 
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, rate: float, name_layer_input: str = None, 
+    def __init__(self, name: str, rate: float, name_module_input: str = None,
                  input_reused: bool = False):
-        super().__init__(name, None, name_layer_input, input_reused)
+        super().__init__(name, None, name_module_input, input_reused)
         self.rate: float = rate
 
     @property
@@ -1267,68 +1305,69 @@ class DropoutLayer(LayerModifier):
     def __repr__(self):
         return (
             f'DropoutLayer({self.name}, {self.rate}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
 
 class RNN(Layer):
     """
-    Represents a type of layer used in recurrent neural networks (RNN) for 
-    processing sequential data by using memory from previous steps to inform 
-    current outputs.
+    Represents a type of layer used in recurrent neural networks (RNN) 
+    for processing sequential data by using memory from previous steps 
+    to inform current outputs.
 
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
         input_size (int): It represents the dimensionality of the input 
             features.
-        hidden_size (int): It represents the number of units in the hidden 
-            state, which captures the network's internal representation of 
-            the input sequence.
+        hidden_size (int): It represents the number of units in the 
+            hidden state, which captures the network's internal 
+            representation of the input sequence.
         bidirectional (bool): Whether the layer is bidirectional or not.
         dropout (float): If non-zero, it introduces a Dropout layer on 
             the outputs of the current sub layers except the last one.
         batch_first (bool): If True, the input and output tensors are 
-            provided as (batch, seq, feature) instead of (seq, batch, feature).
-            Only relevant to PyTorch.
-        permute_dim (bool): Whether the dimensions of the input need to be 
-            permuted to (0, 2, 1). Relevant for PyTorch. 
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+            provided as (batch, seq, feature) instead of (seq, batch, 
+            feature). Only relevant to PyTorch.
+        permute_dim (bool): Whether the dimensions of the input need to 
+            be permuted to (0, 2, 1). Relevant for PyTorch. 
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
-        return_type (str): Whether to return the hidden states, the last output
-        in the output sequence or the full sequence.
+        return_type (str): Whether to return the hidden states, the last 
+            output in the output sequence or the full sequence.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
         input_size (int): It represents the dimensionality of the input 
             features.
-        hidden_size (int): It represents the number of units in the hidden 
-            state, which captures the network's internal representation of 
-            the input sequence.
+        hidden_size (int): It represents the number of units in the 
+            hidden state, which captures the network's internal 
+            representation of the input sequence.
         bidirectional (bool): Whether the layer is bidirectional or not.
         dropout (float): If non-zero, it introduces a Dropout layer on 
             the outputs of the current sub layers except the last one.
         batch_first (bool): If True, the input and output tensors are 
-            provided as (batch, seq, feature) instead of (seq, batch, feature).
-            Only relevant to PyTorch.
-        permute_dim (bool): Whether the dimensions of the input need to be 
-            permuted to (0, 2, 1). Relevant for PyTorch. 
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
-        return_type (str): Whether to return the hidden states, the last output
-        in the output sequence or the full sequence.
+            provided as (batch, seq, feature) instead of (seq, batch, 
+            feature). Only relevant to PyTorch.
+        permute_dim (bool): Whether the dimensions of the input need to
+            be permuted to (0, 2, 1). Relevant for PyTorch. 
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
+        return_type (str): Whether to return the hidden states, the last 
+            output in the output sequence or the full sequence.
     """
-    def __init__(self, name: str, hidden_size: int, return_type: str, 
-                 input_size: int = None, bidirectional: bool = False, 
-                 dropout: float = 0.0, batch_first: bool = True, 
-                 permute_dim: bool = False, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
-        super().__init__(name, actv_func, name_layer_input, input_reused)
+    def __init__(self, name: str, hidden_size: int, return_type: str,
+                 input_size: int = None, bidirectional: bool = False,
+                 dropout: float = 0.0, batch_first: bool = True,
+                 permute_dim: bool = False, actv_func: str = None,
+                 name_module_input: str = None, input_reused: bool = False):
+        super().__init__(name, actv_func, name_module_input, input_reused)
         self.bidirectional: bool = bidirectional
         self.dropout: float = dropout
         self.batch_first: bool = batch_first
@@ -1339,12 +1378,16 @@ class RNN(Layer):
 
     @property
     def input_size(self) -> int:
-        """int: Get the dimensionality of the input features of the layer."""
+        """
+        int: Get the dimensionality of the input features of the layer.
+        """
         return self.__input_size
 
     @input_size.setter
     def input_size(self, input_size: int):
-        """int: Set the dimensionality of the input features of the layer."""
+        """
+        int: Set the dimensionality of the input features of the layer.
+        """
         self.__input_size = input_size
 
     @property
@@ -1376,7 +1419,7 @@ class RNN(Layer):
     def dropout(self, dropout: float):
         """float: Set the dropout ratio of the layer."""
         self.__dropout = dropout
-    
+
     @property
     def batch_first(self) -> bool:
         """
@@ -1410,23 +1453,23 @@ class RNN(Layer):
     @property
     def return_type(self) -> str:
         """
-        str: Whether to return the hidden states, the last output in the output
-            sequence or the full sequence.
+        str: Whether to return the hidden states, the last output in 
+            the output sequence or the full sequence.
         """
         return self.__return_type
 
     @return_type.setter
     def return_type(self, return_type: str):
         """
-        str: Whether to return the hidden states, the last output in the output
-            sequence or the full sequence.
+        str: Whether to return the hidden states, the last output in 
+            the output sequence or the full sequence.
         Raises:
             ValueError: If the return_type is none of these: 
             'hidden', 'last', or 'full'.
         """
 
         if return_type not in ['hidden', 'last', 'full']:
-            raise ValueError ("Invalid return type")  
+            raise ValueError ("Invalid return type")
         self.__return_type = return_type
 
     def __repr__(self):
@@ -1434,7 +1477,7 @@ class RNN(Layer):
             f'RNN({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.permute_dim}, {self.actv_func}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
 
 class SimpleRNNLayer(RNN):
@@ -1447,67 +1490,62 @@ class SimpleRNNLayer(RNN):
         actv_func (str): The type of the activation function.
         input_size (int): It represents the dimensionality of the input 
             features.
-        hidden_size (int): It represents the number of units in the hidden 
-            state, which captures the network's internal representation of 
-            the input sequence.
+        hidden_size (int): It represents the number of units in the 
+            hidden state, which captures the network's internal 
+            representation of the input sequence.
         bidirectional (bool): Whether the layer is bidirectional or not.
         dropout (float): If non-zero, it introduces a Dropout layer on 
             the outputs of the RNN sub layers except the last one.
         batch_first (bool): If True, the input and output tensors are 
-            provided as (batch, seq, feature) instead of (seq, batch, feature).
-            Only relevant to PyTorch.
-        permute_dim (bool): Whether the dimensions of the input need to be 
-            permuted to (0, 2, 1). Relevant for PyTorch. 
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+            provided as (batch, seq, feature) instead of (seq, batch, 
+            feature). Only relevant to PyTorch.
+        permute_dim (bool): Whether the dimensions of the input need 
+            to be permuted to (0, 2, 1). Relevant for PyTorch. 
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
-        return_type (str): Whether to return the hidden states, the last output
-        in the output sequence or the full sequence.
+        return_type (str): Whether to return the hidden states, the last 
+            output in the output sequence or the full sequence.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        input_size (int): Inherited from RNN. It represents the dimensionality
-            of the input features.
-        hidden_size (int): Inherited from RNN. It represents the number of 
-            units in the hidden state, which captures the network's internal 
-            representation of the input sequence.
+        input_size (int): Inherited from RNN. It represents the 
+            dimensionality of the input features.
+        hidden_size (int): Inherited from RNN. It represents the number 
+            of units in the hidden state, which captures the network's 
+            internal representation of the input sequence.
         bidirectional (bool): Inherited from RNN. Whether the layer is 
             bidirectional or not.
-        dropout (float): Inherited from RNN. If non-zero, it introduces a 
-            Dropout layer on the outputs of the RNN sub layers except 
+        dropout (float): Inherited from RNN. If non-zero, it introduces 
+            a Dropout layer on the outputs of the RNN sub layers except 
             the last one.
-        batch_first (bool): Inherited from RNN. If True, the input and output 
-            tensors are provided as (batch, seq, feature) instead of 
-            (seq, batch, feature). Only relevant to PyTorch.
-        permute_dim (bool): Inherited from RNN. Whether the dimensions of the 
-            input need to be permuted to (0, 2, 1). Relevant for PyTorch.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
-        return_type (str): Inherited from RNN. Whether to return the hidden
-        states, the last output in the output sequence or the full sequence.
+        batch_first (bool): Inherited from RNN. If True, the input and 
+            output tensors are provided as (batch, seq, feature) instead 
+            of (seq, batch, feature). Only relevant to PyTorch.
+        permute_dim (bool): Inherited from RNN. Whether the dimensions 
+            of the input need to be permuted to (0, 2, 1). Relevant for 
+            PyTorch.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
+        return_type (str): Inherited from RNN. Whether to return the 
+            hidden states, the last output in the output sequence or 
+            the full sequence.
     """
-    def __init__(self, name: str, hidden_size: int, return_type: str, 
-                 input_size: int = None, bidirectional: bool = False, 
-                 dropout: float = 0.0, batch_first: bool = True, 
-                 actv_func: str = None, permute_dim: bool = False, 
-                 name_layer_input: str = None, input_reused: bool = False):
-        super().__init__(name, hidden_size, return_type, input_size, 
-                         bidirectional, dropout, batch_first, permute_dim, 
-                         actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
-            f'SimpleRNNLayer({self.name}, {self.hidden_size}, {self.return_type}, '
-            f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
-            f'{self.batch_first}, {self.permute_dim}, {self.actv_func}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'SimpleRNNLayer({self.name}, {self.hidden_size}, '
+            f'{self.return_type}, {self.input_size}, {self.bidirectional}, '
+            f'{self.dropout}, {self.batch_first}, {self.permute_dim}, '
+            f'{self.actv_func}, {self.name_module_input}, '
+            f'{self.input_reused})'
         )
-    
 
 class LSTMLayer(RNN):
     """
@@ -1518,67 +1556,61 @@ class LSTMLayer(RNN):
         actv_func (str): The type of the activation function.
         input_size (int): It represents the dimensionality of the input 
             features.
-        hidden_size (int): It represents the number of units in the hidden 
-            state, which captures the network's internal representation of 
-            the input sequence.
+        hidden_size (int): It represents the number of units in the 
+            hidden state, which captures the network's internal 
+            representation of the input sequence.
         bidirectional (bool): Whether the layer is bidirectional or not.
         dropout (float): If non-zero, it introduces a Dropout layer on 
             the outputs of the LSTM sub layers except the last one.
         batch_first (bool): If True, the input and output tensors are 
-            provided as (batch, seq, feature) instead of (seq, batch, feature).
-            Only relevant to PyTorch.
-        permute_dim (bool): Whether the dimensions of the input need to be 
-            permuted to (0, 2, 1). Relevant for PyTorch. 
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
+            provided as (batch, seq, feature) instead of (seq, batch, 
+            feature). Only relevant to PyTorch.
+        permute_dim (bool): Whether the dimensions of the input need to 
+            be permuted to (0, 2, 1). Relevant for PyTorch. 
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
             input to another layer.
-        return_type (str): Whether to return the hidden states, the last output
-        in the output sequence or the full sequence.
+        return_type (str): Whether to return the hidden states, the last 
+            output in the output sequence or the full sequence.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
         actv_func (str): Inherited from Layer. It represents the type of 
             the activation function.
-        input_size (int): Inherited from RNN. It represents the dimensionality
-            of the input features.
-        hidden_size (int): Inherited from RNN. It represents the number of 
-            units in the hidden state, which captures the network's internal 
-            representation of the input sequence.
+        input_size (int): Inherited from RNN. It represents the 
+            dimensionality of the input features.
+        hidden_size (int): Inherited from RNN. It represents the number 
+            of units in the hidden state, which captures the network's 
+            internal representation of the input sequence.
         bidirectional (bool): Inherited from RNN. Whether the layer is 
             bidirectional or not.
-        dropout (float): Inherited from RNN. If non-zero, it introduces a 
-            Dropout layer on the outputs of the LSTM sub layers except 
+        dropout (float): Inherited from RNN. If non-zero, it introduces
+            a Dropout layer on the outputs of the LSTM sub layers except 
             the last one.
-        batch_first (bool): Inherited from RNN. If True, the input and output 
-            tensors are provided as (batch, seq, feature) instead of 
-            (seq, batch, feature). Only relevant to PyTorch.
-        permute_dim (bool): Inherited from RNN. Whether the dimensions of the 
-            input need to be permuted to (0, 2, 1). Relevant for PyTorch.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
-        return_type (str): Inherited from RNN. Whether to return the hidden
-        states, the last output in the output sequence or the full sequence.
+        batch_first (bool): Inherited from RNN. If True, the input and 
+            output tensors are provided as (batch, seq, feature) instead 
+            of (seq, batch, feature). Only relevant to PyTorch.
+        permute_dim (bool): Inherited from RNN. Whether the dimensions 
+            of the input need to be permuted to (0, 2, 1). Relevant for 
+            PyTorch.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
+        return_type (str): Inherited from RNN. Whether to return the 
+            hidden states, the last output in the output sequence or 
+            the full sequence.
     """
-    def __init__(self, name: str, hidden_size: int, return_type: str, 
-                 input_size: int = None, bidirectional: bool = False, 
-                 dropout: float = 0.0, batch_first: bool = True, 
-                 permute_dim: bool = False, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
-        super().__init__(name, hidden_size, return_type, input_size, 
-                         bidirectional, dropout, batch_first, permute_dim, 
-                         actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
             f'LSTMLayer({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.permute_dim}, {self.actv_func}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
-        
 
 class GRULayer(RNN):
     """
@@ -1589,65 +1621,60 @@ class GRULayer(RNN):
         actv_func (str): The type of the activation function.
         input_size (int): It represents the dimensionality of the input 
             features.
-        hidden_size (int): It represents the number of units in the hidden 
-            state, which captures the network's internal representation of 
-            the input sequence.
+        hidden_size (int): It represents the number of units in the 
+            hidden state, which captures the network's internal 
+            representation of the input sequence.
         bidirectional (bool): Whether the layer is bidirectional or not.
         dropout (float): If non-zero, it introduces a Dropout layer on 
             the outputs of the GRU sub layers except the last one.
         batch_first (bool): If True, the input and output tensors are 
-            provided as (batch, seq, feature) instead of (seq, batch, feature).
-            Only relevant to PyTorch.
-        permute_dim (bool): Whether the dimensions of the input need to be 
-            permuted to (0, 2, 1). Relevant for PyTorch. 
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
-        input_reused (bool): Whether the input to this layer is reused as 
-            input to another layer.
-        return_type (str): Whether to return the hidden states, the last output
-        in the output sequence or the full sequence.
+            provided as (batch, seq, feature) instead of (seq, batch, 
+            feature). Only relevant to PyTorch.
+        permute_dim (bool): Whether the dimensions of the input need 
+            to be permuted to (0, 2, 1). Relevant for PyTorch. 
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
+        input_reused (bool): Whether the input to this layer is reused 
+            as input to another layer.
+        return_type (str): Whether to return the hidden states, the last 
+            output in the output sequence or the full sequence.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
-        actv_func (str): Inherited from Layer. It represents the type of 
-            the activation function.
-        input_size (int): Inherited from RNN. It represents the dimensionality
-            of the input features.
-        hidden_size (int): Inherited from RNN. It represents the number of 
-            units in the hidden state, which captures the network's internal 
-            representation of the input sequence.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
+        actv_func (str): Inherited from Layer. It represents the type 
+            of the activation function.
+        input_size (int): Inherited from RNN. It represents the 
+            dimensionality of the input features.
+        hidden_size (int): Inherited from RNN. It represents the number 
+            of units in the hidden state, which captures the network's 
+            internal representation of the input sequence.
         bidirectional (bool): Inherited from RNN. Whether the layer is 
             bidirectional or not.
-        dropout (float): Inherited from RNN. If non-zero, it introduces a 
-            Dropout layer on the outputs of the GRU sub layers except the 
-            last one.
-        batch_first (bool): Inherited from RNN. If True, the input and output 
-            tensors are provided as (batch, seq, feature) instead of 
-            (seq, batch, feature). Only relevant to PyTorch.
-        permute_dim (bool): Inherited from RNN. Whether the dimensions of the 
-            input need to be permuted to (0, 2, 1). Relevant for PyTorch.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
-        return_type (str): Inherited from RNN. Whether to return the hidden
-        states, the last output in the output sequence or the full sequence.
+        dropout (float): Inherited from RNN. If non-zero, it introduces 
+            a Dropout layer on the outputs of the GRU sub layers except 
+            the last one.
+        batch_first (bool): Inherited from RNN. If True, the input and 
+            output tensors are provided as (batch, seq, feature) instead 
+            of (seq, batch, feature). Only relevant to PyTorch.
+        permute_dim (bool): Inherited from RNN. Whether the dimensions 
+            of the input need to be permuted to (0, 2, 1). Relevant for 
+            PyTorch.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
+        return_type (str): Inherited from RNN. Whether to return 
+            the hidden states, the last output in the output sequence or 
+            the full sequence.
     """
-    def __init__(self, name: str, hidden_size: int, return_type: str, 
-                 input_size: int = None, bidirectional: bool = False, 
-                 dropout: float = 0.0, batch_first: bool = True, 
-                 permute_dim: bool = False, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
-        super().__init__(name, hidden_size, return_type, input_size, 
-                         bidirectional, dropout, batch_first, permute_dim, 
-                         actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
             f'GRULayer({self.name}, {self.hidden_size}, {self.return_type}, '
             f'{self.input_size}, {self.bidirectional}, {self.dropout}, '
             f'{self.batch_first}, {self.permute_dim}, {self.actv_func}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
 
 class GeneralLayer(Layer):
@@ -1658,28 +1685,26 @@ class GeneralLayer(Layer):
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
-        input_reused (bool): Whether the input to this layer is reused as 
-            input to another layer.
+        name_module_input (str): The name of the layer from which 
+            the inputs originate.
+        input_reused (bool): Whether the input to this layer is reused 
+            as input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
-        actv_func (str): Inherited from Layer. It represents the type of 
-            the activation function.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
+        actv_func (str): Inherited from Layer. It represents the type 
+            of the activation function.
+        name_module_input (str): Inherited from Layer. The name of the 
+            layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, actv_func: str = None, 
-                 name_layer_input: str = None, input_reused: bool = False):
-        super().__init__(name, actv_func, name_layer_input, input_reused)
 
     def __repr__(self):
         return (
             f'GeneralLayer({self.name}, {self.actv_func}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
 
 class LinearLayer(GeneralLayer):
@@ -1692,26 +1717,27 @@ class LinearLayer(GeneralLayer):
         actv_func (str): The type of the activation function.
         in_features (int): It represents the size of each input sample.
         out_features (int): It represents the size of each output sample.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
-        input_reused (bool): Whether the input to this layer is reused as 
-            input to another layer.
+        name_module_input (str): The name of the layer from which the 
+            inputs originate.
+        input_reused (bool): Whether the input to this layer is reused 
+            as input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
-        actv_func (str): Inherited from Layer. It represents the type of 
-            the activation function.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
+        actv_func (str): Inherited from Layer. It represents the type 
+            of the activation function.
         in_features (int): It represents the size of each input sample.
         out_features (int): It represents the size of each output sample.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        name_module_input (str): Inherited from Layer. The name of 
+            the layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input 
+            to this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, out_features: int, in_features: int = None, 
-                 actv_func: str = None, name_layer_input: str = None, 
+    def __init__(self, name: str, out_features: int, in_features: int = None,
+                 actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False):
-        super().__init__(name, actv_func, name_layer_input, input_reused)
+        super().__init__(name, actv_func, name_module_input, input_reused)
         self.in_features: int = in_features
         self.out_features: int = out_features
 
@@ -1737,40 +1763,42 @@ class LinearLayer(GeneralLayer):
 
     def __repr__(self):
         return (
-            f'LinearLayer({self.name}, {self.actv_func}, {self.out_features}, ' 
-            f'{self.in_features}, {self.name_layer_input}, '
-            f'{self.input_reused})'
+            f'LinearLayer({self.name}, {self.actv_func}, '
+            f'{self.out_features}, {self.in_features}, '
+            f'{self.name_module_input}, {self.input_reused})'
         )
 
 class FlattenLayer(GeneralLayer):
     """
-    Represents a layer that flattens a contiguous range of dims into a tensor.
+    Represents a layer that flattens a contiguous range of dims 
+    into a tensor.
  
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
         start_dim (int): The first dimension to flatten.
         end_dim (int): The last dim to flatten.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
-        input_reused (bool): Whether the input to this layer is reused as 
-            input to another layer.
+        name_module_input (str): The name of the layer from which 
+            the inputs originate.
+        input_reused (bool): Whether the input to this layer is 
+            reused as input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
-        actv_func (str): Inherited from Layer. It represents the type of 
-            the activation function.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
+        actv_func (str): Inherited from Layer. It represents the type 
+            of the activation function.
         start_dim (int): The first dimension to flatten.
         end_dim (int): The last dim to flatten.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        name_module_input (str): Inherited from Layer. The name of 
+            the layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input 
+            to this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, start_dim: int = 1, end_dim: int = -1, 
-                 actv_func: str = None, name_layer_input: str = None, 
+    def __init__(self, name: str, start_dim: int = 1, end_dim: int = -1,
+                 actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False):
-        super().__init__(name, actv_func, name_layer_input, input_reused)
+        super().__init__(name, actv_func, name_module_input, input_reused)
         self.start_dim: int = start_dim
         self.end_dim: int = end_dim
 
@@ -1793,44 +1821,44 @@ class FlattenLayer(GeneralLayer):
     def end_dim(self, end_dim: int):
         """int: Set the last dimension to flatten."""
         self.__end_dim = end_dim
-    
+
     def __repr__(self):
         return (
             f'FlattenLayer({self.name}, {self.actv_func}, {self.start_dim}, '
-            f'{self.end_dim}, {self.name_layer_input}, {self.input_reused})'
+            f'{self.end_dim}, {self.name_module_input}, {self.input_reused})'
         )
 
-        
 class EmbeddingLayer(GeneralLayer):
     """
-    Represents a layer that learns dense vector representations of the input 
-    data.
+    Represents a layer that learns dense vector representations of 
+    the input data.
  
     Args:
         name (str): The name of the layer.
         actv_func (str): The type of the activation function.
         num_embeddings (int): The size of the dictionary of embeddings.
         embedding_dim (int): The size of each embedding vector.
-        name_layer_input (str): The name of the layer from which the inputs 
-            originate.
-        input_reused (bool): Whether the input to this layer is reused as 
-            input to another layer.
+        name_module_input (str): The name of the layer from which 
+            the inputs originate.
+        input_reused (bool): Whether the input to this layer is reused 
+            as input to another layer.
         
     Attributes:
-        name (str): Inherited from Layer. It represents the name of the layer.
-        actv_func (str): Inherited from Layer. It represents the type of 
-            the activation function.
+        name (str): Inherited from Layer. It represents the name of 
+            the layer.
+        actv_func (str): Inherited from Layer. It represents the type 
+            of the activation function.
         num_embeddings (int): The size of the dictionary of embeddings.
         embedding_dim (int): The size of each embedding vector.
-        name_layer_input (str): Inherited from Layer. The name of the layer 
-            from which the inputs originate.
-        input_reused (bool): Inherited from Layer. Whether the input to this 
-            layer is reused as input to another layer.
+        name_module_input (str): Inherited from Layer. The name of 
+            the layer from which the inputs originate.
+        input_reused (bool): Inherited from Layer. Whether the input to 
+            this layer is reused as input to another layer.
     """
-    def __init__(self, name: str, num_embeddings: int, embedding_dim: int, 
-                 actv_func: str = None, name_layer_input: str = None, 
+    def __init__(self, name: str, num_embeddings: int, embedding_dim: int,
+                 actv_func: str = None, name_module_input: str = None,
                  input_reused: bool = False):
-        super().__init__(name, actv_func, name_layer_input, input_reused)
+        super().__init__(name, actv_func, name_module_input, input_reused)
         self.num_embeddings: int = num_embeddings
         self.embedding_dim: int = embedding_dim
 
@@ -1858,14 +1886,13 @@ class EmbeddingLayer(GeneralLayer):
         return (
             f'EmbeddingLayer({self.name}, {self.actv_func}, '
             f'{self.num_embeddings}, {self.embedding_dim}, '
-            f'{self.name_layer_input}, {self.input_reused})'
+            f'{self.name_module_input}, {self.input_reused})'
         )
-
 
 class Feature:
     """
-    A feature is a measurable property or characteristic of an object used 
-    to represent and describe it within a dataset.
+    A feature is a measurable property or characteristic of an object 
+    used to represent and describe it within a dataset.
  
     Args:
         name (str): The name of the feature.
@@ -1873,27 +1900,14 @@ class Feature:
     Attributes:
         name (str): The name of the feature.
     """
-    def __init__(self, name: str):
-        self.name: str = name
-
-    @property
-    def name(self) -> str:
-        """str: Get the name of the feature."""
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        """str: Set the name of the feature."""
-        self.__name = name
 
     def __repr__(self):
-        return f'Feature({self.name})'        
-    
+        return 'Feature()'
 
 class Label:
     """
-    A label is a value assigned to an observation, representing the target 
-    variable for prediction.
+    A label is a value assigned to an observation, representing 
+    the target variable for prediction.
  
     Args:
         col_name (str): The name of the column containing the labels.
@@ -1930,27 +1944,31 @@ class Label:
         self.__label_name = label_name
 
     def __repr__(self):
-        return f'Label({self.col_name}, {self.label_name})'   
-    
+        return f'Label({self.col_name}, {self.label_name})'
+
 class Image(Feature):
     """
     Image represents features designed for handling data with spatial 
-    characteristics, typically including attributes such as height and width.
+    characteristics, typically including attributes such as height 
+    and width.
 
     Args:
         shape (list[int]): The shape of the image in the form 
             [height, width, channels]. Default to [256, 256].
-        normalize (bool): If true, the images will be normalized to zero mean 
-            and unit standard deviation. 
+        normalize (bool): If true, the images will be normalized 
+            to zero mean and unit standard deviation. 
         
     Attributes:
         shape (list[int]): The shape of the image in the form 
             [height, width, channels]. Default to [256, 256].
-        normalize (bool): If true, the images will be normalized to zero mean 
-            and unit standard deviation.  
+        normalize (bool): If true, the images will be normalized 
+            to zero mean and unit standard deviation.  
 
     """
-    def __init__(self, shape: List[int] = [256, 256], normalize: bool = False):
+    def __init__(self, shape: List[int] = None,
+                 normalize: bool = False):
+        if shape is None:
+            shape = [256, 256]
         self.shape: List[int] = shape
         self.normalize: bool = normalize
 
@@ -1981,12 +1999,12 @@ class Image(Feature):
         self.__normalize = normalize
 
     def __repr__(self):
-        return f'Image({self.shape}, {self.normalize})' 
+        return f'Image({self.shape}, {self.normalize})'
 
 class Structured(Feature):
     """
-    Represents features organized in a systematic manner, typically with 
-    well-defined columns and rows, often found in tabular datasets.
+    Represents features organized in a systematic manner, typically 
+    with well-defined columns and rows, often found in tabular datasets.
 
     Args:
         name (str): The name of the feature.
@@ -1996,18 +2014,16 @@ class Structured(Feature):
             the feature.
     """
     def __init__(self, name: str):
-        super().__init__(name)
-        
+        self.name: str = name
+
     def __repr__(self):
         return f'Structured({self.name})'
-
-
 
 class Dataset:
     """
     Represents the collection of data instances used for training or 
-    evaluation, where each instance comprises features and corresponding 
-    labels.
+    evaluation, where each instance comprises features and 
+    corresponding labels.
 
     Args:
         name (str): The name of the dataset.
@@ -2016,8 +2032,8 @@ class Dataset:
         task_type (str): The type of prediction task associated with 
             the dataset.
         input_format (str): The format of the input dataset.
-        image (Image): An image instance that contains the shape desired for 
-            the images if input_format parameter is set to 'images'.
+        image (Image): An image instance that contains the shape desired 
+            for the images if input_format parameter is set to 'images'.
         labels (set[Label]): The set of labels in the dataset.
         
     Attributes:
@@ -2027,13 +2043,15 @@ class Dataset:
         task_type (str): The type of prediction task associated with 
             the dataset.
         input_format (str): The format of the input dataset.
-        image (Image): An image instance that contains the shape desired for 
-            the images if input_format parameter is set to 'images'.
+        image (Image): An image instance that contains the shape desired 
+            for the images if input_format parameter is set to 'images'.
         labels (set[Label]): The set of labels in the dataset.
     """
-    def __init__(self, name: str, path_data: str, task_type: str = None, 
-                 input_format: str = None, image: Image = None, 
-                 labels: set[Label] = set()):
+    def __init__(self, name: str, path_data: str, task_type: str = None,
+                 input_format: str = None, image: Image = None,
+                 labels: set[Label] = None):
+        if labels is None:
+            labels = set()
         self.name: str = name
         self.path_data: str = path_data
         if task_type is not None:
@@ -2101,29 +2119,28 @@ class Dataset:
         """
         if input_format not in ['csv', 'images']:
             raise ValueError("Invalid value of input_format")
-        
         self.__input_format = input_format
 
     @property
     def image(self) -> Image:
         """Image: Get the dimensions of the images."""
         return self.__image
-    
+
     @image.setter
     def image(self, image: Image):
         """Image: Set the dimensions of the images."""
         self.__image = image
-        
+
     def add_image(self, image: Image):
         """Image: Add the dimensions of the image."""
         self.__image = image
         return self
-        
+
     @property
     def labels(self) -> set[Label]:
         """set[Label]: Get the set of labels."""
         return self.__labels
-    
+
     @labels.setter
     def labels(self, labels: set[Label]):
         """set[Label]: Set the set of labels."""
@@ -2138,7 +2155,7 @@ class Dataset:
         return (
             f'Dataset({self.name}, {self.path_data}, {self.task_type}, '
             f'{self.input_format}, {self.image}, {self.labels})'
-        )  
+        )
 
 class Configuration:
     """
@@ -2153,19 +2170,20 @@ class Configuration:
             consisting of one iteration through all data samples.
         learning_rate (float): The step size used to update the model 
             parameters during optimization.
-        optimizer (str): The method or algorithm used to adjust the model 
-            parameters iteratively during training to minimize the loss 
-            function and improve model performance.
+        optimizer (str): The method or algorithm used to adjust the 
+            model parameters iteratively during training to minimize 
+            the loss function and improve model performance.
         loss_function (str): The method used to calculate the difference 
-            between predicted and actual values, guiding the model towards 
-            better predictions.
+            between predicted and actual values, guiding the model 
+            towards better predictions.
         metrics List[str]: Quantitative measures used to evaluate 
             the performance of NN models.
-        weight_decay (float): It represents the strength of L2 regularisation 
-            applied to the model's parameters during optimization.
+        weight_decay (float): It represents the strength of L2 
+            regularisation applied to the model's parameters during 
+            optimization.
         momentum (float): It represents a hyperparameter in optimization 
-            that helps speed up training by using past gradients to smooth 
-            out updates.
+            that helps speed up training by using past gradients to 
+            smooth out updates.
         
     Attributes:
         batch_size (int): The number of data samples processed in each 
@@ -2179,18 +2197,19 @@ class Configuration:
             parameters iteratively during training to minimize the loss 
             function and improve model performance.
         loss_function (str): The method used to calculate the difference 
-            between predicted and actual values, guiding the model towards 
-            better predictions.
+            between predicted and actual values, guiding the model 
+            towards better predictions.
         metrics List[str]: Quantitative measures used to evaluate 
             the performance of NN models.
-        weight_decay (float): It represents the strength of L2 regularisation 
-            applied to the model's parameters during optimization.
+        weight_decay (float): It represents the strength of L2 
+            regularisation applied to the model's parameters during 
+            optimization.
         momentum (float): It represents a hyperparameter in optimization 
-            that helps speed up training by using past gradients to smooth 
-            out updates.
+            that helps speed up training by using past gradients to 
+            smooth out updates.
     """
-    def __init__(self, batch_size: int, epochs: int, learning_rate: float, 
-                 optimizer: str, loss_function: str, metrics: List[str], 
+    def __init__(self, batch_size: int, epochs: int, learning_rate: float,
+                 optimizer: str, loss_function: str, metrics: List[str],
                  weight_decay: float = 0, momentum: float = 0):
         self.batch_size: int = batch_size
         self.epochs: int = epochs
@@ -2236,8 +2255,8 @@ class Configuration:
     @property
     def learning_rate(self) -> float:
         """
-        float: Get the step size used to update the model parameters during 
-            optimization.
+        float: Get the step size used to update the model parameters 
+            during optimization.
         """
         return self.__learning_rate
 
@@ -2276,18 +2295,17 @@ class Configuration:
     def loss_function(self) -> str:
         """
         str: Get the method used to calculate the difference between 
-            predicted and actual values, guiding the model towards better 
-            predictions.
+            predicted and actual values, guiding the model towards 
+            better predictions.
         """
         return self.__loss_function
-
 
     @loss_function.setter
     def loss_function(self, loss_function: str):
         """
         str: Set the method used to calculate the difference between 
-            predicted and actual values, guiding the model towards better 
-            predictions.
+            predicted and actual values, guiding the model towards 
+            better predictions.
         
         Raises:
             ValueError: If loss_function is not one of the allowed 
@@ -2303,30 +2321,30 @@ class Configuration:
     @property
     def metrics(self) -> List[str]:
         """
-        List[str]: Get the measures for evaluating the performance of 
-            the model.
+        List[str]: Get the measures for evaluating the performance 
+            of the model.
         """
         return self.__metrics
 
     @metrics.setter
     def metrics(self, metrics: List[str]):
         """
-        List[str]: Set the measures for evaluating the performance of 
-            the model.
+        List[str]: Set the measures for evaluating the performance 
+            of the model.
         
         Raises:
-            ValueError: If metrics is not one of the allowed 
-            options: accuracy', 'precision', 'recall', 'f1-score' and 'mae'
+            ValueError: If metrics is not one of the allowed options: 
+            accuracy', 'precision', 'recall', 'f1-score' and 'mae'
         """
         if isinstance(metrics, list) and \
             all(isinstance(metric, str) for metric in metrics):
-            if all(metric in ['accuracy', 'precision', 'recall', 
+            if all(metric in ['accuracy', 'precision', 'recall',
                               'f1-score', 'mae'] for metric in metrics):
                 self.__metrics = metrics
             else:
                 invalid_metrics = [
-                    metric for metric in metrics 
-                    if metric not in ['accuracy', 'precision', 'recall', 
+                    metric for metric in metrics
+                    if metric not in ['accuracy', 'precision', 'recall',
                                       'f1-score', 'mae']
                 ]
                 raise ValueError(
@@ -2380,15 +2398,15 @@ class NN(BehaviorImplementation):
 
     Args:
         name (str): The name of the neural network model.
-        configuration (Configuration): The parameters related to the NN training 
-            and evaluation. 
+        configuration (Configuration): The parameters related to the 
+            NN training and evaluation. 
         train_data (Dataset): The dataset used to train the NN model.
         test_data (Dataset): The dataset used to evaluate the NN model.
         
     Attributes:
         name (str): The name of the neural network model.
-        configuration (Configuration): The parameters related to the NN training 
-            and evaluation.
+        configuration (Configuration): The parameters related to the 
+            NN training and evaluation.
         train_data (Dataset): The dataset used to train the NN model.
         test_data (Dataset): The dataset used to evaluate the NN model.        
     """
@@ -2407,26 +2425,26 @@ class NN(BehaviorImplementation):
     def sub_nns(self) -> List[NN]:
         """List[NN]: Get the sub NN models list of the main model."""
         return self.__sub_nns
-            
+
     @sub_nns.setter
     def sub_nns(self, sub_nns: List[NN]):
         """List[NN]: Set the sub NN models list of the main model."""
         raise AttributeError("sub_nns attribute is read-only")
-        
-        
+
     def add_sub_nn(self, sub_nn: NN):
+        """Self: Add a subnn to the NN model."""
         if isinstance(sub_nn, NN):
             self.__sub_nns.append(sub_nn)
             self.__modules.append(sub_nn)
         else:
             raise ValueError("'sub_nn' must be of type NN.")
         return self
-    
+
     @property
     def layers(self) -> List[Layer]:
         """List[Layer]: Get the list of layers."""
         return self.__layers
-            
+
     @layers.setter
     def layers(self, layers: List[Layer]):
         """List[Layer]: Set the list of layers."""
@@ -2445,7 +2463,7 @@ class NN(BehaviorImplementation):
     def tensor_ops(self) -> List[TensorOp]:
         """List[TensorOp]: Get the list of tensor Ops."""
         return self.__tensor_ops
-            
+
     @tensor_ops.setter
     def tensor_ops(self, tensor_ops: List[TensorOp]):
         """List[TensorOp]: Set the list of tensor Ops ."""
@@ -2459,36 +2477,36 @@ class NN(BehaviorImplementation):
         else:
             raise ValueError("'tensor_op' must be of type TensorOp.")
         return self
-    
+
     @property
     def modules(self) -> List[Union[NN, Layer, TensorOp]]:
         """
-        List[Union[NN, Layer, TensorOp]]: Get the modules list of the main 
-            model.
+        List[Union[NN, Layer, TensorOp]]: Get the modules list 
+            of the main model.
         """
         return self.__modules
-            
+
     @modules.setter
     def modules(self, modules: List[Union[NN, Layer, TensorOp]]):
         """
-        List[Union[NN, Layer, TensorOp]]: Set the modules list of the main 
-            model.
+        List[Union[NN, Layer, TensorOp]]: Set the modules list 
+            of the main model.
         """
         raise AttributeError("modules attribute is read-only")
 
     @property
     def configuration(self) -> Configuration:
         """
-        Configuration: Get the parameters related to the NN training and 
-            evaluation.
+        Configuration: Get the parameters related to the NN training 
+            and evaluation.
         """
         return self.__configuration
 
     @configuration.setter
     def configuration(self, configuration: Configuration):
         """
-        Configuration: Set the parameters related to the NN training and 
-            evaluation.
+        Configuration: Set the parameters related to the NN training 
+            and evaluation.
         """
         self.__configuration = configuration
 
@@ -2516,20 +2534,19 @@ class NN(BehaviorImplementation):
         """Self: Add the configuration to the NN model."""
         self.__configuration = configuration
         return self
-    
+
     def add_train_data(self, train_data: Dataset) -> Self:
         """Self: Add the training dataset to the NN model."""
         self.__train_data = train_data
         return self
-    
+
     def add_test_data(self, test_data: Dataset) -> Self:
         """Self: Add the test dataset to the NN model."""
         self.__test_data = test_data
         return self
-    
+
     def __repr__(self):
         return (
             f'NN({self.name}, {self.configuration}, {self.modules}, '
             f'{self.train_data}, {self.test_data})'
             )
-    

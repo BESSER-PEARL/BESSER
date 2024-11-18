@@ -1,11 +1,19 @@
+"""
+Module containing lookup dictionaries for transforming TensorFlow code
+to BUML code.
+"""
+
 lookup_layers = {
     "Conv1D": "Conv1D", "Conv2D": "Conv2D", "Conv3D": "Conv3D",           
     "MaxPool1D": "PoolingLayer", "MaxPool2D": "PoolingLayer", 
     "MaxPool3D": "PoolingLayer", "AveragePooling1D": "PoolingLayer", 
     "AveragePooling2D": "PoolingLayer", "AveragePooling3D": "PoolingLayer",
-    "AdaptiveAveragePooling1D": "PoolingLayer", "AdaptiveAveragePooling2D": "PoolingLayer", 
-    "AdaptiveAveragePooling3D": "PoolingLayer", "AdaptiveMaxPooling1D": "PoolingLayer", 
-    "AdaptiveMaxPooling2D": "PoolingLayer", "AdaptiveMaxPooling3D": "PoolingLayer", 
+    "AdaptiveAveragePooling1D": "PoolingLayer", 
+    "AdaptiveAveragePooling2D": "PoolingLayer", 
+    "AdaptiveAveragePooling3D": "PoolingLayer", 
+    "AdaptiveMaxPooling1D": "PoolingLayer", 
+    "AdaptiveMaxPooling2D": "PoolingLayer", 
+    "AdaptiveMaxPooling3D": "PoolingLayer", 
     "Flatten": "FlattenLayer", "Dense": "LinearLayer", 
     "Embedding": "EmbeddingLayer", "BatchNormalization": "BatchNormLayer", 
     "LayerNormalization": "LayerNormLayer", "Dropout": "DropoutLayer", 
@@ -24,10 +32,10 @@ lookup_layers_params = {
 }
 
 layers_specific_params = {
-    "SimpleRNNLayer": {"units": "hidden_size"},
-    "LSTMLayer": {"units": "hidden_size"},
-    "GRULayer": {"units": "hidden_size"},
-    "LinearLayer": {"units": "out_features"}
+    "RNN": {"units": "hidden_size"},
+    "LSTM": {"units": "hidden_size"},
+    "GRU": {"units": "hidden_size"},
+    "Dense": {"units": "out_features"}
 }
 
 layers_fixed_params = {
@@ -37,23 +45,29 @@ layers_fixed_params = {
     "AveragePooling1D": {"pooling_type": "avg", "dimension": "1D"},
     "AveragePooling2D": {"pooling_type": "avg", "dimension": "2D"},
     "AveragePooling3D": {"pooling_type": "avg", "dimension": "3D"},
-    "AdaptiveAveragePooling1D": {"pooling_type": "adaptive_average", "dimension": "1D"},
-    "AdaptiveAveragePooling2D": {"pooling_type": "adaptive_average", "dimension": "2D"},
-    "AdaptiveAveragePooling3D": {"pooling_type": "adaptive_average", "dimension": "3D"},
-    "AdaptiveMaxPooling1D": {"pooling_type": "adaptive_max", "dimension": "1D"},
-    "AdaptiveMaxPooling2D": {"pooling_type": "adaptive_max", "dimension": "2D"},
-    "AdaptiveMaxPooling3D": {"pooling_type": "adaptive_max", "dimension": "3D"},
+    "AdaptiveAveragePooling1D": {"pooling_type": "adaptive_average", 
+                                 "dimension": "1D"},
+    "AdaptiveAveragePooling2D": {"pooling_type": "adaptive_average", 
+                                 "dimension": "2D"},
+    "AdaptiveAveragePooling3D": {"pooling_type": "adaptive_average", 
+                                 "dimension": "3D"},
+    "AdaptiveMaxPooling1D": {"pooling_type": "adaptive_max", 
+                             "dimension": "1D"},
+    "AdaptiveMaxPooling2D": {"pooling_type": "adaptive_max", 
+                             "dimension": "2D"},
+    "AdaptiveMaxPooling3D": {"pooling_type": "adaptive_max", 
+                             "dimension": "3D"},
 }
 
-rnn_cnn_layers = ["LSTM", "GRU", "SimpleRNN", 
+rnn_cnn_layers = ["LSTM", "GRU", "SimpleRNN",
                   "Conv1D", "Conv2D", "Conv3D"]
 
-config_list = ["batch_size", "epochs", "learning_rate", 
+config_list = ["batch_size", "epochs", "learning_rate",
                "optimizer", "metrics", "loss_function"]
 
 train_param_list = ["name", "path_data", "task_type", "input_format"]
 test_param_list = ["name", "path_data"]
 
-lookup_loss_functions = {"CategoricalCrossentropy": "crossentropy",
-                         "BinaryCrossentropy": "binary_crossentropy",
-                         "MeanSquaredError": "mse"}
+lookup_loss_func = {"CategoricalCrossentropy": "crossentropy",
+                    "BinaryCrossentropy": "binary_crossentropy",
+                    "MeanSquaredError": "mse"}

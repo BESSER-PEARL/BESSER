@@ -165,7 +165,7 @@ class SetupLayerSyntax:
 def get_tensorop_syntax(tensorop, modules_details):
     """It defines the syntax of tensorops."""
     prev_out_var, params = utils.get_tensorop_params(tensorop,
-                                                          modules_details)
+                                                     modules_details)
     tns_type = tensorop.tns_type
     if tns_type == "reshape":
         ts_op_synt = f"tf.reshape({prev_out_var}, {params})"

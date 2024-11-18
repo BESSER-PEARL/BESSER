@@ -43,7 +43,7 @@ class NNCodeGenerator(GeneratorInterface):
     def __init__(self, model: NN,
                  setup_layer: Union[SetupLayerTF, SetupLayerTorch],
                  get_tensorop_syntax: Callable, template_name: str,
-                 template_dir: str, file_name: str = "nn.py", 
+                 template_dir: str, file_name: str = "nn.py",
                  output_dir: str = None):
         super().__init__(model, output_dir)
         self.setup_layer: Union[SetupLayerTF, SetupLayerTorch] = setup_layer
@@ -84,7 +84,7 @@ class NNCodeGenerator(GeneratorInterface):
                 subnn_details = {}
                 for sub_nn_layer in module.layers:
                     subnn_details = handle_layer(
-                        sub_nn_layer, self.setup_layer, 
+                        sub_nn_layer, self.setup_layer,
                         subnn_details, actv_func)
                 name_sub_nn = f"{module.name}_{counter_subnn}_nn"
                 modules_details[name_sub_nn] = subnn_details
@@ -92,7 +92,7 @@ class NNCodeGenerator(GeneratorInterface):
                 modules_details = add_in_out_var_to_subnn(modules_details)
             elif module_type != "TensorOp":
                 modules_details = handle_layer(
-                    module, self.setup_layer, 
+                    module, self.setup_layer,
                     modules_details, actv_func)
             else:
                 modules_details = handle_tensorop(

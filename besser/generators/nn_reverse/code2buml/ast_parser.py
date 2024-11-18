@@ -1,9 +1,10 @@
 """
 Module providing a class that extracts information from the AST of a 
-neural network written in TensorFlow.
+neural network written in TensorFlow or PyTorch.
 """
 
 import ast
+from abc import abstractmethod
 
 class ASTParser(ast.NodeVisitor):
     """Class visiting and parsing the AST"""
@@ -82,6 +83,7 @@ class ASTParser(ast.NodeVisitor):
                     self.data_config["train_data"]["task_type"] = "binary"
 
 
+
     def visit_Assign(self, node):
         """
         It visits an Assign node in the AST, representing an assignment 
@@ -103,7 +105,7 @@ class ASTParser(ast.NodeVisitor):
         if self.in_class:
             self.handle_nn_definition(node)
         else:
-            self.handle_outer_assignments(node)
+            self.handle_outer_assignment(node)
 
     def handle_nn_definition(self, node):
         """
@@ -113,64 +115,55 @@ class ASTParser(ast.NodeVisitor):
         # Init method
         if isinstance(node.targets[0], ast.Attribute):
             self.handle_init(node)
+
         #Forward method, simple calls
         elif (isinstance(node.targets[0], ast.Name) and
               isinstance(node.value, ast.Call)):
-            self.handle_forward(node)
+            self.handle_forward_simple_call(node)
 
+        #Forward RNN
+        elif (isinstance(node.targets[0], ast.Tuple) and
+              isinstance(node.value, ast.Call)):
+            self.handle_forward_tuple_assignment(node)
+
+        #Forward RNN
+        elif (isinstance(node.targets[0], ast.Name) and
+              isinstance(node.value, ast.Subscript)):
+            self.handle_forward_slicing(node)
+
+
+    @abstractmethod
     def handle_init(self, node):
-        """
-        It retrieves the sub_nn layers and stores them in the 'sub_nn' 
-        dict. It also retreives the layers and their parameters and 
-        stores them in the 'layers' dict.
-        """
-        module_name = node.targets[0].attr
-        if (isinstance(node.value, ast.Call) and
-            isinstance(node.value.func, ast.Name)):
-            module_type = node.value.func.id
-            if module_type == "Sequential":
-                self.modules["sub_nns"][module_name] = {}
-                layer_id = 0
-                # Extract layers within Sequential
-                for elt in node.value.args[0].elts:
-                    if isinstance(elt, ast.Call):
-                        layer, params = self.extract_layer(elt)
-                        self.modules["sub_nns"][module_name][layer_id] = [layer, params]
-                        layer_id+=1
+        """It handles the statements in the NN init method."""
 
-        #simple calls to layers
-        if (isinstance(node.value, ast.Call) and
-            isinstance(node.value.func, ast.Attribute)):
-            layer, params = self.extract_layer(node.value)
-            if len(node.value.args)>0: #rnn bidirectional
-                if (isinstance(node.value.args[0], ast.Call) and
-                    node.value.func.attr == "Bidirectional"):
-                    layer, params = self.extract_layer(node.value.args[0])
-                    params["bidirectional"] = True
-            self.modules["layers"][module_name] = [layer, params]
-
-    def handle_forward(self, node):
+    @abstractmethod
+    def handle_forward_simple_call(self, node):
         """
-        This method retrieves the input and output variables of modules
-        and extracts tensorops details and stores the order of calling 
-        the modules in the 'modules' dict.
+        This method is relevant for PyTorch. 
+        It 1) retrieves the input and output variables of 
+        modules and the activation functions and adds them as 
+        parameters to their layers. It also adds the permute op as 
+        parameter to its following layer if it is of type cnn or 
+        rnn (the permute op is sometimes used before a cnn and rnn layer 
+        to make pytorch and tensorflow models equivalent as cnn and rnn
+        in both frameworks receive data in a different order). This 
+        method also extracts tensorops details and stores the order 
+        of calling the modules in the 'modules' dict.
         """
-        if isinstance(node.value.func.value, ast.Name):
-            if node.value.func.value.id == "self":
-                #populate inputs_outputs and layer_of_output
-                module_name = node.value.func.attr
-                self.inputs_outputs[module_name] = [node.value.args[0].id,
-                                                    node.targets[0].id]
-                self.layer_of_output[node.targets[0].id] = module_name
-                self.populate_modules(module_name)
-            else:
-                #tensorops
-                self.extract_tensorops(node)
-        elif isinstance(node.value.func.value, ast.Attribute):
-            if node.value.func.value.value.id == "tf":
-                self.extract_tensorops(node)
 
-        self.previous_assign = node
+    def handle_forward_tuple_assignment(self, node):
+        """
+        This method is relevant for PyTorch.
+        It handles rnn tuple assignments such as 
+        'x, _ = self.l4(x)'
+        """
+
+    def handle_forward_slicing(self, node):
+        """
+        This method is relevant for PyTorch.
+        It handles rnn slicing calls such as 'x = x[:, -1, :]'
+        """
+
 
     def extract_params(self, call_node):
         """
@@ -216,42 +209,9 @@ class ASTParser(ast.NodeVisitor):
         params = self.extract_params(call_node)
         return layer_type, params
 
-
-    def extract_tensorops(self, node):
+    @abstractmethod
+    def extract_tensorop(self, node):
         """It extracts the tensorop name and its parameters."""
-        op_name = node.value.func.attr
-        op_args = node.value.args
-        if op_name == "concat":
-            op_args = node.value.args[0].elts
-            layers_of_tensors = [self.layer_of_output[op_args[0].id],
-                                 self.layer_of_output[op_args[1].id]]
-            cat_dim = node.value.keywords[0].value.value
-            tensorop_param = {"type": "concatenate",
-                              "layers_of_tensors": layers_of_tensors,
-                              "concatenate_dim": cat_dim}
-        elif op_name == "matmul" or op_name == "multiply":
-            op_type = "matmultiply" if op_name == "matmul" else "multiply"
-            layers_of_tensors = [self.layer_of_output[op_args[0].id],
-                                 self.layer_of_output[op_args[1].id]]
-            tensorop_param = {"type": op_type,
-                              "layers_of_tensors": layers_of_tensors}
-        elif op_name == "transpose":
-            op_args = node.value.keywords[0].value.elts
-            transpose_dim = [op_args[0].value, op_args[1].value,
-                             op_args[2].value]
-            tensorop_param = {"type": op_name,
-                              "transpose_dim": transpose_dim}
-        elif op_name == "reshape":
-            reshape_dim = [op_args[i].value for i in range(1, len(op_args))]
-            tensorop_param = {"type": op_name,
-                              "reshape_dim": reshape_dim}
-        else:
-            print(f"{op_name} is not recognized!")
-            return
-
-        self.modules["tensorops"]["op_"+str(self.tensor_op_counter)] = tensorop_param
-        self.populate_modules("op_"+str(self.tensor_op_counter))
-        self.tensor_op_counter+=1
 
 
     def populate_modules(self, module_name):
@@ -266,40 +226,14 @@ class ASTParser(ast.NodeVisitor):
         else:
             self.modules["order"][module_name] = "layer"
 
-
-    def handle_outer_assignments(self, node):
+    @abstractmethod
+    def handle_outer_assignment(self, node):
         """
         It visits and extracts information from assignment statements
         called outside the NN class.
         """
-        if (isinstance(node.value, ast.Call) and
-            isinstance(node.value.func, ast.Attribute)):
-            if isinstance(node.value.func.value, ast.Name):
-                if node.value.func.attr == "batch":
-                    self.data_config["config"]["batch_size"] = node.value.args[0].value
-            elif isinstance(node.value.func.value, ast.Attribute):
-                if node.value.func.value.attr == "preprocessing":
-                    keywords = node.value.keywords
-                    for k in keywords:
-                        if k.arg == "batch_size":
-                            self.data_config["config"]["batch_size"] = k.value.value
-                elif node.value.func.value.attr == "optimizers":
-                    self.get_params_from_optimizer(node)
-                elif node.value.func.value.attr == "losses":
-                    self.data_config["config"]["loss_function"] = node.value.func.attr
-        elif (isinstance(node.value, ast.Call) and
-              isinstance(node.value.func, ast.Name)):
-            self.handle_simple_outer_calls(node)
-        elif (isinstance(node.value, ast.List) and
-              isinstance(node.targets[0], ast.Name)):
-            if node.targets[0].id == "metrics":
-                elts = node.value.elts
-                self.data_config["config"]["metrics"] = [elt.value for elt in elts]
-        else:
-            self.unprocessed_nodes.append(node)
 
-
-    def handle_simple_outer_calls(self, node):
+    def handle_outer_simple_assignment(self, node):
         """
         It extracts information from simple assignment statements 
         called outside the NN class.
@@ -316,27 +250,15 @@ class ASTParser(ast.NodeVisitor):
             if path.endswith("csv"):
                 self.data_config["train_data"]["input_format"] = "csv"
             if "train" in node.targets[0].id or "train" in path:
-                self.data_config["train_data"]["path_data"] = node.value.args[0].value
+                self.data_config["train_data"]["path_data"] = path
             elif "test" in node.targets[0].id or "test" in path:
-                self.data_config["test_data"]["path_data"] = node.value.args[0].value
+                self.data_config["test_data"]["path_data"] = path
         elif node.value.func.id == "compute_mean_std":
             self.get_images_attr(node)
 
+    @abstractmethod
     def get_images_attr(self, node):
         """It extracts information related to images."""
-        self.data_config["train_data"]["input_format"] = "images"
-        if node.targets[0].elts[1].id != "_":
-            self.data_config["train_data"]["normalize_images"] = True
-        else:
-            self.data_config["train_data"]["normalize_images"] = False
-        node_args = node.value.keywords
-        for node_arg in node_args:
-            if node_arg.arg == "target_size":
-                for past_node in self.unprocessed_nodes:
-                    if isinstance(past_node.targets[0], ast.Name):
-                        if past_node.targets[0].id == node_arg.value.id:
-                            sizes = [i.value for i in past_node.value.elts]
-                            self.data_config["train_data"]["images_size"] = sizes
 
 
     def get_params_from_optimizer(self, node):
@@ -344,14 +266,15 @@ class ASTParser(ast.NodeVisitor):
         self.data_config["config"]["optimizer"] = node.value.func.attr.lower()
         keywords = node.value.keywords
         learning_rate = next(
-            (k.value.value for k in keywords if k.arg == 'learning_rate'), None
-        )
+            (k.value.value for k in keywords
+             if k.arg in {'learning_rate', 'lr'}),
+             None)
         momentum = next(
-            (k.value.value for k in keywords if k.arg == 'momentum'), None
-        )
+            (k.value.value for k in keywords if k.arg == 'momentum'),
+            None)
         weight_decay = next(
-            (k.value.value for k in keywords if k.arg == 'weight_decay'), None
-        )
+            (k.value.value for k in keywords if k.arg == 'weight_decay'),
+            None)
         self.data_config["config"]["learning_rate"] = learning_rate
         if momentum:
             self.data_config["config"]["momentum"] = momentum

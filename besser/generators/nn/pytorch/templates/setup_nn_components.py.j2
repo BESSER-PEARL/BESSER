@@ -15,6 +15,84 @@
     {%- set _ = dict_def.update({key: []}) -%}
 {%- endmacro -%}
 
+
+{%- macro print_imports(model, modules_details) %}
+{%- set ti = namespace(torch_imported=False) -%}
+{% if model.train_data is not none %}import torch {%- set ti.torch_imported = True %}{%- endif %}
+{%- for module_name, module_details in modules_details.items() -%}{% if ti.torch_imported == False and ((module_name.endswith("op") and module_details[0].startswith("torch")) or (module_details[-1].__class__.mro()[1].__name__ == "RNN" and module_details[-1].bidirectional and module_details[-1].return_type == "hidden"))%}import torch {%- set ti.torch_imported = True -%}{%- endif %}{%- endfor %}
+{% if model.train_data.input_format == "csv" %}import pandas as pd {%- endif %}
+from torch import nn
+{% if model.train_data.input_format == "images" %}from torchvision import datasets, transforms
+{% if model.train_data.image.normalize %}from besser.generators.nn.utils import compute_mean_std{%- endif %}{%- endif %}
+{% if model.train_data %}{% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
+{%- else -%} from sklearn.metrics import mean_absolute_error {%- endif %}{%- endif %} 
+{% endmacro -%}
+
+{%- macro print_init(modules_details) %}
+        super().__init__()
+    {%- set activ_func_list = [] -%}
+    {%- for module_name, module_details in modules_details.items() %}
+        {%- if module_name.endswith("nn") %}
+        self.{{ module_name.split('_')[0] }} = nn.Sequential(
+            {%- for subnn_key, subnn_value in module_details.items() %}
+                {%- if subnn_key != "in_out_variable" %}
+            {{ subnn_value[0].split('=', 1)[1].strip() }},
+                {%- endif -%}
+            {%- endfor %}
+        )
+        {%- elif module_name.endswith("activ") %}
+                {%- if module_details[0] not in activ_func_list %}
+                {%- set _ = activ_func_list.append(module_details[0])%}
+        {{ module_details[0] }}
+                {%- endif -%}
+        {%- elif module_name.endswith("layer") %}
+        {{ module_details[0] }}
+        {%- endif -%}
+    {%- endfor -%}
+{% endmacro -%}
+
+{%- macro print_forward(modules_details) %}
+    {%- set return_variable =  namespace(value="") %}
+    {%- for module_name, module_details in modules_details.items() -%}
+    {%- if module_name.endswith("op") %}
+        {{ module_details[1] }} = {{ module_details[0] }}
+    {%- elif module_name.endswith("nn") %}
+        {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
+    {%- else %}
+        {%- if module_name.endswith("activ") %}
+        {{ module_details[1] }} = self.{{ module_details[0].split('.', 1)[1].split('=', 1)[0].strip() }}({{ module_details[2] }})
+        {%- elif module_details[-1].__class__.mro()[1].__name__ == "RNN" %}
+            {%- if module_details[-1].return_type == "hidden" %}
+                {%- if module_details[-1].__class__.__name__ == "LSTMLayer" %}
+        _, ({{ module_details[1] }}, _) = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- else %}
+        _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- endif -%}
+                {%- if module_details[-1].bidirectional %}
+        {{ module_details[1] }} = torch.cat(({{ module_details[1] }}[-2], {{ module_details[1] }}[-1]), dim=1)
+                {%- else %}
+        {{ module_details[1] }} = {{ module_details[1] }}[-1]
+                {%- endif -%}
+            {%- elif module_details[-1].return_type == "full" %}
+        {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+            {%- else %}
+        {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {{ module_details[1] }} = {{ module_details[1] }}[:, -1, :]
+            {%- endif -%}
+
+        {%- else %}
+        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {%- endif -%}
+    {%- endif -%}
+    {%- if module_name.endswith("nn") %}
+    {%- set return_variable.value =  module_details["in_out_variable"] %}
+    {%- else %} 
+    {%- set return_variable.value =  module_details[1] %}
+    {%- endif -%}
+    {%- endfor %}
+        return {{ return_variable.value -}}
+{% endmacro -%}
+
 {%- macro get_loss_function(configuration) %}
     {%- if configuration.loss_function == "crossentropy" -%}
         nn.CrossEntropyLoss()
@@ -50,29 +128,35 @@
     {%- if train_data.input_format == "images" -%}
 {%- set transformations = [] -%}
 
-IMAGE_SIZE = ({{ train_data.image.shape[0] }}, {{ train_data.image.shape[1] }})
+{%- set IMAGE_SIZE = (
+    train_data.image.shape[0] , train_data.image.shape[1]
+) -%}
+IMAGE_SIZE = {{ IMAGE_SIZE }}
 {%- set _ = transformations.append("transforms.Resize(IMAGE_SIZE)")%}
 {%- set _ = transformations.append("transforms.ToTensor()") %}
 
         {%- if train_data.image.normalize %}
-mean, std = compute_mean_std(r"{{ train_data.path_data }}", num_samples=100,
-                             target_size=IMAGE_SIZE)
+scale, mean, std = compute_mean_std(r"{{ train_data.path_data }}", 
+                                    num_samples=100, target_size=IMAGE_SIZE)
 {%- set _ = transformations.append("transforms.Normalize(mean, std)")%}
         {%- endif %}
 transform = transforms.Compose([
-    {{ transformations | join(', \n\t') }}
+    {{ transformations | join(',\n\t') }}
     ])
 
 
 # Load the training dataset
-# Directory structure: root/class1/img1.jpg, root/class1/img2.jpg, root/class2/img1.jpg, ...
-train_dataset = datasets.ImageFolder(root=r"{{ train_data.path_data }}", transform=transform)
+# Directory structure: root/class1/img1.jpg, root/class1/img2.jpg,
+# root/class2/img1.jpg, ...
+train_dataset = datasets.ImageFolder(
+    root=r"{{ train_data.path_data }}", transform=transform)
 
 # Load the testing dataset that is in a similar directory structure
-test_dataset = datasets.ImageFolder(root=r"{{ test_data.path_data }}", transform=transform)
+test_dataset = datasets.ImageFolder(
+    root=r"{{ test_data.path_data }}", transform=transform)
 
     {%- else -%}
-    def load_data(csv_file):
+    def load_dataset(csv_file):
     # Load data from CSV file
     data = pd.read_csv(csv_file)
     # Extract features and targets
@@ -86,13 +170,15 @@ test_dataset = datasets.ImageFolder(root=r"{{ test_data.path_data }}", transform
     return dataset
 
 # Loading data
-train_dataset = load_data(r"{{ train_data.path_data }}")
-test_dataset = load_data(r"{{ test_data.path_data }}")
+train_dataset = load_dataset(r"{{ train_data.path_data }}")
+test_dataset = load_dataset(r"{{ test_data.path_data }}")
     {%- endif %}
 
 # Create data loaders
-train_loader = torch.utils.data.DataLoader(dataset=train_dataset, batch_size={{ configuration.batch_size }}, shuffle=True)
-test_loader = torch.utils.data.DataLoader(dataset=test_dataset, batch_size={{ configuration.batch_size }}, shuffle=False)
+train_loader = torch.utils.data.DataLoader(
+    dataset=train_dataset, batch_size={{ configuration.batch_size }}, shuffle=True)
+test_loader = torch.utils.data.DataLoader(
+    dataset=test_dataset, batch_size={{ configuration.batch_size }}, shuffle=False)
 
 {% endmacro -%}
 
@@ -123,11 +209,14 @@ for epoch in range({{ model.configuration.epochs }}):
         running_loss += loss.item()
         total_loss += loss.item()
         if i % 200 == 199:    # Print every 200 mini-batches
-            print('[%d, %5d] loss: %.3f' %
-                  (epoch + 1, i + 1, running_loss / 200))
+            print(
+                f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 200:.3f}"
+            )
             running_loss = 0.0
-    print('[%d] overall loss for epoch: %.3f' % (epoch + 1, total_loss / len(train_loader)))
-    
+    print(
+        f"[{epoch + 1}] overall loss for epoch: "
+        f"{total_loss / len(train_loader):.3f}"
+    )
 print('Training finished')
 {%- endmacro -%}
 
@@ -171,12 +260,14 @@ for metric in metrics:
     {%- elif prediction_task == "multi_class" %}
     metric_list = []
     for class_label in report.keys():
-        if class_label != "macro avg" and class_label != "weighted avg" and class_label != "accuracy":
-            print(f"{metric.capitalize()} for class {class_label}: {report[class_label][metric]}")
+        if class_label not in ('macro avg', 'weighted avg', 'accuracy'):
+            print(f"{metric.capitalize()} for class {class_label}:",
+                  report[class_label][metric])
             metric_list.append(report[class_label][metric])
-    print(f"Average {metric.capitalize()}: {(sum(metric_list) / len(metric_list)):.2f}")
+    metric_value = sum(metric_list) / len(metric_list)
+    print(f"Average {metric.capitalize()}: {metric_value:.2f}")
     print(f"Accuracy: {report['accuracy']}")
-    {%- endif -%}
+{% endif -%}
 {%- else %}
 mae = mean_absolute_error(true_labels, predicted_labels)
 print(f"Mean Absolute Error (MAE): {mae}")

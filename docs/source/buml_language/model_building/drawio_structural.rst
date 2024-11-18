@@ -36,7 +36,7 @@ You can do this in two ways:
     # Generate model and save to Python file
     library_buml: DomainModel = structural_drawio_to_buml(
         drawio_file_path='library.drawio',
-        buml_model_file_name='library_model'  # Will create buml/library_model.py
+        file_path='library_model'
     )
 
 .. note::

@@ -124,6 +124,7 @@ class ButtonActionType(Enum):
     Help = "Help"
     About= "About"
     Exit = "Exit"
+    Edit = "Edit"
 
 
 
@@ -413,10 +414,10 @@ class Screen(ViewContainer):
         """str: Set the size of the screen.
 
         Raises:
-            ValueError: If the size provided is not one of the allowed options: 'SmallScreen','MediumScreen', 'LargScreen', 'xLargeScreen'
+            ValueError: If the size provided is not one of the allowed options: 'Small','Medium', 'Larg', 'xLarge'
         """
 
-        if size not in ['SmallScreen', 'MediumScreen', 'LargScreen', 'xLargeScreen']:
+        if size not in ['Small', 'Medium', 'Large', 'xLarge']:
            raise ValueError("Invalid value of size")
            self.__size = size
 
@@ -614,10 +615,10 @@ class InputField(ViewComponent):
         validationRules (str): The validation rules for the input field.
     """
     
-    def __init__(self, name: str, description: str, fieldType: str, validationRules: str):
+    def __init__(self, name: str, description: str, fieldType: str, validationRules: str=None):
         super().__init__(name, description)
         self.fieldType: str= fieldType
-        self.validationRules: str = validationRules
+        self._validationRules = validationRules
 
     @property
     def fieldType(self) -> str:
@@ -644,9 +645,8 @@ class InputField(ViewComponent):
 
     
     @validationRules.setter
-    def validationRules(self, str):
-        """str: Set the validation rules of the input field."""
-        self.__validationRules = validationRules
+    def validationRules(self, rules: str):
+        self._validationRules = rules
 
     def __repr__(self):
      return f'InputField({self.name},{self.description}, {self.fieldType}, {self.validationRules})'

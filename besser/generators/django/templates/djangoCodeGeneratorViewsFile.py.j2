@@ -1,0 +1,152 @@
+from django.shortcuts import render, redirect, get_object_or_404
+from django.contrib import messages
+from django.http import JsonResponse
+{%-  for class_obj in model.classes_sorted_by_inheritance() %}
+from .models import {{ class_obj.name }}
+{%-  endfor %}
+{%- for module in app.modules%}
+    {%- for screen in module.screens %}
+    {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                    {%- set source_name= source.dataSourceClass%}
+from .forms import {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}Form
+                {%-  endif %}
+            {%-  endfor %}
+        {%-  endif %}
+    {%-  endfor %}
+{%-  endfor %}
+{%- endfor %}
+
+
+def handle_create(request, form_class, success_message):
+    """Handle form submission for create views."""
+    if request.method == 'POST':
+        form = form_class(request.POST)
+        if form.is_valid():
+            form.save()
+            return JsonResponse({'success': True})
+        return JsonResponse({'success': False, 'errors': form.errors})
+    return JsonResponse({'success': False})
+
+
+{%- for module in app.modules%}
+    {%- for screen in module.screens %}
+    {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                    {%- set source_name= source.dataSourceClass%}
+
+
+def create_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}(request):
+    """Create a new {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} record."""
+    return handle_create(request, {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}Form, '{{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}} created successfully')
+                {%-  endif %}
+            {%-  endfor %}
+        {%-  endif %}
+    {%-  endfor %}
+{%-  endfor %}
+{%- endfor %}
+
+
+def handle_edit(request, form_class, instance, success_message, redirect_url):
+    if request.method == 'POST':
+        form = form_class(request.POST, instance=instance)
+        if form.has_changed() and form.is_valid():
+            form.save()
+            messages.success(request, success_message)
+            return redirect(redirect_url)
+        elif not form.has_changed():
+            messages.info(
+                request,
+                f'No changes were made to the {instance._meta.verbose_name}.'
+            )
+            return redirect(redirect_url)
+    else:
+        form = form_class(instance=instance)
+    return render(
+        request,
+        f'{instance._meta.model_name}_form.html',
+        {'form': form, 'is_edit': True}
+    )
+
+
+{%- for module in app.modules%}
+    {%- for screen in module.screens %}
+    {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                    {%- set source_name= source.dataSourceClass%}
+
+
+def edit_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}(request, {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_id):
+    """Edit an existing {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} record."""
+    {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} = get_object_or_404({{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}, id={{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_id)
+    return handle_edit(
+        request,
+        {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}Form,
+        {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}},
+        '{{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}} updated successfully',
+        '{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list'
+    )
+                {%-  endif %}
+            {%-  endfor %}
+        {%-  endif %}
+    {%-  endfor %}
+{%-  endfor %}
+{%- endfor %}
+
+
+{%- for module in app.modules%}
+    {%- for screen in module.screens %}
+    {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                    {%- set source_name= source.dataSourceClass%}
+
+
+def delete_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}(request, {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_id):
+    """Delete an existing {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} record."""
+    {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} = get_object_or_404({{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}, id={{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_id)
+    {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.delete()
+    return redirect('{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list')
+                {%-  endif %}
+            {%-  endfor %}
+        {%-  endif %}
+    {%-  endfor %}
+{%-  endfor %}
+{%- endfor %}
+
+{%- for module in app.modules%}
+    {%- for screen in module.screens %}
+    {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                    {%- set source_name= source.dataSourceClass%}
+
+
+def {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list(request):
+    """Display the list of {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s."""
+    {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s = {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}.objects.all()
+    form = {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}Form()
+    return render(
+        request, '{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list.html',
+        {'{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s': {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s, 'form': form, 'is_default': True}
+    )
+                {%-  endif %}
+            {%-  endfor %}
+        {%-  endif %}
+    {%-  endfor %}
+{%-  endfor %}
+{%- endfor %}
+
+
+def home(request):
+    """Render the home page."""
+    return render(request, 'home.html')
+

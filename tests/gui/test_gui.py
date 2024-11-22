@@ -21,13 +21,13 @@ def test_unique_module_names():
 
 # Test: Do not have two screens with the same name in an application.
 def test_unique_screen_names():
-    screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", view_elements={})
-    screen2: Screen = Screen(name="screen2", description="", x_dpi="", y_dpi="", size="SmallScreen", view_elements={})
+    screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="Small", view_elements={})
+    screen2: Screen = Screen(name="screen2", description="", x_dpi="", y_dpi="", size="Small", view_elements={})
     module1: Module = Module(name="module1", screens={screen1, screen2})
     my_app: Application = Application(name="application1", package="", versionCode="", versionName="", description="", screenCompatibility=False, modules={module1})
     with pytest.raises(ValueError) as excinfo:
         # Try to create a screen with the same name as screen1
-        screen_duplicate: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", view_elements={})
+        screen_duplicate: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="Small", view_elements={})
         module1.screens = {screen1, screen2, screen_duplicate}
     assert "A module cannot have two screens with the same name" in str(excinfo.value)
 
@@ -48,7 +48,7 @@ def test_button_buttonType_must_be_defined():
     with pytest.raises(ValueError) as excinfo:
         if button.buttonType == "":
             raise ValueError("buttonType must be defined")
-        screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", view_elements={button})
+        screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="Small", view_elements={button})
     assert "buttonType must be defined" in str(excinfo.value)
 
 def test_button_actionType_must_be_defined():
@@ -57,7 +57,7 @@ def test_button_actionType_must_be_defined():
     with pytest.raises(ValueError) as excinfo:
         if button.actionType == "":
             raise ValueError("actionType must be defined")
-        screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", view_elements={button})
+        screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="Small", view_elements={button})
     assert "actionType must be defined" in str(excinfo.value)
 
 def test_button_properties_must_be_defined():
@@ -66,7 +66,7 @@ def test_button_properties_must_be_defined():
     with pytest.raises(ValueError) as excinfo:
         if button.buttonType == "" and button.actionType== "":
             raise ValueError("buttonType and actionType must be defined")
-        screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", view_elements={button})
+        screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="Small", view_elements={button})
     assert "buttonType and actionType must be defined" in str(excinfo.value)
 
 
@@ -78,7 +78,7 @@ def test_list_sources_must_be_defined():
         if len(myList.list_sources) == 0:
             raise ValueError("list_sources must be defined")
 
-        screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="SmallScreen", view_elements={myList})
+        screen1: Screen = Screen(name="screen1", description="", x_dpi="", y_dpi="", size="Small", view_elements={myList})
 
     assert "list_sources must be defined" in str(excinfo.value)
 

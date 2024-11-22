@@ -1,24 +1,14 @@
-{% macro get_field(attr_type, enumerations) %}
-    {% if attr_type.name == "str" %}
-models.CharField(max_length=255)
-    {% elif attr_type.name == "int" %}
-models.IntegerField()
-    {% elif attr_type.name == "float" %}
-models.FloatField()
-    {% elif attr_type.name == "date" %}
-models.DateField()
-    {% elif attr_type.name == "datetime" %}
-models.DateTimeField()
-    {% elif attr_type.name == "bool" %}
-models.BooleanField()
-    {% elif attr_type.name == "text" %}
-models.TextField()
-    {% elif attr_type.name == "uuid" %}
-models.UUIDField()
-    {% elif attr_type in enumerations %}
-models.CharField(max_length=255, choices={{attr_type.name}}.choices)
-    {% else %}
+{%- macro get_field(attr_type, attr_properties) %}
+    {%- if attr_type == "str" %} models.CharField(max_length=255)
+    {%- elif attr_type == "int" %} models.IntegerField(default=0)
+    {%- elif attr_type == "float" %} models.FloatField()
+    {%- elif attr_type == "date" %} models.DateField()
+    {%- elif attr_type == "datetime" %} models.DateTimeField()
+    {%- elif attr_type == "bool" %} models.BooleanField()
+    {%- elif attr_type == "text" %} models.TextField()
+    {%- elif attr_type == "uuid" %} models.UUIDField()
+    {%- else %}
     {# Unknown field type #}
 None
-    {% endif %}
-{% endmacro %}
+    {%- endif %}
+{%- endmacro %}

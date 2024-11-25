@@ -1,4 +1,5 @@
 __pycache__/
+.pytest_cache/
 
 # virtual env
 Pipfile
@@ -23,3 +24,6 @@ besser/.idea/workspace.xml
 *.iml
 .idea/inspectionProfiles/profiles_settings.xml
 *.xml
+
+# Backend
+besser_backend/output

@@ -4,6 +4,8 @@ Helper functions to transform NN code to BUML code.
 
 import argparse
 import ast
+from besser.generators.nn_reverse.tf2buml.missing_attr import get_attributes
+
 
 def parse_arguments_code2buml():
     """Define and parse command-line arguments."""
@@ -13,7 +15,20 @@ def parse_arguments_code2buml():
     parser.add_argument(
         "filename", type=str, help="Path to the file to read"
     )
+    parser.add_argument(
+        "--datashape", type=parse_tuple, default=None, 
+        help=(
+            "The shape of the input data (optional)."
+            "It is needed when transforming tf code to pytorch code"
+            "It is used to recover some layer attributes dynamically"
+        ),
+    )
+
     return parser.parse_args()
+
+def parse_tuple(value):
+    """Parse a tuple from a string input"""
+    return (1,) + tuple(map(int, value.strip("()").split(",")))
 
 def code2buml(args, ast_parser_class, framework, transform_layers,
               config_list, train_param_list, test_param_list,
@@ -27,18 +42,17 @@ def code2buml(args, ast_parser_class, framework, transform_layers,
     with open(args.filename, "r", encoding="utf-8") as file:
         code = file.read()
 
+    shape = args.datashape
 
     # Parse the code and use the extractor
     tree = ast.parse(code)
     extractor = ast_parser_class()
     extractor.visit(tree)
-    #print(ast.dump(tree, indent=4))
-    #print("layers", layers)
-    #print("subnn", sub_nns)
-    #print(extractor.data_config)
-    #print("in ou", extractor.inputs_outputs, extractor.layer_of_output)
 
     nn_name = extractor.nn_name
+    if framework == "TF":
+        extractor = get_attributes(extractor, args.filename,
+                                                   shape)
     extractor = transform_modules(extractor, transform_layers)
     print_imports(extractor, framework)
     print_subnn_def(extractor.modules["sub_nns"])
@@ -55,7 +69,29 @@ def code2buml(args, ast_parser_class, framework, transform_layers,
     return nn_name
 
 
+def transform_modules(extractor, transform_layers):
+    """
+    It transforms names and parameters of modules to BUML.
+    """
+    for sub_nn_name, sub_nn_elems in extractor.modules["sub_nns"].items():
+        sub_nn_elems, _ = transform_layers(sub_nn_elems,
+                                           extractor.inputs_outputs,
+                                           extractor.layer_of_output,
+                                           extractor.modules["order"],
+                                           is_layer=False)
+        extractor.modules["sub_nns"][sub_nn_name] = sub_nn_elems
 
+    layers, modules = transform_layers(extractor.modules["layers"],
+                                       extractor.inputs_outputs,
+                                       extractor.layer_of_output,
+                                       extractor.modules["order"],
+                                       extractor.modules["sub_nns"],
+                                       is_layer=True)
+
+    extractor.modules["layers"] = layers
+    if modules:
+        extractor.modules["order"] = modules
+    return extractor
 
 
 def handle_remaining_params(params, layer_type, layer_name, inputs_outputs,
@@ -72,7 +108,7 @@ def handle_remaining_params(params, layer_type, layer_name, inputs_outputs,
             inputs_outputs[layer_name][0] != inputs_outputs[layer_name][1]):
             lyr_in_out = layer_of_output[inputs_outputs[layer_name][0]]
             params["input_reused"] = True
-            params["name_layer_input"] = lyr_in_out
+            params["name_module_input"] = lyr_in_out
 
     return params
 
@@ -151,32 +187,9 @@ def print_subnn_def(sub_nns):
             layer_params = layer_elems[1]
             params_str = format_params(layer_params)
             print(f"{sub_nn_name}.add_layer({layer_type}("
-                f"name='{sub_nn_name}_{layer_id}', {params_str}))")
+                  f"name='{sub_nn_name}_{layer_id}', {params_str}))")
         print("\n")
 
-
-def transform_modules(extractor, transform_layers):
-    """
-    It transforms names and parameters of modules to BUML.
-    """
-    for sub_nn_name, sub_nn_elems in extractor.modules["sub_nns"].items():
-        sub_nn_elems, _ = transform_layers(sub_nn_elems,
-                                           extractor.inputs_outputs,
-                                           extractor.layer_of_output,
-                                           extractor.modules["order"],
-                                           is_layer=False)
-
-        #ssub_nn_elems = adjust_layers_ids(sub_nn_elems)
-        extractor.modules["sub_nns"][sub_nn_name] = sub_nn_elems
-
-    layers, modules = transform_layers(extractor.modules["layers"],
-                              extractor.inputs_outputs,
-                              extractor.layer_of_output,
-                              extractor.modules["order"])
-    extractor.modules["layers"] = layers
-    if modules:
-        extractor.modules["order"] = modules
-    return extractor
 
 
 def print_imports(extractor, framework):

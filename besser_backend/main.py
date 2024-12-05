@@ -12,7 +12,7 @@ from besser.generators.sql import SQLGenerator
 
 from besser_backend.models.class_diagram import ClassDiagramInput
 from besser_backend.services.json_to_buml import process_class_diagram, process_state_machine
-from besser_backend.services.buml_to_json import domain_model_to_json, parse_buml_content
+from besser_backend.services.buml_to_json import domain_model_to_json, parse_buml_content, state_machine_to_json
 
 app = FastAPI(
     title="Besser Backend API",
@@ -129,11 +129,18 @@ async def get_json_model(buml_file: UploadFile = File(...)):
         content = await buml_file.read()
         buml_content = content.decode('utf-8')
         
-        # Parse the BUML content into a domain model
-        domain_model = parse_buml_content(buml_content)
-        print("Domain model created:", domain_model)
-        # Convert the domain model to JSON format using the renamed function
-        json_model = domain_model_to_json(domain_model)
+        # Try to determine if it's a state machine or domain model
+        is_state_machine = 'StateMachine' in buml_content and 'Session' in buml_content
+        
+        if is_state_machine:
+            # Convert the state machine Python code directly to JSON
+            json_model = state_machine_to_json(buml_content)
+        else:
+            # Parse the BUML content into a domain model
+            domain_model = parse_buml_content(buml_content)
+            print("Domain model created:", domain_model)
+            # Convert the domain model to JSON format
+            json_model = domain_model_to_json(domain_model)
         
         wrapped_response = {
             "title": buml_file.filename,

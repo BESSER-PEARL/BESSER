@@ -166,8 +166,11 @@ def parse_multiplicity(multiplicity_str):
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""
     domain_model = DomainModel("Class Diagram")
-    elements = json_data.get("elements", {})
-    relationships = json_data.get("relationships", {})
+    
+    # Get elements from the correct nested structure
+    elements = json_data.get('elements', {}).get('elements', {})
+    relationships = json_data.get('elements', {}).get('relationships', {})
+    
     print(f"Elements: {elements}")
     print(f"Relationships: {relationships}")
 

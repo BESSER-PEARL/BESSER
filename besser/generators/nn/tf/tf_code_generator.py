@@ -5,7 +5,7 @@ TF code for neural networks based on the B-UML model.
 
 from typing import Callable
 from besser.BUML.metamodel.nn import NN
-from besser.generators.nn.tf.utils import SetupLayerSyntax, \
+from besser.generators.nn.tf.utils_tf import SetupLayerSyntax, \
     get_tensorop_syntax
 from besser.generators.nn.nn_code_generator import NNCodeGenerator
 

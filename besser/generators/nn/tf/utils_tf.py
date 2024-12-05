@@ -6,7 +6,7 @@ of layers in TensorFlow, while `get_tensorop_syntax` defines the
 tensorOps.
 """
 
-from besser.generators.nn import utils
+from besser.generators.nn import utils_nn as utils
 
 
 class SetupLayerSyntax:
@@ -18,6 +18,9 @@ class SetupLayerSyntax:
     def __init__(self, layer, modules_details):
         self.layer = layer
         self.modules_details = modules_details
+        self.permute_out = None
+        self.permute_in = None
+        self.dim = None
 
     def setup_general_layer(self):
         """It defines the syntax of general layers."""
@@ -162,10 +165,13 @@ class SetupLayerSyntax:
         return lyr, self.modules_details
 
 
-def get_tensorop_syntax(tensorop, modules_details):
+def get_tensorop_syntax(tensorop, modules_details, in_var=None):
     """It defines the syntax of tensorops."""
     prev_out_var, params = utils.get_tensorop_params(tensorop,
                                                      modules_details)
+    if in_var is not None:
+        prev_out_var = in_var
+
     tns_type = tensorop.tns_type
     if tns_type == "reshape":
         ts_op_synt = f"tf.reshape({prev_out_var}, {params})"

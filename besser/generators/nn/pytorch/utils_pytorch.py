@@ -7,7 +7,7 @@ tensorOps.
 """
 
 from besser.BUML.metamodel.nn import TensorOp
-from besser.generators.nn import utils
+from besser.generators.nn import utils_nn as utils
 
 
 class SetupLayerSyntax:
@@ -19,12 +19,16 @@ class SetupLayerSyntax:
     def __init__(self, layer, modules_details):
         self.layer = layer
         self.modules_details = modules_details
+        self.permute_out = None
+        self.permute_in = None
+        self.dim = None
 
     def setup_general_layer(self):
         """It defines the syntax of general layers."""
         cls_name = self.layer.__class__.__name__
         lyr_name = self.layer.name
         lyr = f"self.{lyr_name} = nn"
+
         if cls_name == "LinearLayer":
             in_f = self.layer.in_features
             out_f = self.layer.out_features
@@ -66,10 +70,31 @@ class SetupLayerSyntax:
             lyr = f"{lyr}.Dropout(p={self.layer.rate})"
         return lyr
 
+    def add_permute(self, lyr_name, dim, in_var_layer):
+        """It permutes the input of the layer"""
+        if dim is None:
+            perm_dim = [0, 2, 1]
+        else:
+            if dim == "1":
+                perm_dim = [0, 2, 1]
+            elif dim == "2":
+                perm_dim = [0, 3, 1, 2]
+            else:
+                perm_dim = [0, 4, 1, 2, 3]
+
+        tns = TensorOp(name=f"{lyr_name}_in_op", tns_type="permute",
+                       permute_dim=perm_dim)
+        tns_out = utils.handle_tensorop
+        self.modules_details = tns_out(tns, self.modules_details,
+                                       get_tensorop_syntax,
+                                       in_var_layer)
+
+
     def setup_rnn(self):
         """It defines the syntax of rnn layers."""
         cls_name = self.layer.__class__.__name__
         lyr_name = self.layer.name
+
         if self.layer.permute_dim:
             permute = TensorOp(name=f"{lyr_name}_op", tns_type="permute",
                                permute_dim=[0, 2, 1])
@@ -129,21 +154,9 @@ class SetupLayerSyntax:
         kernel = utils.format_value(self.layer.kernel_dim)
         stride = utils.format_value(self.layer.stride_dim)
         pad = self.layer.padding_amount
-        permute = self.layer.permute_dim
-        if dim == "1":
-            perm_dim = [0, 2, 1]
-        elif dim == "2":
-            perm_dim=[0, 3, 1, 2]
-        else:
-            perm_dim=[0, 4, 1, 2, 3]
-
-        lyr = ""
-        if permute:
-            tns = TensorOp(name=f"{lyr_name}_op", tns_type="permute",
-                           permute_dim=perm_dim)
-            tns_out = utils.handle_tensorop
-            self.modules_details = tns_out(tns, self.modules_details,
-                                           get_tensorop_syntax)
+        self.permute_in = self.layer.permute_in
+        self.permute_out = self.layer.permute_out
+        self.dim = dim
         lyr = (
             f"self.{lyr_name} = nn.Conv{dim}d(in_channels={in_chan}, "
             f"out_channels={out_chan}, kernel_size={kernel}, "
@@ -151,10 +164,16 @@ class SetupLayerSyntax:
         )
         return lyr
 
+
     def setup_pooling(self, lyr_name):
         """It defines the syntax of pooling layers."""
         pl_type = self.layer.pooling_type
         dim = self.layer.dimension[-2:-1]
+        self.dim = dim
+
+        self.permute_in = self.layer.permute_in
+        self.permute_out = self.layer.permute_out
+
         if pl_type == "max" or pl_type == "average":
             pl = "Max" if pl_type == "max" else "Avg"
             kernel = utils.format_value(self.layer.kernel_dim)
@@ -176,10 +195,14 @@ class SetupLayerSyntax:
             )
         return lyr
 
-def get_tensorop_syntax(tensorop, modules_details):
+def get_tensorop_syntax(tensorop, modules_details, in_var=None):
     """It defines the syntax of tensorops."""
+
     prev_out_var, params = utils.get_tensorop_params(tensorop,
                                                      modules_details)
+    if in_var is not None:
+        prev_out_var = in_var
+
     tns_type = tensorop.tns_type
     if tns_type == "reshape":
         ts_op_synt = f"{prev_out_var}.reshape({params})"

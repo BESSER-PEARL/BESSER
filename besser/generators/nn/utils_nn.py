@@ -127,8 +127,8 @@ def initialize_layer_vars(layer):
             out_var_actv, in_var_actv = "x", "x"
     return out_var_layer, in_var_layer, out_var_actv, in_var_actv
 
-def get_layer_syntax(setup_layer_cls, layer,
-                     modules_details, actv_func_synt):
+def get_layer_syntax(setup_layer_cls, layer, modules_details,
+                     in_layer, actv_func_synt):
     """
     It retrieves the syntax of the layer (and the activation 
     function in the case of PyTorch) from the ´setup_layer_cls´ 
@@ -142,12 +142,13 @@ def get_layer_syntax(setup_layer_cls, layer,
         layer_synt, modules_details = setup.setup_rnn()
     elif parent_class == "GeneralLayer":
         layer_synt = setup.setup_general_layer()
-    else: #(parent_class == "LayerModifier" or parent_class == "NormalizationLayer")
+    else: #(parent_class == "LayerModifier" or
+           #parent_class == "NormalizationLayer")
         layer_synt = setup.setup_layer_modifier()
 
     if actv_func_synt is not None:
         actv_func_synt = setup.setup_actv_func()
-    return layer_synt, actv_func_synt, modules_details
+    return layer_synt, actv_func_synt, modules_details, setup
 
 def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=None):
     """
@@ -157,8 +158,7 @@ def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=None):
     In the case of PyTorch, the activation function is treated as 
     a layer.
     """
-    layer_synt, actv_func_syntax, modules_details = get_layer_syntax(
-        setup_layer, layer, modules_details, actv_func_syntax)
+
     if len(modules_details) == 0:
         out_layer, in_layer, out_actv, in_actv = initialize_layer_vars(layer)
     else:
@@ -167,14 +167,22 @@ def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=None):
         out_layer, in_layer, out_actv, in_actv = get_layer_vars(
             layer, prev_out_var, modules_details)
 
+    layer_synt, actv_func_syntax, modules_details, setup = get_layer_syntax(
+        setup_layer, layer, modules_details, in_layer, actv_func_syntax)
+
+    if setup.permute_in:
+        dim = setup.dim
+        setup.add_permute(layer.name, dim, in_layer)
+
     modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
                                               in_layer, layer]
     if actv_func_syntax is not None:
         modules_details[layer.name + "_activ"] = [actv_func_syntax, out_actv,
                                                   in_actv]
+    if setup.permute_out:
+        dim = setup.dim
+        setup.add_permute(layer.name, dim, out_layer)
     return modules_details
-
-
 
 
 def get_tensorop_params(tensorop, modules_details):
@@ -219,18 +227,20 @@ def get_tensorop_out_var(tensorop, prev_out_var):
         out_var = prev_out_var
     return out_var
 
-def handle_tensorop(tensorop, modules_details, get_tensorop_syntax):
+def handle_tensorop(tensorop, modules_details,
+                    get_tensorop_syntax, out_var=None):
     """
     It populates the `modules_details` dictionary with tensorop's 
     information: Its syntax and output variable.
     """
-    ts_op_synt = get_tensorop_syntax(tensorop, modules_details)
-    if len(modules_details) == 0:
-        out_var  = initialize_tensorop_var(tensorop)
-    else:
-        prev_module = list(modules_details.keys())[-1]
-        prev_out_var = get_previous_out_var(modules_details, prev_module)
-        out_var = get_tensorop_out_var(tensorop, prev_out_var)
+    ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var)
+    if out_var is None:
+        if len(modules_details) == 0:
+            out_var  = initialize_tensorop_var(tensorop)
+        else:
+            prev_module = list(modules_details.keys())[-1]
+            prev_out_var = get_previous_out_var(modules_details, prev_module)
+            out_var = get_tensorop_out_var(tensorop, prev_out_var)
 
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var]
     return modules_details

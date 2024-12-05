@@ -196,11 +196,11 @@ def preprocess_image(image, label, to_scale):
 
 
 # Load dataset (resizes by default)
-def load_dataset(directory, mode):
+def load_dataset(directory, mode, image_size):
     dataset = tf.keras.preprocessing.image_dataset_from_directory(
         directory=directory,
         label_mode="int",
-        image_size=IMAGE_SIZE,
+        image_size=image_size,
         batch_size={{ configuration.batch_size }},
         shuffle=True if mode == 'train' else False,
     )
@@ -218,8 +218,8 @@ def load_dataset(directory, mode):
     return dataset
 
 # Load datasets
-train_loader = load_dataset(r"{{ train_data.path_data }}", "train")
-test_loader = load_dataset(r"{{ test_data.path_data }}", "test")
+train_loader = load_dataset(r"{{ train_data.path_data }}", "train", IMAGE_SIZE)
+test_loader = load_dataset(r"{{ test_data.path_data }}", "test", IMAGE_SIZE)
 
    {%- else -%}
     def load_dataset(csv_file):
@@ -254,6 +254,13 @@ test_loader = create_data_loader(test_dataset, "test")
 {%- endif -%}
 {% endmacro -%}
 
+{%- macro get_output_layer_neurons(model) -%}
+    {%- if  model.modules[-1].__class__.__name__ == "LinearLayer" -%}
+        {{- model.modules[-1].out_features }}
+    {% else %}
+        {{- model.modules[-1].modules[-1].out_features }}
+    {%- endif -%}
+{%- endmacro -%}
 
 {%- macro train_model(model, prediction_task) -%}
 print('##### Training the model')
@@ -270,16 +277,15 @@ for epoch in range({{ model.configuration.epochs }}):
             if labels.shape.rank > 1 and labels.shape[-1] == 1:
                 labels = tf.squeeze(labels, axis=-1)
             labels = tf.cast(labels, dtype=tf.int32)
-            {%- set depth = model.layers[-1].out_features %}
-            labels = tf.one_hot(labels, depth={{ depth }})
+            labels = tf.one_hot(labels, depth={{ get_output_layer_neurons(model) }})
             {% elif prediction_task == "regression" %}
             labels = tf.expand_dims(labels, axis=1)
             {% endif -%}
             loss = criterion(labels, outputs)
         # Compute gradients and update model parameters
-        gradients = tape.gradient(loss, my_model.trainable_variables)
+        gradients = tape.gradient(loss, {{ model.name }}.trainable_variables)
         optimizer.apply_gradients(
-            zip(gradients, my_model.trainable_variables))
+            zip(gradients, {{ model.name }}.trainable_variables))
         total_loss += loss.numpy()
         running_loss += loss.numpy()
         if i % 200 == 199:  # Print every 200 mini-batches
@@ -312,7 +318,7 @@ for inputs, labels in test_loader:
     if labels.shape.rank > 1 and labels.shape[-1] == 1:
         labels = tf.squeeze(labels, axis=-1)
     labels = tf.cast(labels, dtype=tf.int32)
-    labels = tf.one_hot(labels, depth={{ model.layers[-1].out_features }})
+    labels = tf.one_hot(labels, depth={{ get_output_layer_neurons(model) }})
     {%- else -%}
     predicted = outputs.numpy()
     labels = tf.expand_dims(labels, axis=1)

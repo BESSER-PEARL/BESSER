@@ -9,13 +9,13 @@ from typing import Dict, Callable, Union
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.nn import NN
 from besser.generators import GeneratorInterface
-from besser.generators.nn.tf.utils import (
+from besser.generators.nn.tf.utils_tf import (
     SetupLayerSyntax as SetupLayerTF
 )
-from besser.generators.nn.pytorch.utils import (
+from besser.generators.nn.pytorch.utils_pytorch import (
     SetupLayerSyntax as SetupLayerTorch
 )
-from besser.generators.nn.utils import handle_layer, handle_tensorop, \
+from besser.generators.nn.utils_nn import handle_layer, handle_tensorop, \
     add_in_out_var_to_subnn
 
 
@@ -92,8 +92,7 @@ class NNCodeGenerator(GeneratorInterface):
                 modules_details = add_in_out_var_to_subnn(modules_details)
             elif module_type != "TensorOp":
                 modules_details = handle_layer(
-                    module, self.setup_layer,
-                    modules_details, actv_func)
+                    module, self.setup_layer, modules_details, actv_func)
             else:
                 modules_details = handle_tensorop(
                     module, modules_details, self.get_tensorop_syntax)

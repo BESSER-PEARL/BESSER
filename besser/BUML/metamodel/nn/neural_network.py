@@ -332,7 +332,13 @@ class CNN(Layer):
             the stride of the convolution or pooling (i.e., [depth, 
             height, width]).
         padding_amount (int): The amount of padding added to the input.
-        padding_type (str): The type of padding applied to the input. 
+        padding_type (str): The type of padding applied to the input.
+        permute_in (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Whether the dimensions of the output need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
         name_module_input (str): The name of the layer from which the 
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
@@ -351,6 +357,12 @@ class CNN(Layer):
             height, width]).
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
+        permute_in (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Whether the dimensions of the output need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
         name_module_input (str): Inherited from Layer. The name of 
             the layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input 
@@ -360,12 +372,15 @@ class CNN(Layer):
     def __init__(self, name: str, kernel_dim: List[int],
                  stride_dim: List[int], padding_amount: int = 0,
                  padding_type: str = "valid", actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False):
+                 name_module_input: str = None, input_reused: bool = False,
+                 permute_in: bool = False, permute_out: bool = False):
         super().__init__(name, actv_func, name_module_input, input_reused)
         self.kernel_dim: List[int] = kernel_dim
         self.stride_dim: List[int] = stride_dim
         self.padding_amount: int = padding_amount
         self.padding_type: str = padding_type
+        self.permute_in: bool = permute_in
+        self.permute_out: bool = permute_out
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -420,10 +435,40 @@ class CNN(Layer):
         self.__padding_type = padding_type
 
 
+    @property
+    def permute_in(self) -> bool:
+        """
+        bool: Get whether to permute the dim of the input.
+        """
+        return self.__permute_in
+
+    @permute_in.setter
+    def permute_in(self, permute_in: bool):
+        """
+        bool: Set whether to permute the dim of the input.
+        """
+        self.__permute_in = permute_in
+
+    @property
+    def permute_out(self) -> bool:
+        """
+        bool: Get whether to permute the dim of the output.
+        """
+        return self.__permute_out
+
+    @permute_out.setter
+    def permute_out(self, permute_out: bool):
+        """
+        bool: Set whether to permute the dim of the output.
+        """
+        self.__permute_out = permute_out
+
+
     def __repr__(self):
         return (
             f'CNN({self.name}, {self.actv_func}, {self.kernel_dim}, '
             f'{self.stride_dim}, {self.padding_amount}, {self.padding_type}, '
+            f'{self.permute_in}, {self.permute_out}'
             f'{self.name_module_input}, {self.input_reused})'
         )
 
@@ -445,7 +490,10 @@ class ConvolutionalLayer(CNN):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
-        permute_dim (bool): Whether the dimensions of the input need 
+        permute_in (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Whether the dimensions of the output need 
             to be permuted. Relevant for PyTorch. It is used to make 
             PyTorch model equivalent to TensorFlow model.
         name_module_input (str): The name of the layer from which the 
@@ -471,9 +519,12 @@ class ConvolutionalLayer(CNN):
             added to the input.
         padding_type (str): Inherited from CNN. The type of padding 
             applied to the input.
-        permute_dim (bool): Whether the dimensions of the input need 
-            to be permuted. Relevant for PyTorch. It is used to make 
-            PyTorch model equivalent to TensorFlow model.
+        permute_in (bool): Inherited from CNN. Whether the dimensions of 
+            the input need to be permuted. Relevant for PyTorch. It is 
+            used to make PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Inherited from CNN. Whether the dimensions of 
+            the output need to be permuted. Relevant for PyTorch. It is 
+            used to make PyTorch model equivalent to TensorFlow model.
         name_module_input (str): Inherited from Layer. The name of the 
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input 
@@ -484,13 +535,13 @@ class ConvolutionalLayer(CNN):
                  stride_dim: List[int], in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False, permute_dim: bool = False):
+                 input_reused: bool = False, permute_in: bool = False, 
+                 permute_out: bool = False):
         super().__init__(name, kernel_dim, stride_dim, padding_amount,
                          padding_type, actv_func, name_module_input,
-                         input_reused)
+                         input_reused, permute_in, permute_out)
         self.in_channels: int = in_channels
         self.out_channels: int = out_channels
-        self.permute_dim: bool = permute_dim
 
     @property
     def in_channels(self) -> int:
@@ -516,20 +567,6 @@ class ConvolutionalLayer(CNN):
         """
         self.__out_channels = out_channels
 
-    @property
-    def permute_dim(self) -> bool:
-        """
-        bool: Get whether to permute the dim of the input.
-        """
-        return self.__permute_dim
-
-    @permute_dim.setter
-    def permute_dim(self, permute_dim: bool):
-        """
-        bool: Set whether to permute the dim of the input.
-        """
-        self.__permute_dim = permute_dim
-
 
     def __repr__(self):
         return (
@@ -537,7 +574,7 @@ class ConvolutionalLayer(CNN):
             f'{self.out_channels}, {self.stride_dim}, {self.in_channels}, '
             f'{self.padding_amount}, {self.padding_type}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_dim})'
+            f'{self.permute_in}, {self.permute_out})'
         )
 
 class Conv1D(ConvolutionalLayer):
@@ -559,7 +596,10 @@ class Conv1D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
-        permute_dim (bool): Whether the dimensions of the input need 
+        permute_in (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Whether the dimensions of the output need 
             to be permuted. Relevant for PyTorch. It is used to make 
             PyTorch model equivalent to TensorFlow model.
         name_module_input (str): The name of the layer from which the 
@@ -587,10 +627,12 @@ class Conv1D(ConvolutionalLayer):
             amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type
             of padding applied to the input. 
-        permute_dim (bool): Inherited from ConvolutionalLayer. Whether 
-            the dimensions of the input need to be permuted. Relevant 
-            for PyTorch. It is used to make PyTorch model equivalent to 
-            TensorFlow model. 
+        permute_in (bool): Inherited from CNN. Whether the dimensions of 
+            the input need to be permuted. Relevant for PyTorch. It is 
+            used to make PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Inherited from CNN. Whether the dimensions of 
+            the output need to be permuted. Relevant for PyTorch. It is 
+            used to make PyTorch model equivalent to TensorFlow model.
         name_module_input (str): Inherited from Layer. The name of the 
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to 
@@ -600,12 +642,14 @@ class Conv1D(ConvolutionalLayer):
                  stride_dim: List[int] = None, in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False, permute_dim: bool = False):
+                 input_reused: bool = False, permute_in: bool = False,
+                 permute_out: bool = False):
         if stride_dim is None:
             stride_dim = [1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type, actv_func,
-                         name_module_input, input_reused, permute_dim)
+                         name_module_input, input_reused, permute_in,
+                         permute_out)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -649,7 +693,7 @@ class Conv1D(ConvolutionalLayer):
             f'{self.out_channels}, {self.stride_dim}, {self.in_channels}, ' 
             f'{self.padding_amount}, {self.padding_type}, '
             f'{self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_dim})'
+            f'{self.permute_in}, {self.permute_out})'
         )
 
 class Conv2D(ConvolutionalLayer):
@@ -671,7 +715,10 @@ class Conv2D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input.  
-        permute_dim (bool): Whether the dimensions of the input need 
+        permute_in (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Whether the dimensions of the output need 
             to be permuted. Relevant for PyTorch. It is used to make 
             PyTorch model equivalent to TensorFlow model.
         name_module_input (str): The name of the layer from which the 
@@ -699,10 +746,12 @@ class Conv2D(ConvolutionalLayer):
             amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the 
             type of padding applied to the input.
-        permute_dim (bool): Inherited from ConvolutionalLayer. Whether 
-            the dimensions of the input need to be permuted. Relevant 
-            for PyTorch. It is used to make PyTorch model equivalent to 
-            TensorFlow model.
+        permute_in (bool): Inherited from CNN. Whether the dimensions of 
+            the input need to be permuted. Relevant for PyTorch. It is 
+            used to make PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Inherited from CNN. Whether the dimensions of 
+            the output need to be permuted. Relevant for PyTorch. It is 
+            used to make PyTorch model equivalent to TensorFlow model.
         name_module_input (str): Inherited from Layer. The name of the 
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to 
@@ -712,13 +761,14 @@ class Conv2D(ConvolutionalLayer):
                  stride_dim: List[int] = None, in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False, permute_dim: bool = False):
+                 input_reused: bool = False, permute_in: bool = False,
+                 permute_out: bool = False):
         if stride_dim is None:
             stride_dim = [1, 1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type,
                          actv_func, name_module_input, input_reused,
-                         permute_dim)
+                         permute_in, permute_out)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -762,7 +812,7 @@ class Conv2D(ConvolutionalLayer):
             f'{self.stride_dim}, {self.in_channels}, {self.padding_amount}, '
             f'{self.padding_type}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_dim})'
+            f'{self.permute_in}, {self.permute_out})'
         )
 
 class Conv3D(ConvolutionalLayer):
@@ -784,7 +834,10 @@ class Conv3D(ConvolutionalLayer):
             the convolution.
         padding_amount (int): The amount of padding added to the input.
         padding_type (str): The type of padding applied to the input. 
-        permute_dim (bool): Whether the dimensions of the input need 
+        permute_in (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Whether the dimensions of the output need 
             to be permuted. Relevant for PyTorch. It is used to make 
             PyTorch model equivalent to TensorFlow model.
         name_module_input (str): The name of the layer from which the 
@@ -812,10 +865,12 @@ class Conv3D(ConvolutionalLayer):
             amount of padding added to the input.
         padding_type (str): Inherited from CNN. It represents the type 
             of padding applied to the input. 
-        permute_dim (bool): Inherited from ConvolutionalLayer. Whether 
-            the dimensions of the input need to be permuted. Relevant 
-            for PyTorch. It is used to make PyTorch model equivalent to 
-            TensorFlow model.
+        permute_in (bool): Inherited from CNN. Whether the dimensions of 
+            the input need to be permuted. Relevant for PyTorch. It is 
+            used to make PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Inherited from CNN. Whether the dimensions of 
+            the output need to be permuted. Relevant for PyTorch. It is 
+            used to make PyTorch model equivalent to TensorFlow model.
         name_module_input (str): Inherited from Layer. The name of the 
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to 
@@ -825,13 +880,14 @@ class Conv3D(ConvolutionalLayer):
                  stride_dim: List[int] = None, in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False, permute_dim: bool = False):
+                 input_reused: bool = False, permute_in: bool = False,
+                 permute_out: bool = False):
         if stride_dim is None:
             stride_dim = [1, 1, 1]
         super().__init__(name, kernel_dim, out_channels, stride_dim,
                          in_channels, padding_amount, padding_type,
                          actv_func, name_module_input, input_reused,
-                         permute_dim)
+                         permute_in, permute_out)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -874,7 +930,7 @@ class Conv3D(ConvolutionalLayer):
             f'{self.stride_dim}, {self.in_channels}, {self.padding_amount}, '
             f'{self.padding_type}, {self.actv_func}, '
             f'{self.name_module_input}, {self.input_reused}, '
-            f'{self.permute_dim})'
+            f'{self.permute_in}, {self.permute_out})'
         )
 
 
@@ -900,6 +956,12 @@ class PoolingLayer(CNN):
             or 3D.
         output_dim (List[int]): The output dimensions of the adaptive 
             pooling operation. Only relevant for adaptive pooling.
+        permute_in (bool): Whether the dimensions of the input need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Whether the dimensions of the output need 
+            to be permuted. Relevant for PyTorch. It is used to make 
+            PyTorch model equivalent to TensorFlow model.
         name_module_input (str): The name of the layer from which the 
             inputs originate.
         input_reused (bool): Whether the input to this layer is reused as 
@@ -927,6 +989,12 @@ class PoolingLayer(CNN):
             or 3D.
         output_dim (List[int]): The output dimensions of the adaptive 
             pooling operation. Only relevant for adaptive pooling.
+        permute_in (bool): Inherited from CNN. Whether the dimensions of 
+            the input need to be permuted. Relevant for PyTorch. It is 
+            used to make PyTorch model equivalent to TensorFlow model.
+        permute_out (bool): Inherited from CNN. Whether the dimensions of 
+            the output need to be permuted. Relevant for PyTorch. It is 
+            used to make PyTorch model equivalent to TensorFlow model.
         name_module_input (str): Inherited from Layer. The name of the 
             layer from which the inputs originate.
         input_reused (bool): Inherited from Layer. Whether the input to 
@@ -936,7 +1004,8 @@ class PoolingLayer(CNN):
                  kernel_dim: List[int] = None, stride_dim: List[int] = None,
                  padding_amount: int = 0, padding_type: str = "valid",
                  output_dim: List[int] = None, actv_func: str = None,
-                 name_module_input: str = None, input_reused: bool = False):
+                 name_module_input: str = None, input_reused: bool = False,
+                 permute_in: bool = False, permute_out: bool = False):
         self.pooling_type: str = pooling_type
         self.dimension: str = dimension
         self.output_dim: List[int] = output_dim
@@ -944,7 +1013,7 @@ class PoolingLayer(CNN):
             output_dim = []
         super().__init__(name, kernel_dim, stride_dim, padding_amount,
                          padding_type, actv_func, name_module_input,
-                         input_reused)
+                         input_reused, permute_in, permute_out)
 
     @property
     def kernel_dim(self) -> List[int]:
@@ -1062,7 +1131,7 @@ class PoolingLayer(CNN):
             f'{self.pooling_type}, {self.dimension}, {self.kernel_dim}, '
             f'{self.stride_dim}, {self.padding_amount}, {self.padding_type}, '
             f'{self.output_dim}, {self.name_module_input}, '
-            f'{self.input_reused})'
+            f'{self.input_reused}, {self.permute_in}, {self.permute_out})'
         )
 
 class LayerModifier(Layer):

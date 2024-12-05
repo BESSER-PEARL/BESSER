@@ -3,7 +3,7 @@ Helper functions to transform NN TensorFlow code to BUML code.
 """
 
 from besser.generators.nn_reverse.tf2buml.definitions import lookup_layers, \
-    lookup_layers_params, layers_fixed_params, rnn_cnn_layers, \
+    lookup_layers_params, layers_fixed_params, rnn_layers, \
     layers_specific_params
 from besser.generators.nn_reverse.code2buml.utils_code2buml import (
     handle_remaining_params
@@ -152,7 +152,7 @@ def set_default_rnn_return_type(layer_type, layer_params):
     it could not be infered from the code.
     """
     #check if the layer is an rnn layer
-    if layer_type[:-5] in rnn_cnn_layers[:3]:
+    if layer_type[:-5] in rnn_layers[:3]:
         if "return_type" not in layer_params:
             layer_params["return_type"] = "last"
     return layer_params
@@ -171,4 +171,3 @@ def handle_conv_padding(layer_elems, padding_amount):
             layer_elems[1]["padding_amount"] = padding_amount
             padding_amount = None
     return layer_elems, padding_amount
-

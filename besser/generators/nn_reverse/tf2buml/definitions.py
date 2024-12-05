@@ -61,7 +61,7 @@ layers_fixed_params = {
                              "dimension": "3D"},
 }
 
-rnn_cnn_layers = ["LSTM", "GRU", "SimpleRNN",
+rnn_layers = ["LSTM", "GRU", "SimpleRNN",
                   "Conv1D", "Conv2D", "Conv3D"]
 
 config_list = ["batch_size", "epochs", "learning_rate",

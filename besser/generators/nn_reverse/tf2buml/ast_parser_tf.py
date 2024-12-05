@@ -4,7 +4,7 @@ neural network written in TensorFlow.
 """
 
 import ast
-from besser.generators.nn_reverse.code2buml.ast_parser import ASTParser
+from besser.generators.nn_reverse.code2buml.ast_parser_nn import ASTParser
 
 class ASTParserTF(ASTParser):
     """Class visiting and parsing TensorFlow code AST"""
@@ -91,25 +91,25 @@ class ASTParserTF(ASTParser):
                 lyr2 = self.layer_of_output[op_args[1].id]
                 if lyr1 != lyr2:
                     layers_of_tensors = [lyr1, lyr2]
-                    cat_dim = node.value.keywords[0].value.value
-                    tensorop_param = {"type": "concatenate",
-                                    "layers_of_tensors": layers_of_tensors,
-                                    "concatenate_dim": cat_dim}
+                    cat_dim = self.param_value(node.value.keywords[0].value)
+                    tensorop_param = {"tns_type": "concatenate",
+                                      "layers_of_tensors": layers_of_tensors,
+                                      "concatenate_dim": cat_dim}
         elif op_name == "matmul" or op_name == "multiply":
             op_type = "matmultiply" if op_name == "matmul" else "multiply"
             layers_of_tensors = [self.layer_of_output[op_args[0].id],
                                  self.layer_of_output[op_args[1].id]]
-            tensorop_param = {"type": op_type,
+            tensorop_param = {"tns_type": op_type,
                               "layers_of_tensors": layers_of_tensors}
         elif op_name == "transpose":
             op_args = node.value.keywords[0].value.elts
             transpose_dim = [op_args[0].value, op_args[1].value,
                              op_args[2].value]
-            tensorop_param = {"type": op_name,
+            tensorop_param = {"tns_type": op_name,
                               "transpose_dim": transpose_dim}
         elif op_name == "reshape":
             reshape_dim = [op_args[i].value for i in range(1, len(op_args))]
-            tensorop_param = {"type": op_name,
+            tensorop_param = {"tns_type": op_name,
                               "reshape_dim": reshape_dim}
         else:
             print(f"{op_name} is not recognized!")

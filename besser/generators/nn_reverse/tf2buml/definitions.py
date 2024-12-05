@@ -27,8 +27,10 @@ lookup_layers_params = {
     "dropout": "dropout", "return_sequences": "return_sequences",
     "return_state": "return_state", "axis": "normalized_shape", 
     "rate": "rate", "input_dim": "num_embeddings", 
-    "output_dim": "embedding_dim", "permute_dim": "permute_dim",
-    "padding_amount": "padding_amount", "bidirectional": "bidirectional"
+    "output_dim": "embedding_dim", "permute_in": "permute_in",
+    "permute_out": "permute_out", "padding_amount": "padding_amount",
+    "in_channels": "in_channels", "in_features": "in_features",
+    "input_size": "input_size",  "bidirectional": "bidirectional"
 }
 
 layers_specific_params = {

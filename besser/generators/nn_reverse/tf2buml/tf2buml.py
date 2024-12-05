@@ -7,13 +7,13 @@ Argument:
 """
 
 import sys
-from besser.generators.nn_reverse.tf2buml.ast_parser import ASTParserTF
-from besser.generators.nn_reverse.tf2buml.transform_functions import (
+from besser.generators.nn_reverse.tf2buml.ast_parser_tf import ASTParserTF
+from besser.generators.nn_reverse.tf2buml.transform_func_tf import (
     wrap_transform_layers
 )
 from besser.generators.nn_reverse.tf2buml.definitions import config_list, \
     train_param_list, test_param_list, lookup_loss_func
-from besser.generators.nn_reverse.code2buml.utils import (
+from besser.generators.nn_reverse.code2buml.utils_code2buml import (
     parse_arguments_code2buml, code2buml
 )
 
@@ -26,8 +26,8 @@ def main():
     sys.stdout = f
 
     nn_name = code2buml(args, ASTParserTF, "TF", wrap_transform_layers,
-              config_list, train_param_list, test_param_list,
-              lookup_loss_func)
+                        config_list, train_param_list, test_param_list,
+                        lookup_loss_func)
 
     print(f"tf_model = TFGenerator(model={nn_name}, "
           f"output_dir='output/{nn_name}')")

@@ -5,11 +5,12 @@ Helper functions to transform NN TensorFlow code to BUML code.
 from besser.generators.nn_reverse.tf2buml.definitions import lookup_layers, \
     lookup_layers_params, layers_fixed_params, rnn_cnn_layers, \
     layers_specific_params
-from besser.generators.nn_reverse.code2buml.utils import (
+from besser.generators.nn_reverse.code2buml.utils_code2buml import (
     handle_remaining_params
 )
 
-def transform_layers(layers, inputs_outputs, layer_of_output, is_layer):
+def transform_layers(layers, inputs_outputs, layer_of_output,
+                     modules, subnns, is_layer):
     """
     It processes the information related to layers and transforms the layers'
     code from TensorFlow to BUML.
@@ -30,17 +31,68 @@ def transform_layers(layers, inputs_outputs, layer_of_output, is_layer):
             layer_params = set_default_rnn_return_type(layer_type,
                                                        layer_params)
             layers[layer_name] = [layer_type, layer_params]
+    if not subnns:
+        layers = add_permute_dim(modules, layers)
     return layers
 
+
+def add_permute_dim(modules, layers):
+    """
+    Check whether input and output of cnn layers needs to be permuted 
+    to make pytorch and tensorflow equivalent.
+    """
+    modules_names = list(modules.keys())
+    prev_module = None
+    next_module = None
+    cnns = ["Conv1D", "Conv2D", "Conv3D", "PoolingLayer"]
+    permuted = []
+
+    for i, name in enumerate(modules_names[:-1]):
+        next_module = modules_names[i+1]
+        current_cnn, prev_cnn, next_cnn = False, False, False
+
+        if next_module in layers:
+            if layers[next_module][0] in cnns:
+                next_cnn = True
+
+        if name in layers:
+            if layers[name][0] in cnns:
+                current_cnn = True
+                if "name_module_input" in layers[name][1]:
+                    prev_module = layers[name][1]["name_module_input"]
+                if next_module in layers:
+                    if "name_module_input" in layers[next_module][1]:
+                        if layers[next_module][1]["name_module_input"] != name:
+                            next_cnn = False
+
+        if prev_module in layers:
+            if layers[prev_module][0] in cnns:
+                prev_cnn = True
+        elif prev_module is None:
+            prev_cnn = False
+
+        if current_cnn:
+            if not prev_cnn:
+                if prev_module not in permuted:
+                    layers[name][1]["permute_in"] = True
+                    permuted.append(prev_module)
+            if not next_cnn:
+                layers[name][1]["permute_out"] = True
+
+        prev_module = name
+
+    return layers
+
+
 def wrap_transform_layers(layers, inputs_outputs, layer_of_output,
-                          _modules=None, is_layer=True):
+                          modules, subnns=None, is_layer=True):
     """
     It wraps the 'transform_layers' function so that it returns two 
     outputs instead of one. It is used to unify the outputs of 
     'transform_layers' functions from both Torch and TensorFlow.
     """
     return (transform_layers(layers, inputs_outputs, layer_of_output,
-                             is_layer),
+                             modules, subnns, is_layer),
             None)
 
 def handle_params(layer_elems, layer_name, inputs_outputs, layer_of_output,
@@ -61,9 +113,8 @@ def handle_params(layer_elems, layer_name, inputs_outputs, layer_of_output,
             layer_params["return_type"] = "full"
         elif param == "return_state" and layer_elems[1][param] is True:
             layer_params["return_type"] = "hidden"
-        #"permute_dim" not needed in tf
         if param in ["activation", "return_sequences", "return_state",
-                     "units", "permute_dim"]:
+                     "units"]:
             del layer_elems[1][param]
         elif param in lookup_layers_params:
             param_name = lookup_layers_params[param]
@@ -109,7 +160,7 @@ def set_default_rnn_return_type(layer_type, layer_params):
 
 def handle_conv_padding(layer_elems, padding_amount):
     """
-    If padding is used before conv layers, it is amount is stored in
+    If padding is used before conv layers, its amount is stored in
     the 'padding_amount' attribute.
     """
     layer_type = layer_elems[0]
@@ -120,3 +171,4 @@ def handle_conv_padding(layer_elems, padding_amount):
             layer_elems[1]["padding_amount"] = padding_amount
             padding_amount = None
     return layer_elems, padding_amount
+

@@ -502,7 +502,7 @@ def state_machine_to_json(content: str):
                 
                 elements[code_block_id] = {
                     "id": code_block_id,
-                    "name": "",
+                    "name": function_name,  
                     "type": "StateCodeBlock",
                     "owner": None,
                     "bounds": {
@@ -547,37 +547,6 @@ def state_machine_to_json(content: str):
                                 }
                             }
                             elements[state['id']]["bodies"].append(body_id)
-                            
-                            # Create code block
-                            code_block_id = str(uuid.uuid4())
-                            function_source = functions[body_func]['source']
-                            
-                            # Clean up the source code and preserve all content
-                            cleaned_source = "\n".join(
-                                line.rstrip() 
-                                for line in function_source.splitlines()
-                            )
-                            
-                            elements[code_block_id] = {
-                                "id": code_block_id,
-                                "name": "",
-                                "type": "StateCodeBlock",
-                                "owner": None,
-                                "bounds": {
-                                    "x": code_blocks_x,
-                                    "y": code_blocks_y,
-                                    "width": 580,
-                                    "height": 200
-                                },
-                                "text": cleaned_source,
-                                "language": "python",
-                                "code": {
-                                    "content": cleaned_source,
-                                    "language": "python",
-                                    "version": "1.0"
-                                }
-                            }
-                            code_blocks_x += 610
                     
                     # Handle when_event_go_to
                     elif node.value.func.attr == 'when_event_go_to':

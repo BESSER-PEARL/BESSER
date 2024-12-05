@@ -498,11 +498,12 @@ def state_machine_to_json(content: str):
                 cleaned_source = "\n".join(
                     line.rstrip() 
                     for line in function_source.splitlines()
+                    if line.strip()  # Only include non-empty lines
                 )
                 
                 elements[code_block_id] = {
                     "id": code_block_id,
-                    "name": function_name,  
+                    "name": function_name,
                     "type": "StateCodeBlock",
                     "owner": None,
                     "bounds": {
@@ -519,7 +520,10 @@ def state_machine_to_json(content: str):
                         "version": "1.0"
                     }
                 }
-                created_code_blocks[function_name] = code_block_id
+                created_code_blocks[function_name] = {
+                    "id": code_block_id,
+                    "source": cleaned_source
+                }
                 code_blocks_x += 610
     
     # Third pass: process state bodies and transitions
@@ -531,7 +535,7 @@ def state_machine_to_json(content: str):
                     if node.value.func.attr == 'set_body':
                         state_var = node.value.func.value.id
                         body_func = node.value.keywords[0].value.id
-                        if state_var in states and body_func in functions:
+                        if state_var in states and body_func in created_code_blocks:
                             state = states[state_var]
                             body_id = str(uuid.uuid4())
                             elements[body_id] = {

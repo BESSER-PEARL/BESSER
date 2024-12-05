@@ -23,7 +23,7 @@
 {% if model.train_data.input_format == "csv" %}import pandas as pd {%- endif %}
 from torch import nn
 {% if model.train_data.input_format == "images" %}from torchvision import datasets, transforms
-{% if model.train_data.image.normalize %}from besser.generators.nn.utils import compute_mean_std{%- endif %}{%- endif %}
+{% if model.train_data.image.normalize %}from besser.generators.nn.utils_nn import compute_mean_std{%- endif %}{%- endif %}
 {% if model.train_data %}{% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
 {%- else -%} from sklearn.metrics import mean_absolute_error {%- endif %}{%- endif %} 
 {% endmacro -%}

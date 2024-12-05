@@ -28,7 +28,7 @@ from keras import layers
 {%- endif %}
 {%- for module_name, module_details in modules_details.items() -%}
 {%- if module_name.endswith("layer") %}{% if module_details[0].split("=")[1].strip().startswith("tfa") %}import tensorflow_addons as tfa{% endif %}{% endif %}{% endfor %}
-{% if model.train_data.input_format == "images" %}from besser.generators.nn.utils import compute_mean_std{%- endif %}
+{% if model.train_data.input_format == "images" %}from besser.generators.nn.utils_nn import compute_mean_std{%- endif %}
 {% endmacro -%}
 
 

@@ -1,8 +1,9 @@
 import uuid
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
     Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY
-from ..utils.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
-from ..utils.constants import VISIBILITY_MAP, RELATIONSHIP_TYPES
+from besser.BUML.metamodel.state_machine import Body, Event, StateMachine
+from besser_backend.utils.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
+from besser_backend.utils.constants import VISIBILITY_MAP, RELATIONSHIP_TYPES
 from .layout_calculator import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
@@ -147,11 +148,28 @@ def parse_multiplicity(multiplicity_str):
     )
     return Multiplicity(min_multiplicity=min_multiplicity, max_multiplicity=max_multiplicity)
 
-def json_to_buml(json_data):
-    """Convert JSON data to a BUML DomainModel object."""
-    domain_model = DomainModel("Domain Model")
-    elements = json_data.get("elements", {}).get("elements", {})
-    relationships = json_data.get("elements", {}).get("relationships", {})
+# def json_to_buml(json_data):
+#     """Convert JSON data to a BUML DomainModel or StateMachine object."""
+#     # Get diagram type from the correct location in the JSON structure
+#     diagram_type = json_data.get("type")
+#     print(f"Diagram type: {diagram_type}")
+#     if diagram_type == "ClassDiagram":
+#         return process_class_diagram(json_data)
+#     elif diagram_type == "StateMachineDiagram":
+#         print("PROCESSING STATE MACHINE JSON")
+#         return process_state_machine(json_data)
+#     else:
+#         raise ValueError(f"Unsupported diagram type: {diagram_type}")
+
+
+
+def process_class_diagram(json_data):
+    """Process Class Diagram specific elements."""
+    domain_model = DomainModel("Class Diagram")
+    elements = json_data.get("elements", {})
+    relationships = json_data.get("relationships", {})
+    print(f"Elements: {elements}")
+    print(f"Relationships: {relationships}")
 
     # First process enumerations to have them available for attribute types
     for element_id, element in elements.items():
@@ -285,3 +303,112 @@ def json_to_buml(json_data):
             domain_model.generalizations.add(generalization)
 
     return domain_model
+
+def process_state_machine(json_data):
+    """Process State Machine Diagram specific elements and return Python code as string."""
+    code_lines = []
+    code_lines.append("import datetime")
+    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event\n")
+    
+    sm_name = json_data.get("name", "Generated State Machine")
+    code_lines.append(f"sm = StateMachine(name='{sm_name}')\n")
+    
+    elements = json_data.get("elements", {})
+    relationships = json_data.get("relationships", {})
+    
+    # Track states by ID for later reference
+    states_by_id = {}
+    body_names = set()
+    event_names = set()
+    
+    # Collect all body and event names first
+    for element in elements.values():
+        if element.get("type") == "StateBody":
+            body_names.add(element.get("name"))
+        elif element.get("type") == "StateFallbackBody":
+            body_names.add(element.get("name"))
+    
+    # Collect event names from transitions
+    for rel in relationships.values():
+        if rel.get("type") == "StateTransition" and rel.get("name"):
+            event_names.add(rel.get("name"))
+    
+    # Write function definitions first
+    for element in elements.values():
+        if element.get("type") == "StateCodeBlock":
+            name = element.get("name", "")
+            code_content = element.get("code", {}).get("content", "")
+            
+            # Clean up the code content by removing extra newlines
+            cleaned_code = "\n".join(line for line in code_content.splitlines() if line.strip())
+            
+            # Write the function definition with its code content
+            code_lines.append(cleaned_code)  # Write the actual function code
+            code_lines.append("")  # Add single blank line after function
+            
+            if name in body_names:
+                code_lines.append(f"{name} = Body(name='{name}', callable={name})")
+            if name in event_names:
+                code_lines.append(f"{name} = Event(name='{name}', callable={name})")
+            code_lines.append("")  # Add blank line after Body/Event creation
+    
+    # Create states
+    for element_id, element in elements.items():
+        if element.get("type") == "State":
+            is_initial = False
+            for rel in relationships.values():
+                if (rel.get("type") == "StateTransition" and 
+                    rel.get("target", {}).get("element") == element_id and
+                    elements.get(rel.get("source", {}).get("element", ""), {}).get("type") == "StateInitialNode"):
+                    is_initial = True
+                    break
+            
+            state_name = element.get("name", "")
+            code_lines.append(f"{state_name}_state = sm.new_state(name='{state_name}', initial={str(is_initial)})")
+            states_by_id[element_id] = state_name
+    code_lines.append("")
+    
+    # Assign bodies to states
+    for element_id, element in elements.items():
+        if element.get("type") == "State":
+            state_name = element.get("name", "")
+            for body_id in element.get("bodies", []):
+                body_element = elements.get(body_id)
+                if body_element:
+                    body_name = body_element.get("name")
+                    if body_name in body_names:
+                        code_lines.append(f"{state_name}_state.set_body(body={body_name})")
+            
+            for fallback_id in element.get("fallbackBodies", []):
+                fallback_element = elements.get(fallback_id)
+                if fallback_element:
+                    fallback_name = fallback_element.get("name")
+                    if fallback_name in body_names:
+                        code_lines.append(f"{state_name}_state.set_fallback_body({fallback_name})")
+    code_lines.append("")
+    
+    # Write transitions
+    for relationship in relationships.values():
+        if relationship.get("type") == "StateTransition":
+            source_id = relationship.get("source", {}).get("element")
+            target_id = relationship.get("target", {}).get("element")
+            
+            if elements.get(source_id, {}).get("type") == "StateInitialNode":
+                continue
+                
+            source_name = states_by_id.get(source_id)
+            target_name = states_by_id.get(target_id)
+            
+            if source_name and target_name:
+                event_name = relationship.get("name", "")
+                params = relationship.get("params")
+                
+                if event_name:
+                    event_params = f"event_params={{ {params} }}" if params else "event_params={}"
+                    code_lines.append(f"{source_name}_state.when_event_go_to(")
+                    code_lines.append(f"    event={event_name},")
+                    code_lines.append(f"    dest={target_name}_state,")
+                    code_lines.append(f"    {event_params}")
+                    code_lines.append(")")
+    
+    return "\n".join(code_lines)

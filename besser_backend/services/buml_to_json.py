@@ -4,8 +4,8 @@ from besser.BUML.metamodel.structural import (
     Enumeration, EnumerationLiteral, BinaryAssociation, Generalization, 
     Multiplicity, UNLIMITED_MAX_MULTIPLICITY
 )
-from ..utils.constants import VISIBILITY_MAP, RELATIONSHIP_TYPES
-from .layout_calculator import calculate_center_point, determine_connection_direction, calculate_connection_points, calculate_path_points, calculate_relationship_bounds
+from besser_backend.utils.constants import VISIBILITY_MAP, RELATIONSHIP_TYPES
+from besser_backend.services.layout_calculator import calculate_center_point, determine_connection_direction, calculate_connection_points, calculate_path_points, calculate_relationship_bounds
 
 
 def parse_buml_content(content: str) -> DomainModel:

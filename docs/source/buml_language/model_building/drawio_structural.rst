@@ -36,13 +36,13 @@ You can do this in two ways:
     # Generate model and save to Python file
     library_buml: DomainModel = structural_drawio_to_buml(
         drawio_file_path='library.drawio',
-        file_path='library_model'
+        buml_file_path='library_model'
     )
 
 .. note::
     
     The ``drawio_file_path`` parameter contains the path and name of the ``.drawio`` model to be transformed
-    The optional ``buml_model_file_name`` parameter specifies the name for the generated Python file (without extension)
+    The optional ``buml_file_path`` parameter specifies the name for the generated Python file (without extension)
 
 ``library_buml`` is the B-UML model containing the domain specification. You can look up the classes, attributes, relationships, 
 etc. For example, the following is the way to get the class names.

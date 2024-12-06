@@ -6,7 +6,7 @@ from keras import layers
 
 from sklearn.metrics import classification_report 
 
-from besser.generators.nn.utils import compute_mean_std
+from besser.generators.nn.utils_nn import compute_mean_std
 
 
 # Define the network architecture
@@ -50,11 +50,11 @@ def preprocess_image(image, label, to_scale):
 
 
 # Load dataset (resizes by default)
-def load_dataset(directory, mode):
+def load_dataset(directory, mode, image_size):
     dataset = tf.keras.preprocessing.image_dataset_from_directory(
         directory=directory,
         label_mode="int",
-        image_size=IMAGE_SIZE,
+        image_size=image_size,
         batch_size=32,
         shuffle=True if mode == 'train' else False,
     )
@@ -67,8 +67,8 @@ def load_dataset(directory, mode):
     return dataset
 
 # Load datasets
-train_loader = load_dataset(r"dataset\cifar10\train", "train")
-test_loader = load_dataset(r"dataset\cifar10\test", "test")
+train_loader = load_dataset(r"dataset\cifar10\train", "train", IMAGE_SIZE)
+test_loader = load_dataset(r"dataset\cifar10\test", "test", IMAGE_SIZE)
 
 
 # Define the network, loss function, and optimizer
@@ -91,7 +91,8 @@ for epoch in range(10):
             if labels.shape.rank > 1 and labels.shape[-1] == 1:
                 labels = tf.squeeze(labels, axis=-1)
             labels = tf.cast(labels, dtype=tf.int32)
-            labels = tf.one_hot(labels, depth=10)
+            labels = tf.one_hot(labels, depth=10
+    )
             loss = criterion(labels, outputs)
         # Compute gradients and update model parameters
         gradients = tape.gradient(loss, my_model.trainable_variables)
@@ -124,7 +125,8 @@ for inputs, labels in test_loader:
     if labels.shape.rank > 1 and labels.shape[-1] == 1:
         labels = tf.squeeze(labels, axis=-1)
     labels = tf.cast(labels, dtype=tf.int32)
-    labels = tf.one_hot(labels, depth=10)
+    labels = tf.one_hot(labels, depth=10
+    )
     predicted_labels.extend(predicted)
     test_loss += criterion(labels, outputs).numpy()
 

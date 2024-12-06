@@ -31,7 +31,7 @@ class NeuralNetwork(tf.keras.Model):
         x_1 = self.l4(x_1)
         x_2 = self.l5(x)
         x_2 = self.l6(x_2)
-        x_2 = tf.concat([x_1, x_2], axis=1)
+        x_2 = tf.concat([x_1, x_2], axis=-1)
         x_2 = self.l7(x_2)
         x_2 = self.l8(x_2)
         x_2 = self.l9(x_2)

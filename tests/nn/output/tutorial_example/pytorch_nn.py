@@ -24,6 +24,7 @@ class NeuralNetwork(nn.Module):
 
 
     def forward(self, x):
+        x = x.permute(0, 3, 1, 2)
         x = self.l1(x)
         x = self.relu_activ(x)
         x = self.l2(x)
@@ -32,6 +33,7 @@ class NeuralNetwork(nn.Module):
         x = self.l4(x)
         x = self.l5(x)
         x = self.relu_activ(x)
+        x = x.permute(0, 3, 1, 2)
         x = self.l6(x)
         x = self.l7(x)
         x = self.relu_activ(x)

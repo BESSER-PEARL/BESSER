@@ -3,11 +3,11 @@ Module providing a class that extracts information from the AST of a
 neural network written in PyTorch.
 """
 import ast
-from besser.generators.nn_reverse.code2buml.ast_parser import ASTParser
+from besser.generators.nn_reverse.code2buml.ast_parser_nn import ASTParser
 from besser.generators.nn_reverse.torch2buml.definitions import (
-    lookup_actv_fun, rnn_cnn_layers
+    lookup_actv_fun, cnn_layers
 )
-from besser.generators.nn_reverse.torch2buml.transform_functions import (
+from besser.generators.nn_reverse.torch2buml.transform_func_pytorch import (
     transform_actv_func
 )
 
@@ -174,7 +174,7 @@ class ASTParserTorch(ASTParser):
         It adds the permute op as parameter to its following layer if
         it is a cnn or rnn layer.
         """
-        if (self.modules["layers"][layer_name][0] in rnn_cnn_layers and
+        if (self.modules["layers"][layer_name][0] in cnn_layers and
             len(self.modules["tensorops"])!=0):
             #make sure the previous module is neither a layer nor a sub_nn
             if (isinstance(self.previous_assign.targets[0], ast.Name) and
@@ -183,7 +183,7 @@ class ASTParserTorch(ASTParser):
                     ops_name = self.previous_assign.value.func.attr
                     if ops_name == "permute":
                         layer_param = self.modules["layers"][layer_name][1]
-                        layer_param["permute_dim"] = True
+                        layer_param["permute_in"] = True
                         self.modules["tensorops"].popitem()
                         self.modules["order"].popitem()
 
@@ -194,23 +194,21 @@ class ASTParserTorch(ASTParser):
         ops_args = node.value.args
         tensorop_param = None
         if ops_name == "permute":
-            permute_dim=[ops_args[0].value, ops_args[1].value,
-                            ops_args[2].value]
-            tensorop_param = {"type": "permute", "permute_dim": permute_dim}
+            tensorop_param = self.extract_tensorop_permute(ops_args)
         elif ops_name == "cat":
             tensorop_param = self.extract_tensorop_concatenate(node)
         elif ops_name == "mul" or ops_name == "matmul":
             layers_of_tensors = [self.layer_of_output[ops_args[0].id],
                                  self.layer_of_output[ops_args[1].id]]
-            tensorop_param = {"type": ops_name+"tiply",
+            tensorop_param = {"tns_type": ops_name+"tiply",
                               "layers_of_tensors": layers_of_tensors}
         elif ops_name == "transpose":
             transpose_dim = [ops_args[i].value for i in range(len(ops_args))]
-            tensorop_param = {"type": ops_name,
+            tensorop_param = {"tns_type": ops_name,
                               "transpose_dim": transpose_dim}
         elif ops_name == "reshape":
             reshape_dim = [ops_args[0].value, ops_args[1].value]
-            tensorop_param = {"type": ops_name,
+            tensorop_param = {"tns_type": ops_name,
                               "reshape_dim": reshape_dim}
         else:
             print(f"{ops_name} is not recognized!")
@@ -236,10 +234,30 @@ class ASTParserTorch(ASTParser):
         else:
             layers_of_tensors = [self.layer_of_output[ops_args[0].id],
                                  self.layer_of_output[ops_args[1].id]]
-            cat_dim = node.value.keywords[0].value.value
-            tensorop_param = {"type": "concatenate",
+            cat_dim = self.param_value(node.value.keywords[0].value)
+
+            tensorop_param = {"tns_type": "concatenate",
                               "layers_of_tensors": layers_of_tensors,
                               "concatenate_dim": cat_dim}
+        return tensorop_param
+
+
+    def extract_tensorop_permute(self, ops_args):
+        """
+        It extracts the permute tensorop information
+        """
+        tensorop_param = None
+        last_module = next(reversed(self.modules["order"]), None)
+        if last_module in self.modules["layers"]:
+            lyr_type = self.modules["layers"][last_module][0]
+            if lyr_type in cnn_layers:
+                layer_param = self.modules["layers"][last_module][1]
+                layer_param["permute_out"] = True
+        else:
+            permute_dim=[ops_args[0].value, ops_args[1].value,
+                         ops_args[2].value]
+            tensorop_param = {"tns_type": "permute",
+                            "permute_dim": permute_dim}
         return tensorop_param
 
     def handle_outer_attribute_assignment(self, node):

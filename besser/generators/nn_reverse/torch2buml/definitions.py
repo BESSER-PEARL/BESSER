@@ -34,7 +34,8 @@ lookup_layers_params = {
     "num_embeddings": "num_embeddings", "embedding_dim": "embedding_dim", 
     "start_dim": "start_dim", "end_dim": "end_dim", 
     "in_features": "in_features", "out_features": "out_features",
-    "return_type": "return_type", "permute_dim": "permute_dim"
+    "return_type": "return_type", "permute_in": "permute_in",
+    "permute_out": "permute_out"
 }
 
 layers_fixed_params = {
@@ -58,7 +59,7 @@ layers_fixed_params = {
     "BatchNorm3d": {"dimension": "3D"},
 }
 
-rnn_cnn_layers = ["LSTM", "GRU", "SimpleRNN",
+cnn_layers = ["LSTM", "GRU", "SimpleRNN",
                   "Conv1d", "Conv2d", "Conv3d"]
 
 config_list = ["batch_size", "epochs", "learning_rate",

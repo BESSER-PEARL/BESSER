@@ -5,12 +5,12 @@ Helper functions to transform NN Torch code to BUML code.
 from besser.generators.nn_reverse.torch2buml.definitions import (
     lookup_layers, lookup_layers_params, layers_fixed_params, lookup_actv_fun
 )
-from besser.generators.nn_reverse.code2buml.utils import (
+from besser.generators.nn_reverse.code2buml.utils_code2buml import (
     handle_remaining_params
 )
 
 def transform_layers(layers, inputs_outputs, layer_of_output,
-                     modules, is_layer=True):
+                     modules, is_layer):
     """
     It processes the information related to layers and transforms the layers'
     code from Torch to BUML.
@@ -34,6 +34,18 @@ def transform_layers(layers, inputs_outputs, layer_of_output,
             prev_layer = layer_name
     return layers, modules
 
+def wrap_transform_layers(layers, inputs_outputs, layer_of_output,
+                          modules, subnns=None, is_layer=True):
+    """
+    It wraps the `transform_layers` function so that it accepts
+    an additional param `subnns` to make it similar to the one for
+    TensorFlow.
+    """
+
+    return transform_layers(layers, inputs_outputs, layer_of_output,
+                            modules, is_layer)
+    
+
 def handle_params(layer_elems, layer_name, inputs_outputs,
                   layer_of_output, is_layer=True):
     """It processes and transforms the layers' parameters"""
@@ -53,7 +65,7 @@ def handle_params(layer_elems, layer_name, inputs_outputs,
         if inputs_outputs[layer_name][0] != inputs_outputs[layer_name][1]:
             layer_params["input_reused"] = True
             lyr_in = layer_of_output[inputs_outputs[layer_name][0]]
-            layer_params["name_layer_input"] = lyr_in
+            layer_params["name_module_input"] = lyr_in
 
     layer_params = handle_remaining_params(layer_params, layer_type,
                                            layer_name, inputs_outputs,

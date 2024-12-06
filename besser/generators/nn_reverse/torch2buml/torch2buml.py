@@ -7,13 +7,15 @@ Argument:
 """
 
 import sys
-from besser.generators.nn_reverse.torch2buml.ast_parser import ASTParserTorch
-from besser.generators.nn_reverse.torch2buml.transform_functions import (
-    transform_layers
+from besser.generators.nn_reverse.torch2buml.ast_parser_pytorch import (
+    ASTParserTorch
+)
+from besser.generators.nn_reverse.torch2buml.transform_func_pytorch import (
+    wrap_transform_layers
 )
 from besser.generators.nn_reverse.torch2buml.definitions import config_list, \
     train_param_list, test_param_list, lookup_loss_func
-from besser.generators.nn_reverse.code2buml.utils import (
+from besser.generators.nn_reverse.code2buml.utils_code2buml import (
     parse_arguments_code2buml, code2buml
 )
 
@@ -25,7 +27,7 @@ def main():
     f = open("code_transformed.py", "w", encoding="utf-8")
     sys.stdout = f
 
-    nn_name = code2buml(args, ASTParserTorch, "Pytorch", transform_layers,
+    nn_name = code2buml(args, ASTParserTorch, "Pytorch", wrap_transform_layers,
                         config_list, train_param_list, test_param_list,
                         lookup_loss_func)
 

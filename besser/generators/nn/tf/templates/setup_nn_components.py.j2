@@ -22,6 +22,7 @@ from keras import layers
 {% for module_name, module_details in modules_details.items() -%}
 {% if module_name.endswith("nn") and si.sequential_imported == False %}from keras.models import Sequential{%- set si.sequential_imported = True -%} {% endif %}{% endfor %}
 {% if model.train_data is not none %}
+from datetime import datetime
 {% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report
 {%- else -%}from sklearn.metrics import mean_absolute_error{%- endif %} 
 {% if model.train_data.input_format == "csv" %}import pandas as pd{%- endif %}
@@ -352,4 +353,11 @@ for metric in metrics:
 mae = mean_absolute_error(true_labels, predicted_labels)
 print("Mean Absolute Error (MAE):", mae)
 {%- endif -%}
+{% endmacro -%}
+
+
+{% macro save_model(model) -%}
+print('##### Saving the model')
+{{ model.name }}.save(f"{{ model.name | lower }}_{datetime.now}")
+print("The model is saved successfully")
 {% endmacro -%}

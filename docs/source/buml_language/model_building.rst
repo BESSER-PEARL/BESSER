@@ -8,3 +8,4 @@ Creating your B-UML model
   model_building/grammars
   model_building/image_to_buml
   model_building/drawio_structural
+  model_building/gui_apollon

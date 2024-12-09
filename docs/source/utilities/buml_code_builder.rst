@@ -5,7 +5,7 @@ The B-UML code builder component provides functionality to generate Python code 
 can be used to recreate the model programmatically.
 
 Code Generation
---------------
+------------------
 
 To generate Python code from a B-UML domain model, you can use the ``domain_model_to_code()`` function as follows:
 

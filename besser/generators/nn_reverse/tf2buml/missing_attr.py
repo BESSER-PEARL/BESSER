@@ -180,6 +180,9 @@ def extract_code(file_path, shape):
         extract_nn_code(file_path)
     )
 
+    if loader_name is None and shape is None:
+        return None
+
     model_code = modify_nn_call(call_code, init_code)
     loader_code = "".join(loader_code)
 
@@ -285,6 +288,8 @@ def get_attributes(extractor, filename, shape=None):
     """
 
     code = extract_code(filename, shape)
+    if code is None:
+        return extractor
     shape_attr = execute_code(code)
     if shape_attr is None:
         return extractor

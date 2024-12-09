@@ -51,8 +51,7 @@ def code2buml(args, ast_parser_class, framework, transform_layers,
 
     nn_name = extractor.nn_name
     if framework == "TF":
-        extractor = get_attributes(extractor, args.filename,
-                                                   shape)
+        extractor = get_attributes(extractor, args.filename, shape)
     extractor = transform_modules(extractor, transform_layers)
     print_imports(extractor, framework)
     print_subnn_def(extractor.modules["sub_nns"])

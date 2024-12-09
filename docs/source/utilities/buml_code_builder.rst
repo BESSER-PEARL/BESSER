@@ -1,5 +1,5 @@
 B-UML Code Builder
-=================
+=====================
 
 The B-UML code builder component provides functionality to generate Python code from B-UML domain models. This generated code
 can be used to recreate the model programmatically.

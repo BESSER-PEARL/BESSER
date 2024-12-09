@@ -77,7 +77,6 @@ To generate the py file, set the ``buml_file_path`` parameter with your desired 
     library_buml: DomainModel = plantuml_to_buml(plantUML_model_path='library.plantuml', 
                                                  buml_file_path="buml/model.py")
 
-.. note::
 
 After running this code, the file ``model.py`` with your BUML model source code will be created in the ``buml`` folder, containing content similar 
 to the following example:

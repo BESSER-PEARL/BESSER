@@ -1,0 +1,14 @@
+Version 2.0.0
+=============
+
+New features
+------------
+
+* Apollon Integration: Visual UML modeling support through web-based Apollon editor
+* State Machine Generator: New code generator for state machine models
+
+Improvements
+------------
+
+* Visual Modeling: Graphical interface for creating and editing models
+* Documentation: Comprehensive guides for all new features and integrations

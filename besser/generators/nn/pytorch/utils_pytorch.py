@@ -94,14 +94,6 @@ class SetupLayerSyntax:
         """It defines the syntax of rnn layers."""
         cls_name = self.layer.__class__.__name__
         lyr_name = self.layer.name
-
-        if self.layer.permute_dim:
-            permute = TensorOp(name=f"{lyr_name}_op", tns_type="permute",
-                               permute_dim=[0, 2, 1])
-            tns_out = utils.handle_tensorop
-            self.modules_details = tns_out(permute, self.modules_details,
-                                           get_tensorop_syntax)
-
         layer_type = cls_name[:-5]
         in_sz = self.layer.input_size
         h_sz = self.layer.hidden_size

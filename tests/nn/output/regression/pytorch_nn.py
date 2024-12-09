@@ -1,6 +1,7 @@
 """PyTorch code generated based on BUML."""
 
 import torch
+from datetime import datetime
 import pandas as pd
 from torch import nn
 
@@ -115,3 +116,8 @@ print(f"Test Loss: {average_loss:.3f}")
 metrics = ['mae']
 mae = mean_absolute_error(true_labels, predicted_labels)
 print(f"Mean Absolute Error (MAE): {mae}")
+
+# Save the neural network
+print('##### Saving the model')
+torch.save(my_model, f"my_model_{datetime.now}.pth")
+print("The model is saved successfully")

@@ -4,6 +4,7 @@ import tensorflow as tf
 from keras import layers
 
 
+from datetime import datetime
 from sklearn.metrics import classification_report 
 
 from besser.generators.nn.utils_nn import compute_mean_std
@@ -148,3 +149,9 @@ for metric in metrics:
     metric_value = sum(metric_list) / len(metric_list)
     print(f"Average {metric.capitalize()}: {metric_value:.2f}")
     print(f"Accuracy: {report['accuracy']}")
+
+
+# Save the neural network
+print('##### Saving the model')
+my_model.save(f"my_model_{datetime.now}")
+print("The model is saved successfully")

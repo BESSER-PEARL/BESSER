@@ -1,6 +1,7 @@
 """PyTorch code generated based on BUML."""
 
 import torch
+from datetime import datetime
 
 from torch import nn
 from torchvision import datasets, transforms
@@ -134,3 +135,9 @@ for metric in metrics:
     metric_value = sum(metric_list) / len(metric_list)
     print(f"Average {metric.capitalize()}: {metric_value:.2f}")
     print(f"Accuracy: {report['accuracy']}")
+
+
+# Save the neural network
+print('##### Saving the model')
+torch.save(my_model, f"my_model_{datetime.now}.pth")
+print("The model is saved successfully")

@@ -4,6 +4,7 @@ import tensorflow as tf
 from keras import layers
 
 
+from datetime import datetime
 from sklearn.metrics import mean_absolute_error 
 import pandas as pd
 
@@ -121,3 +122,8 @@ print(f"Test Loss: {average_loss:.3f}")
 metrics = ['mae']
 mae = mean_absolute_error(true_labels, predicted_labels)
 print("Mean Absolute Error (MAE):", mae)
+
+# Save the neural network
+print('##### Saving the model')
+my_model.save(f"my_model_{datetime.now}")
+print("The model is saved successfully")

@@ -282,5 +282,5 @@ print(f"Mean Absolute Error (MAE): {mae}")
 {% macro save_model(model) -%}
 print('##### Saving the model')
 torch.save({{ model.name }}, f"{{ model.name | lower }}_{datetime.now}.pth")
-print(f"The model is saved successfully")
+print("The model is saved successfully")
 {% endmacro -%}

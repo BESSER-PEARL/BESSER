@@ -16,9 +16,12 @@
 {%- endmacro -%}
 
 
+from datetime import datetime
+
 {%- macro print_imports(model, modules_details) %}
 {%- set ti = namespace(torch_imported=False) -%}
-{% if model.train_data is not none %}import torch {%- set ti.torch_imported = True %}{%- endif %}
+{% if model.train_data is not none %}import torch
+from datetime import datetime {%- set ti.torch_imported = True %}{%- endif %}
 {%- for module_name, module_details in modules_details.items() -%}{% if ti.torch_imported == False and ((module_name.endswith("op") and module_details[0].startswith("torch")) or (module_details[-1].__class__.mro()[1].__name__ == "RNN" and module_details[-1].bidirectional and module_details[-1].return_type == "hidden"))%}import torch {%- set ti.torch_imported = True -%}{%- endif %}{%- endfor %}
 {% if model.train_data.input_format == "csv" %}import pandas as pd {%- endif %}
 from torch import nn
@@ -272,4 +275,12 @@ for metric in metrics:
 mae = mean_absolute_error(true_labels, predicted_labels)
 print(f"Mean Absolute Error (MAE): {mae}")
 {%- endif -%}
+{% endmacro -%}
+
+
+
+{% macro save_model(model) -%}
+print('##### Saving the model')
+torch.save({{ model.name }}, f"{{ model.name | lower }}_{datetime.now}.pth")
+print(f"The model is saved successfully")
 {% endmacro -%}

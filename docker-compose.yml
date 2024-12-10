@@ -13,7 +13,7 @@ services:
     volumes:
       - ./besser/utilities/besser_backend/Apollon:/app
       - /app/node_modules
-    command: yarn start
+    command: npm start
 
   backend:
     build:

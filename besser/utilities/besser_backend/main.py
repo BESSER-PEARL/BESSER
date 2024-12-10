@@ -107,11 +107,13 @@ async def generate_output(input_data: ClassDiagramInput):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 @app.post("/export-buml")
-async def export_buml(input_data: dict):
+async def export_buml(input_data: ClassDiagramInput):
     try:
-        # print("Input data received for BUML export:", input_data)
-
-        # Create and clear output directory
+        # Convert Pydantic model to dictionary
+        json_data = input_data.dict()
+        elements_data = input_data.elements  # Extract elements directly from the Pydantic model
+        print("Input data received:", json_data)
+        # Ensure output directory is clean
         os.makedirs("output", exist_ok=True)
         for file in os.listdir("output"):
             file_path = os.path.join("output", file)
@@ -121,12 +123,8 @@ async def export_buml(input_data: dict):
             except Exception as e:
                 print(f"Error deleting {file_path}: {e}")
 
-        # Get the elements data which contains the actual diagram content
-        elements_data = input_data.get("elements", {})
-        
-        # Check diagram type from the elements data
+        # Check diagram type
         if elements_data.get("type") == "StateMachineDiagram":
-            # print("Processing State Machine Diagram")
             # Handle state machine diagram
             state_machine_code = process_state_machine(elements_data)
             output_file_path = "output/state_machine.py"
@@ -135,17 +133,26 @@ async def export_buml(input_data: dict):
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
             shutil.rmtree("output", ignore_errors=True)
-            return Response(content=file_content, media_type="text/plain", headers={"Content-Disposition": f"attachment; filename=state_machine.py"})
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={"Content-Disposition": f"attachment; filename=state_machine.py"}
+            )
+
         elif elements_data.get("type") == "ClassDiagram":
             # Handle class diagram
-            buml_model = process_class_diagram(elements_data)
-            # print(f"BUML model created: {buml_model}")
+            buml_model = process_class_diagram(json_data)  # Use elements_data directly
             output_file_path = "output/domain_model.py"
             domain_model_to_code(model=buml_model, file_path=output_file_path)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
             shutil.rmtree("output", ignore_errors=True)
-            return Response(content=file_content, media_type="text/plain", headers={"Content-Disposition": f"attachment; filename=domain_model.py"})
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={"Content-Disposition": f"attachment; filename=domain_model.py"}
+            )
+
         else:
             raise ValueError(f"Unsupported or missing diagram type: {elements_data.get('type')}")
 
@@ -155,6 +162,7 @@ async def export_buml(input_data: dict):
     except Exception as e:
         print(f"Error during BUML export: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
 
 @app.post("/get-json-model")
 async def get_json_model(buml_file: UploadFile = File(...)):

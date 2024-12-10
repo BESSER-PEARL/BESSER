@@ -5,7 +5,7 @@ BESSER provides integration with `Apollon <https://apollon-library.readthedocs.i
 Apollon is an open-source, modern UML editor supporting various diagram types.
 
 .. image:: ../../img/library_apollon.png
-   :width: 550
+   :width: 500
    :alt: Library model in Apollon
    :align: center
 
@@ -51,7 +51,8 @@ Submodule Integration
 ---------------------
 
 1. **Clone BESSER**
-   Clone the BESSER repository with the Apollon submodule:
+
+   - Clone the BESSER repository with the Apollon submodule:
 
    .. code-block:: bash
 
@@ -61,14 +62,16 @@ Submodule Integration
       git submodule update
 
 2. **Launch Services**
-   Use Docker Compose to start both BESSER and Apollon:
+
+   - Use Docker Compose to start both BESSER and Apollon:
 
    .. code-block:: bash
 
       docker-compose up
 
 3. **Access Apollon**
-   Open your browser and navigate to ``http://localhost:8888``.
+
+   - Open your browser and navigate to ``http://localhost:8888``.
 
 Running Components Independently
 --------------------------------

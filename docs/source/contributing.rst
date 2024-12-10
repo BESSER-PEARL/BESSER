@@ -11,11 +11,11 @@ Our Team
 Maintainers:
 
 * `Iván Alfonso <https://github.com/ivan-alfonso>`_
+* `Armen Sulejmani <https://github.com/ArmenSl>`_
 * `Jordi Cabot <https://github.com/jcabot>`_
 
 We want to recognize the work of the contributors:
 
-* `Armen Sulejmani <https://github.com/Arm-Sl>`_
 * `Aaron Conrardy <https://github.com/Aran30>`_
 * `Fitash Ul-Haq <https://github.com/FitashUlHaq>`_
 * `Marcos Gomez <https://github.com/mgv99>`_

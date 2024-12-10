@@ -53,9 +53,9 @@ expression:
           | Arrow LAST LPAREN RPAREN+ expression? #LAST
           | Arrow APPEND LPAREN (SingleQuote? expression SingleQuote? COMMA?)*  RPAREN+ expression?   #APPEND
 
-          | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN (ID (COLON ID)? COMMA?)+ PIPE expression RPAREN endExpression? #COLLECTION
+          | Arrow? (FORALL | EXISTS | SELECT|REJECT | COLLECT) LPAREN (ID (COLON ID)? COMMA?)+ PIPE expression RPAREN endExpression? #COLLECTION
 
-          | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN expression RPAREN endExpression? #CollectionExpressionVariable
+          | Arrow? (FORALL | EXISTS | SELECT|REJECT | COLLECT) LPAREN expression RPAREN endExpression? #CollectionExpressionVariable
 //
 //
           | Arrow SYMMETRICDIFFERENCE LPAREN expression RPAREN+ expression? #SYMMETRICDIFFERENCE
@@ -75,6 +75,7 @@ expression:
           | DoubleDots expression #doubleDots
           | AND? OR? ID? DoubleCOLON expression #doubleCOLONs
           | operator numberORUserDefined?  #op
+
           | primaryExpression expression? #ID
 
 
@@ -82,7 +83,7 @@ expression:
 endExpression:  (AND | OR)? expression;
 binaryFunctionCall: operator ((primaryExpression (DOT ID)*) | NUMBER)  ;
 
-binaryExpression:  ((primaryExpression (DOT ID)*) | NUMBER)   (DOT ID)* operator ((primaryExpression (DOT ID)*) | NUMBER) ;
+binaryExpression:  ((primaryExpression (DOT ID)*) | NUMBER| dateLiteral)   (DOT ID)* operator ((primaryExpression (DOT ID)*) | NUMBER| dateLiteral) ;
 unaryExpression: (NOT | MINUS|PLUS|Divide|'*') expression ;
 //
 operator: EQUAL | NOTEQUAL| LT | LE | GT | GE | PLUS|'*' | MINUS | EMPTYSTRING | Divide | AND | OR | XOR | IMPLIES ; // Added 'xor' and 'implies'
@@ -92,6 +93,7 @@ numberORUserDefined: NUMBER |SingleQuote? ID LPAREN? RPAREN? SingleQuote?  ;
 primaryExpression: literal | SELF | functionCall | LPAREN expression RPAREN | ID  ;
 
 literal: NUMBER | STRING_LITERAL | BOOLEAN_LITERAL | NULL ;
+dateLiteral : DATE DoubleCOLON? ('now'|'today')? LPAREN? RPAREN? DOT? 'addDays'? LPAREN? NUMBER? RPAREN?;
 // Function and Property Calls
 
 
@@ -104,9 +106,11 @@ SELF: 'self' ;
 FORALL: 'forAll' ;
 EXISTS: 'exists' ;
 SELECT: 'select' ;
+REJECT: 'reject' ;
 COLLECT: 'collect' ;
 OCLANY: 'OclAny' ;
 OCLVOID: 'OclVoid' ;
+DATE: 'date' | 'Date';
 WS: [ \t\r\n]+ -> skip ;
 
 

@@ -23,7 +23,7 @@ class OCLExpression(TypedElement):
     def source(self) ->Any:
         """Get the source of OCL Expression"""
         return self._source
-    
+
     @source.setter
     def source(self, source)->Any:
         """Set the source of OCL Expression"""
@@ -214,7 +214,7 @@ class IfExp(OCLExpression):
     def elseCondition(self) -> OCLExpression:
         """Get the else Condition of expression"""
         return self._else_expression
-    
+
     @property
     def thenExpression(self) ->OCLExpression:
         """Get the then expression of OCLexpression"""
@@ -417,14 +417,14 @@ class LoopExp(CallExp):
     def get_body(self):
         """Get body of the expression"""
         return self.body
-    
+
     def addIterator(self,iterator):
         """add iterator to the expression"""
         self.iterator.append(iterator)
     # @property
     # def set_iterator (self,iterator):
     #     self.iterator = iterator
-        
+
     @property
     def get_iterator(self):
         """add iterator of the expression"""
@@ -453,7 +453,7 @@ class NumericLiteralExp(PrimitiveLiteralExp):
 
 class IterateExp(LoopExp):
     """A class to define Iterate expression
-    
+
     Args:
         name: name of expression
         type: type of expression
@@ -518,7 +518,22 @@ class BooleanLiteralExpression(LiteralExpression):
 
     def __repr__(self):
         return f'BooleanLiteralExpression({self.value})'
-    
+
+class DateLiteralExpression(LiteralExpression):
+    """ A Date literal Expression of type LiteralExpression
+
+    Args:
+        name (str): the name of the expression
+        value: value of the expression
+    """
+
+    def __init__(self, name: str, value: str):
+        super().__init__(name, type=PrimitiveDataType(name="date"), value=value)
+
+    def __repr__(self):
+        return f'DateLiteralExpression({self.value})'
+
+
 class StringLiteralExpression(LiteralExpression):
     """ A String literal Expression of type LiteralExpression
 
@@ -549,7 +564,7 @@ class InfixOperator:
     def get_infix_operator(self):
         """Get the infinix Operator"""
         return self.operator
-    
+
     def __str__(self):
         return self.operator
 
@@ -569,7 +584,7 @@ class CollectionType(DataType):
     Args:
         name: Name of the expression
     """
-    
+
     def __init__(self,name):
         super().__init__(name)
 
@@ -636,7 +651,7 @@ class CollectionLiteralExp(LiteralExp):
         for item in self.collectionItems:
             toRet = toRet + str(item)
         return toRet
-    
+
     def add(self, item):
         """Method to add item in the collection items"""
         self.collectionItems.append(item)
@@ -672,11 +687,11 @@ class CollectionItem(CollectionLiteralPart):
 
     def __str__(self):
         return str(self.value)+","
-    
+
     def get(self):
         """Get the value of item"""
         return self.value
-    
+
 class CollectionRange(CollectionLiteralPart):
     """A class to define collection range
 

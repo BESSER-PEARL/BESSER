@@ -35,6 +35,9 @@ class Factory:
             return prop
         else:
             raise Exception("Property "+name+ " not found in class "+str(self.context))
+
+    def create_date_literal_expression(self,name,value):
+        return DateLiteralExpression(name,value)
     def create_variable_expression(self,name,type):
         var = VariableExp(name,type)
         return var

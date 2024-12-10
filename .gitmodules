@@ -1,3 +1,5 @@
 [submodule "besser/utilities/besser_backend/Apollon"]
 	path = besser/utilities/besser_backend/Apollon
 	url = https://github.com/BESSER-PEARL/Apollon.git
+	branch = develop
+	

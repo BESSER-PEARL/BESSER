@@ -148,20 +148,6 @@ def parse_multiplicity(multiplicity_str):
     )
     return Multiplicity(min_multiplicity=min_multiplicity, max_multiplicity=max_multiplicity)
 
-# def json_to_buml(json_data):
-#     """Convert JSON data to a BUML DomainModel or StateMachine object."""
-#     # Get diagram type from the correct location in the JSON structure
-#     diagram_type = json_data.get("type")
-#     print(f"Diagram type: {diagram_type}")
-#     if diagram_type == "ClassDiagram":
-#         return process_class_diagram(json_data)
-#     elif diagram_type == "StateMachineDiagram":
-#         print("PROCESSING STATE MACHINE JSON")
-#         return process_state_machine(json_data)
-#     else:
-#         raise ValueError(f"Unsupported diagram type: {diagram_type}")
-
-
 
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""

@@ -112,7 +112,6 @@ async def export_buml(input_data: ClassDiagramInput):
         # Convert Pydantic model to dictionary
         json_data = input_data.dict()
         elements_data = input_data.elements  # Extract elements directly from the Pydantic model
-        print("Input data received:", json_data)
         # Ensure output directory is clean
         os.makedirs("output", exist_ok=True)
         for file in os.listdir("output"):
@@ -141,7 +140,7 @@ async def export_buml(input_data: ClassDiagramInput):
 
         elif elements_data.get("type") == "ClassDiagram":
             # Handle class diagram
-            buml_model = process_class_diagram(json_data)  # Use elements_data directly
+            buml_model = process_class_diagram(json_data)
             output_file_path = "output/domain_model.py"
             domain_model_to_code(model=buml_model, file_path=output_file_path)
             with open(output_file_path, "rb") as f:

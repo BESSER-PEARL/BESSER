@@ -1,5 +1,6 @@
 __pycache__/
 .pytest_cache/
+/.idea/
 
 # virtual env
 Pipfile

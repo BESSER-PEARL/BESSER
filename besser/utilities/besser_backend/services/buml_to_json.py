@@ -13,7 +13,7 @@ from besser.BUML.metamodel.state_machine import (
 
 
 def parse_buml_content(content: str) -> DomainModel:
-    """Parse BUML content from a Python file and return a DomainModel."""
+    """Parse B-UML content from a Python file and return a DomainModel."""
     try:
         # Create a safe environment for eval
         safe_globals = {
@@ -44,7 +44,7 @@ def parse_buml_content(content: str) -> DomainModel:
         # Create a new domain model
         domain_model = DomainModel("Generated Model")
         
-        # Execute the BUML content in a safe environment
+        # Execute the B-UML content in a safe environment
         local_vars = {}
         exec(content, safe_globals, local_vars)
         
@@ -74,11 +74,11 @@ def parse_buml_content(content: str) -> DomainModel:
         return domain_model
             
     except Exception as e:
-        print(f"Error parsing BUML content: {e}")
-        raise ValueError(f"Failed to parse BUML content: {str(e)}")
+        print(f"Error parsing B-UML content: {e}")
+        raise ValueError(f"Failed to parse B-UML content: {str(e)}")
     
 def domain_model_to_json(domain_model):
-    """Convert a BUML DomainModel object to JSON format matching the frontend structure."""
+    """Convert a B-UML DomainModel object to JSON format matching the frontend structure."""
     elements = {}
     relationships = {}
     

@@ -23,7 +23,7 @@ Key Features
 Visual Modeling
 ^^^^^^^^^^^^^^^^
 - Interactive UML diagram creation
-- Supports BUML for:
+- Supports B-UML for:
 
   - Class diagrams (structural models)
   - State machine diagrams

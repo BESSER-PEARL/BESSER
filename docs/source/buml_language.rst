@@ -18,7 +18,7 @@ BESSER currently offers three ways to specify your models with B-UML. However, n
 
 * Build the model coding in Python Using the B-UML python library
 * Define the model via textual notation using one of our grammars
-* Transform an image into a BUML model (e.g., a photo of a hand-drawn model on a board)
+* Transform an image into a B-UML model (e.g., a photo of a hand-drawn model on a board)
 
 The following table shows the different notations supported by each type of model
 

@@ -1,5 +1,5 @@
 services:
-  BESSER-Web-Modeling-Editor-frontend:
+  besser-gui-frontend:
     build:
       context: ./besser/utilities/besser_backend/BESSER-Web-Modeling-Editor
       dockerfile: Dockerfile
@@ -15,7 +15,7 @@ services:
       - /app/node_modules
     command: npm start
 
-  BESSER-Web-Modeling-Editor-backend:
+  besser-gui-backend:
     build:
       context: .
       dockerfile: Dockerfile

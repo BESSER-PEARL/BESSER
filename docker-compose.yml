@@ -1,7 +1,7 @@
 services:
-  frontend:
+  BESSER-Web-Modeling-Editor-frontend:
     build:
-      context: ./besser/utilities/besser_backend/Apollon
+      context: ./besser/utilities/besser_backend/BESSER-Web-Modeling-Editor
       dockerfile: Dockerfile
     ports:
       - "8888:8888"
@@ -11,11 +11,11 @@ services:
       - DISABLE_HUSKY=1
       - CI=true
     volumes:
-      - ./besser/utilities/besser_backend/Apollon:/app
+      - ./besser/utilities/besser_backend/BESSER-Web-Modeling-Editor:/app
       - /app/node_modules
     command: npm start
 
-  backend:
+  BESSER-Web-Modeling-Editor-backend:
     build:
       context: .
       dockerfile: Dockerfile

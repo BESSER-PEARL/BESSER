@@ -589,7 +589,7 @@ class BOCLListener(ParseTreeListener):
                 print(ctx.getText())
                 print(ctx.parentCtx.getText())
             # print(ctx.getText())
-        print(ctx.parentCtx)
+
         if ctx.parentCtx is not None:
             self.rootHandler.verify(ctx.parentCtx.getText().split(ctx.getText())[0])
         self.rootHandler.handle_collection(ctx.getText())

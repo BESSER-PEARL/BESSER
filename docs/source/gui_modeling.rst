@@ -4,7 +4,7 @@ Web Modeling Editor
 BESSER provides integration with `Apollon <https://apollon-library.readthedocs.io/en/latest/>`_ for visual UML modeling and code generation. 
 Apollon is an open-source, modern UML editor supporting various diagram types.
 
-.. image:: ./img/library_apollon.png
+.. image:: ./img/library_web_modeling.png
    :width: 500
    :alt: Library model in Apollon
    :align: center
@@ -21,7 +21,7 @@ Visual Modeling
   - State machine diagrams
   - More diagram types coming soon
 
-.. image:: ./img/GUI_Apollon_HDV2.gif
+.. image:: ./img/GUI_WEB_SHOW.gif
    :width: 900
    :alt: 
    :align: center

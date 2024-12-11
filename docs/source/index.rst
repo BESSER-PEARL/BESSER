@@ -30,7 +30,7 @@ Contents
    :maxdepth: 2
 
    installation
-   gui_modeling
+   web_editor
    buml_language
    generators
    utilities

@@ -12,7 +12,7 @@ With B-UML, you can design various types of models using its diverse sublanguage
 * :doc:`../buml_language/model_types/gui`
 * :doc:`../buml_language/model_types/ocl`
 * :doc:`../buml_language/model_types/deployment`
-* :doc:`../buml_language/model_types/state_machine_bot`
+* :doc:`../buml_language/model_types/state_machine`
 
 BESSER currently offers three ways to specify your models with B-UML. However, not all model types support all three forms.
 

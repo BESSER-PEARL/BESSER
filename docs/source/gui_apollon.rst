@@ -1,21 +1,13 @@
-Integration with Apollon
-========================
+Visual Modeling with Apollon
+======================================
 
 BESSER provides integration with `Apollon <https://apollon-library.readthedocs.io/en/latest/>`_ for visual UML modeling and code generation. 
 Apollon is an open-source, modern UML editor supporting various diagram types.
 
-.. image:: ../../img/library_apollon.png
+.. image:: ./img/library_apollon.png
    :width: 500
    :alt: Library model in Apollon
    :align: center
-
-Prerequisites
--------------
-
-Before using Apollon with BESSER, ensure you have:
-
-* **Docker** installed
-* Basic familiarity with command-line interfaces (CLI)
 
 Key Features
 ------------
@@ -29,11 +21,19 @@ Visual Modeling
   - State machine diagrams
   - More diagram types coming soon
 
-.. image:: ../../img/GUI_Apollon_HDV2.gif
+.. image:: ./img/GUI_Apollon_HDV2.gif
    :width: 900
    :alt: 
    :align: center
 
+
+Prerequisites
+-------------
+
+Before using Apollon with BESSER, ensure you have:
+
+* **Docker** installed (Docker Desktop or standalone Docker Engine with Docker Compose)
+* Basic familiarity with command-line interfaces (CLI)
 
 Getting Started
 ---------------

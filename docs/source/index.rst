@@ -30,6 +30,7 @@ Contents
    :maxdepth: 2
 
    installation
+   gui_apollon
    buml_language
    generators
    utilities

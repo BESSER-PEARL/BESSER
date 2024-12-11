@@ -259,7 +259,7 @@ def process_class_diagram(json_data):
             continue
 
         # Handle each type of relationship
-        if rel_type == "ClassBidirectional" or rel_type == "ClassUnidirectional" or rel_type == "ClassComposition":
+        if rel_type == "ClassBidirectional" or rel_type == "ClassUnidirectional" or rel_type == "ClassComposition" or rel_type == "ClassAggregation" :
             is_composite = rel_type == "ClassComposition"
             source_navigable = rel_type != "ClassUnidirectional"
             target_navigable = True
@@ -271,14 +271,14 @@ def process_class_diagram(json_data):
                 name=source.get("role", ""),
                 type=target_class,
                 multiplicity=source_multiplicity,
-                is_navigable=source_navigable,
-                is_composite=is_composite
+                is_navigable=source_navigable
             )
             target_property = Property(
                 name=target.get("role", ""),
                 type=source_class,
                 multiplicity=target_multiplicity,
-                is_navigable=target_navigable
+                is_navigable=target_navigable,
+                is_composite=is_composite
             )
 
             association = BinaryAssociation(

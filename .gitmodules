@@ -1,5 +1,5 @@
-[submodule "besser/utilities/besser_backend/Apollon"]
-	path = besser/utilities/besser_backend/Apollon
-	url = https://github.com/BESSER-PEARL/Apollon.git
+[submodule "besser/utilities/besser_backend/BESSER-Web-Modeling-Editor"]
+	path = besser/utilities/besser_backend/BESSER-Web-Modeling-Editor
+	url = https://github.com/BESSER-PEARL/BESSER-Web-Modeling-Editor.git
 	branch = develop
 	

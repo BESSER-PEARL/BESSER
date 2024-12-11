@@ -1,4 +1,4 @@
-Visual Modeling with Apollon
+Web Modeling Editor
 ======================================
 
 BESSER provides integration with `Apollon <https://apollon-library.readthedocs.io/en/latest/>`_ for visual UML modeling and code generation. 

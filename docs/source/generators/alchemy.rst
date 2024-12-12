@@ -20,6 +20,6 @@ the ``generate`` method as follows:
 The ``sql_alchemy.py`` file with the Declarative Mapping of the database will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../tests/structural/library/output/sql_alchemy.py
+.. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/sql_alchemy.py
    :language: python
    :linenos:

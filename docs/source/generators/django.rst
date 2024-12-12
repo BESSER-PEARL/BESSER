@@ -18,6 +18,6 @@ the ``generate`` method as follows:
 The ``models.py`` file with the Django models defined will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../tests/structural/library/output/models.py
+.. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/models.py
    :language: python
    :linenos:

@@ -59,7 +59,7 @@ You should get output like this:
     associations have a unique name.
 
 B-UML model source code
-----------------------
+-----------------------
 
 When you run this PlantUML to B-UML transformation, you could also generate a ``.py`` file with the python based code of your B-UML model definition. 
 This code is reusable, allowing you to make quick updates to your model. For example, you could add more classes, properties, or update the name 

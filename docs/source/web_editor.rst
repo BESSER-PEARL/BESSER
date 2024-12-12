@@ -9,8 +9,8 @@ design :doc:`B-UML <../buml_language>` models and try the :doc:`BESSER code gene
 
 The BESSER web editor provides a graphical dashboard to create two types of B-UML models:
 
-- Class diagram or :doc:`structural model <./buml_language/model_types/structural>`: 
-- :doc:`State Machine diagram <./buml_language/model_types/state_machine>`: 
+- Class diagram or :doc:`structural model <./buml_language/model_types/structural>`
+- :doc:`State Machine diagram <./buml_language/model_types/state_machine>`
 
 .. image:: ./img/GUI_WEB_SHOW.gif
    :width: 900

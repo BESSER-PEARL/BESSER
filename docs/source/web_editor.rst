@@ -54,10 +54,9 @@ Modeling
 
 Generating Code
 ^^^^^^^^^^^^^^^^
-1. Create your class diagram.
-2. Select your BESSER Generator (e.g., Python classes, Backend).
-3. Click "Generate/Download" in the toolbar.
-4. Download the generated code.
+1. After create your class diagram, select the BESSER Generator (e.g., Python classes, Backend).
+2. Click "Generate/Download" in the toolbar.
+3. Download the generated code.
 
 .. note::
    The Web Editor will soon be available online. Stay tuned for updates!

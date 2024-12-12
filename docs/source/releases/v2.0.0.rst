@@ -4,7 +4,11 @@ Version 2.0.0
 New features
 ------------
 
-* Web modeling editor: Visual B-UML modeling support through the web modeling editor (fork of the `Apollon project <https://apollon-library.readthedocs.io/en/latest/>`_)
+**Web Modeling Editor**
+
+* The editor enables the design of B-UML models through a graphical dashboard 
+* It provides access to BESSER code generators to directly download the generated code
+* Import/export models in B-UML and JSON formats
 
 Improvements
 ------------

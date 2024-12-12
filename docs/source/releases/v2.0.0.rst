@@ -4,11 +4,10 @@ Version 2.0.0
 New features
 ------------
 
-* Apollon Integration: Visual UML modeling support through web-based Apollon editor
-* State Machine Generator: New code generator for state machine models
+* Web modeling editor: Visual B-UML modeling support through the web modeling editor (fork of the `Apollon project <https://apollon-library.readthedocs.io/en/latest/>`_)
 
 Improvements
 ------------
 
-* Visual Modeling: Graphical interface for creating and editing models
-* Documentation: Comprehensive guides for all new features and integrations
+* Extended OCL metamodel to handle DateLiteralExpressions
+* Improved grammar and parser to handle dates and reject construct

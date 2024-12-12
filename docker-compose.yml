@@ -1,7 +1,7 @@
 services:
   besser-gui-frontend:
     build:
-      context: ./besser/utilities/besser_backend/BESSER-Web-Modeling-Editor
+      context: ./besser/utilities/web_modeling_editor/BESSER-Web-Modeling-Editor
       dockerfile: Dockerfile
     ports:
       - "8888:8888"
@@ -11,7 +11,7 @@ services:
       - DISABLE_HUSKY=1
       - CI=true
     volumes:
-      - ./besser/utilities/besser_backend/BESSER-Web-Modeling-Editor:/app
+      - ./besser/utilities/web_modeling_editor/BESSER-Web-Modeling-Editor:/app
       - /app/node_modules
     command: npm start
 
@@ -26,4 +26,4 @@ services:
     working_dir: /app/besser
     environment:
       - PYTHONPATH=/app
-    command: python -m besser.utilities.besser_backend.main
+    command: python -m besser.utilities.web_modeling_editor.backend.backend

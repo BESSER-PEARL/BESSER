@@ -27,4 +27,4 @@ besser/.idea/workspace.xml
 *.xml
 
 # Backend
-besser_backend/output
+besser/utilities/web_modeling_editor/backend/output

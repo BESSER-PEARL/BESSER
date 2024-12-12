@@ -2,9 +2,8 @@ import uuid
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
     Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY
 from besser.BUML.metamodel.state_machine import Body, Event, StateMachine
-from besser.utilities.besser_backend.utils.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
-from besser.utilities.besser_backend.utils.constants import VISIBILITY_MAP, RELATIONSHIP_TYPES
-from besser.utilities.besser_backend.services.layout_calculator import (
+from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
+from besser.utilities.web_modeling_editor.backend.services.layout_calculator import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
 )

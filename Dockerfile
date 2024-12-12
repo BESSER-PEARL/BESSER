@@ -4,7 +4,7 @@ FROM python:3.9
 WORKDIR /app
 
 # Copy requirements.txt first for better caching
-COPY besser/utilities/besser_backend/requirements.txt /app/requirements.txt
+COPY besser/utilities/web_modeling_editor/backend/requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the entire project
@@ -20,4 +20,4 @@ RUN pip install -e .
 EXPOSE 8000
 
 # Start the application
-CMD ["python", "besser/utilities/besser_backend/main.py"]
+CMD ["python", "besser/utilities/web_modeling_editor/backend/backend.py"]

@@ -74,6 +74,8 @@ class Root_Handler:
             return "str"
         elif txt == "True" or txt == "False":
             return "bool"
+        elif "Date::" in txt:
+            return "date"
         else:
             return "var"
 
@@ -184,6 +186,8 @@ class Root_Handler:
             collectionOperator = "collect"
         elif "select" in oclExp[0:8]:
             collectionOperator = "select"
+        elif "reject" in oclExp[0:8]:
+            collectionOperator = "reject"
 
         # print("Collection Operator: " + collectionOperator)
         self.handleColl(oclExp,collectionOperator)
@@ -239,6 +243,7 @@ class Root_Handler:
                 self.all[-1].addIterator(iteratorExp)
 
     def handle_binary_expression(self, expression, operator,inbetween= None,beforeSign = None):
+        # print("handling right part")
         expressionParts = expression.split(operator)
         leftside = self.checkNumberOrVariable(expressionParts[0])
         rightside = self.checkNumberOrVariable(expressionParts[1])
@@ -254,6 +259,8 @@ class Root_Handler:
             leftPart = self.factory.create_boolean_literal_expression("NP", (expressionParts[0]))
         elif "str" in leftside:
             leftPart = self.factory.create_string_literal_expression("str", expressionParts[0].replace("'",""))
+        elif "date" in leftside:
+            leftPart = self.factory.create_date_literal_expression("date", expressionParts[0].replace("'",""))
         if "var" in rightside:
             rightPart = self.factory.create_property_Call_Expression(expressionParts[1], type="NP",iterators=self.all)
         elif "int" in rightside:
@@ -264,6 +271,9 @@ class Root_Handler:
             rightPart = self.factory.create_boolean_literal_expression("NP", (expressionParts[1]))
         elif "str" in rightside:
             rightPart = self.factory.create_string_literal_expression("str", expressionParts[1].replace("'",""))
+        elif "date" in rightside:
+            rightPart = self.factory.create_date_literal_expression("date", expressionParts[1].replace("'", ""))
+
         infixOperator = self.factory.create_infix_operator(operator)
         beforeOp = None
         if beforeSign is not None:
@@ -276,6 +286,9 @@ class Root_Handler:
         self.add_to_root(opeartion_call_exp)
 
     def handleBinaryFunc(self,operator,number):
+        # import inspect
+        # print(inspect.stack()[0][3])
+
         num = self.checkNumberOrVariable(number)
         if "int" in num:
             rightPart = self.factory.create_integer_literal_expression("NP", int(number))

@@ -100,11 +100,25 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endif -%}{% endfor -%}
     {%- endif %}
 
-    {%if class.attributes%}
-    db_{{ class.name | lower}} = {{ class.name }}({% for attribute in class.attributes %}{{attribute.name}}={{ class.name | lower}}_data.{{attribute.name}}{% if not loop.last %}, {% endif %}{% endfor %}{% if ns.end_name_one %}{% for x in ns.end_name_one %}, {{x[0]|lower}}_id={{ class.name | lower}}_data.{{x[0]|lower}}_id{% endfor %}{% endif %})
+    {% if class.attributes %}
+    db_{{ class.name | lower}} = {{ class.name }}(
+        {% for attribute in class.attributes %}
+        {{attribute.name}}={{ class.name | lower}}_data.{{attribute.name}}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
+        {% endfor %}
+        {% if ns.end_name_one %}
+        {% for x in ns.end_name_one %}, {{x[0]|lower}}_id={{ class.name | lower}}_data.{{x[0]|lower}}_id{% endfor %}
+        {% endif %}
+    )
     {% else %}
-    {% for parent in class.parents()  %}
-    db_{{ class.name | lower}} = {{ class.name }}({%for attrparent in parent.attributes %}{{attrparent.name}}={{ class.name | lower}}_data.{{attrparent.name}}{% if not loop.last %}, {% endif %}{% endfor %}{% if ns.end_name_one %}{% for x in ns.end_name_one %}, {{x[0]|lower}}_id={{ class.name | lower}}_data.{{x[0]|lower}}_id{% endfor %}{% endif %})
+    {% for parent in class.parents() %}
+    db_{{ class.name | lower}} = {{ class.name }}(
+        {% for attrparent in parent.attributes %}
+        {{attrparent.name}}={{ class.name | lower}}_data.{{attrparent.name}}{% if attrparent.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
+        {% endfor %}
+        {% if ns.end_name_one %}
+        {% for x in ns.end_name_one %}, {{x[0]|lower}}_id={{ class.name | lower}}_data.{{x[0]|lower}}_id{% endfor %}
+        {% endif %}
+    )
     {% endfor %}
     {% endif %}
 
@@ -137,7 +151,11 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
                 if db_{{x[0] | lower}} is None:
                     raise HTTPException(status_code=404, detail=f"{{x[0]}} with ID {x} not found")
             else:
-                db_{{x[0] | lower}} = {{x[0]}}({%for attr in lk_class.attributes%}{{attr.name}}=x.{{attr.name}}{% if not loop.last %}, {% endif %}{%endfor%})
+                db_{{x[0] | lower}} = {{x[0]}}(
+                    {%for attr in lk_class.attributes%}
+                    {{attr.name}}=x.{{attr.name}}{% if attr.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
+                    {%endfor%}
+                )
             database.add(db_{{x[0] | lower}})
             database.commit()
             # Create the association
@@ -163,7 +181,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
 
     {# Update attributes of the model -#}
     {% for attribute in class.attributes %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
     {% endfor %}
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}

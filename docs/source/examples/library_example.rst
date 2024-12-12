@@ -14,7 +14,7 @@ code (lines 1-44). Additionally, the ``Python_Generator``, ``DjangoGenerator``, 
 code generators are implemented in this example (lines 50-61). Running this script will generate the ``output/`` folder with the
 ``classes.py``, ``models.py``, ``sql_alchemy.py``, ``tables.sql``, ``rest_api.py`` and ``pydantic_classes.py`` files produced by each of the Generators respectively.
 
-.. literalinclude:: ../../../tests/structural/library/library.py
+.. literalinclude:: ../../../tests/BUML/metamodel/structural/library/library.py
    :language: python
    :linenos:
 

@@ -1,3 +1,4 @@
+import enum
 from typing import List, Optional
 from sqlalchemy import (
     create_engine, Column, ForeignKey, Table, Text, Boolean, String, Date, 
@@ -13,7 +14,7 @@ class Base(DeclarativeBase):
 
 # Enum definitions
 {% for enum in enumerations %}
-class {{ enum.name }}(Enum):
+class {{ enum.name }}(enum.Enum):
     {% for literal in enum.literals %}
     {{ literal.name }} = "{{ literal.name }}"
     {%- endfor %}
@@ -23,13 +24,13 @@ class {{ enum.name }}(Enum):
 # Tables definition for many-to-many relationships
 
 {%- for association in associations if association.ends|length == 2 %}
-    {%- set ns = namespace(many_to_many = True) %}
-    {%- for end in association.ends %}
-        {%- if end.multiplicity.max < 2 %} 
-            {%- set ns.many_to_many = False %} 
-        {%- endif %}
-    {%- endfor %}
-    {%- if ns.many_to_many == True %}
+{%- set ns = namespace(many_to_many = True) %}
+{%- for end in association.ends %}
+{%- if end.multiplicity.max < 2 %} 
+{%- set ns.many_to_many = False %} 
+{%- endif %}
+{%- endfor %}
+{%- if ns.many_to_many == True %}
 {{ association.name.lower() }} = Table(
     "{{ association.name.lower() }}",
     Base.metadata,
@@ -59,7 +60,7 @@ class {{ class.name }}(
     id: Mapped[int] = mapped_column(primary_key=True)
     {%- endif %}
     {%- for attribute in class.attributes %}
-    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({{types[attribute.type.name]}})
+    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %})
     {%- endfor %}
     {%- if class.specializations()|length > 0 %}
     type_spec: Mapped[str]

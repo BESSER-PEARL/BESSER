@@ -59,7 +59,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         # Write classes
         f.write("# Classes\n")
         for cls in model.get_classes():
-            f.write(f"{cls.name} = Class(name=\"{cls.name}\")\n")
+            f.write(f"{cls.name} = Class(name=\"{cls.name}\"{', is_abstract=True' if cls.is_abstract else ''})\n")
         f.write("\n")
 
         # Write class members
@@ -86,7 +86,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
                         default_str = f", default_value='{param.default_value}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
                         params[param.name] = f"Parameter(name='{param.name}', type={param_type}{default_str})"
                 
-                params_str = "{" + ", ".join(f"'{name}': {param}" for name, param in params.items()) + "}"
+                params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
 
                 if method_type:
                     f.write(f"{cls.name}_m_{method.name}: Method = Method(name=\"{method.name}\""

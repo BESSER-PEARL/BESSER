@@ -87,7 +87,7 @@ The Draw.io parser supports several UML class notations:
     - Association end names should start with a lowercase letter (e.g., "books", "author")
 
 B-UML model source code
-----------------------
+-------------------------
 
 When you run this Draw.io to B-UML transformation, the file ``buml/buml_model.py`` will be created with the python code of your B-UML model definition. 
 You could directly reuse this code to make quick modifications to your model. For example, you could add more classes, properties, or update the name 

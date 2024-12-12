@@ -589,6 +589,7 @@ class BOCLListener(ParseTreeListener):
                 print(ctx.getText())
                 print(ctx.parentCtx.getText())
             # print(ctx.getText())
+
         if ctx.parentCtx is not None:
             self.rootHandler.verify(ctx.parentCtx.getText().split(ctx.getText())[0])
         self.rootHandler.handle_collection(ctx.getText())
@@ -652,7 +653,7 @@ class BOCLListener(ParseTreeListener):
             self.rootHandler.handle_adding_to_root(self.coll_data.pop())
         self.rootHandler.handle_adding_to_root(op_call_exp)
         # print(inspect.stack()[0][3])
-      
+
     # Exit a parse tree produced by BOCLParser#FIRST.
     def exitFIRST(self, ctx: BOCLParser.FIRSTContext):
         pass
@@ -1115,8 +1116,19 @@ class BOCLListener(ParseTreeListener):
         operator = self.operator.pop()
         num = ctx.getText().replace(operator,"")
         self.rootHandler.handleBinaryFunc(operator,num)
+# Enter a parse tree produced by BOCLParser#dateLiteral.
+    def enterDateLiteral(self, ctx:BOCLParser.DateLiteralContext):
+        if self.debug:
+            print(inspect.stack()[0][3])
+            if self.debug_print:
+                print(ctx.getText())
+        pass
 
-
-
-
+    # Exit a parse tree produced by BOCLParser#dateLiteral.
+    def exitDateLiteral(self, ctx:BOCLParser.DateLiteralContext):
+        if self.debug:
+            print(inspect.stack()[0][3])
+            if self.debug_print:
+                print(ctx.getText())
+        pass
 del BOCLParser

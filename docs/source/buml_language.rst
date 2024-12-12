@@ -12,13 +12,14 @@ With B-UML, you can design various types of models using its diverse sublanguage
 * :doc:`../buml_language/model_types/gui`
 * :doc:`../buml_language/model_types/ocl`
 * :doc:`../buml_language/model_types/deployment`
-* :doc:`../buml_language/model_types/state_machine_bot`
+* :doc:`../buml_language/model_types/state_machine`
 
-BESSER currently offers three ways to specify your models with B-UML. However, not all model types support all three forms.
+BESSER currently offers four ways to specify your models with B-UML. However, not all model types support all three forms.
 
 * Build the model coding in Python Using the B-UML python library
 * Define the model via textual notation using one of our grammars
-* Transform an image into a BUML model (e.g., a photo of a hand-drawn model on a board)
+* Transform an image into a B-UML model (e.g., a photo of a hand-drawn model on a board)
+* Use the BESSER Web Modeling Editor to design models with a graphical notation
 
 The following table shows the different notations supported by each type of model
 
@@ -31,7 +32,8 @@ The following table shows the different notations supported by each type of mode
 +---------------------------------------------------------------------------+------------+------------+------------+------------+------------+---------------+
 | :doc:`Image transformation <buml_language/model_building/image_to_buml>`  |     X      |            |            |            |            |               |
 +---------------------------------------------------------------------------+------------+------------+------------+------------+------------+---------------+
-
+| :doc:`Web Modeling Editor <./web_editor>`                                 |     X      |            |            |            |            |      X        |
++---------------------------------------------------------------------------+------------+------------+------------+------------+------------+---------------+
 
 Contents
 --------

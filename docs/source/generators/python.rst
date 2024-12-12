@@ -18,6 +18,6 @@ the ``generate`` method as follows:
 The ``classes.py`` file with the Python domain model (i.e., the set of classes) will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../tests/structural/library/output/classes.py
+.. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/classes.py
    :language: python
    :linenos:

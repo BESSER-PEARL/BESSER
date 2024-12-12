@@ -5,7 +5,7 @@ One of the practical ways to use BESSER is through the Web Modeling Editor, wher
 design :doc:`B-UML <../buml_language>` models and try the :doc:`BESSER code generators <../generators>`.
 
 .. note::
-   The BESSER Web Editor is an extension of the `Apollon project <https://apollon-library.readthedocs.io/en/latest/>`_, a UML modeling editor.
+   The BESSER Web Editor is based on a fork of the `Apollon project <https://apollon-library.readthedocs.io/en/latest/>`_, a UML modeling editor.
 
 The BESSER web editor provides a graphical dashboard to create two types of B-UML models:
 

@@ -1,4 +1,4 @@
-from tests.object.library_object import library_model, object_model
+from tests.BUML.metamodel.object.library_object import library_model, object_model
 from besser.BUML.notations.ocl.OCLParserWrapper import OCLParserWrapper
 
 def test1():

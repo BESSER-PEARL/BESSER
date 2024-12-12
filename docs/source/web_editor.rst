@@ -12,7 +12,7 @@ The BESSER web editor provides a graphical dashboard to create two types of B-UM
 - Class diagram or :doc:`structural model <./buml_language/model_types/structural>`: 
 - :doc:`State Machine diagram <./buml_language/model_types/state_machine>`: 
 
-.. image:: ./img/GUI_Apollon_HDV2.gif
+.. image:: ./img/GUI_WEB_SHOW.gif
    :width: 900
    :alt: BESSER Web Editor interface
    :align: center
@@ -24,7 +24,7 @@ The BESSER web editor can be launched as Docker containers using `Docker Compose
 
 Prerequisites
 ^^^^^^^^^^^^^
-* Install Docker Compose. The recommended way is via `Docker Desktop <https://www.docker.com/products/docker-desktop/>`_)
+* Install Docker Compose. The recommended way is via `Docker Desktop <https://www.docker.com/products/docker-desktop/>`_
 
 Clone and Launch the Project
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -46,7 +46,7 @@ Using the BESSER Web Editor
 
 Creating Diagrams
 ^^^^^^^^^^^^^^^^^
-1. Open Apollon in your browser (based on the chosen setup: ``http://localhost:8888`` or ``http://localhost:3000``).
+1. Open Apollon in your browser (``http://localhost:8888``).
 2. Select the diagram type (Class or State Machine).
 3. Use the toolbar to add elements and relationships.
 4. Models are automatically saved and synchronized.
@@ -58,3 +58,6 @@ Generating Code
 2. Select your BESSER Generator (e.g., Python classes, Backend).
 3. Click "Generate/Download" in the toolbar.
 4. Download the generated code.
+
+.. note::
+   The Web Editor will be available online.

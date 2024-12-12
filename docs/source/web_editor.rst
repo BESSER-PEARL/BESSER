@@ -44,9 +44,9 @@ Once the setup is complete, open your browser and navigate to ``http://localhost
 Using the BESSER Web Editor
 ---------------------------
 
-Creating Diagrams
-^^^^^^^^^^^^^^^^^
-1. Open Apollon in your browser (``http://localhost:8888``).
+Modeling
+^^^^^^^^
+1. Open the web modeling editor in your browser (``http://localhost:8888``).
 2. Select the diagram type (Class or State Machine).
 3. Use the toolbar to add elements and relationships.
 4. Models are automatically saved and synchronized.
@@ -54,10 +54,10 @@ Creating Diagrams
 
 Generating Code
 ^^^^^^^^^^^^^^^^
-1. Create your UML diagram in Apollon.
+1. Create your class diagram.
 2. Select your BESSER Generator (e.g., Python classes, Backend).
 3. Click "Generate/Download" in the toolbar.
 4. Download the generated code.
 
 .. note::
-   The Web Editor will be available online.
+   The Web Editor will soon be available online. Stay tuned for updates!

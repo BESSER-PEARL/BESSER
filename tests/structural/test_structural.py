@@ -237,10 +237,9 @@ def test_classes_sorted_by_inheritance():
     assert classes[6] == cl1
 
 # Testing synonyms of a Named Element
-'''def test_synonyms():
+def test_synonyms():
     class_a: Class = Class(name="Library", synonyms=["synonym1", "synonym2", "synonym3"])
     assert len(class_a.synonyms) == 3
     assert class_a.synonyms[0] == "synonym1"
     assert class_a.synonyms[1] == "synonym2"
     assert class_a.synonyms[2] == "synonym3"
-'''

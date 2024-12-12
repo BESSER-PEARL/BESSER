@@ -1,5 +1,5 @@
 Model Serializer
-===============
+==================
 .. automodule:: besser.utilities.utils
    :members:
    :private-members:

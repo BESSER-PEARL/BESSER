@@ -18,6 +18,6 @@ You should create a ``PydanticGenerator`` object, provide the B-UML model, and u
 Upon executing this code, a ``pydantic_classes.py`` file containing the Pydantic models will be generated.  in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../tests/structural/library/output_backend/pydantic_classes.py
+.. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output_backend/pydantic_classes.py
    :language: Python
    :linenos:

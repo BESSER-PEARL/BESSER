@@ -7,7 +7,7 @@ Let's see an example with object diagram of the classic `library model <https://
 diagram written in PlantUML Syntax is shown below.
 
 
-.. literalinclude:: ../../../../tests/notations/objectPlantUML/libraryObjectDiagram.plantuml
+.. literalinclude:: ../../../../tests/BUML/notations/objectPlantUML/libraryObjectDiagram.plantuml
    :language: console
    :linenos:
 

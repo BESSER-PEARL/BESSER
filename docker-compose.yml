@@ -1,0 +1,29 @@
+services:
+  besser-gui-frontend:
+    build:
+      context: ./besser/utilities/web_modeling_editor/BESSER-Web-Modeling-Editor
+      dockerfile: Dockerfile
+    ports:
+      - "8888:8888"
+    environment:
+      - REACT_APP_API_URL=http://backend:8000
+      - HUSKY=0
+      - DISABLE_HUSKY=1
+      - CI=true
+    volumes:
+      - ./besser/utilities/web_modeling_editor/BESSER-Web-Modeling-Editor:/app
+      - /app/node_modules
+    command: npm start
+
+  besser-gui-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+    working_dir: /app/besser
+    environment:
+      - PYTHONPATH=/app
+    command: python -m besser.utilities.web_modeling_editor.backend.backend

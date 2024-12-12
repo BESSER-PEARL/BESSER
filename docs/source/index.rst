@@ -30,6 +30,7 @@ Contents
    :maxdepth: 2
 
    installation
+   web_editor
    buml_language
    generators
    utilities

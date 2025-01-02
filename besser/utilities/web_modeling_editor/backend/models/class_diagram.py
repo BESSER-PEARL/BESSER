@@ -1,5 +1,7 @@
 from pydantic import BaseModel
+from typing import Optional, Dict, Any
 
 class ClassDiagramInput(BaseModel):
-    elements: dict
+    elements: Dict[str, Any]
     generator: str
+    ocl: Optional[str] = None

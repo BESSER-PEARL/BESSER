@@ -1,6 +1,6 @@
 import uuid
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
-    Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY
+    Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint
 from besser.BUML.metamodel.state_machine import Body, Event, StateMachine
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
 from besser.utilities.web_modeling_editor.backend.services.layout_calculator import (
@@ -140,21 +140,74 @@ def parse_multiplicity(multiplicity_str):
     if not multiplicity_str:
         return Multiplicity(min_multiplicity=1, max_multiplicity=1)
     
+    # Handle single "*" case
+    if multiplicity_str == "*":
+        return Multiplicity(min_multiplicity=0, max_multiplicity=UNLIMITED_MAX_MULTIPLICITY)
+    
     parts = multiplicity_str.split("..")
-    min_multiplicity = int(parts[0]) if parts[0] else 1
-    max_multiplicity = (
-        int(parts[1]) if len(parts) > 1 and parts[1] and parts[1] != "*" else UNLIMITED_MAX_MULTIPLICITY
-    )
+    try:
+        min_multiplicity = int(parts[0]) if parts[0] and parts[0] != "*" else 0
+        max_multiplicity = (
+            UNLIMITED_MAX_MULTIPLICITY if len(parts) > 1 and (not parts[1] or parts[1] == "*")
+            else int(parts[1]) if len(parts) > 1
+            else min_multiplicity
+        )
+    except ValueError:
+        # If parsing fails, return default multiplicity of 1..1
+        return Multiplicity(min_multiplicity=1, max_multiplicity=1)
+        
     return Multiplicity(min_multiplicity=min_multiplicity, max_multiplicity=max_multiplicity)
 
+def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> list:
+    """Process OCL constraints and convert them to BUML Constraint objects."""
+    if not ocl_text:
+        return []
+    
+    constraints = []
+    lines = ocl_text.split('\n')
+    constraint_count = 1
+    
+    for line in lines:
+        line = line.strip()
+        if not line or not line.startswith('context'):
+            continue
+            
+        # Extract context class name
+        parts = line.split()
+        if len(parts) < 4:  # Minimum: "context ClassName inv name:"
+            continue
+            
+        context_class_name = parts[1]
+        context_class = domain_model.get_class_by_name(context_class_name)
+        
+        if not context_class:
+            print(f"Warning: Context class {context_class_name} not found")
+            continue
+            
+        constraint_name = f"constraint_{context_class_name}_{constraint_count}"
+        constraint_count += 1
+        
+        constraints.append(
+            Constraint(
+                name=constraint_name,
+                context=context_class,
+                expression=line,
+                language="OCL"
+            )
+        )
+    
+    return constraints
 
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""
     domain_model = DomainModel("Class Diagram")
     
-    # Get elements from the correct nested structure
+    # Get elements and OCL constraints from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})
+    ocl_constraints = json_data.get('ocl', '')  # Get OCL constraints
+    
+    
     
     print(f"Elements: {elements}")
     print(f"Relationships: {relationships}")
@@ -289,6 +342,11 @@ def process_class_diagram(json_data):
         elif rel_type == "ClassInheritance":
             generalization = Generalization(general=source_class, specific=target_class)
             domain_model.generalizations.add(generalization)
+
+    # Process OCL constraints at the end
+    if ocl_constraints:
+        constraints = process_ocl_constraints(ocl_constraints, domain_model)
+        domain_model.constraints = set(constraints)
 
     return domain_model
 

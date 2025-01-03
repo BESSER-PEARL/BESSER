@@ -111,7 +111,6 @@ async def export_buml(input_data: ClassDiagramInput):
     try:
         json_data = input_data.dict()
         elements_data = input_data.elements
-        ocl_constraints = input_data.ocl  # Get OCL constraints from input data
         
         # Ensure output directory is clean
         os.makedirs("output", exist_ok=True)
@@ -143,11 +142,6 @@ async def export_buml(input_data: ClassDiagramInput):
             # Handle class diagram
             buml_model = process_class_diagram(json_data)
             output_file_path = "output/domain_model.py"
-            
-            # # First write OCL constraints if they exist
-            # with open(output_file_path, "w") as f:
-            #     if ocl_constraints:
-            #         f.write(f"# OCL Constraints:\n# {ocl_constraints.replace('\n', '\n# ')}\n\n")
             
             # Then write the domain model code
             domain_model_to_code(model=buml_model, file_path=output_file_path)

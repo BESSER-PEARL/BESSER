@@ -1,3 +1,4 @@
+import re
 import uuid
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
     Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint
@@ -164,7 +165,7 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> list:
         return []
     
     constraints = []
-    lines = ocl_text.split('\n')
+    lines = re.split(r'[,\n]', ocl_text)
     constraint_count = 1
     
     for line in lines:

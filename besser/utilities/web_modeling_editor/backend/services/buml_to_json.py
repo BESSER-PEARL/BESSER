@@ -2,7 +2,7 @@ import uuid
 from besser.BUML.metamodel.structural import (
     Class, Property, Method, DomainModel, PrimitiveDataType,
     Enumeration, EnumerationLiteral, BinaryAssociation, Generalization, 
-    Multiplicity, UNLIMITED_MAX_MULTIPLICITY
+    Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, RELATIONSHIP_TYPES
 from besser.utilities.web_modeling_editor.backend.services.layout_calculator import calculate_center_point, determine_connection_direction, calculate_connection_points, calculate_path_points, calculate_relationship_bounds
@@ -12,8 +12,8 @@ from besser.BUML.metamodel.state_machine import (
 )
 
 
-def parse_buml_content(content: str) -> DomainModel:
-    """Parse B-UML content from a Python file and return a DomainModel."""
+def parse_buml_content(content: str) -> tuple[DomainModel, str]:
+    """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
         # Create a safe environment for eval
         safe_globals = {
@@ -44,6 +44,7 @@ def parse_buml_content(content: str) -> DomainModel:
         # Create a new domain model
         domain_model = DomainModel("Generated Model")
         
+        
         # Execute the B-UML content in a safe environment
         local_vars = {}
         exec(content, safe_globals, local_vars)
@@ -52,12 +53,17 @@ def parse_buml_content(content: str) -> DomainModel:
         
         # First pass: Add all classes and enumerations
         classes = {}
+        ocl_constraints = []
         for var_name, var_value in local_vars.items():
             if isinstance(var_value, (Class, Enumeration)):
-                #print(f"Found type: {var_name} = {var_value}")
                 domain_model.types.add(var_value)
                 classes[var_name] = var_value
+            elif isinstance(var_value, Constraint):
+                ocl_constraints.append(var_value.expression)
         
+        # Join OCL constraints with commas
+        ocl_string = ', '.join(ocl_constraints)
+
         # Second pass: Add associations and generalizations
         for var_name, var_value in local_vars.items():
             if isinstance(var_value, BinaryAssociation):
@@ -65,13 +71,9 @@ def parse_buml_content(content: str) -> DomainModel:
                 #print(f"Association ends: {var_value.ends}")
                 domain_model.associations.add(var_value)
             elif isinstance(var_value, Generalization):
-                #print(f"Found generalization: {var_name} = {var_value}")
                 domain_model.generalizations.add(var_value)
         
-        #print(f"Domain model types: {domain_model.types}")
-        #print(f"Domain model associations: {domain_model.associations}")
-        
-        return domain_model
+        return domain_model, ocl_string
             
     except Exception as e:
         print(f"Error parsing B-UML content: {e}")

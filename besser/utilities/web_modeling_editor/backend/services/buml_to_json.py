@@ -228,6 +228,7 @@ def domain_model_to_json(domain_model):
     # Second pass: Create relationships
     for association in domain_model.associations:
         rel_id = str(uuid.uuid4())
+        name = association.name if association.name else ""
         ends = list(association.ends)
         if len(ends) == 2:
             source_prop, target_prop = ends
@@ -262,6 +263,7 @@ def domain_model_to_json(domain_model):
                 
                 relationships[rel_id] = {
                     "id": rel_id,
+                    "name": name,
                     "type": rel_type,
                     "source": {
                         "element": class_id_map[source_class],

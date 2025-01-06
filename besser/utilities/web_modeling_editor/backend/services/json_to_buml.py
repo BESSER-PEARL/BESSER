@@ -167,7 +167,9 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> list:
     constraints = []
     lines = re.split(r'[,\n]', ocl_text)
     constraint_count = 1
-    
+
+    domain_classes = {cls.name.lower(): cls for cls in domain_model.types}
+
     for line in lines:
         line = line.strip()
         if not line or not line.startswith('context'):
@@ -179,7 +181,7 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> list:
             continue
             
         context_class_name = parts[1]
-        context_class = domain_model.get_class_by_name(context_class_name)
+        context_class = domain_classes.get(context_class_name.lower())
         
         if not context_class:
             print(f"Warning: Context class {context_class_name} not found")
@@ -322,26 +324,28 @@ def process_class_diagram(json_data):
 
             source_property = Property(
                 name=source.get("role", ""),
-                type=target_class,
+                type=source_class,
                 multiplicity=source_multiplicity,
                 is_navigable=source_navigable
             )
             target_property = Property(
                 name=target.get("role", ""),
-                type=source_class,
+                type=target_class,
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,
                 is_composite=is_composite
             )
 
+            association_name = relationship.get("name") or f"{source_class.name}_{target_class.name}"
+
             association = BinaryAssociation(
-                name=f"{source_class.name}_{target_class.name}",
+                name=association_name,
                 ends={source_property, target_property}
             )
             domain_model.associations.add(association)
 
         elif rel_type == "ClassInheritance":
-            generalization = Generalization(general=source_class, specific=target_class)
+            generalization = Generalization(general=target_class, specific=source_class)
             domain_model.generalizations.add(generalization)
 
     # Process OCL constraints at the end

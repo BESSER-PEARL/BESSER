@@ -201,6 +201,16 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> list:
     
     return constraints
 
+def generate_unique_class_name(base_name, existing_names):
+    """Generate a unique class name by appending a number if necessary."""
+    if base_name != "Class" or base_name not in existing_names:
+        return base_name
+    
+    counter = 1
+    while f"{base_name}{counter}" in existing_names:
+        counter += 1
+    return f"{base_name}{counter}"
+
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""
     domain_model = DomainModel("Class Diagram")
@@ -215,6 +225,9 @@ def process_class_diagram(json_data):
     print(f"Elements: {elements}")
     print(f"Relationships: {relationships}")
 
+    # Track existing class names
+    existing_class_names = set()
+
     # First process enumerations to have them available for attribute types
     for element_id, element in elements.items():
         if element.get("type") == "Enumeration":
@@ -227,14 +240,25 @@ def process_class_diagram(json_data):
                     literals.add(literal_obj)
             enum = Enumeration(name=element_name, literals=literals)
             domain_model.types.add(enum)
+            existing_class_names.add(element_name)
 
     # Then process classes with attributes that might reference enumerations
     for element_id, element in elements.items():
         # Check for both regular Class and AbstractClass
         if element.get("type") in ["Class", "AbstractClass"]:
             # Set is_abstract based on the type
+            original_name = element.get("name")
+            unique_name = generate_unique_class_name(original_name, existing_class_names)
+            existing_class_names.add(unique_name)
+            
+            # Create the class with the unique name
             is_abstract = element.get("type") == "AbstractClass"
-            cls = Class(name=element.get("name"), is_abstract=is_abstract)
+            cls = Class(name=unique_name, is_abstract=is_abstract)
+            
+            # Store the mapping of original to unique name if needed
+            element["original_name"] = original_name
+            element["unique_name"] = unique_name
+            
             # Add attributes
             for attr_id in element.get("attributes", []):
                 attr = elements.get(attr_id)
@@ -463,3 +487,4 @@ def process_state_machine(json_data):
                     code_lines.append(")")
     
     return "\n".join(code_lines)
+```

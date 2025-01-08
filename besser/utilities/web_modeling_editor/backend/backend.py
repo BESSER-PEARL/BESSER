@@ -109,9 +109,9 @@ async def generate_output(input_data: ClassDiagramInput):
 @app.post("/export-buml")
 async def export_buml(input_data: ClassDiagramInput):
     try:
-        # Convert Pydantic model to dictionary
         json_data = input_data.dict()
-        elements_data = input_data.elements  # Extract elements directly from the Pydantic model
+        elements_data = input_data.elements
+        
         # Ensure output directory is clean
         os.makedirs("output", exist_ok=True)
         for file in os.listdir("output"):
@@ -142,6 +142,8 @@ async def export_buml(input_data: ClassDiagramInput):
             # Handle class diagram
             buml_model = process_class_diagram(json_data)
             output_file_path = "output/domain_model.py"
+            
+            # Then write the domain model code
             domain_model_to_code(model=buml_model, file_path=output_file_path)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
@@ -175,15 +177,17 @@ async def get_json_model(buml_file: UploadFile = File(...)):
         if is_state_machine:
             # Convert the state machine Python code directly to JSON
             json_model = state_machine_to_json(buml_content)
+            ocl_string = ""  # State machines don't have OCL constraints
         else:
-            # Parse the BUML content into a domain model
-            domain_model = parse_buml_content(buml_content)
+            # Parse the BUML content into a domain model and get OCL constraints
+            domain_model, ocl_string = parse_buml_content(buml_content)
             # Convert the domain model to JSON format
             json_model = domain_model_to_json(domain_model)
         
         wrapped_response = {
             "title": buml_file.filename,
-            "model": json_model
+            "model": json_model,
+            "ocl": ocl_string
         }
         
         return wrapped_response

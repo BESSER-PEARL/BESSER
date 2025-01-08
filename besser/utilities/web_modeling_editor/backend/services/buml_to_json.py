@@ -227,72 +227,89 @@ def domain_model_to_json(domain_model):
 
     # Second pass: Create relationships
     for association in domain_model.associations:
-        rel_id = str(uuid.uuid4())
-        name = association.name if association.name else ""
-        ends = list(association.ends)
-        if len(ends) == 2:
-            source_prop, target_prop = ends
-            source_class = source_prop.type
-            target_class = target_prop.type
-            
-            if source_class in class_id_map and target_class in class_id_map:
-                # Get source and target elements
-                source_element = elements[class_id_map[source_class]]
-                target_element = elements[class_id_map[target_class]]
+        try:
+            rel_id = str(uuid.uuid4())
+            name = association.name if association.name else ""
+            ends = list(association.ends)
+            if len(ends) == 2:
+                source_prop, target_prop = ends
                 
-                # Calculate connection directions and points
-                source_dir, target_dir = determine_connection_direction(
-                    source_element['bounds'], 
-                    target_element['bounds']
-                )
+                # Check navigability and swap if needed
+                if not source_prop.is_navigable and target_prop.is_navigable:
+                    # If source is not navigable but target is, keep current order
+                    pass
+                elif source_prop.is_navigable and not target_prop.is_navigable:
+                    # If target is not navigable but source is, swap them
+                    source_prop, target_prop = target_prop, source_prop
+                elif not source_prop.is_navigable and not target_prop.is_navigable:
+                    # If both are not navigable, raise error but continue
+                    print(f"Warning: Both ends of association {name} are not navigable. Skipping this association.")
+                    continue
                 
-                source_point = calculate_connection_points(source_element['bounds'], source_dir)
-                target_point = calculate_connection_points(target_element['bounds'], target_dir)
+                source_class = source_prop.type
+                target_class = target_prop.type
                 
-                # Calculate path points
-                path_points = calculate_path_points(source_point, target_point, source_dir, target_dir)
-                
-                # Calculate bounds
-                rel_bounds = calculate_relationship_bounds(path_points)
-                
-                # Determine relationship type
-                rel_type = RELATIONSHIP_TYPES["composition"] if source_prop.is_composite else (
-                    RELATIONSHIP_TYPES["bidirectional"] if source_prop.is_navigable and target_prop.is_navigable
-                    else RELATIONSHIP_TYPES["unidirectional"]
-                )
-                
-                relationships[rel_id] = {
-                    "id": rel_id,
-                    "name": name,
-                    "type": rel_type,
-                    "source": {
-                        "element": class_id_map[source_class],
-                        "multiplicity": f"{source_prop.multiplicity.min}..{'*' if source_prop.multiplicity.max == 9999 else source_prop.multiplicity.max}",
-                        "role": source_prop.name,
-                        "direction": source_dir,
-                        "bounds": {
-                            "x": source_point['x'],
-                            "y": source_point['y'],
-                            "width": 0,
-                            "height": 0
-                        }
-                    },
-                    "target": {
-                        "element": class_id_map[target_class],
-                        "multiplicity": f"{target_prop.multiplicity.min}..{'*' if target_prop.multiplicity.max == 9999 else target_prop.multiplicity.max}",
-                        "role": target_prop.name,
-                        "direction": target_dir,
-                        "bounds": {
-                            "x": target_point['x'],
-                            "y": target_point['y'],
-                            "width": 0,
-                            "height": 0
-                        }
-                    },
-                    "bounds": rel_bounds,
-                    "path": path_points,
-                    "isManuallyLayouted": False
-                }
+                if source_class in class_id_map and target_class in class_id_map:
+                    # Get source and target elements
+                    source_element = elements[class_id_map[source_class]]
+                    target_element = elements[class_id_map[target_class]]
+                    
+                    # Calculate connection directions and points
+                    source_dir, target_dir = determine_connection_direction(
+                        source_element['bounds'], 
+                        target_element['bounds']
+                    )
+                    
+                    source_point = calculate_connection_points(source_element['bounds'], source_dir)
+                    target_point = calculate_connection_points(target_element['bounds'], target_dir)
+                    
+                    # Calculate path points
+                    path_points = calculate_path_points(source_point, target_point, source_dir, target_dir)
+                    
+                    # Calculate bounds
+                    rel_bounds = calculate_relationship_bounds(path_points)
+                    
+                    # Determine relationship type
+                    rel_type = RELATIONSHIP_TYPES["composition"] if source_prop.is_composite else (
+                        RELATIONSHIP_TYPES["bidirectional"] if source_prop.is_navigable and target_prop.is_navigable
+                        else RELATIONSHIP_TYPES["unidirectional"]
+                    )
+                    
+                    relationships[rel_id] = {
+                        "id": rel_id,
+                        "name": name,
+                        "type": rel_type,
+                        "source": {
+                            "element": class_id_map[source_class],
+                            "multiplicity": f"{source_prop.multiplicity.min}..{'*' if source_prop.multiplicity.max == 9999 else source_prop.multiplicity.max}",
+                            "role": source_prop.name,
+                            "direction": source_dir,
+                            "bounds": {
+                                "x": source_point['x'],
+                                "y": source_point['y'],
+                                "width": 0,
+                                "height": 0
+                            }
+                        },
+                        "target": {
+                            "element": class_id_map[target_class],
+                            "multiplicity": f"{target_prop.multiplicity.min}..{'*' if target_prop.multiplicity.max == 9999 else target_prop.multiplicity.max}",
+                            "role": target_prop.name,
+                            "direction": target_dir,
+                            "bounds": {
+                                "x": target_point['x'],
+                                "y": target_point['y'],
+                                "width": 0,
+                                "height": 0
+                            }
+                        },
+                        "bounds": rel_bounds,
+                        "path": path_points,
+                        "isManuallyLayouted": False
+                    }
+        except Exception as e:
+            print(f"Error creating relationship: {e}")
+            continue
 
     # Handle generalizations
     for generalization in domain_model.generalizations:

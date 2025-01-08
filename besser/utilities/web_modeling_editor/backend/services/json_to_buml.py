@@ -203,7 +203,15 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> list:
 
 def generate_unique_class_name(base_name, existing_names):
     """Generate a unique class name by appending a number if necessary."""
-    if base_name != "Class" or base_name not in existing_names:
+    # If base_name is "Class", always add a number
+    if base_name == "Class":
+        counter = 1
+        while f"{base_name}{counter}" in existing_names:
+            counter += 1
+        return f"{base_name}{counter}"
+    
+    # For other names, only add number if name exists
+    if base_name not in existing_names:
         return base_name
     
     counter = 1
@@ -346,6 +354,13 @@ def process_class_diagram(json_data):
             source_multiplicity = parse_multiplicity(source.get("multiplicity", "1"))
             target_multiplicity = parse_multiplicity(target.get("multiplicity", "1"))
 
+            # Use unique names to find the correct classes
+            source_unique_name = source_element.get("unique_name", source_element.get("name", ""))
+            target_unique_name = target_element.get("unique_name", target_element.get("name", ""))
+
+            source_class = domain_model.get_class_by_name(source_unique_name)
+            target_class = domain_model.get_class_by_name(target_unique_name)
+
             source_property = Property(
                 name=source.get("role", ""),
                 type=source_class,
@@ -354,13 +369,13 @@ def process_class_diagram(json_data):
             )
             target_property = Property(
                 name=target.get("role", ""),
-                type=target_class,
+                type=target_class, 
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,
                 is_composite=is_composite
             )
 
-            association_name = relationship.get("name") or f"{source_class.name}_{target_class.name}"
+            association_name = relationship.get("name") or f"{source_unique_name}_{target_unique_name}"
 
             association = BinaryAssociation(
                 name=association_name,
@@ -487,4 +502,3 @@ def process_state_machine(json_data):
                     code_lines.append(")")
     
     return "\n".join(code_lines)
-```

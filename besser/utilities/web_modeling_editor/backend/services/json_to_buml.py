@@ -487,4 +487,3 @@ def process_state_machine(json_data):
                     code_lines.append(")")
     
     return "\n".join(code_lines)
-```

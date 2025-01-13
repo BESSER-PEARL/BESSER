@@ -348,7 +348,7 @@ def domain_model_to_json(domain_model):
                     {"x": 100, "y": 50}
                 ]
             }
-            
+
     # Handle OCL constraint links
     for type_obj in domain_model.constraints:
         if isinstance(type_obj, Constraint) and type_obj.context in class_id_map:
@@ -384,7 +384,7 @@ def domain_model_to_json(domain_model):
             }
 
         # Create the final structure
-        result = {
+    result = {
             "version": "3.0.0",
             "type": "ClassDiagram",
             "size": default_size,

@@ -2,6 +2,8 @@ from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 import os, io, zipfile, shutil
+import tempfile
+import uuid
 
 from besser.utilities.buml_code_builder import domain_model_to_code
 from besser.generators.django import DjangoGenerator
@@ -15,6 +17,7 @@ from besser.generators.backend import BackendGenerator
 from besser.utilities.web_modeling_editor.backend.models.class_diagram import ClassDiagramInput
 from besser.utilities.web_modeling_editor.backend.services.json_to_buml import process_class_diagram, process_state_machine
 from besser.utilities.web_modeling_editor.backend.services.buml_to_json import domain_model_to_json, parse_buml_content, state_machine_to_json
+from besser.utilities.web_modeling_editor.backend.services.ocl_checker import check_ocl_constraint
 
 app = FastAPI(
     title="Besser Backend API",
@@ -44,49 +47,41 @@ GENERATOR_CONFIG = {
 
 @app.post("/generate-output")
 async def generate_output(input_data: ClassDiagramInput):
+    # Create unique temporary directory for this request
+    temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
     try:
         json_data = input_data.dict()
         print("Input data received:", json_data)
 
-        # Create and clear output directory
-        os.makedirs("output", exist_ok=True)
-        for file in os.listdir("output"):
-            file_path = os.path.join("output", file)
-            try:
-                if os.path.isfile(file_path):
-                    os.unlink(file_path)
-            except Exception as e:
-                print(f"Error deleting {file_path}: {e}")
-
-        # Handle class diagram generation
         generator = input_data.generator
         if generator not in GENERATOR_CONFIG:
             raise HTTPException(status_code=400, detail="Invalid generator type specified.")
 
         buml_model = process_class_diagram(json_data)
         generator_class, _ = GENERATOR_CONFIG[generator]
-        generator_instance = generator_class(buml_model, output_dir="output")
+        generator_instance = generator_class(buml_model, output_dir=temp_dir)
 
         generator_instance.generate()
 
-        # Get file name first
+        # Get file name
         _, file_name = GENERATOR_CONFIG[generator]
 
         # Handle zip file generators
         if generator == "java" or generator == "backend":
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                for root, _, files in os.walk("output"):
+                for root, _, files in os.walk(temp_dir):
                     for file in files:
                         file_path = os.path.join(root, file)
-                        zip_file.write(file_path, os.path.relpath(file_path, "output"))
+                        zip_file.write(file_path, os.path.relpath(file_path, temp_dir))
             zip_buffer.seek(0)
-            # Clean up output directory
-            shutil.rmtree("output", ignore_errors=True)
-            return StreamingResponse(zip_buffer, media_type="application/zip", headers={"Content-Disposition": f"attachment; filename={file_name}"})
+            # Clean up temp directory
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return StreamingResponse(zip_buffer, media_type="application/zip", 
+                                  headers={"Content-Disposition": f"attachment; filename={file_name}"})
 
         # For other generators, return the single file
-        output_file_path = os.path.join("output", file_name)
+        output_file_path = os.path.join(temp_dir, file_name)
         if not os.path.exists(output_file_path):
             raise ValueError(f"{generator} generation failed: Output file was not created.")
 
@@ -94,74 +89,57 @@ async def generate_output(input_data: ClassDiagramInput):
         with open(output_file_path, 'rb') as f:
             file_content = f.read()
         
-        # Clean up output directory
-        shutil.rmtree("output", ignore_errors=True)
+        # Clean up temp directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
         
-        return Response(content=file_content, media_type="text/plain", headers={"Content-Disposition": f"attachment; filename={file_name}"})
+        return Response(content=file_content, media_type="text/plain", 
+                      headers={"Content-Disposition": f"attachment; filename={file_name}"})
 
-    except ValueError as ve:
-        print(f"ValueError: {str(ve)}")
-        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
+        # Ensure cleanup on error
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
         print(f"Error during file generation or response: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 @app.post("/export-buml")
 async def export_buml(input_data: ClassDiagramInput):
+    # Create unique temporary directory for this request
+    temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
     try:
-        # Convert Pydantic model to dictionary
         json_data = input_data.dict()
-        elements_data = input_data.elements  # Extract elements directly from the Pydantic model
-        # Ensure output directory is clean
-        os.makedirs("output", exist_ok=True)
-        for file in os.listdir("output"):
-            file_path = os.path.join("output", file)
-            try:
-                if os.path.isfile(file_path):
-                    os.unlink(file_path)
-            except Exception as e:
-                print(f"Error deleting {file_path}: {e}")
+        elements_data = input_data.elements
 
-        # Check diagram type
         if elements_data.get("type") == "StateMachineDiagram":
-            # Handle state machine diagram
             state_machine_code = process_state_machine(elements_data)
-            output_file_path = "output/state_machine.py"
+            output_file_path = os.path.join(temp_dir, "state_machine.py")
             with open(output_file_path, "w") as f:
                 f.write(state_machine_code)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
-            shutil.rmtree("output", ignore_errors=True)
-            return Response(
-                content=file_content,
-                media_type="text/plain",
-                headers={"Content-Disposition": f"attachment; filename=state_machine.py"}
-            )
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return Response(content=file_content, media_type="text/plain",
+                          headers={"Content-Disposition": "attachment; filename=state_machine.py"})
 
         elif elements_data.get("type") == "ClassDiagram":
-            # Handle class diagram
             buml_model = process_class_diagram(json_data)
-            output_file_path = "output/domain_model.py"
+            output_file_path = os.path.join(temp_dir, "domain_model.py")
             domain_model_to_code(model=buml_model, file_path=output_file_path)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
-            shutil.rmtree("output", ignore_errors=True)
-            return Response(
-                content=file_content,
-                media_type="text/plain",
-                headers={"Content-Disposition": f"attachment; filename=domain_model.py"}
-            )
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return Response(content=file_content, media_type="text/plain",
+                          headers={"Content-Disposition": "attachment; filename=domain_model.py"})
 
         else:
             raise ValueError(f"Unsupported or missing diagram type: {elements_data.get('type')}")
 
-    except ValueError as ve:
-        print(f"ValueError: {str(ve)}")
-        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
+        # Ensure cleanup on error
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
         print(f"Error during BUML export: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-
 
 @app.post("/get-json-model")
 async def get_json_model(buml_file: UploadFile = File(...)):
@@ -176,14 +154,14 @@ async def get_json_model(buml_file: UploadFile = File(...)):
             # Convert the state machine Python code directly to JSON
             json_model = state_machine_to_json(buml_content)
         else:
-            # Parse the BUML content into a domain model
+            # Parse the BUML content into a domain model and get OCL constraints
             domain_model = parse_buml_content(buml_content)
             # Convert the domain model to JSON format
             json_model = domain_model_to_json(domain_model)
         
         wrapped_response = {
             "title": buml_file.filename,
-            "model": json_model
+            "model": json_model,
         }
         
         return wrapped_response
@@ -191,6 +169,30 @@ async def get_json_model(buml_file: UploadFile = File(...)):
     except Exception as e:
         print(f"Error in get_json_model: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/check-ocl")
+async def check_ocl(input_data: ClassDiagramInput):
+    try:
+        # Convert diagram to BUML model
+        json_data = {"elements": input_data.elements}
+        buml_model = process_class_diagram(json_data)
+        
+        if not buml_model:
+            return {
+                "success": False,
+                "message": "Failed to create BUML model"
+            }
+        
+        # Check OCL constraints
+        result = check_ocl_constraint(buml_model)
+        return result
+        
+    except Exception as e:
+        print(f"Error in check_ocl: {str(e)}")  # Debug print
+        return {
+            "success": False,
+            "message": f"Error checking OCL constraints: {str(e)}"
+        }
 
 if __name__ == "__main__":
     import uvicorn

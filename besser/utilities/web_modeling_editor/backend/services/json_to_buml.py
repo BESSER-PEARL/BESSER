@@ -1,6 +1,7 @@
+import re
 import uuid
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
-    Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY
+    Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint
 from besser.BUML.metamodel.state_machine import Body, Event, StateMachine
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
 from besser.utilities.web_modeling_editor.backend.services.layout_calculator import (
@@ -140,24 +141,97 @@ def parse_multiplicity(multiplicity_str):
     if not multiplicity_str:
         return Multiplicity(min_multiplicity=1, max_multiplicity=1)
     
+    # Handle single "*" case
+    if multiplicity_str == "*":
+        return Multiplicity(min_multiplicity=0, max_multiplicity=UNLIMITED_MAX_MULTIPLICITY)
+    
     parts = multiplicity_str.split("..")
-    min_multiplicity = int(parts[0]) if parts[0] else 1
-    max_multiplicity = (
-        int(parts[1]) if len(parts) > 1 and parts[1] and parts[1] != "*" else UNLIMITED_MAX_MULTIPLICITY
-    )
+    try:
+        min_multiplicity = int(parts[0]) if parts[0] and parts[0] != "*" else 0
+        max_multiplicity = (
+            UNLIMITED_MAX_MULTIPLICITY if len(parts) > 1 and (not parts[1] or parts[1] == "*")
+            else int(parts[1]) if len(parts) > 1
+            else min_multiplicity
+        )
+    except ValueError:
+        # If parsing fails, return default multiplicity of 1..1
+        return Multiplicity(min_multiplicity=1, max_multiplicity=1)
+        
     return Multiplicity(min_multiplicity=min_multiplicity, max_multiplicity=max_multiplicity)
 
+def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> list:
+    """Process OCL constraints and convert them to BUML Constraint objects."""
+    if not ocl_text:
+        return []
+    
+    constraints = []
+    lines = re.split(r'[,\n]', ocl_text)
+    constraint_count = 1
+
+    domain_classes = {cls.name.lower(): cls for cls in domain_model.types}
+
+    for line in lines:
+        line = line.strip()
+        if not line or not line.startswith('context'):
+            continue
+            
+        # Extract context class name
+        parts = line.split()
+        if len(parts) < 4:  # Minimum: "context ClassName inv name:"
+            continue
+            
+        context_class_name = parts[1]
+        context_class = domain_classes.get(context_class_name.lower())
+        
+        if not context_class:
+            print(f"Warning: Context class {context_class_name} not found")
+            continue
+            
+        constraint_name = f"constraint_{context_class_name}_{constraint_count}"
+        constraint_count += 1
+        
+        constraints.append(
+            Constraint(
+                name=constraint_name,
+                context=context_class,
+                expression=line,
+                language="OCL"
+            )
+        )
+    
+    return constraints
+
+def generate_unique_class_name(base_name, existing_names):
+    """Generate a unique class name by appending a number if necessary."""
+    # If base_name is "Class", always add a number
+    if base_name == "Class":
+        counter = 1
+        while f"{base_name}{counter}" in existing_names:
+            counter += 1
+        return f"{base_name}{counter}"
+    
+    # For other names, only add number if name exists
+    if base_name not in existing_names:
+        return base_name
+    
+    counter = 1
+    while f"{base_name}{counter}" in existing_names:
+        counter += 1
+    return f"{base_name}{counter}"
 
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""
     domain_model = DomainModel("Class Diagram")
     
-    # Get elements from the correct nested structure
+    # Get elements and OCL constraints from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})
-    
-    print(f"Elements: {elements}")
-    print(f"Relationships: {relationships}")
+
+    # print(f"Elements: {elements}")
+    # print(f"Relationships: {relationships}")
+
+    # Track existing class names
+    existing_class_names = set()
 
     # First process enumerations to have them available for attribute types
     for element_id, element in elements.items():
@@ -171,14 +245,25 @@ def process_class_diagram(json_data):
                     literals.add(literal_obj)
             enum = Enumeration(name=element_name, literals=literals)
             domain_model.types.add(enum)
+            existing_class_names.add(element_name)
 
     # Then process classes with attributes that might reference enumerations
     for element_id, element in elements.items():
         # Check for both regular Class and AbstractClass
         if element.get("type") in ["Class", "AbstractClass"]:
             # Set is_abstract based on the type
+            original_name = element.get("name")
+            unique_name = generate_unique_class_name(original_name, existing_class_names)
+            existing_class_names.add(unique_name)
+            
+            # Create the class with the unique name
             is_abstract = element.get("type") == "AbstractClass"
-            cls = Class(name=element.get("name"), is_abstract=is_abstract)
+            cls = Class(name=unique_name, is_abstract=is_abstract)
+            
+            # Store the mapping of original to unique name if needed
+            element["original_name"] = original_name
+            element["unique_name"] = unique_name
+            
             # Add attributes
             for attr_id in element.get("attributes", []):
                 attr = elements.get(attr_id)
@@ -232,7 +317,7 @@ def process_class_diagram(json_data):
 
     # Processing relationships (Associations, Generalizations, and Compositions)
     for rel_id, relationship in relationships.items():
-        print(f"Processing relationship ID: {rel_id} with data: {relationship}")
+        #print(f"Processing relationship ID: {rel_id} with data: {relationship}")
 
         rel_type = relationship.get("type")
         source = relationship.get("source")
@@ -240,6 +325,10 @@ def process_class_diagram(json_data):
 
         if not rel_type or not source or not target:
             print(f"Skipping relationship {rel_id} due to missing data.")
+            continue
+
+        # Skip OCL links
+        if rel_type == "ClassOCLLink":
             continue
 
         # Retrieve source and target elements
@@ -266,29 +355,52 @@ def process_class_diagram(json_data):
             source_multiplicity = parse_multiplicity(source.get("multiplicity", "1"))
             target_multiplicity = parse_multiplicity(target.get("multiplicity", "1"))
 
+            # Use unique names to find the correct classes
+            source_unique_name = source_element.get("unique_name", source_element.get("name", ""))
+            target_unique_name = target_element.get("unique_name", target_element.get("name", ""))
+
+            source_class = domain_model.get_class_by_name(source_unique_name)
+            target_class = domain_model.get_class_by_name(target_unique_name)
+
             source_property = Property(
                 name=source.get("role", ""),
-                type=target_class,
+                type=source_class,
                 multiplicity=source_multiplicity,
                 is_navigable=source_navigable
             )
             target_property = Property(
                 name=target.get("role", ""),
-                type=source_class,
+                type=target_class,
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,
                 is_composite=is_composite
             )
 
+            association_name = relationship.get("name") or f"{source_class.name}_{target_class.name}"
+
             association = BinaryAssociation(
-                name=f"{source_class.name}_{target_class.name}",
+                name=association_name,
                 ends={source_property, target_property}
             )
             domain_model.associations.add(association)
 
         elif rel_type == "ClassInheritance":
-            generalization = Generalization(general=source_class, specific=target_class)
+            generalization = Generalization(general=target_class, specific=source_class)
             domain_model.generalizations.add(generalization)
+
+    # Process OCL constraints
+    all_constraints = set()
+    for element_id, element in elements.items():
+        if element.get("type") in ["ClassOCLConstraint"]:
+            ocl = element.get("constraint")
+            if ocl:
+                try:
+                    new_constraints = process_ocl_constraints(ocl, domain_model)
+                    all_constraints.update(new_constraints)
+                except Exception as e:
+                    print(f"Error processing OCL constraint for element {element_id}: {e}")
+                    continue
+    domain_model.constraints = all_constraints
 
     return domain_model
 

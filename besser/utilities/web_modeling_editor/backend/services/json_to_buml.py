@@ -376,7 +376,7 @@ def process_class_diagram(json_data):
                 is_composite=is_composite
             )
 
-            association_name = relationship.get("name") or f"{source_class.name}_{target_class.name}"
+            association_name = relationship.get("name") or f"{source_unique_name}_{target_unique_name}"
 
             association = BinaryAssociation(
                 name=association_name,

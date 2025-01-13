@@ -51,7 +51,6 @@ async def generate_output(input_data: ClassDiagramInput):
     temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
     try:
         json_data = input_data.dict()
-        print("Input data received:", json_data)
 
         generator = input_data.generator
         if generator not in GENERATOR_CONFIG:

@@ -15,6 +15,7 @@ from besser.generators.backend import BackendGenerator
 from besser.utilities.web_modeling_editor.backend.models.class_diagram import ClassDiagramInput
 from besser.utilities.web_modeling_editor.backend.services.json_to_buml import process_class_diagram, process_state_machine
 from besser.utilities.web_modeling_editor.backend.services.buml_to_json import domain_model_to_json, parse_buml_content, state_machine_to_json
+from besser.utilities.web_modeling_editor.backend.services.ocl_checker import check_ocl_constraint
 
 app = FastAPI(
     title="Besser Backend API",
@@ -193,6 +194,30 @@ async def get_json_model(buml_file: UploadFile = File(...)):
     except Exception as e:
         print(f"Error in get_json_model: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/check-ocl")
+async def check_ocl(input_data: ClassDiagramInput):
+    try:
+        # Convert diagram to BUML model
+        json_data = {"elements": input_data.elements}
+        buml_model = process_class_diagram(json_data)
+        
+        if not buml_model:
+            return {
+                "success": False,
+                "message": "Failed to create BUML model"
+            }
+        
+        # Check OCL constraints
+        result = check_ocl_constraint(buml_model)
+        return result
+        
+    except Exception as e:
+        print(f"Error in check_ocl: {str(e)}")  # Debug print
+        return {
+            "success": False,
+            "message": f"Error checking OCL constraints: {str(e)}"
+        }
 
 if __name__ == "__main__":
     import uvicorn

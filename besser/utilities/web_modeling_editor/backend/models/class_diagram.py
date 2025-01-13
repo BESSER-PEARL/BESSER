@@ -3,4 +3,4 @@ from typing import Optional, Dict, Any
 
 class ClassDiagramInput(BaseModel):
     elements: Dict[str, Any]
-    generator: str
+    generator: Optional[str] = None

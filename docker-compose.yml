@@ -4,7 +4,7 @@ services:
       context: ./besser/utilities/web_modeling_editor/BESSER-Web-Modeling-Editor
       dockerfile: Dockerfile
     ports:
-      - "8080:8080"
+      - "8888:8888"
     environment:
       - REACT_APP_API_URL=http://backend:8000
       - HUSKY=0
@@ -13,7 +13,7 @@ services:
     volumes:
       - ./besser/utilities/web_modeling_editor/BESSER-Web-Modeling-Editor:/app
       - /app/node_modules
-    command: http-server dist -p 8080
+    command: npm run start
 
   besser-gui-backend:
     build:

@@ -18,6 +18,10 @@ Input models definition
 
   from besser.BUML.metamodel.gui import *
    
+  # The GUI will use the Library structural model classes
+  # to create views and handle data operations
+  from library import *
+
   ##################################
   #      GUI model definition      #
   ##################################
@@ -108,6 +112,8 @@ To use the Flutter code generator, simply provide the input models and use the `
 .. code-block:: python
 
   from besser.generators.flutter import FlutterGenerator
+  from library import library_model # Structural model
+  from gui import MyApp, MyHomeScreen # GUI model
   
   code_gen = FlutterGenerator(model=library_model, application=MyApp, main_page=MyHomeScreen)
   code_gen.generate()

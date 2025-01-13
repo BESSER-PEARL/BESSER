@@ -177,17 +177,15 @@ async def get_json_model(buml_file: UploadFile = File(...)):
         if is_state_machine:
             # Convert the state machine Python code directly to JSON
             json_model = state_machine_to_json(buml_content)
-            ocl_string = ""  # State machines don't have OCL constraints
         else:
             # Parse the BUML content into a domain model and get OCL constraints
-            domain_model, ocl_string = parse_buml_content(buml_content)
+            domain_model = parse_buml_content(buml_content)
             # Convert the domain model to JSON format
             json_model = domain_model_to_json(domain_model)
         
         wrapped_response = {
             "title": buml_file.filename,
             "model": json_model,
-            "ocl": ocl_string
         }
         
         return wrapped_response

@@ -1,0 +1,3 @@
+input_nn_type: "sequential" # subclassing or sequential
+output_nn_type: "sequential" # subclassing or sequential
+only_nn: True

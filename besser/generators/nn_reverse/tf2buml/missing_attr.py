@@ -22,9 +22,9 @@ import tensorflow as tf
 from keras import layers
 
 
-def extract_nn_code(file_path):
+def extract_nn_code(file_path, nn_type):
     """
-    Extracts the code on the neural network from the given file.
+    Extracts the code of the neural network from the given file.
     It returns:
         `init_code` that contains the code defined in the init method.
         `call_code` containing the statements in the call method.
@@ -36,13 +36,28 @@ def extract_nn_code(file_path):
     init_code = []
     in_init = True
     loader_code = []
+    imports = "from tf2buml.missing_attr import get_input_shape_all\n"
+    imports += "from tf2buml.missing_attr import get_data\n"
+    if nn_type == "sequential":
+        loader_code.append(imports)
+    else:
+        init_code.append(imports)
 
-    init_code.append("from tf2buml.missing_attr import get_data\n")
-    init_code.append("from tf2buml.missing_attr import get_input_shape_all\n")
     with open(file_path, 'r', encoding="utf-8") as file:
         for line in file:
             if "class " in line:
                 nn_name = line.split(" ")[1].split("(")[0]
+
+            if nn_type == "sequential":
+                if "Sequential" in line:
+                    nn_name = line.split(" = ")[0]
+
+            if (not (in_init or in_call_method)) or nn_type == "sequential":
+                loader_code.append(line)
+                # Check for the first occurrence of `loader` and `train`
+                if "loader" in line and "train" in line:
+                    loader_name = line.split(" ")[0]
+                    break
 
             if in_init:
                 init_code.append(line)
@@ -59,15 +74,7 @@ def extract_nn_code(file_path):
 
             if in_call_method and line.strip():
                 call_code.append(line)
-
-            if not (in_init or in_call_method):
-                loader_code.append(line)
-                # Check for the first occurrence of `loader` and `train`
-                if "loader" in line and "train" in line:
-                    loader_name = line.split(" ")[0]
-                    break
-
-    return nn_name, loader_name, init_code, call_code, loader_code[1:]
+    return nn_name, loader_name, init_code, call_code, loader_code
 
 
 def get_data(loader, input_shape):
@@ -86,6 +93,7 @@ def get_data(loader, input_shape):
     else:
         input_data = None
     return input_data
+
 
 def get_modules_names(model):
     """Maps modules objects to their names"""
@@ -138,8 +146,8 @@ def get_input_shape_all(x, model):
             lyr_name = modules_names.get(module, "Unknown")
             input_shape_all, x = get_shape(input_shape_all, module,
                                            index, x, lyr_name)
-
     return input_shape_all
+
 
 def modify_nn_call(call_code, init_code):
     """
@@ -165,7 +173,7 @@ def modify_nn_call(call_code, init_code):
     return model_code
 
 
-def extract_code(file_path, shape):
+def extract_code(file_path, shape, input_nn_type):
     """
     Extract code from the beginning of the file up to and including
     the line containing the first occurrence of `loader`, which is used
@@ -177,16 +185,17 @@ def extract_code(file_path, shape):
     """
 
     nn_name, loader_name, init_code, call_code, loader_code = (
-        extract_nn_code(file_path)
+        extract_nn_code(file_path, input_nn_type)
     )
 
     if loader_name is None and shape is None:
         return None
 
-    model_code = modify_nn_call(call_code, init_code)
     loader_code = "".join(loader_code)
 
-    function_code = f"""\
+    if input_nn_type == "subclassing":
+        model_code = modify_nn_call(call_code, init_code)
+        function_code = f"""\
 tf_model = {nn_name}()
 input_data = get_data({loader_name}, {shape})
 x = input_data
@@ -202,10 +211,17 @@ for mdl_name, mdl_details in input_shape_all.items():
             mdl_details[1] = input_shape_from_call[mdl_details[-1]][-1][-1]
 
 print(input_shape_all)
-"""
+    """
+        code = f"{''.join(model_code)}\n{loader_code}\n{function_code}"
+    else:
+        function_code = f"""\
+input_data = get_data({loader_name}, {shape})
+x = input_data
+input_shape_all = get_input_shape_all(x, {nn_name})
+print(input_shape_all)
+    """
 
-    code = f"{''.join(model_code)}\n{loader_code}\n{function_code}"
-
+        code = f"{loader_code}\n{function_code}"
     return code
 
 
@@ -286,8 +302,8 @@ def get_attributes(extractor, filename, shape=None):
     Retrieve the in_features and in_channels missig attributes and 
     store them to `extractor`.
     """
-
-    code = extract_code(filename, shape)
+    input_nn_type = extractor.input_nn_type
+    code = extract_code(filename, shape, input_nn_type)
     if code is None:
         return extractor
     shape_attr = execute_code(code)
@@ -298,10 +314,10 @@ def get_attributes(extractor, filename, shape=None):
     subnns = extractor.modules["sub_nns"]
     cnt_lyr_missing = next(iter(shape_attr))
     cnt_mdl = 0
-
     for mdl_name, mdl_type in extractor.modules["order"].items():
         if (mdl_type == "sub_nn" and
-            shape_attr[cnt_lyr_missing][-1] == mdl_name):
+           (shape_attr[cnt_lyr_missing][-1] == mdl_name or
+             input_nn_type == "sequential")):
             subnn_attr_dict = shape_attr[cnt_lyr_missing][1]
             cnt_ms_sub = next(iter(subnn_attr_dict))
             cnt_lyr_sub = 0
@@ -313,7 +329,8 @@ def get_attributes(extractor, filename, shape=None):
             cnt_lyr_missing = increment_counter(cnt_lyr_missing, shape_attr)
 
         elif (mdl_type == "layer" and
-              shape_attr[cnt_lyr_missing][-1] == mdl_name):
+              (shape_attr[cnt_lyr_missing][-1] == mdl_name or
+               input_nn_type == "sequential")):
             lyr_details = _layers[mdl_name]
             new_details, cnt_lyr_missing, cnt_mdl = update_layers_attr(
                 shape_attr, cnt_lyr_missing, cnt_mdl, lyr_details)

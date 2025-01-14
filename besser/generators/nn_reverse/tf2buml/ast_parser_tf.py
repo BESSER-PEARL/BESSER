@@ -20,14 +20,7 @@ class ASTParserTF(ASTParser):
             isinstance(node.value.func, ast.Name)):
             module_type = node.value.func.id
             if module_type == "Sequential":
-                self.modules["sub_nns"][module_name] = {}
-                layer_id = 0
-                # Extract layers within Sequential
-                for elt in node.value.args[0].elts:
-                    if isinstance(elt, ast.Call):
-                        layer, params = self.extract_layer(elt)
-                        self.modules["sub_nns"][module_name][layer_id] = [layer, params]
-                        layer_id+=1
+                self.handle_sequential_layers(node, module_name)
 
         #simple calls to layers
         if (isinstance(node.value, ast.Call) and
@@ -39,6 +32,33 @@ class ASTParserTF(ASTParser):
                     layer, params = self.extract_layer(node.value.args[0])
                     params["bidirectional"] = True
             self.modules["layers"][module_name] = [layer, params]
+
+
+    def handle_sequential_layers(self, node, seq_name):
+        """
+        It retrieves layers of a sequential model.
+        It can be used for the main sequential nn and sub-nns.
+        """
+        dict_layers = {}
+        self.modules["sub_nns"][seq_name] = {}
+        layer_id = 1
+        # Extract layers within Sequential
+        for elt in node.value.args[0].elts:
+            if isinstance(elt, ast.Call):
+                layer, params = self.extract_layer(elt)
+                if len(elt.args)>0: #rnn bidirectional
+                    if (isinstance(elt.args[0], ast.Call) and
+                        isinstance(elt.func, ast.Attribute)):
+                        if  elt.func.attr == "Bidirectional":
+                            layer, params = self.extract_layer(elt.args[0])
+                            params["bidirectional"] = True
+
+                dict_layers[f"layer_{layer_id}"] = [layer, params]
+                layer_id+=1
+            elif isinstance(elt, ast.Name):
+                dict_layers[elt.id] = "predefined"
+        self.modules["sub_nns"][seq_name] = dict_layers
+
 
     def handle_forward_simple_call(self, node):
         """

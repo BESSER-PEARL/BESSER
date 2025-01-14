@@ -11,7 +11,7 @@ from besser.generators.nn_reverse.torch2buml.ast_parser_pytorch import (
     ASTParserTorch
 )
 from besser.generators.nn_reverse.torch2buml.transform_func_pytorch import (
-    wrap_transform_layers
+    transform_layers
 )
 from besser.generators.nn_reverse.torch2buml.definitions import config_list, \
     train_param_list, test_param_list, lookup_loss_func
@@ -27,12 +27,15 @@ def main():
     f = open("code_transformed.py", "w", encoding="utf-8")
     sys.stdout = f
 
-    nn_name = code2buml(args, ASTParserTorch, "Pytorch", wrap_transform_layers,
-                        config_list, train_param_list, test_param_list,
-                        lookup_loss_func)
+    nn_name, output_nn_type = code2buml(
+        args, ASTParserTorch, "Pytorch", transform_layers, config_list,
+        train_param_list, test_param_list, lookup_loss_func
+    )
 
     print(f"pytorch_model = PytorchGenerator(model={nn_name}, "
-          f"output_dir='output/{nn_name}')")
+          f"output_dir='output/{nn_name}', "
+          f"generation_type='{output_nn_type}')")
+
     print("pytorch_model.generate()")
 
     sys.stdout = sys.__stdout__

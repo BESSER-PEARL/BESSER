@@ -4,19 +4,22 @@ to BUML code.
 """
 
 lookup_layers = {
-    "Conv1D": "Conv1D", "Conv2D": "Conv2D", "Conv3D": "Conv3D",           
-    "MaxPool1D": "PoolingLayer", "MaxPool2D": "PoolingLayer", 
-    "MaxPool3D": "PoolingLayer", "AveragePooling1D": "PoolingLayer", 
+    "Conv1D": "Conv1D", "Conv2D": "Conv2D", "Conv3D": "Conv3D",      
+    "MaxPool1D": "PoolingLayer", "MaxPool2D": "PoolingLayer",
+    "MaxPool3D": "PoolingLayer", "AveragePooling1D": "PoolingLayer",
     "AveragePooling2D": "PoolingLayer", "AveragePooling3D": "PoolingLayer",
-    "AdaptiveAveragePooling1D": "PoolingLayer", 
-    "AdaptiveAveragePooling2D": "PoolingLayer", 
-    "AdaptiveAveragePooling3D": "PoolingLayer", 
-    "AdaptiveMaxPooling1D": "PoolingLayer", 
-    "AdaptiveMaxPooling2D": "PoolingLayer", 
-    "AdaptiveMaxPooling3D": "PoolingLayer", 
-    "Flatten": "FlattenLayer", "Dense": "LinearLayer", 
-    "Embedding": "EmbeddingLayer", "BatchNormalization": "BatchNormLayer", 
-    "LayerNormalization": "LayerNormLayer", "Dropout": "DropoutLayer", 
+    "AdaptiveAveragePooling1D": "PoolingLayer",
+    "GlobalAveragePooling1D": "PoolingLayer",
+    "GlobalAveragePooling2D": "PoolingLayer",
+    "GlobalAveragePooling3D": "PoolingLayer",
+    "AdaptiveAveragePooling2D": "PoolingLayer",
+    "AdaptiveAveragePooling3D": "PoolingLayer",
+    "AdaptiveMaxPooling1D": "PoolingLayer",
+    "AdaptiveMaxPooling2D": "PoolingLayer",
+    "AdaptiveMaxPooling3D": "PoolingLayer",
+    "Flatten": "FlattenLayer", "Dense": "LinearLayer",
+    "Embedding": "EmbeddingLayer", "BatchNormalization": "BatchNormLayer",
+    "LayerNormalization": "LayerNormLayer", "Dropout": "DropoutLayer",
     "RNN": "SimpleRNNLayer", "LSTM": "LSTMLayer", "GRU": "GRULayer",
 }
 
@@ -59,6 +62,12 @@ layers_fixed_params = {
                              "dimension": "2D"},
     "AdaptiveMaxPooling3D": {"pooling_type": "adaptive_max", 
                              "dimension": "3D"},
+    "GlobalAveragePooling1D": {"pooling_type": "global_average", 
+                               "dimension": "1D"},
+    "GlobalAveragePooling2D": {"pooling_type": "global_average", 
+                               "dimension": "2D"},
+    "GlobalAveragePooling3D": {"pooling_type": "global_average", 
+                               "dimension": "3D"},
 }
 
 rnn_layers = ["LSTM", "GRU", "SimpleRNN",
@@ -73,3 +82,17 @@ test_param_list = ["name", "path_data"]
 lookup_loss_func = {"CategoricalCrossentropy": "crossentropy",
                     "BinaryCrossentropy": "binary_crossentropy",
                     "MeanSquaredError": "mse"}
+
+
+pos_params = {"Dense": ["units", "activation"],
+              "Embedding": ["input_dim", "output_dim"],
+              "SimpleRNN": ["units", "activation"],
+              "LSTM": ["units", "activation"],
+              "GRU": ["units", "activation"],
+              "Conv": ["filters", "kernel_size", "strides", "padding"],
+              "AveragePooling": ["pool_size", "strides", "padding"],
+              "MaxPool": ["pool_size", "strides", "padding"],
+              "AdaptiveAveragePooling": ["output_size"],
+              "AdaptiveMaxPooling": ["output_size"],
+              "Dropout ": ["rate"],
+              "LayerNormalization": ["axis"]}

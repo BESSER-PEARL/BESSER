@@ -52,7 +52,12 @@ def code2buml(args, ast_parser_class, framework, transform_layers,
     nn_name = extractor.nn_name
     if framework == "TF":
         extractor = get_attributes(extractor, args.filename, shape)
+    if extractor.input_nn_type == "sequential":
+        if extractor.modules["sub_nns"]:
+            extractor.modules["sub_nns"].pop(nn_name)
+
     extractor = transform_modules(extractor, transform_layers)
+
     print_imports(extractor, framework)
     print_subnn_def(extractor.modules["sub_nns"])
     print_nn_def(extractor)
@@ -65,13 +70,14 @@ def code2buml(args, ast_parser_class, framework, transform_layers,
         print_data(extractor.data_config["train_data"],
                    extractor.data_config["test_data"], nn_name,
                    train_param_list, test_param_list)
-    return nn_name
+    return nn_name, extractor.output_nn_type
 
 
 def transform_modules(extractor, transform_layers):
     """
     It transforms names and parameters of modules to BUML.
     """
+
     for sub_nn_name, sub_nn_elems in extractor.modules["sub_nns"].items():
         sub_nn_elems, _ = transform_layers(sub_nn_elems,
                                            extractor.inputs_outputs,
@@ -80,17 +86,41 @@ def transform_modules(extractor, transform_layers):
                                            is_layer=False)
         extractor.modules["sub_nns"][sub_nn_name] = sub_nn_elems
 
-    layers, modules = transform_layers(extractor.modules["layers"],
-                                       extractor.inputs_outputs,
-                                       extractor.layer_of_output,
-                                       extractor.modules["order"],
-                                       extractor.modules["sub_nns"],
-                                       is_layer=True)
+    is_layer = True
+    if (extractor.output_nn_type == "sequential" or
+        extractor.input_nn_type == "sequential"):
+        # if the main model is seq, only that model can remain in modules
+        # so that its layers are not defined or called separately.
+        is_layer = False
+
+    layers, order = transform_layers(extractor.modules["layers"],
+                                     extractor.inputs_outputs,
+                                     extractor.layer_of_output,
+                                     extractor.modules["order"],
+                                     is_layer=is_layer)
 
     extractor.modules["layers"] = layers
-    if modules:
-        extractor.modules["order"] = modules
+    if order:
+        extractor.modules["order"] = order
     return extractor
+
+
+def handle_positional_params(layer_type, layer_elems, pos_params):
+    """
+    It handles the positional parameters to convert them
+    to keyword parameters.
+    """
+    lyr_pos = next((e for e in pos_params if layer_type.startswith(e)), None)
+    if lyr_pos and layer_elems[1]["positional_params"]:
+        counter = 0
+        params = layer_elems[1]["positional_params"]
+        new_dict = {}
+        for pos_arg in params:
+            new_dict[pos_params[lyr_pos][counter]] = pos_arg
+            counter+=1
+        layer_elems[1] = {**new_dict, **layer_elems[1]}
+    layer_elems[1].pop("positional_params")
+    return layer_elems
 
 
 def handle_remaining_params(params, layer_type, layer_name, inputs_outputs,
@@ -116,7 +146,9 @@ def format_params(layer_params):
     """It formats the layers' parameters for printing."""
     formatted_params = []
     for key, value in layer_params.items():
-        if isinstance(value, str):
+        if str(value).startswith("self"):
+            formatted_params.append(f"{key}='{value}'")
+        elif isinstance(value, str):
             if key == "path_data":
                 formatted_params.append(f"{key}=r'{value}'")
             else:
@@ -188,7 +220,6 @@ def print_subnn_def(sub_nns):
             print(f"{sub_nn_name}.add_layer({layer_type}("
                   f"name='{sub_nn_name}_{layer_id}', {params_str}))")
         print("\n")
-
 
 
 def print_imports(extractor, framework):

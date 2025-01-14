@@ -71,3 +71,19 @@ test_param_list = ["name", "path_data"]
 lookup_loss_func = {"CrossEntropyLoss": "crossentropy",
                     "BCELoss": "binary_crossentropy",
                     "MSELoss": "mse"}
+
+pos_params = {"Linear": ["in_features", "out_features"],
+              "Embedding": ["num_embeddings", "embedding_dim"],
+              "Flatten": ["Flatten", "end_dim"],
+              "RNN": ["input_size", "hidden_size"],
+              "LSTM": ["input_size", "hidden_size"],
+              "GRU": ["input_size", "hidden_size"],
+              "Conv": ["in_channels", "out_channels", "kernel_size",
+                       "stride", "padding"],
+              "AvgPool": ["kernel_size", "stride", "padding"],
+              "MaxPool": ["kernel_size", "stride", "padding"],
+              "AdaptiveAvgPool": ["output_size"],
+              "AdaptiveMaxPool": ["output_size"],
+              "Dropout ": ["p"],
+              "LayerNorm": ["normalized_shape"],
+              "BatchNorm": ["num_features"]}

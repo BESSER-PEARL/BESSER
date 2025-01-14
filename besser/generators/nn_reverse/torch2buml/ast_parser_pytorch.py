@@ -30,27 +30,56 @@ class ASTParserTorch(ASTParser):
             # Check if it is a Sequential or any NN layer
             module_type = node.value.func.attr
             if module_type == "Sequential":
-                self.modules["sub_nns"][module_name] = {}
-                layer_id = 0
-                # Extract layers within Sequential
-                for elt in node.value.args:
-                    if isinstance(elt, ast.Call):
-                        layer, params = self.extract_layer(elt)
-                        if layer in lookup_actv_fun:
-                            transform_actv_func(layer,
-                                                self.modules,
-                                                self.activation_functions,
-                                                in_forward=False)
-                        else:
-                            sub_nn = self.modules["sub_nns"][module_name]
-                            sub_nn[layer_id] = [layer, params]
-                            layer_id+=1
+                self.handle_sequential_layers(node, module_name)
             else:
                 layer, params = self.extract_layer(node.value)
                 if layer not in lookup_actv_fun:
                     self.modules["layers"][module_name] = [layer, params]
                 else:
                     self.activation_functions[module_name] = layer
+
+
+    def handle_sequential_layers(self, node, seq_name):
+        """
+        It retrieves layers of a sequential model.
+        It can be used for the main sequential nn and sub-nns.
+        """
+        dict_layers = {}
+        self.modules["sub_nns"][seq_name] = {}
+        layer_id = 1
+        permute = False
+        # Extract layers within Sequential
+        for elt in node.value.args:
+            if isinstance(elt, ast.Call):
+                layer, params = self.extract_layer(elt)
+                if layer in lookup_actv_fun:
+                    transform_actv_func(layer,
+                                        self.modules,
+                                        self.activation_functions,
+                                        dict_layers,
+                                        in_forward=False)
+                elif layer == "Permute":
+                    last_module = next(reversed(dict_layers), None)
+                    if last_module is not None:
+                        lyr_type = dict_layers[last_module][0]
+                        if lyr_type in cnn_layers:
+                            layer_param = dict_layers[last_module][1]
+                            layer_param["permute_out"] = True
+                        else:
+                            permute = True
+                    else:
+                        permute = True
+                else:
+                    if permute:
+                        params["permute_in"] = True
+                        permute = False
+                    dict_layers[f"layer_{layer_id}"] = [layer, params]
+                    layer_id+=1
+
+            elif isinstance(elt, ast.Name):
+                dict_layers[elt.id] = "predefined"
+        self.modules["sub_nns"][seq_name] = dict_layers
+
 
     def handle_forward_simple_call(self, node):
         """
@@ -76,7 +105,7 @@ class ASTParserTorch(ASTParser):
                                     self.activation_functions)
 
             elif module_name not in self.modules["sub_nns"]:
-                self.is_permute_before_rnn_cnn(module_name)
+                self.is_permute_before_cnn(module_name)
 
             if module_name not in self.activation_functions:
                 self.populate_modules(module_name)
@@ -106,7 +135,7 @@ class ASTParserTorch(ASTParser):
         rnn_in = node.value.args[0].id
         self.inputs_outputs[module_name] = [rnn_in, rnn_out]
         self.layer_of_output[rnn_out] = module_name
-        self.is_permute_before_rnn_cnn(module_name)
+        #self.is_permute_before_cnn(module_name)
         self.populate_modules(module_name)
         self.previous_assign = node
 
@@ -169,7 +198,7 @@ class ASTParserTorch(ASTParser):
             self.data_config["train_data"]["normalize_images"] = True
 
 
-    def is_permute_before_rnn_cnn(self, layer_name):
+    def is_permute_before_cnn(self, layer_name):
         """
         It adds the permute op as parameter to its following layer if
         it is a cnn or rnn layer.

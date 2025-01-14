@@ -25,12 +25,15 @@ def main():
     f = open("code_transformed.py", "w", encoding="utf-8")
     sys.stdout = f
 
-    nn_name = code2buml(args, ASTParserTF, "TF", wrap_transform_layers,
-                        config_list, train_param_list, test_param_list,
-                        lookup_loss_func)
+    nn_name, output_nn_type = code2buml(
+        args, ASTParserTF, "TF", wrap_transform_layers, config_list,
+        train_param_list, test_param_list, lookup_loss_func
+    )
 
     print(f"tf_model = TFGenerator(model={nn_name}, "
-          f"output_dir='output/{nn_name}')")
+          f"output_dir='output/{nn_name}', "
+          f"generation_type='{output_nn_type}')")
+
     print("tf_model.generate()")
 
     sys.stdout = sys.__stdout__

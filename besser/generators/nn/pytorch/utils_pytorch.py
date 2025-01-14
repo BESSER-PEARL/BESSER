@@ -18,10 +18,10 @@ class SetupLayerSyntax:
     """
     def __init__(self, layer, modules_details):
         self.layer = layer
-        self.modules_details = modules_details
-        self.permute_out = None
-        self.permute_in = None
-        self.dim = None
+        self.modules_details: dict = modules_details
+        self.permute_out: bool = None
+        self.permute_in: bool = None
+        self.dim: str = None
 
     def setup_general_layer(self):
         """It defines the syntax of general layers."""
@@ -70,24 +70,39 @@ class SetupLayerSyntax:
             lyr = f"{lyr}.Dropout(p={self.layer.rate})"
         return lyr
 
-    def add_permute(self, lyr_name, dim, in_var_layer):
+    def add_permute(self, lyr_name, dim, in_var_layer, permute_in = True,
+                    sequential=False, is_subnn=False):
         """It permutes the input of the layer"""
+        if permute_in:
+            perm_name = f"{lyr_name}_in_op"
+        else:
+            perm_name = f"{lyr_name}_out_op"
         if dim is None:
             perm_dim = [0, 2, 1]
         else:
             if dim == "1":
                 perm_dim = [0, 2, 1]
             elif dim == "2":
-                perm_dim = [0, 3, 1, 2]
+                if permute_in:
+                    perm_dim = [0, 3, 1, 2]
+                else:
+                    perm_dim = [0, 2, 3, 1]
             else:
-                perm_dim = [0, 4, 1, 2, 3]
+                if permute_in:
+                    perm_dim = [0, 4, 1, 2, 3]
+                else:
+                    perm_dim = [0, 2, 3, 4, 1]
 
-        tns = TensorOp(name=f"{lyr_name}_in_op", tns_type="permute",
-                       permute_dim=perm_dim)
-        tns_out = utils.handle_tensorop
-        self.modules_details = tns_out(tns, self.modules_details,
-                                       get_tensorop_syntax,
-                                       in_var_layer)
+        if sequential or is_subnn:
+            self.modules_details[perm_name] = [f"Permute(dims={perm_dim})",
+                                               in_var_layer]
+        else:
+            tns = TensorOp(name=perm_name, tns_type="permute",
+                           permute_dim=perm_dim)
+            tns_out = utils.handle_tensorop
+            self.modules_details = tns_out(tns, self.modules_details,
+                                           get_tensorop_syntax,
+                                           in_var_layer)
 
 
     def setup_rnn(self):
@@ -107,21 +122,22 @@ class SetupLayerSyntax:
         )
         return lyr, self.modules_details
 
+
     def setup_actv_func(self):
         """It defines the syntax of activation functions."""
-        actv_func = self.layer.actv_func
         lyr = None
+        activs = {"relu": "ReLU", "leaky_relu": "LeakyReLU",
+                  "sigmoid": "Sigmoid", "softmax": "Softmax", "tanh": "Tanh"}
         if hasattr(self.layer, 'actv_func'):
-            if actv_func == "relu":
-                lyr = "self.relu_activ = nn.ReLU()"
-            elif actv_func == "leaky_relu":
-                lyr = "self.leaky_relu_activ = nn.LeakyReLU()"
-            elif actv_func == "sigmoid":
-                lyr = "self.sigmoid_activ = nn.Sigmoid()"
-            elif actv_func == "softmax":
-                lyr = "self.softmax_activ = nn.Softmax()"
-            elif actv_func == "tanh":
-                lyr = "self.tanh_activ = nn.Tanh()"
+            actv = self.layer.actv_func
+            if actv in activs:
+                lyr = f"self.actv_func_{actv} = nn.{activs[actv]}()"
+            elif actv is not None:
+                if actv.startswith("self"):
+                    lyr = f"self.actv_func_{actv[5:]}"
+                else:
+                    lyr = f"self.actv_func_{actv}"
+                lyr = f"{lyr} = get_activation_function({actv})"
         return lyr
 
     def setup_cnn(self):
@@ -175,6 +191,12 @@ class SetupLayerSyntax:
                 f"self.{lyr_name} = nn.{pl}Pool{dim}d(kernel_size={kernel}, "
                 f"stride={stride}, padding={pad})"
             )
+        elif pl_type.startswith("global"):
+            out_dim = (1,) * int(dim)
+            lyr = (
+                f"self.{lyr_name} = nn.AdaptiveAvgPool{dim}d({out_dim})"
+            )
+            # or tensor.mean(dim=(2, 3, 4), keepdim=True)
         else:
             if pl_type == "adaptive_average":
                 pl = "AdaptiveAvg"
@@ -210,3 +232,20 @@ def get_tensorop_syntax(tensorop, modules_details, in_var=None):
     else:
         ts_op_synt = f"torch.matmul({params})"
     return ts_op_synt
+
+
+def adjust_actv_func_names(modules_details):
+    """Renames activation functions as activ_func_1, activ_func_2, ..."""
+    actv_dict = {}
+    counter = 1
+    for mdl_name, mdl_details in modules_details.items():
+        if mdl_name.split("_")[-1] == "activ":
+            synt = mdl_details[0]
+            if "get_activation_function" in synt:
+                activ_type = synt.split("(")[1].split(")")[0]
+                if activ_type not in actv_dict:
+                    actv_dict[activ_type] = f"activ_func_{counter}"
+                    counter+=1
+                activ_def = synt.split("=")[1]
+                mdl_details[0] = f"self.{actv_dict[activ_type]} = {activ_def}"
+    return modules_details

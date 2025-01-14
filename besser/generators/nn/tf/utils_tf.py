@@ -17,10 +17,9 @@ class SetupLayerSyntax:
     """
     def __init__(self, layer, modules_details):
         self.layer = layer
-        self.modules_details = modules_details
-        self.permute_out = None
-        self.permute_in = None
-        self.dim = None
+        self.modules_details: dict = modules_details
+        self.permute_out: bool = None
+        self.permute_in: bool = None
 
     def setup_general_layer(self):
         """It defines the syntax of general layers."""
@@ -98,8 +97,13 @@ class SetupLayerSyntax:
         It formats the activation function as attribute of the layer.
         """
         if hasattr(self.layer, 'actv_func'):
-            if self.layer.actv_func is not None:
-                return f"'{self.layer.actv_func}'"
+            activ = self.layer.actv_func
+            list_func = ["relu", "tanh", "sigmoid","softmax", "leaky_relu"]
+            if activ is not None:
+                if activ in list_func:
+                    return f"'{self.layer.actv_func}'"
+                else:
+                    return f"{self.layer.actv_func}"
             else:
                 return None
 
@@ -137,6 +141,12 @@ class SetupLayerSyntax:
             lyr = (
                 f"self.{lyr_name} = layers.{pl}{dim}D(pool_size={kernel}, "
                 f"strides={stride}, padding='{pad_type}')"
+            )
+        elif pl_type.startswith("global"):
+            typ = pl_type.split("_")[1]
+            pl = f"Global{typ[0].upper()}{typ[1:]}Pooling"
+            lyr = (
+                f"self.{lyr_name} = layers.{pl}{dim}D()"
             )
         else:
             if pl_type == "adaptive_average":

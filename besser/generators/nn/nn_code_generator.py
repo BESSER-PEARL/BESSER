@@ -15,6 +15,7 @@ from besser.generators.nn.tf.utils_tf import (
 from besser.generators.nn.pytorch.utils_pytorch import (
     SetupLayerSyntax as SetupLayerTorch
 )
+from besser.generators.nn.pytorch.utils_pytorch import adjust_actv_func_names
 from besser.generators.nn.utils_nn import handle_layer, handle_tensorop, \
     add_in_out_var_to_subnn
 
@@ -42,17 +43,24 @@ class NNCodeGenerator(GeneratorInterface):
     """
     def __init__(self, model: NN,
                  setup_layer: Union[SetupLayerTF, SetupLayerTorch],
-                 get_tensorop_syntax: Callable, template_name: str,
-                 template_dir: str, file_name: str = "nn.py",
-                 output_dir: str = None):
+                 get_tensorop_syntax: Callable, generation_type: str,
+                 channel_last: bool, template_dir: str,
+                 file_name: str = "nn.py", output_dir: str = None):
+
         super().__init__(model, output_dir)
         self.setup_layer: Union[SetupLayerTF, SetupLayerTorch] = setup_layer
         self.get_tensorop_syntax: Callable = get_tensorop_syntax
-        self.template_name: str = template_name
+        self.generation_type: str = generation_type
+        self.channel_last: bool = channel_last
         self.template_dir: str = template_dir
         self.file_name: str = file_name
-        self.modules_details: Dict = self.get_modules_details()
 
+        if self.generation_type == "subclassing":
+            self.template_name = f"template_{template_dir}_subclassing.py.j2"
+        else:
+            self.template_name = f"template_{template_dir}_sequential.py.j2"
+
+        self.modules_details: Dict = self.get_modules_details()
 
 
     def get_modules_details(self) -> str:
@@ -77,25 +85,37 @@ class NNCodeGenerator(GeneratorInterface):
         """
         counter_subnn = 0
         modules_details = {}
-        actv_func = True if "torch" in self.template_name else None
+        if "torch" in self.template_name:
+            actv_func = True
+        else:
+            actv_func = False
+
+        is_seq = False
+        if self.generation_type == "sequential":
+            is_seq = True
         for module in self.model.modules:
             module_type = module.__class__.__name__
             if module_type == "NN":
                 subnn_details = {}
                 for sub_nn_layer in module.layers:
                     subnn_details = handle_layer(
-                        sub_nn_layer, self.setup_layer,
-                        subnn_details, actv_func)
+                        sub_nn_layer, self.setup_layer, subnn_details,
+                        actv_func, is_seq, self.channel_last, is_subnn=True
+                    )
                 name_sub_nn = f"{module.name}_{counter_subnn}_nn"
                 modules_details[name_sub_nn] = subnn_details
                 counter_subnn += 1
                 modules_details = add_in_out_var_to_subnn(modules_details)
             elif module_type != "TensorOp":
                 modules_details = handle_layer(
-                    module, self.setup_layer, modules_details, actv_func)
+                    module, self.setup_layer, modules_details,
+                    actv_func, is_seq, self.channel_last, is_subnn=False
+                )
             else:
                 modules_details = handle_tensorop(
                     module, modules_details, self.get_tensorop_syntax)
+        if actv_func:
+            modules_details = adjust_actv_func_names(modules_details)
         return modules_details
 
     def build_generation_path(self, file_name:str) -> str:
@@ -122,7 +142,8 @@ class NNCodeGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as a file named nn_code.py
         """
-        file_path = self.build_generation_path(file_name=self.file_name)
+        file_name = f"{self.file_name[:-3]}_{self.generation_type}.py"
+        file_path = self.build_generation_path(file_name=file_name)
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), self.template_dir, "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
@@ -130,6 +151,7 @@ class NNCodeGenerator(GeneratorInterface):
 
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(
-                model=self.model, modules_details=self.modules_details)
+                model=self.model, modules_details=self.modules_details,
+                generation_type=self.generation_type)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

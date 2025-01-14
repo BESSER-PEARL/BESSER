@@ -1,24 +1,18 @@
-"""TensorFlow code generated based on BUML."""
+"""PyTorch code generated based on BUML."""
 
 {% import "setup_nn_components.py.j2" as nn_components -%}
-{{- nn_components.print_imports(model, modules_details) }}
+{{ nn_components.print_imports(model, modules_details, generation_type) }}
 
 # Define the network architecture
-class NeuralNetwork(tf.keras.Model):
-    def __init__(self):
-    {{- nn_components.print_init(modules_details) }}
-        
-    def call(self, x):
-    {{- nn_components.print_forward(modules_details) }}
-    
+{{ nn_components.print_sequential(model, modules_details) }}
+
 
 {% if model.train_data is not none %}
 # Dataset preparation
 {{ nn_components.prepare_data(model.train_data, model.test_data, model.configuration) }}
 
 
-# Define the network, loss function, and optimizer
-{{ model.name }} = NeuralNetwork()
+# Define the loss function, and optimizer
 {% set from_logits = nn_components.from_logits(modules_details) -%}
 criterion = {{ nn_components.get_loss_function(model.configuration, from_logits) }}
 optimizer = {{ nn_components.get_optimizer(model) }}

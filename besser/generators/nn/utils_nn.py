@@ -8,6 +8,7 @@ import random
 
 from PIL import Image
 import numpy as np
+from torch import nn
 
 
 def get_previous_out_var(modules_details, prev_module):
@@ -127,6 +128,22 @@ def initialize_layer_vars(layer):
             out_var_actv, in_var_actv = "x", "x"
     return out_var_layer, in_var_layer, out_var_actv, in_var_actv
 
+
+def get_activation_function(activ):
+    """
+    It returns the activation function syntax if the user does not
+    explicitely provide the activation function name in the BUML model.
+    """
+    activ_func = {"relu": "ReLU", "leaky_relu": "LeakyReLU",
+                  "sigmoid": "Sigmoid", "softmax": "Softmax", "tanh": "Tanh"}
+    activ = activ.lower()
+
+    if activ in activ_func:
+        return f"nn.{activ_func[activ]}()"
+    raise ValueError(f"The activation function {activ} is invalid")
+
+
+
 def get_layer_syntax(setup_layer_cls, layer, modules_details,
                      in_layer, actv_func_synt):
     """
@@ -146,16 +163,18 @@ def get_layer_syntax(setup_layer_cls, layer, modules_details,
            #parent_class == "NormalizationLayer")
         layer_synt = setup.setup_layer_modifier()
 
-    if actv_func_synt is not None:
+    if actv_func_synt:
         actv_func_synt = setup.setup_actv_func()
+
     return layer_synt, actv_func_synt, modules_details, setup
 
-def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=None):
+def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=False,
+                 is_seq=False, channel_last=True, is_subnn=False):
     """
     It populates the `modules_details` dictionary with layer's 
     information: Its syntax, input and output variables, and the 
     layer class.
-    In the case of PyTorch, the activation function is treated as 
+    In the case of PyTorch, the activation function is treated as
     a layer.
     """
 
@@ -170,18 +189,20 @@ def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=None):
     layer_synt, actv_func_syntax, modules_details, setup = get_layer_syntax(
         setup_layer, layer, modules_details, in_layer, actv_func_syntax)
 
-    if setup.permute_in:
+    if setup.permute_in and channel_last:
         dim = setup.dim
-        setup.add_permute(layer.name, dim, in_layer)
+        setup.add_permute(layer.name, dim, in_layer, permute_in=True,
+                          sequential=is_seq, is_subnn=is_subnn)
 
     modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
                                               in_layer, layer]
-    if actv_func_syntax is not None:
+    if actv_func_syntax:
         modules_details[layer.name + "_activ"] = [actv_func_syntax, out_actv,
                                                   in_actv]
-    if setup.permute_out:
+    if setup.permute_out and channel_last:
         dim = setup.dim
-        setup.add_permute(layer.name, dim, out_layer)
+        setup.add_permute(layer.name, dim, out_layer, permute_in = False,
+                          sequential=is_seq, is_subnn=is_subnn)
     return modules_details
 
 
@@ -293,3 +314,14 @@ def format_value(elem):
     if len(elem) == 1:
         return elem[0]
     return tuple(elem)
+
+
+class Permute(nn.Module):
+    """A custom permute module for the sequential architecture"""
+    def __init__(self, dims):
+        super().__init__()
+        self.dims = dims
+
+    def forward(self, x):
+        x = x.permute(self.dims)
+        return x

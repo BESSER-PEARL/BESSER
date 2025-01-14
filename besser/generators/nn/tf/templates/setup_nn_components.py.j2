@@ -15,8 +15,9 @@
     {%- set _ = dict_def.update({key: []}) -%}
 {%- endmacro -%}
 
-{%- macro print_imports(model, modules_details) %}
+{%- macro print_imports(model, modules_details, generation_type) %}
 {%- set si = namespace(sequential_imported=False) -%}
+{% if generation_type == "sequential"%}from keras.models import Sequential{%- set si.sequential_imported = True -%} {% endif %}
 import tensorflow as tf
 from keras import layers
 {% for module_name, module_details in modules_details.items() -%}
@@ -31,6 +32,42 @@ from datetime import datetime
 {%- if module_name.endswith("layer") %}{% if module_details[0].split("=")[1].strip().startswith("tfa") %}import tensorflow_addons as tfa{% endif %}{% endif %}{% endfor %}
 {% if model.train_data.input_format == "images" %}from besser.generators.nn.utils_nn import compute_mean_std{%- endif %}
 {% endmacro -%}
+
+
+{%- macro print_sequential(model, modules_details) %}
+    {%- for module_name, module_details in modules_details.items() %}
+        {%- if module_name.endswith("nn") %}
+{{ module_name.split('_')[0] }} = Sequential([
+    {%- for subnn_key, subnn_value in module_details.items() %}
+        {%- if subnn_key != "in_out_variable" %}
+            {%- if "layers.ZeroPadding" in subnn_value[0] %}
+    {{ subnn_value[0].split("#")[0].split('=', 1)[1].strip() }},
+    {{ subnn_value[0].split("#")[1].split('=', 1)[1].strip() }},
+            {%- else %}
+    {{ subnn_value[0].split('=', 1)[1].strip() }},
+            {%- endif -%}
+        {%- endif -%}
+    {%- endfor %}
+])
+        {%- endif -%}
+    {%- endfor %}
+
+{{ model.name }} = Sequential([
+    {%- for module_name, module_details in modules_details.items() %}
+        {%- if module_name.endswith("nn") %}
+    {{ module_name.split('_')[0] }},
+        {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
+        {%- if "layers.ZeroPadding" in module_details[0] %}
+    {{ module_details[0].split("#")[0].strip() }}
+    {{ module_details[0].split("#")[1].strip() }}
+        {%- else %}
+    {{ module_details[0].split('=', 1)[1].strip() }},
+        {%- endif -%}
+        {%- endif -%}
+    {%- endfor %}
+])
+{% endmacro -%}
+
 
 
 {%- macro print_init(modules_details) %}

@@ -19,8 +19,8 @@ class PytorchGenerator(NNCodeGenerator):
     Args:
         model (NN): An instance of the NN Model class representing 
             the B-UML model.
-        setup_layer (SetupLayerSyntax): The class 
-            that defines the syntax of layers.
+        setup_layer (SetupLayerSyntax): The class that defines
+            the syntax of layers.
         setup_tensorop (Callable): The function that defines the
             syntax of tensorops.
         output_dir (str, optional): The output directory where the 
@@ -29,11 +29,14 @@ class PytorchGenerator(NNCodeGenerator):
             code is stored.
         template (str): The name of the jinja template.
     """
-    def __init__(self, model: NN,
-            setup_layer: SetupLayerSyntax = SetupLayerSyntax,
-            setup_tensorop: Callable = get_tensorop_syntax,
-            template_name: str = "template_pytorch_functional.py.j2",
-            template_dir: str = "pytorch",
-            file_name: str = "pytorch_nn.py", output_dir: str = None):
-        super().__init__(model, setup_layer, setup_tensorop,
-                         template_name, template_dir, file_name, output_dir)
+    def __init__(self, model: NN, output_dir: str, generation_type: str,
+                 channel_last: bool = True):
+
+        setup_layer: SetupLayerSyntax = SetupLayerSyntax
+        setup_tensorop: Callable = get_tensorop_syntax
+
+        template_dir: str = "pytorch"
+        file_name: str = "pytorch_nn.py"
+
+        super().__init__(model, setup_layer, setup_tensorop, generation_type,
+                         channel_last, template_dir, file_name, output_dir)

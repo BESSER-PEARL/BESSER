@@ -29,11 +29,14 @@ class TFGenerator(NNCodeGenerator):
             code is stored.
         template (str): The name of the jinja template.
     """
-    def __init__(self, model: NN,
-                setup_layer: SetupLayerSyntax = SetupLayerSyntax,
-                setup_tensorop: Callable = get_tensorop_syntax,
-                template_name: str = "template_tf_functional.py.j2",
-                template_dir: str = "tf",
-                file_name: str = "tf_nn.py", output_dir: str = None):
-        super().__init__(model, setup_layer, setup_tensorop,
-                         template_name, template_dir, file_name, output_dir)
+    def __init__(self, model: NN, output_dir: str, generation_type: str):
+
+        setup_layer: SetupLayerSyntax = SetupLayerSyntax
+        setup_tensorop: Callable = get_tensorop_syntax
+
+        template_dir: str = "tf"
+        file_name: str = "tf_nn.py"
+        channel_last: bool = None
+
+        super().__init__(model, setup_layer, setup_tensorop, generation_type,
+                         channel_last, template_dir, file_name, output_dir)

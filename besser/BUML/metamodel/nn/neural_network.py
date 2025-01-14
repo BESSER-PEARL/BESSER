@@ -275,10 +275,10 @@ class Layer:
             options: 'relu', 'leaky_rely', 'sigmoid', 'softmax' and 
             'tanh'
         """
-        if actv_func is not None and actv_func not in [
-            'relu', 'leaky_relu', 'sigmoid', 'softmax', 'tanh'
-        ]:
-            raise ValueError("Invalid value of actv_func")
+        #if actv_func is not None and actv_func not in [
+        #    'relu', 'leaky_relu', 'sigmoid', 'softmax', 'tanh'
+        #]:
+        #    raise ValueError("Invalid value of actv_func")
         self.__actv_func = actv_func
 
     @property
@@ -535,7 +535,7 @@ class ConvolutionalLayer(CNN):
                  stride_dim: List[int], in_channels: int = None,
                  padding_amount: int = 0, padding_type: str = "valid",
                  actv_func: str = None, name_module_input: str = None,
-                 input_reused: bool = False, permute_in: bool = False, 
+                 input_reused: bool = False, permute_in: bool = False,
                  permute_out: bool = False):
         super().__init__(name, kernel_dim, stride_dim, padding_amount,
                          padding_type, actv_func, name_module_input,
@@ -1027,7 +1027,8 @@ class PoolingLayer(CNN):
         An error is raised if the length of the list does not match 
         the dimensionality of the pooling operation.
         """
-        if not self.pooling_type.startswith("adaptive"):
+        if not (self.pooling_type.startswith("adaptive") or
+                self.pooling_type.startswith("global")):
             if self.dimension == "1D" and len(kernel_dim) != 1:
                 raise ValueError("kernel_dim list must have exactly \
                                  1 element (dimension).")
@@ -1052,7 +1053,8 @@ class PoolingLayer(CNN):
         the dimensionality of the pooling operation.
         """
         if (
-            not self.pooling_type.startswith("adaptive")
+            not (self.pooling_type.startswith("adaptive") or
+                 self.pooling_type.startswith("global"))
             and stride_dim is not None
         ):
             if self.dimension == "1D" and len(stride_dim) != 1:
@@ -1087,7 +1089,8 @@ class PoolingLayer(CNN):
         """
 
         if pooling_type not in [
-            'average', 'adaptive_average', 'max', 'adaptive_max'
+            'average', 'adaptive_average', 'max', 'adaptive_max',
+            'global_average', 'global_max'
         ]:
             raise ValueError ("Invalid pooling type")
         self.__pooling_type = pooling_type
@@ -1927,7 +1930,7 @@ class Feature:
     """
     A feature is a measurable property or characteristic of an object 
     used to represent and describe it within a dataset.
- 
+
     Args:
         name (str): The name of the feature.
         
@@ -1942,12 +1945,12 @@ class Label:
     """
     A label is a value assigned to an observation, representing 
     the target variable for prediction.
- 
+
     Args:
         col_name (str): The name of the column containing the labels.
         label_name (str): The name of a label in the dataset. If 
             the prediction task is regression, it can be omitted.
-        
+
     Attributes:
         col_name (str): The name of the column containing the labels.
         label_name (str): The name of a label in the dataset. If 

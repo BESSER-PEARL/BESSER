@@ -1,5 +1,5 @@
 services:
-  besser-gui-frontend:
+  besser-wme-frontend:
     build:
       context: ./besser/utilities/web_modeling_editor/BESSER-Web-Modeling-Editor
       dockerfile: Dockerfile
@@ -15,7 +15,7 @@ services:
       - /app/node_modules
     command: http-server dist -p 8080
 
-  besser-gui-backend:
+  besser-wme-backend:
     build:
       context: .
       dockerfile: Dockerfile

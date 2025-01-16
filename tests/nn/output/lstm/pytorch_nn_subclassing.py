@@ -16,9 +16,9 @@ class NeuralNetwork(nn.Module):
         self.l3 = nn.Dropout(p=0.2)
         self.l4 = nn.LSTM(input_size=80, hidden_size=40, bidirectional=False, dropout=0.2, batch_first=True)
         self.l5 = nn.Linear(in_features=40, out_features=40)
-        self.relu_activ = nn.ReLU()
+        self.actv_func_relu = nn.ReLU()
         self.l6 = nn.Linear(in_features=40, out_features=2)
-        self.softmax_activ = nn.Softmax()
+        self.actv_func_softmax = nn.Softmax()
 
 
     def forward(self, x):
@@ -28,8 +28,8 @@ class NeuralNetwork(nn.Module):
         x, _ = self.l4(x)
         x = x[:, -1, :]
         x = self.l5(x)
-        x = self.relu_activ(x)
+        x = self.actv_func_relu(x)
         x = self.l6(x)
-        x = self.softmax_activ(x)
+        x = self.actv_func_softmax(x)
         return x
 

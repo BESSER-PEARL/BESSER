@@ -1,7 +1,7 @@
 """PyTorch code generated based on BUML."""
-
 import torch
 from datetime import datetime
+
 import pandas as pd
 from torch import nn
 
@@ -13,7 +13,7 @@ class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         self.l1 = nn.Linear(in_features=13, out_features=64)
-        self.relu_activ = nn.ReLU()
+        self.actv_func_relu = nn.ReLU()
         self.l2 = nn.Linear(in_features=64, out_features=128)
         self.l3 = nn.Dropout(p=0.2)
         self.l4 = nn.Linear(in_features=128, out_features=1)
@@ -21,9 +21,9 @@ class NeuralNetwork(nn.Module):
 
     def forward(self, x):
         x = self.l1(x)
-        x = self.relu_activ(x)
+        x = self.actv_func_relu(x)
         x = self.l2(x)
-        x = self.relu_activ(x)
+        x = self.actv_func_relu(x)
         x = self.l3(x)
         x = self.l4(x)
         return x

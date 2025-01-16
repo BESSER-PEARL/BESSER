@@ -29,7 +29,8 @@ class PytorchGenerator(NNCodeGenerator):
             code is stored.
         template (str): The name of the jinja template.
     """
-    def __init__(self, model: NN, output_dir: str, generation_type: str,
+    def __init__(self, model: NN, output_dir: str,
+                 generation_type: str = "subclassing",
                  channel_last: bool = True):
 
         setup_layer: SetupLayerSyntax = SetupLayerSyntax

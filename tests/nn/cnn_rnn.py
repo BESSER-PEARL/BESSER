@@ -16,17 +16,14 @@ nn_model.add_layer(EmbeddingLayer(name="l1", actv_func=None,
 nn_model.add_layer(DropoutLayer(name="l2", rate=0.5))
 nn_model.add_layer(Conv1D(name="l3", actv_func="relu", in_channels=50,
                           out_channels=200, kernel_dim=[4],
-                          input_reused=True, name_module_input="l2",
-                          permute_in=True))
+                          input_reused=True, name_module_input="l2"))
 nn_model.add_layer(PoolingLayer(name="l4", actv_func=None, pooling_type="max",
-                                dimension="1D", kernel_dim=[2],
-                                permute_out=True))
+                                dimension="1D", kernel_dim=[2]))
 nn_model.add_layer(Conv1D(name="l5", actv_func="relu", in_channels=50,
                           out_channels=200, kernel_dim=[5], input_reused=True,
                           name_module_input="l2"))
 nn_model.add_layer(PoolingLayer(name="l6", actv_func=None, pooling_type="max",
-                                dimension="1D", kernel_dim=[2],
-                                permute_out=True))
+                                dimension="1D", kernel_dim=[2]))
 nn_model.add_tensor_op(TensorOp(name="op1", tns_type="concatenate",
                                 layers_of_tensors=["l4", "l6"],
                                 concatenate_dim=-1))

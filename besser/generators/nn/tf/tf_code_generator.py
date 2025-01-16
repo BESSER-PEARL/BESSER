@@ -29,7 +29,8 @@ class TFGenerator(NNCodeGenerator):
             code is stored.
         template (str): The name of the jinja template.
     """
-    def __init__(self, model: NN, output_dir: str, generation_type: str):
+    def __init__(self, model: NN, output_dir: str,
+                 generation_type: str = "subclassing"):
 
         setup_layer: SetupLayerSyntax = SetupLayerSyntax
         setup_tensorop: Callable = get_tensorop_syntax

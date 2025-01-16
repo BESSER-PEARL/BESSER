@@ -1,7 +1,7 @@
 """PyTorch code generated based on BUML."""
-
 import torch
 from datetime import datetime
+
 
 from torch import nn
 from torchvision import datasets, transforms
@@ -14,7 +14,7 @@ class NeuralNetwork(nn.Module):
     def __init__(self):
         super().__init__()
         self.l1 = nn.Conv2d(in_channels=3, out_channels=32, kernel_size=(3, 3), stride=(1, 1), padding=0)
-        self.relu_activ = nn.ReLU()
+        self.actv_func_relu = nn.ReLU()
         self.l2 = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0)
         self.l3 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(3, 3), stride=(1, 1), padding=0)
         self.l4 = nn.MaxPool2d(kernel_size=(2, 2), stride=(2, 2), padding=0)
@@ -27,17 +27,17 @@ class NeuralNetwork(nn.Module):
     def forward(self, x):
         x = x.permute(0, 3, 1, 2)
         x = self.l1(x)
-        x = self.relu_activ(x)
+        x = self.actv_func_relu(x)
         x = self.l2(x)
         x = self.l3(x)
-        x = self.relu_activ(x)
+        x = self.actv_func_relu(x)
         x = self.l4(x)
         x = self.l5(x)
-        x = self.relu_activ(x)
-        x = x.permute(0, 3, 1, 2)
+        x = self.actv_func_relu(x)
+        x = x.permute(0, 2, 3, 1)
         x = self.l6(x)
         x = self.l7(x)
-        x = self.relu_activ(x)
+        x = self.actv_func_relu(x)
         x = self.l8(x)
         return x
 

@@ -1,0 +1,4 @@
+1. main page
+2. pet screen
+3. owner screen
+4. cliic screen

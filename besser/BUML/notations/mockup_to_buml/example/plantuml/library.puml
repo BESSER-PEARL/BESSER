@@ -1,0 +1,6 @@
+@startuml
+class Library {
++ name: str
++ address: str
+}
+@enduml

@@ -186,7 +186,7 @@ def gpt4o_call_gui_models(api_key, mockup_image_path, base64_metamodel, base64_m
                     },
                     {
                         "type": "text",
-                        "text": "You can view the example image at this link: [Example Image](https://drive.google.com/file/d/1O2xnMUShfllwKr4EXrr6a814zazUkFhC/view?usp=sharing)"
+                        "text": "You can view the example image at this link: [Example Image](https://imgurl.ir/uploads/p876089_main_page.png)"
                     },
                     {
                         "type": "text",
@@ -206,7 +206,7 @@ def gpt4o_call_gui_models(api_key, mockup_image_path, base64_metamodel, base64_m
                     },
                     {
                         "type": "text",
-                        "text": "You can view the example image at this link: [Example Image](https://drive.google.com/file/d/1asuEWXjYDqvBGQa65A3SWqohkTDlR-8e/view?usp=sharing)"
+                        "text": "You can view the example image at this link: [Example Image](https://imgurl.ir/uploads/f832119_library_directory.png)"
                     },
                     {
                         "type": "text",

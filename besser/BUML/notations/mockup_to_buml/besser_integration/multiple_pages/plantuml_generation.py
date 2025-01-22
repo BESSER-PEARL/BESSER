@@ -137,19 +137,19 @@ def gpt4o_call_palntUML(api_key, prompt, mockup_images_path, additional_text_fil
                 },
                 {
                     "type": "text",
-                    "text": "You can view the UI image for the main page of the app: [manin page Image](https://drive.google.com/file/d/1O2xnMUShfllwKr4EXrr6a814zazUkFhC/view?usp=sharing)"
+                    "text": "You can view the UI image for the main page of the app: [manin page Image](https://imgurl.ir/uploads/p876089_main_page.png)"
                 },
                 {
                     "type": "text",
-                    "text": "You can view the UI image for the second page of the app: [Second page Image](https://drive.google.com/file/d/1asuEWXjYDqvBGQa65A3SWqohkTDlR-8e/view?usp=sharing)"
+                    "text": "You can view the UI image for the second page of the app: [Second page Image](https://imgurl.ir/uploads/f832119_library_directory.png)"
                 },
                 {
                     "type": "text",
-                    "text": "You can view the UI image for the Third page of the app: [Third page Image](https://drive.google.com/file/d/1WIBYIoSkReI9XtjFCVYScZatndw7PnNq/view?usp=sharing)"
+                    "text": "You can view the UI image for the Third page of the app: [Third page Image](https://imgurl.ir/uploads/x12382_author_list.png)"
                 },
                 {
                     "type": "text",
-                    "text": "You can view the UI image for the fourth page of the app: [Fourth Page](https://drive.google.com/file/d/1YAmF-rf9nKlTBpeXU_731WAvRqS-wOBV/view?usp=sharing)"
+                    "text": "You can view the UI image for the fourth page of the app: [Fourth Page](https://imgurl.ir/uploads/c588836_book_list.png)"
                 },
                 {
                     "type": "text",

@@ -115,7 +115,7 @@ def gpt4o_call_plantuml(api_key, prompt, mockup_image_path, first_gui_model_path
                 },
                 {
                     "type": "text",
-                    "text": "You can view the UI image for the web page: [page Image](https://drive.google.com/file/d/1asuEWXjYDqvBGQa65A3SWqohkTDlR-8e/view?usp=sharing)"
+                    "text": "You can view the UI image for the web page: [page Image](https://imgurl.ir/uploads/f832119_library_directory.png)"
                 },
                 {
                     "type": "text",

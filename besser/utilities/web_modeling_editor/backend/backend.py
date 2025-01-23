@@ -184,6 +184,12 @@ async def check_ocl(input_data: ClassDiagramInput):
         
         # Check OCL constraints
         result = check_ocl_constraint(buml_model)
+        
+        # Add warnings to the message if they exist
+        if hasattr(buml_model, 'ocl_warnings') and buml_model.ocl_warnings:
+            warnings_text = "\n\nWarnings:\n" + "\n".join(buml_model.ocl_warnings)
+            result['message'] = result['message'] + warnings_text
+            
         return result
         
     except Exception as e:

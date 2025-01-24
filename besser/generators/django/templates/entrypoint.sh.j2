@@ -1,0 +1,25 @@
+#!/bin/sh
+
+# Wait for PostgreSQL to be ready
+echo "Waiting for PostgreSQL to be available..."
+until pg_isready -h db -p 5432 -U postgres; do
+  echo "Waiting for PostgreSQL to be available..."
+  sleep 2
+done
+
+echo "Database is ready. Proceeding..."
+
+# Set environment variables for the superuser
+export DJANGO_SUPERUSER_USERNAME=admin
+export DJANGO_SUPERUSER_EMAIL=admin@example.com
+export DJANGO_SUPERUSER_PASSWORD=admin
+
+# Create and apply migrations
+python manage.py makemigrations
+python manage.py migrate
+
+# Create the superuser
+python manage.py createsuperuser --noinput || echo "Superuser already exists."
+
+# Start the server
+python manage.py runserver 0.0.0.0:8000

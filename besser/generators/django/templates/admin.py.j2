@@ -1,0 +1,6 @@
+from django.contrib import admin
+from {{app_name}}.models import *
+
+{% for class in model.get_classes() %}
+admin.site.register({{class.name}})
+{% endfor %}

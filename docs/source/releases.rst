@@ -17,3 +17,4 @@ Release Notes
    releases/v1.4.0
    releases/v1.4.1
    releases/v2.0.0
+   releases/v2.1.0

@@ -372,7 +372,7 @@ def process_class_diagram(json_data):
             )
             target_property = Property(
                 name=target.get("role", ""),
-                type=target_class,
+                type=target_class, 
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,
                 is_composite=is_composite

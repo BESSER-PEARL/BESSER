@@ -20,7 +20,7 @@ class {{ enum.name }}(models.TextChoices):
     {% endfor %}
     {% set inheritance = generals.names | join(', ') %}
 class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
-    {% for attr in class_obj.attributes %}
+    {% for attr in sort(class_obj.attributes) %}
     {{ attr.name }} = {{ django_fields.get_field(attr.type, model.enumerations) }}
     {%- endfor %}
     {% for association in class_obj.associations %}
@@ -34,7 +34,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
             {% set class2_name = ns.end2.type.name %}
             {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
             {# N:M Relationship: Use ManyToManyField in Django #}
-    {{ ns.end2.name.replace(' ', '_') }} = models.ManyToManyField('{{ class2_name }}'{% if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{% endif %})
+    {{ ns.end2.name.replace(' ', '_') }} = models.ManyToManyField('{{ class2_name }}'{% if ns.end2.multiplicity.min == 0 %}, blank=True{% endif %})
                 {% do processed_associations.append(association.name) %}
             {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
             {# N:1 Relationship: Use ForeignKey in Django #}

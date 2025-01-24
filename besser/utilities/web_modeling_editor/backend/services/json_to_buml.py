@@ -166,7 +166,7 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> tuple[l
     
     constraints = []
     warnings = []
-    lines = re.split(r'[,\n]', ocl_text)
+    lines = re.split(r'[,]', ocl_text)
     constraint_count = 1
 
     domain_classes = {cls.name.lower(): cls for cls in domain_model.types}

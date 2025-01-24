@@ -159,20 +159,21 @@ def parse_multiplicity(multiplicity_str):
         
     return Multiplicity(min_multiplicity=min_multiplicity, max_multiplicity=max_multiplicity)
 
-def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> list:
+def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> tuple[list, list]:
     """Process OCL constraints and convert them to BUML Constraint objects."""
     if not ocl_text:
-        return []
+        return [], []
     
     constraints = []
-    lines = re.split(r'[,\n]', ocl_text)
+    warnings = []
+    lines = re.split(r'[,]', ocl_text)
     constraint_count = 1
 
     domain_classes = {cls.name.lower(): cls for cls in domain_model.types}
 
     for line in lines:
         line = line.strip()
-        if not line or not line.startswith('context'):
+        if not line or not line.lower().startswith('context'):
             continue
             
         # Extract context class name
@@ -184,7 +185,8 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> list:
         context_class = domain_classes.get(context_class_name.lower())
         
         if not context_class:
-            print(f"Warning: Context class {context_class_name} not found")
+            warning_msg = f"Warning: Context class {context_class_name} not found"
+            warnings.append(warning_msg)
             continue
             
         constraint_name = f"constraint_{context_class_name}_{constraint_count}"
@@ -199,7 +201,7 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> list:
             )
         )
     
-    return constraints
+    return constraints, warnings
 
 def generate_unique_class_name(base_name, existing_names):
     """Generate a unique class name by appending a number if necessary."""
@@ -226,12 +228,9 @@ def process_class_diagram(json_data):
     # Get elements and OCL constraints from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})
-    ocl_constraints = json_data.get('ocl', '')  # Get OCL constraints
-    
-    
-    
-    print(f"Elements: {elements}")
-    print(f"Relationships: {relationships}")
+
+    # print(f"Elements: {elements}")
+    # print(f"Relationships: {relationships}")
 
     # Track existing class names
     existing_class_names = set()
@@ -320,7 +319,7 @@ def process_class_diagram(json_data):
 
     # Processing relationships (Associations, Generalizations, and Compositions)
     for rel_id, relationship in relationships.items():
-        print(f"Processing relationship ID: {rel_id} with data: {relationship}")
+        #print(f"Processing relationship ID: {rel_id} with data: {relationship}")
 
         rel_type = relationship.get("type")
         source = relationship.get("source")
@@ -328,6 +327,10 @@ def process_class_diagram(json_data):
 
         if not rel_type or not source or not target:
             print(f"Skipping relationship {rel_id} due to missing data.")
+            continue
+
+        # Skip OCL links
+        if rel_type == "ClassOCLLink":
             continue
 
         # Retrieve source and target elements
@@ -387,10 +390,25 @@ def process_class_diagram(json_data):
             generalization = Generalization(general=target_class, specific=source_class)
             domain_model.generalizations.add(generalization)
 
-    # Process OCL constraints at the end
-    if ocl_constraints:
-        constraints = process_ocl_constraints(ocl_constraints, domain_model)
-        domain_model.constraints = set(constraints)
+    # Process OCL constraints
+    all_constraints = set()
+    all_warnings = []
+    for element_id, element in elements.items():
+        if element.get("type") in ["ClassOCLConstraint"]:
+            ocl = element.get("constraint")
+            if ocl:
+                try:
+                    new_constraints, warnings = process_ocl_constraints(ocl, domain_model)
+                    all_constraints.update(new_constraints)
+                    all_warnings.extend(warnings)
+                except Exception as e:
+                    error_msg = f"Error processing OCL constraint for element {element_id}: {e}"
+                    all_warnings.append(error_msg)
+                    continue
+
+    # Attach warnings to domain model for later use
+    domain_model.ocl_warnings = all_warnings
+    domain_model.constraints = all_constraints
 
     return domain_model
 

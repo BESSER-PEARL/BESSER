@@ -2,7 +2,7 @@
   <img src="./docs/source/_static/besser_logo_light.png" alt="BESSER platform" width="500"/>
 </div>
 
-[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11-blue?logo=python&logoColor=gold)](https://pypi.org/project/besser/)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue?logo=python&logoColor=gold)](https://pypi.org/project/besser/)
 [![PyPI version](https://img.shields.io/pypi/v/besser?logo=pypi&logoColor=white)](https://pypi.org/project/besser/)
 [![PyPI - Downloads](https://static.pepy.tech/badge/besser)](https://pypi.org/project/besser/)
 [![Documentation Status](https://readthedocs.org/projects/besser/badge/?version=latest)](https://besser.readthedocs.io/en/latest/)
@@ -19,7 +19,7 @@ With B-UML you can specify your software application and then use any of the [co
 
 ## Basic Installation
 
-BESSER works with Python 3.9+. We recommend creating a virtual environment (e.g. [venv](https://docs.python.org/3/tutorial/venv.html), [conda](https://docs.conda.io/en/latest/)).
+BESSER works with Python 3.10+. We recommend creating a virtual environment (e.g. [venv](https://docs.python.org/3/tutorial/venv.html), [conda](https://docs.conda.io/en/latest/)).
 
 The latest stable version of BESSER is available in the Python Package Index (PyPi) and can be installed using
 

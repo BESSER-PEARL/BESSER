@@ -14,7 +14,7 @@ Improvements
 * Streamlined DockerCompose configuration for lighter deployment
 
 
-**BLC**:
+**BESSER Low-code Platform**:
 
 * Simplified OCL Parser
   - Consolidated multiple parsing functions into unified entry point
@@ -24,5 +24,6 @@ Improvements
   - Initialization expressions for attributes 
   - Syntax validation for OCL constraints
 * Added OCL to the `domain_model_to_code` function
-* Complete end-to-end Django code generation
-
+* Django code generator
+  - Support for generation of a complete Django project
+  - Support for deployement using `Docker Compose <https://docs.docker.com/compose/>`_

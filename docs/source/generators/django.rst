@@ -2,8 +2,9 @@ Django Generator
 ================
 
 BESSER provides a code generator for `Django web applications <https://www.djangoproject.com/>`_.
-Let's generate a Django web app taking as input our :doc:`../examples/library_example` structural model example.
-The following is an example of how to implement the code generator:
+Let's generate a Django web app taking as input our :doc:`../examples/library_example`.
+Below is an example of how to implement the code generator with Python (alternatively, 
+you can use the :doc:`../web_editor` to generate the code):
 
 .. code-block:: python
     
@@ -34,7 +35,7 @@ generator. Follow the steps below based on your setup:
 1. If containerization is set to `False`
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-**Requirement**: Python 3.12 or higher
+**Recommendation**: Use Python 3.12 or higher for optimal performance.
 
 Enter the project folder and run the following commands:
 

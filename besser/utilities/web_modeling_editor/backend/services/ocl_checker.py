@@ -1,5 +1,4 @@
-from besser.BUML.notations.ocl.ocl_parser import ocl_parser
-from besser.BUML.metamodel.structural import Class
+from besser.BUML.notations.ocl.OCLParserWrapper import OCLParserWrapper
 
 def check_ocl_constraint(domain_model):
     """
@@ -14,14 +13,15 @@ def check_ocl_constraint(domain_model):
 
         valid_constraints = []
         invalid_constraints = []
+        parser = OCLParserWrapper(domain_model, None)
 
         for constraint in domain_model.constraints:
             try:
-                result = ocl_parser(constraint, domain_model, None)
-                if result is not None:  # If parser returns something, it's an error
-                    invalid_constraints.append(f"❌ '{constraint.expression}'\n   Error: {result}")
-                else:
+                result = parser.parse(constraint)
+                if result is True:  # Parser returns True for valid constraints
                     valid_constraints.append(f"✅ '{constraint.expression}'")
+                else:
+                    invalid_constraints.append(f"❌ '{constraint.expression}'\n   Error: Parsing failed")
             except Exception as e:
                 invalid_constraints.append(f"❌ '{constraint.expression}'\n   Error: {str(e)}")
 

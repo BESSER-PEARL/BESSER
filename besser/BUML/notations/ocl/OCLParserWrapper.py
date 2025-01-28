@@ -3,6 +3,7 @@ from besser.BUML.notations.ocl.BOCLParser import BOCLParser
 from besser.BUML.notations.ocl.BOCLListener import BOCLListener
 from besser.BUML.notations.ocl.RootHandler import Root_Handler
 from antlr4 import *
+
 class OCLParserWrapper:
     def __init__(self, dm, om):
         self.dm = dm

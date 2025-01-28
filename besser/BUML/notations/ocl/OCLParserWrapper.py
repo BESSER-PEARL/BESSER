@@ -11,7 +11,7 @@ class OCLParserWrapper:
 
     def parse(self, ocl):
         input_stream = InputStream(ocl.expression)
-        rootHandler = Root_Handler(ocl, self.dm, self.om)
+        rootHandler = Root_Handler(self.dm, self.om)
         lexer = BOCLLexer(input_stream)
         stream = CommonTokenStream(lexer)
         parser = BOCLParser(stream)

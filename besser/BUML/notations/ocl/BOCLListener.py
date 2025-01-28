@@ -7,7 +7,7 @@ else:
     from BOCLParser import BOCLParser
 import inspect
 from besser.BUML.metamodel.ocl.ocl import OperationCallExpression
-from besser.BUML.notations.ocl.comparison_operator_checker import comparison_verifier
+
 
 # This class defines a complete listener for a parse tree produced by BOCLParser.
 class BOCLListener(ParseTreeListener):
@@ -35,11 +35,6 @@ class BOCLListener(ParseTreeListener):
             raise Exception(" Incorrect Syntax: Number of Brackets Mismatch")
         if ocl.count('[') != ocl.count(']'):
             raise Exception(" Incorrect Syntax: Number of Brackets Mismatch")
-        cc = comparison_verifier()
-
-        # print(cc.verify_ocl(ocl))
-        if not cc.verify_ocl(ocl):
-            raise Exception("Incorrect Syntax for comparison operators")
     # Enter a parse tree produced by BOCLParser#oclFile.
     def enterOclFile(self, ctx: BOCLParser.OclFileContext):
         # print(inspect.stack()[0][3])
@@ -72,56 +67,6 @@ class BOCLListener(ParseTreeListener):
 
         pass
 
-        # Enter a parse tree produced by BOCLParser#preCondition.
-    def enterPreCondition(self, ctx: BOCLParser.PreConditionContext):
-        if self.debug:
-            print(inspect.stack()[0][3])
-        if self.debug_print:
-            print(ctx.getText())
-        # Exit a parse tree produced by BOCLParser#preCondition.
-    def exitPreCondition(self, ctx: BOCLParser.PreConditionContext):
-        if self.debug:
-            print(inspect.stack()[0][3])
-        if self.debug_print:
-            print(ctx.getText())
-        context = ctx.getText().split("context")[1].split(":")[0]
-        function_name = ctx.getText().split("::")[1].split("pre:")[0]
-        self.rootHandler.handle_pre_root(context, function_name, self.rootHandler.get_root())
-
-        # Enter a parse tree produced by BOCLParser#postCondition.
-    def enterPostCondition(self, ctx: BOCLParser.PostConditionContext):
-        if self.debug:
-            print(inspect.stack()[0][3])
-        if self.debug_print:
-            print(ctx.getText())
-        # Exit a parse tree produced by BOCLParser#postCondition.
-    def exitPostCondition(self, ctx: BOCLParser.PostConditionContext):
-        if self.debug:
-            print(inspect.stack()[0][3])
-        if self.debug_print:
-            print(ctx.getText())
-        context = ctx.getText().split("context")[1].split(":")[0]
-        function_name = ctx.getText().split("::")[1].split("post:")[0]
-        self.rootHandler.handle_post_root(context, function_name, self.rootHandler.get_root())
-
-        # Enter a parse tree produced by BOCLParser#initConstraints.
-    def enterInitConstraints(self, ctx: BOCLParser.InitConstraintsContext):
-        if self.debug:
-            print(inspect.stack()[0][3])
-        if self.debug_print:
-            print(ctx.getText())
-        # Exit a parse tree produced by BOCLParser#initConstraints.
-    def exitInitConstraints(self, ctx: BOCLParser.InitConstraintsContext):
-        if self.debug:
-            print(inspect.stack()[0][3])
-        if self.debug_print:
-            print(ctx.getText())
-
-        context = ctx.getText().split("context")[1].split(":")[0]
-        variable_name = ctx.getText().split("::")[1].split(":")[0]
-        variable_type = ctx.getText().split("init:")[0].split(":")[-1]
-        # print(ctx.getText())
-        self.rootHandler.handle_init_root(context, variable_name, self.rootHandler.get_root(),variable_type)
     # Enter a parse tree produced by BOCLParser#ContextExp.
     def enterContextExp(self, ctx: BOCLParser.ContextExpContext):
         self.context = (ctx.getText())
@@ -136,11 +81,6 @@ class BOCLListener(ParseTreeListener):
 
     # Enter a parse tree produced by BOCLParser#constraint.
     def enterConstraint(self, ctx: BOCLParser.ConstraintContext):
-
-        if self.debug:
-            print(inspect.stack()[0][3])
-        if self.debug_print:
-            print(ctx.getText())
         self.context_name = (self.context.split(ctx.getText()))[0].replace('context', '')
         self.rootHandler.set_context_name(self.context_name)
         # print(ctx.getText())

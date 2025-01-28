@@ -17,13 +17,18 @@ Improvements
 **BESSER Low-code Platform**:
 
 * Simplified OCL Parser
+
   - Consolidated multiple parsing functions into unified entry point
   - Improved code maintainability and reduced complexity
+
 * New OCL Features:
+
   - Pre/post conditions for operations
   - Initialization expressions for attributes 
   - Syntax validation for OCL constraints
+
 * Added OCL to the `domain_model_to_code` function
 * Django code generator
+
   - Support for generation of a complete Django project
   - Support for deployement using `Docker Compose <https://docs.docker.com/compose/>`_

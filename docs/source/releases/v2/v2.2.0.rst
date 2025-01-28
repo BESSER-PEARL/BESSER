@@ -1,0 +1,22 @@
+Version 2.2.0
+=============
+
+Improvements
+------------
+**Web Modeling Editor**:
+
+* Added OCL Constraint and OCL Checker
+* Enhanced Django Generator Support
+* Interactive error verification with detailed popup notifications
+* Unique generation path
+* New association list feature for easier relationship mapping
+* More Connection point to have a better visibility
+* Streamlined DockerCompose configuration for lighter deployment
+
+
+**BLC**:
+
+* Simplified OCL Parser by consolidating multiple functions into a single function call
+* Added OCL to the `domain_model_to_code` function
+* Complete end-to-end Django code generation with or without Docker
+

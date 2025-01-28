@@ -11,7 +11,7 @@ class Factory:
                 return attrib
 
     def checkInAssociation(self, name, context):
-        for end in context.association_ends():
+        for end in context.all_association_ends():
             if name == end.name:
                 return end
 

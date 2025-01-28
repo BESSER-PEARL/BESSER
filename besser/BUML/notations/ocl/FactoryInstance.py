@@ -9,11 +9,11 @@ class Factory:
         for attrib in context.attributes:
             if name == attrib.name:
                 return attrib
-    def checkInAssociation(self,name,context):
-        for association in context.associations:
-            for end in association.ends:
-                if name == end.name:
-                    return end
+
+    def checkInAssociation(self, name, context):
+        for end in context.association_ends():
+            if name == end.name:
+                return end
 
     def handleProp(self,name,iterator):
         if "." in name:

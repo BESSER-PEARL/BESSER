@@ -1495,6 +1495,6 @@ class DomainModel(Model):
 
     def __repr__(self):
         return (
-            f'Package({self.name}, {self.types}, {self.associations}, {self.generalizations}, '
+            f'DomainModel({self.name}, {self.types}, {self.associations}, {self.generalizations}, '
             f'{self.packages}, {self.constraints}, {self.timestamp}, {self.synonyms})'
         )

@@ -12,7 +12,7 @@ from besser.BUML.metamodel.state_machine import (
 )
 
 
-def parse_buml_content(content: str) -> tuple[DomainModel, str]:
+def parse_buml_content(content: str) -> DomainModel:
     """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
         # Create a safe environment for eval
@@ -22,6 +22,7 @@ def parse_buml_content(content: str) -> tuple[DomainModel, str]:
             'Method': Method,
             'PrimitiveDataType': PrimitiveDataType,
             'BinaryAssociation': BinaryAssociation,
+            'Constraint': Constraint,
             'Multiplicity': Multiplicity,
             'UNLIMITED_MAX_MULTIPLICITY': UNLIMITED_MAX_MULTIPLICITY,
             'Generalization': Generalization,
@@ -48,21 +49,17 @@ def parse_buml_content(content: str) -> tuple[DomainModel, str]:
         # Execute the B-UML content in a safe environment
         local_vars = {}
         exec(content, safe_globals, local_vars)
-        
         #print("Local variables after execution:", local_vars.keys())
         
         # First pass: Add all classes and enumerations
         classes = {}
-        ocl_constraints = []
         for var_name, var_value in local_vars.items():
             if isinstance(var_value, (Class, Enumeration)):
                 domain_model.types.add(var_value)
                 classes[var_name] = var_value
             elif isinstance(var_value, Constraint):
-                ocl_constraints.append(var_value.expression)
+                domain_model.constraints.add(var_value)
         
-        # Join OCL constraints with commas
-        ocl_string = ', '.join(ocl_constraints)
 
         # Second pass: Add associations and generalizations
         for var_name, var_value in local_vars.items():
@@ -72,8 +69,8 @@ def parse_buml_content(content: str) -> tuple[DomainModel, str]:
                 domain_model.associations.add(var_value)
             elif isinstance(var_value, Generalization):
                 domain_model.generalizations.add(var_value)
-        
-        return domain_model, ocl_string
+
+        return domain_model
             
     except Exception as e:
         print(f"Error parsing B-UML content: {e}")
@@ -117,8 +114,8 @@ def domain_model_to_json(domain_model):
     # First pass: Create all class and enumeration elements
     class_id_map = {}  # Store mapping between Class objects and their IDs
     
-    for type_obj in domain_model.types:
-        if isinstance(type_obj, (Class, Enumeration)):
+    for type_obj in domain_model.types | domain_model.constraints:
+        if isinstance(type_obj, (Class, Enumeration, Constraint)):
             # Generate UUID for the element
             element_id = str(uuid.uuid4())
             class_id_map[type_obj] = element_id
@@ -207,12 +204,16 @@ def domain_model_to_json(domain_model):
                     attribute_ids.append(literal_id)
                     y_offset += 30
 
+
+
             # Create the element
             elements[element_id] = {
                 "id": element_id,
                 "name": type_obj.name,
-                "type": "Enumeration" if isinstance(type_obj, Enumeration) else 
-                       "AbstractClass" if type_obj.is_abstract else "Class",
+                "type": "Enumeration" if isinstance(type_obj, Enumeration) 
+                        else "ClassOCLConstraint" if isinstance(type_obj, Constraint)
+                        else "AbstractClass" if type_obj.is_abstract 
+                        else "Class",
                 "owner": None,
                 "bounds": {
                     "x": x,
@@ -220,9 +221,13 @@ def domain_model_to_json(domain_model):
                     "width": 160,
                     "height": max(100, 30 * (len(attribute_ids) + len(method_ids) + 1))
                 },
-                "attributes": attribute_ids,
-                "methods": method_ids,
-                "stereotype": "enumeration" if isinstance(type_obj, Enumeration) else None
+                **({
+                    "attributes": attribute_ids,
+                    "methods": method_ids,
+                    "stereotype": "enumeration" if isinstance(type_obj, Enumeration) else None
+                } if not isinstance(type_obj, Constraint) else {
+                    "constraint": type_obj.expression
+                })
             }
 
     # Second pass: Create relationships
@@ -344,19 +349,53 @@ def domain_model_to_json(domain_model):
                 ]
             }
 
-    # Create the final structure
+    # Handle OCL constraint links
+    for type_obj in domain_model.constraints:
+        if isinstance(type_obj, Constraint) and type_obj.context in class_id_map:
+            rel_id = str(uuid.uuid4())
+            relationships[rel_id] = {
+                "id": rel_id,
+                "name": "",
+                "type": "ClassOCLLink",
+                "owner": None,
+                "source": {
+                    "direction": "Left",
+                    "element": class_id_map[type_obj],
+                    "multiplicity": "",
+                    "role": ""
+                },
+                "target": {
+                    "direction": "Right", 
+                    "element": class_id_map[type_obj.context],
+                    "multiplicity": "",
+                    "role": ""
+                },
+                "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                },
+                "path": [
+                    {"x": 0, "y": 0},
+                    {"x": 0, "y": 0}
+                ],
+                "isManuallyLayouted": False
+            }
+
+        # Create the final structure
     result = {
-        "version": "3.0.0",
-        "type": "ClassDiagram",
-        "size": default_size,
-        "interactive": {
-            "elements": {},
-            "relationships": {}
-        },
-        "elements": elements,
-        "relationships": relationships,
-        "assessments": {}
-    }
+            "version": "3.0.0",
+            "type": "ClassDiagram",
+            "size": default_size,
+            "interactive": {
+                "elements": {},
+                "relationships": {}
+            },
+            "elements": elements,
+            "relationships": relationships,
+            "assessments": {}
+        }
 
     return result
 

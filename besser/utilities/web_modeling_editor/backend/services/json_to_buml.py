@@ -226,12 +226,9 @@ def process_class_diagram(json_data):
     # Get elements and OCL constraints from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})
-    ocl_constraints = json_data.get('ocl', '')  # Get OCL constraints
-    
-    
-    
-    print(f"Elements: {elements}")
-    print(f"Relationships: {relationships}")
+
+    # print(f"Elements: {elements}")
+    # print(f"Relationships: {relationships}")
 
     # Track existing class names
     existing_class_names = set()
@@ -320,7 +317,7 @@ def process_class_diagram(json_data):
 
     # Processing relationships (Associations, Generalizations, and Compositions)
     for rel_id, relationship in relationships.items():
-        print(f"Processing relationship ID: {rel_id} with data: {relationship}")
+        #print(f"Processing relationship ID: {rel_id} with data: {relationship}")
 
         rel_type = relationship.get("type")
         source = relationship.get("source")
@@ -328,6 +325,10 @@ def process_class_diagram(json_data):
 
         if not rel_type or not source or not target:
             print(f"Skipping relationship {rel_id} due to missing data.")
+            continue
+
+        # Skip OCL links
+        if rel_type == "ClassOCLLink":
             continue
 
         # Retrieve source and target elements
@@ -387,10 +388,19 @@ def process_class_diagram(json_data):
             generalization = Generalization(general=target_class, specific=source_class)
             domain_model.generalizations.add(generalization)
 
-    # Process OCL constraints at the end
-    if ocl_constraints:
-        constraints = process_ocl_constraints(ocl_constraints, domain_model)
-        domain_model.constraints = set(constraints)
+    # Process OCL constraints
+    all_constraints = set()
+    for element_id, element in elements.items():
+        if element.get("type") in ["ClassOCLConstraint"]:
+            ocl = element.get("constraint")
+            if ocl:
+                try:
+                    new_constraints = process_ocl_constraints(ocl, domain_model)
+                    all_constraints.update(new_constraints)
+                except Exception as e:
+                    print(f"Error processing OCL constraint for element {element_id}: {e}")
+                    continue
+    domain_model.constraints = all_constraints
 
     return domain_model
 

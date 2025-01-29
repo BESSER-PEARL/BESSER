@@ -13,7 +13,7 @@ services:
     volumes:
       - ./besser/utilities/web_modeling_editor/BESSER-Web-Modeling-Editor:/app
       - /app/node_modules
-    command: npm start
+    command: npm run start
 
   besser-gui-backend:
     build:

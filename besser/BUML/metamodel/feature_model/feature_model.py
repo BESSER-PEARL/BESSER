@@ -1,3 +1,5 @@
+from typing import Union
+
 from besser.BUML.metamodel.structural import Model, NamedElement, Element
 
 MANDATORY = 'mandatory'
@@ -110,7 +112,9 @@ class Feature(NamedElement):
 
 class FeatureGroup(Element):
 
-    def __init__(self, kind: str, features: list[Feature] = []):
+    def __init__(self, kind: str, features: list[Feature] = None):
+        if features is None:
+            features = []
         if (kind == MANDATORY or kind == OPTIONAL) and len(features) > 1:
             raise ValueError(f'{kind} has more than 1 feature')
         if (kind == ALTERNATIVE or kind == OR) and len(features) < 2:
@@ -134,9 +138,9 @@ class FeatureGroup(Element):
 
 class FeatureConfiguration(Element):
 
-    def __init__(self, feature: Feature):
+    def __init__(self, feature: Feature, value: Union[int, float, str] = None):
         self.feature: Feature = feature
-        self.value: int or float or str = None
+        self.value: Union[int, float, str] = value
         self.parent: FeatureConfiguration = None
         self.children: list[FeatureConfiguration] = []
 

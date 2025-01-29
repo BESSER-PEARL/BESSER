@@ -18,6 +18,7 @@ from besser.generators.backend import BackendGenerator
 from besser.utilities.web_modeling_editor.backend.models.class_diagram import ClassDiagramInput
 from besser.utilities.web_modeling_editor.backend.services.json_to_buml import process_class_diagram, process_state_machine
 from besser.utilities.web_modeling_editor.backend.services.buml_to_json import domain_model_to_json, parse_buml_content, state_machine_to_json
+from besser.utilities.web_modeling_editor.backend.services.ocl_checker import check_ocl_constraint
 
 app = FastAPI(
     title="Besser Backend API",

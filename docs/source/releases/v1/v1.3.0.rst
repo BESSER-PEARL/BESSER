@@ -1,0 +1,21 @@
+Version 1.3.0
+=============
+
+New features
+------------
+
+* State Machine Models in B-UML: B-UML now allows the specification of State Machine models.
+* New `RDF <https://www.w3.org/TR/rdf-schema/>`_ Code Generator: A code generator to produce the RDF representation of a structural model.
+
+Improvements
+------------
+
+* B-UML Structural Models: Added support for specifying methods.
+* PlantUML Grammar: Enhanced to support the definition of enumerations and methods for structural models.
+* Django Code Generation: Extended to include support for enumerations.
+* Backend Code Generator: Extended to handle enumerations and methods.
+
+Fixes
+-----
+
+* Resolved the issue with the deprecated GPT version. You can now specify the OpenAI model (default is ``gpt-4o``).

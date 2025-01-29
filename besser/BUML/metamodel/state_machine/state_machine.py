@@ -32,6 +32,9 @@ class ConfigProperty:
     def __hash__(self):
         return hash((self.section, self.name))
 
+    def __repr__(self):
+        return f"ConfigProperty(section='{self.section}', name='{self.name}', value={repr(self.value)})"
+
 
 class Body(Method):
     """The body of the state of a state machine.
@@ -61,6 +64,9 @@ class Body(Method):
             type=None,
             code=inspect.getsource(callable)
         )
+
+    def __repr__(self):
+        return f"Body(name='{self.name}')"
 
 
 class Event(Method):
@@ -96,6 +102,9 @@ class Event(Method):
             code=code
         )
 
+    def __repr__(self):
+        return f"Event(name='{self.name}')"
+
 
 class Transition(NamedElement):
     """A state machine transition from one state (source) to another (destination).
@@ -130,6 +139,9 @@ class Transition(NamedElement):
         self.dest: 'State' = dest
         self.event: Event = event
         self.event_params: dict = event_params
+
+    def __repr__(self):
+        return f"Transition(name='{self.name}', source='{self.source.name}', dest='{self.dest.name}')"
 
 
 class State(NamedElement):
@@ -198,6 +210,9 @@ class State(NamedElement):
 
     def when_event_go_to(self, event: Event, dest: 'State', event_params: dict) -> None:
         self.transitions.append(Transition(name=self._t_name(), source=self, dest=dest, event=event, event_params=event_params))
+
+    def __repr__(self):
+        return f"State(name='{self.name}', initial={self.initial})"
 
 
 class StateMachine(Model):
@@ -289,6 +304,11 @@ class StateMachine(Model):
         for state in self.states:
             state.fallback_body = body
 
+    def __repr__(self):
+        states_str = ', '.join([str(state) for state in self.states])
+        props_str = ', '.join([str(prop) for prop in self.properties])
+        return f"StateMachine(name='{self.name}', states=[{states_str}], properties=[{props_str}])"
+
 
 class Session:
     """A user session in a state machine execution.
@@ -341,4 +361,7 @@ class Session:
             transition (Transition): the transition that points to the state to move
         """
         pass
+
+    def __repr__(self):
+        return f"Session(id='{self.id}', current_state='{self.current_state.name if self.current_state else None}')"
 

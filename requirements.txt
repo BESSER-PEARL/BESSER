@@ -4,6 +4,7 @@ iniconfig==2.0.0
 packaging
 pluggy==1.2.0
 pytest==7.4.0
+python-multipart == 0.0.17
 setuptools==68.2.2
 textX==3.1.1
 jinja2==3.1.2
@@ -15,3 +16,4 @@ uvicorn==0.28.0
 SQLAlchemy==2.0.29
 httpx==0.27.0
 docker==7.1.0
+Django==5.1.5

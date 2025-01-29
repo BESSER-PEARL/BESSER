@@ -1,0 +1,22 @@
+FROM python:3
+
+# Update package list and install PostgreSQL client
+RUN apt-get update && apt-get install -y postgresql-client
+
+# Set environment variables
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Set the working directory inside the container
+WORKDIR /code
+
+# Copy and install the requirements.txt
+COPY requirements.txt /code/
+RUN pip install -r requirements.txt
+
+# Copy the application files into the container
+COPY . /code/
+
+# Set the entrypoint for the container
+RUN chmod +x /code/entrypoint.sh
+ENTRYPOINT ["sh", "/code/entrypoint.sh"]

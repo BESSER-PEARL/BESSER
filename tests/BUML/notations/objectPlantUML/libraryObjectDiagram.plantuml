@@ -1,0 +1,37 @@
+@startuml
+Object Library {
+name: "dummy"
+address: "dummy"
+}
+
+Object Bookone {
+tittle: "not important"
+pages: 10
+release: 01/01/2001
+}
+
+Object Author {
+name: "dummy"
+email: "dummy@dummy.com"
+}
+
+Object Booktwo {
+tittle: "not important"
+pages: 20
+release: 01/01/2001
+}
+
+Object Bookthree {
+tittle: "not important"
+pages: 30
+release: 01/01/2001
+}
+
+Booktwo --> Author :wrote
+Bookthree --> Author :wrote
+Bookone --> Author :wrote
+
+Library --> Bookone :has
+Library --> Booktwo :has
+Library --> Bookthree:has
+@enduml

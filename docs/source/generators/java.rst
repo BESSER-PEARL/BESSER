@@ -18,15 +18,15 @@ the ``generate`` method as follows:
 The ``classes.py`` file with the Java domain model (i.e., the set of classes) will be generated in the ``<<current_directory>>/output`` 
 folder. Note that in this case, the package name will be set to the default generation directory "output" and this will be reflected in the Java classes and will look as follows. 
 
-.. literalinclude:: ../../../tests/structural/library/output/java/Author.java
+.. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/java/Author.java
    :language: java
    :linenos:
 
-.. literalinclude:: ../../../tests/structural/library/output/java/Book.java
+.. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/java/Book.java
    :language: java
    :linenos:
 
-.. literalinclude:: ../../../tests/structural/library/output/java/Library.java
+.. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/java/Library.java
    :language: java
    :linenos:
 

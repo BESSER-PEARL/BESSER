@@ -14,7 +14,6 @@ PRIMITIVE_TYPE_MAPPING = {
     'datetime': 'DateTimeType',
     'timedelta': 'TimeDeltaType'
 }
-
 def domain_model_to_code(model: DomainModel, file_path: str):
     """
     Generates Python code for a B-UML model and writes it to a specified file.
@@ -41,7 +40,8 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         f.write("    BinaryAssociation, Generalization, DomainModel,\n")
         f.write("    Enumeration, EnumerationLiteral, Multiplicity,\n")
         f.write("    StringType, IntegerType, FloatType, BooleanType,\n")
-        f.write("    TimeType, DateType, DateTimeType, TimeDeltaType\n")
+        f.write("    TimeType, DateType, DateTimeType, TimeDeltaType,\n")
+        f.write("    Constraint\n")
         f.write(")\n\n")
 
         # Write enumerations
@@ -138,6 +138,19 @@ def domain_model_to_code(model: DomainModel, file_path: str):
                         f"(general={gen.general.name}, specific={gen.specific.name})\n")
             f.write("\n")
 
+        # Write OCL constraints if they exist
+        if hasattr(model, 'constraints') and model.constraints:
+            f.write("\n# OCL Constraints\n")
+            for constraint in model.constraints:
+                constraint_name = constraint.name.replace("-", "_")
+                f.write(f"{constraint_name}: Constraint = Constraint(\n")
+                f.write(f"    name=\"{constraint.name}\",\n")
+                f.write(f"    context={constraint.context.name},\n")
+                f.write(f"    expression=\"{constraint.expression}\",\n")
+                f.write(f"    language=\"{constraint.language}\"\n")
+                f.write(")\n")
+            f.write("\n")
+
         # Write domain model
         f.write("# Domain Model\n")
         f.write("domain_model = DomainModel(\n")
@@ -151,6 +164,9 @@ def domain_model_to_code(model: DomainModel, file_path: str):
             f.write(f"    associations={{{', '.join(assoc.name for assoc in model.associations)}}},\n")
         else:
             f.write("    associations={},\n")
+        if hasattr(model, 'constraints') and model.constraints:
+            constraints_str = ', '.join(c.name.replace("-", "_") for c in model.constraints)
+            f.write(f"    constraints={{{constraints_str}}},\n")
         if model.generalizations:
             f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in model.generalizations)}}}\n")
         else:

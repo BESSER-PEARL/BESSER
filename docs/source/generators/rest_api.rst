@@ -18,7 +18,7 @@ The ``https_methods`` parameter is optional and can be used to specify the HTTP 
 Upon executing this code, a ``rest_api.py`` file and ``pydantic_classes.py`` using the ``Pydantic_Generator`` containing the Pydantic models will be generated.  in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../tests/structural/library/output/rest_api.py
+.. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/rest_api.py
    :language: python
    :linenos:
 

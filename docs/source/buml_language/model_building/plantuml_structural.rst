@@ -36,7 +36,7 @@ Then, load and process the model using our grammar and apply the transformation 
     
     The ``plantUML_model_path`` parameter contains the path and name of the ``.plantuml`` model to be transformed
 
-``library_buml`` is the BUML model containing the domain specification. You can look up the classes, attributes, relationships, 
+``library_buml`` is the B-UML model containing the domain specification. You can look up the classes, attributes, relationships, 
 etc. For example, you can print the class names as follows.
 
 .. code-block:: python
@@ -58,10 +58,10 @@ You should get output like this:
     Although the PlantUML notation allows the definition of unnamed associations, for the BESSER platform it is necessary that all 
     associations have a unique name.
 
-BUML model source code
-----------------------
+B-UML model source code
+-----------------------
 
-When you run this PlantUML to B-UML transformation, you could also generate a ``.py`` file with the python based code of your BUML model definition. 
+When you run this PlantUML to B-UML transformation, you could also generate a ``.py`` file with the python based code of your B-UML model definition. 
 This code is reusable, allowing you to make quick updates to your model. For example, you could add more classes, properties, or update the name 
 of the ends of an association.
 
@@ -77,9 +77,8 @@ To generate the py file, set the ``buml_file_path`` parameter with your desired 
     library_buml: DomainModel = plantuml_to_buml(plantUML_model_path='library.plantuml', 
                                                  buml_file_path="buml/model.py")
 
-.. note::
 
-After running this code, the file ``model.py`` with your BUML model source code will be created in the ``buml`` folder, containing content similar 
+After running this code, the file ``model.py`` with your B-UML model source code will be created in the ``buml`` folder, containing content similar 
 to the following example:
 
 .. literalinclude:: ../../code_eg/structural_grammar/buml/buml_model.py

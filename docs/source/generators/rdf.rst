@@ -18,6 +18,6 @@ the ``generate`` method as follows:
 The ``vocabulary.ttl`` file with the vocabulary specification in turtle forma will be generated in the ``<<current_directory>>/output`` 
 folder and it will look as follows.
 
-.. literalinclude:: ../../../tests/structural/library/output/vocabulary.ttl
+.. literalinclude:: ../../../tests/BUML/metamodel/structural/library/output/vocabulary.ttl
    :language: console
    :linenos:

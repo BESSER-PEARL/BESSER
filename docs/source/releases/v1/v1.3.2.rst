@@ -1,0 +1,9 @@
+Version 1.3.2
+=============
+
+
+Fixes
+-----
+
+* Fixed the IP Address issue for the Backend Generator with Docker
+* Added init file for the State Machine metamodel

@@ -1,4 +1,4 @@
-BUML Language
+B-UML Language
 ==============
 
 .. toctree::

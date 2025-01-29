@@ -20,7 +20,7 @@ def parse_attribute(attribute_name, domain_model=None):
         visibility_symbol = parts[0] if parts[0] in VISIBILITY_MAP else "+"
         visibility = VISIBILITY_MAP.get(visibility_symbol, "public")  # Default to "public"
         name = parts[1] if len(parts) > 1 else "Unnamed"
-        
+
         # Check if type is specified
         if len(parts) > 2:
             type_name = parts[2]
@@ -32,7 +32,7 @@ def parse_attribute(attribute_name, domain_model=None):
                 attr_type = VALID_PRIMITIVE_TYPES.get(type_name.lower(), "str")
         else:
             attr_type = "str"  # Default to "str" if no type specified
-            
+
     return visibility, name, attr_type
 
 def parse_method(method_str):
@@ -62,7 +62,7 @@ def parse_method(method_str):
     # Parse method using regex
     pattern = r"([^(]+)\((.*?)\)(?:\s*:\s*(.+))?"
     match = re.match(pattern, method_str)
-    
+
     if not match:
         return visibility, method_str.replace("()", ""), parameters, return_type
 
@@ -75,7 +75,7 @@ def parse_method(method_str):
         param_list = []
         current_param = []
         paren_count = 0
-        
+
         for char in params_str + ',':
             if char == '(' and paren_count >= 0:
                 paren_count += 1
@@ -92,7 +92,7 @@ def parse_method(method_str):
         for param in param_list:
             if not param:
                 continue
-                
+
             param_dict = {'name': param, 'type': 'str'}  # Default type
 
             # Handle parameter with default value
@@ -100,7 +100,7 @@ def parse_method(method_str):
                 param_parts = param.split('=', 1)
                 param_name_type = param_parts[0].strip()
                 default_value = param_parts[1].strip().strip('"\'')
-                
+
                 if ':' in param_name_type:
                     param_name, param_type = [p.strip() for p in param_name_type.split(':')]
                     param_dict.update({
@@ -140,11 +140,11 @@ def parse_multiplicity(multiplicity_str):
     """Parse a multiplicity string and return a Multiplicity object with defaults."""
     if not multiplicity_str:
         return Multiplicity(min_multiplicity=1, max_multiplicity=1)
-    
+
     # Handle single "*" case
     if multiplicity_str == "*":
         return Multiplicity(min_multiplicity=0, max_multiplicity=UNLIMITED_MAX_MULTIPLICITY)
-    
+
     parts = multiplicity_str.split("..")
     try:
         min_multiplicity = int(parts[0]) if parts[0] and parts[0] != "*" else 0
@@ -156,14 +156,14 @@ def parse_multiplicity(multiplicity_str):
     except ValueError:
         # If parsing fails, return default multiplicity of 1..1
         return Multiplicity(min_multiplicity=1, max_multiplicity=1)
-        
+
     return Multiplicity(min_multiplicity=min_multiplicity, max_multiplicity=max_multiplicity)
 
-def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> tuple[list, list]:
+def process_ocl_constraints(ocl_text: str, domain_model: DomainModel, counter: int) -> tuple[list, list]:
     """Process OCL constraints and convert them to BUML Constraint objects."""
     if not ocl_text:
         return [], []
-    
+
     constraints = []
     warnings = []
     lines = re.split(r'[,]', ocl_text)
@@ -175,23 +175,23 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> tuple[l
         line = line.strip()
         if not line or not line.lower().startswith('context'):
             continue
-            
+
         # Extract context class name
         parts = line.split()
         if len(parts) < 4:  # Minimum: "context ClassName inv name:"
             continue
-            
+
         context_class_name = parts[1]
         context_class = domain_classes.get(context_class_name.lower())
-        
+
         if not context_class:
             warning_msg = f"Warning: Context class {context_class_name} not found"
             warnings.append(warning_msg)
             continue
-            
-        constraint_name = f"constraint_{context_class_name}_{constraint_count}"
+
+        constraint_name = f"constraint_{context_class_name}_{counter}_{constraint_count}"
         constraint_count += 1
-        
+
         constraints.append(
             Constraint(
                 name=constraint_name,
@@ -200,7 +200,7 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel) -> tuple[l
                 language="OCL"
             )
         )
-    
+
     return constraints, warnings
 
 def generate_unique_class_name(base_name, existing_names):
@@ -211,11 +211,11 @@ def generate_unique_class_name(base_name, existing_names):
         while f"{base_name}{counter}" in existing_names:
             counter += 1
         return f"{base_name}{counter}"
-    
+
     # For other names, only add number if name exists
     if base_name not in existing_names:
         return base_name
-    
+
     counter = 1
     while f"{base_name}{counter}" in existing_names:
         counter += 1
@@ -224,7 +224,7 @@ def generate_unique_class_name(base_name, existing_names):
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""
     domain_model = DomainModel("Class Diagram")
-    
+
     # Get elements and OCL constraints from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})
@@ -257,15 +257,15 @@ def process_class_diagram(json_data):
             original_name = element.get("name")
             unique_name = generate_unique_class_name(original_name, existing_class_names)
             existing_class_names.add(unique_name)
-            
+
             # Create the class with the unique name
             is_abstract = element.get("type") == "AbstractClass"
             cls = Class(name=unique_name, is_abstract=is_abstract)
-            
+
             # Store the mapping of original to unique name if needed
             element["original_name"] = original_name
             element["unique_name"] = unique_name
-            
+
             # Add attributes
             for attr_id in element.get("attributes", []):
                 attr = elements.get(attr_id)
@@ -284,7 +284,7 @@ def process_class_diagram(json_data):
                 method = elements.get(method_id)
                 if method:
                     visibility, name, parameters, return_type = parse_method(method.get("name", ""))
-                    
+
                     # Create method parameters
                     method_params = []
                     for param in parameters:
@@ -297,7 +297,7 @@ def process_class_diagram(json_data):
                         if 'default' in param:
                             param_obj.default_value = param['default']
                         method_params.append(param_obj)
-                    
+
                     # Create method with parameters and return type
                     method_obj = Method(
                         name=name,
@@ -393,14 +393,16 @@ def process_class_diagram(json_data):
     # Process OCL constraints
     all_constraints = set()
     all_warnings = []
+    constraint_counter = 0
     for element_id, element in elements.items():
         if element.get("type") in ["ClassOCLConstraint"]:
             ocl = element.get("constraint")
             if ocl:
                 try:
-                    new_constraints, warnings = process_ocl_constraints(ocl, domain_model)
+                    new_constraints, warnings = process_ocl_constraints(ocl, domain_model, constraint_counter)
                     all_constraints.update(new_constraints)
                     all_warnings.extend(warnings)
+                    constraint_counter += 1
                 except Exception as e:
                     error_msg = f"Error processing OCL constraint for element {element_id}: {e}"
                     all_warnings.append(error_msg)
@@ -417,49 +419,49 @@ def process_state_machine(json_data):
     code_lines = []
     code_lines.append("import datetime")
     code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event\n")
-    
+
     sm_name = json_data.get("name", "Generated State Machine")
     code_lines.append(f"sm = StateMachine(name='{sm_name}')\n")
-    
+
     elements = json_data.get("elements", {})
     relationships = json_data.get("relationships", {})
-    
+
     # Track states by ID for later reference
     states_by_id = {}
     body_names = set()
     event_names = set()
-    
+
     # Collect all body and event names first
     for element in elements.values():
         if element.get("type") == "StateBody":
             body_names.add(element.get("name"))
         elif element.get("type") == "StateFallbackBody":
             body_names.add(element.get("name"))
-    
+
     # Collect event names from transitions
     for rel in relationships.values():
         if rel.get("type") == "StateTransition" and rel.get("name"):
             event_names.add(rel.get("name"))
-    
+
     # Write function definitions first
     for element in elements.values():
         if element.get("type") == "StateCodeBlock":
             name = element.get("name", "")
             code_content = element.get("code", {}).get("content", "")
-            
+
             # Clean up the code content by removing extra newlines
             cleaned_code = "\n".join(line for line in code_content.splitlines() if line.strip())
-            
+
             # Write the function definition with its code content
             code_lines.append(cleaned_code)  # Write the actual function code
             code_lines.append("")  # Add single blank line after function
-            
+
             if name in body_names:
                 code_lines.append(f"{name} = Body(name='{name}', callable={name})")
             if name in event_names:
                 code_lines.append(f"{name} = Event(name='{name}', callable={name})")
             code_lines.append("")  # Add blank line after Body/Event creation
-    
+
     # Create states
     for element_id, element in elements.items():
         if element.get("type") == "State":
@@ -470,12 +472,12 @@ def process_state_machine(json_data):
                     elements.get(rel.get("source", {}).get("element", ""), {}).get("type") == "StateInitialNode"):
                     is_initial = True
                     break
-            
+
             state_name = element.get("name", "")
             code_lines.append(f"{state_name}_state = sm.new_state(name='{state_name}', initial={str(is_initial)})")
             states_by_id[element_id] = state_name
     code_lines.append("")
-    
+
     # Assign bodies to states
     for element_id, element in elements.items():
         if element.get("type") == "State":
@@ -486,7 +488,7 @@ def process_state_machine(json_data):
                     body_name = body_element.get("name")
                     if body_name in body_names:
                         code_lines.append(f"{state_name}_state.set_body(body={body_name})")
-            
+
             for fallback_id in element.get("fallbackBodies", []):
                 fallback_element = elements.get(fallback_id)
                 if fallback_element:
@@ -494,23 +496,23 @@ def process_state_machine(json_data):
                     if fallback_name in body_names:
                         code_lines.append(f"{state_name}_state.set_fallback_body({fallback_name})")
     code_lines.append("")
-    
+
     # Write transitions
     for relationship in relationships.values():
         if relationship.get("type") == "StateTransition":
             source_id = relationship.get("source", {}).get("element")
             target_id = relationship.get("target", {}).get("element")
-            
+
             if elements.get(source_id, {}).get("type") == "StateInitialNode":
                 continue
-                
+
             source_name = states_by_id.get(source_id)
             target_name = states_by_id.get(target_id)
-            
+
             if source_name and target_name:
                 event_name = relationship.get("name", "")
                 params = relationship.get("params")
-                
+
                 if event_name:
                     event_params = f"event_params={{ {params} }}" if params else "event_params={}"
                     code_lines.append(f"{source_name}_state.when_event_go_to(")
@@ -518,5 +520,5 @@ def process_state_machine(json_data):
                     code_lines.append(f"    dest={target_name}_state,")
                     code_lines.append(f"    {event_params}")
                     code_lines.append(")")
-    
+
     return "\n".join(code_lines)

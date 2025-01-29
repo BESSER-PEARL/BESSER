@@ -172,7 +172,8 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel, counter: i
     domain_classes = {cls.name.lower(): cls for cls in domain_model.types}
 
     for line in lines:
-        line = line.strip()
+        
+        line = line.strip().replace('\n', '')
         if not line or not line.lower().startswith('context'):
             continue
 

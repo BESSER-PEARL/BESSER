@@ -9,11 +9,11 @@ class Factory:
         for attrib in context.attributes:
             if name == attrib.name:
                 return attrib
-    def checkInAssociation(self,name,context):
-        for association in context.associations:
-            for end in association.ends:
-                if name == end.name:
-                    return end
+
+    def checkInAssociation(self, name, context):
+        for end in context.all_association_ends():
+            if name == end.name:
+                return end
 
     def handleProp(self,name,iterator):
         if "." in name:
@@ -34,7 +34,7 @@ class Factory:
         if prop is not None:
             return prop
         else:
-            raise Exception("Property "+name+ " not found in class "+str(self.context))
+            raise Exception("Property "+name+ " not found in class "+str(self.context.name))
 
     def create_date_literal_expression(self,name,value):
         return DateLiteralExpression(name,value)

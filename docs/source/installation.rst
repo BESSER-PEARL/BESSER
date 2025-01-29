@@ -3,7 +3,7 @@ Installation
 
 Basic Installation
 --------------------------------
-BESSER works with Python 3.9+. We recommend creating a virtual environment (e.g. `venv <https://docs.python.org/3/tutorial/venv.html>`_, 
+BESSER works with Python 3.10+. We recommend creating a virtual environment (e.g. `venv <https://docs.python.org/3/tutorial/venv.html>`_, 
 `conda <https://docs.conda.io/en/latest/>`_).
 
 The latest stable version of BESSER is available in the Python Package Index (PyPi) and can be installed using

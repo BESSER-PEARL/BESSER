@@ -4,6 +4,7 @@ from fastapi.responses import StreamingResponse, Response
 import os, io, zipfile, shutil
 import tempfile
 import uuid
+import asyncio
 
 from besser.utilities.buml_code_builder import domain_model_to_code
 from besser.generators.django import DjangoGenerator
@@ -17,6 +18,7 @@ from besser.generators.backend import BackendGenerator
 from besser.utilities.web_modeling_editor.backend.models.class_diagram import ClassDiagramInput
 from besser.utilities.web_modeling_editor.backend.services.json_to_buml import process_class_diagram, process_state_machine
 from besser.utilities.web_modeling_editor.backend.services.buml_to_json import domain_model_to_json, parse_buml_content, state_machine_to_json
+from besser.utilities.web_modeling_editor.backend.services.ocl_checker import check_ocl_constraint
 
 app = FastAPI(
     title="Besser Backend API",
@@ -37,7 +39,7 @@ app.add_middleware(
 GENERATOR_CONFIG = {
     "python": (PythonGenerator, "classes.py"),
     "java": (JavaGenerator, "java_classes.zip"),
-    "django": (DjangoGenerator, "models.py"),
+    "django": (DjangoGenerator, "django_project.zip"),
     "pydantic": (PydanticGenerator, "pydantic_classes.py"),
     "sqlalchemy": (SQLAlchemyGenerator, "sql_alchemy.py"),
     "sql": (SQLGenerator, "tables.sql"),
@@ -46,56 +48,97 @@ GENERATOR_CONFIG = {
 
 @app.post("/generate-output")
 async def generate_output(input_data: ClassDiagramInput):
-    # Create unique temporary directory for this request
     temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
     try:
         json_data = input_data.dict()
-        print("Input data received:", json_data)
-
         generator = input_data.generator
+        
         if generator not in GENERATOR_CONFIG:
             raise HTTPException(status_code=400, detail="Invalid generator type specified.")
 
         buml_model = process_class_diagram(json_data)
-        generator_class, _ = GENERATOR_CONFIG[generator]
-        generator_instance = generator_class(buml_model, output_dir=temp_dir)
+        generator_class, file_name = GENERATOR_CONFIG[generator]
 
-        generator_instance.generate()
+        # Handle Django generator with config
+        if generator == "django":
+            if not input_data.config:
+                raise HTTPException(status_code=400, detail="Django configuration is required")
+            
+            # Clean up any existing project directory first
+            project_dir = os.path.join(temp_dir, input_data.config.project_name)
+            if os.path.exists(project_dir):
+                shutil.rmtree(project_dir)
+            
+            # Create a fresh project directory
+            os.makedirs(temp_dir, exist_ok=True)
+            
+            # Change to temp directory before running django-admin
+            original_cwd = os.getcwd()
+            os.chdir(temp_dir)
+            
+            try:
+                generator_instance = generator_class(
+                    model=buml_model,
+                    project_name=input_data.config.project_name,
+                    app_name=input_data.config.app_name,
+                    containerization=input_data.config.containerization,
+                    output_dir=temp_dir
+                )
+                
+                # Generate the Django project
+                generator_instance.generate()
+                
+                # Wait a moment for file system operations to complete
+                await asyncio.sleep(1)
+                
+                # Check if the project directory exists and has content
+                if not os.path.exists(project_dir) or not os.listdir(project_dir):
+                    raise ValueError("Django project generation failed: Output directory is empty")
+                
+            finally:
+                # Always restore the original working directory
+                os.chdir(original_cwd)
 
-        # Get file name
-        _, file_name = GENERATOR_CONFIG[generator]
+        else:
+            generator_instance = generator_class(buml_model, output_dir=temp_dir)
+            generator_instance.generate()
 
         # Handle zip file generators
-        if generator == "java" or generator == "backend":
+        if generator in ["java", "backend", "django"]:
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                for root, _, files in os.walk(temp_dir):
+                # For Django, start from the project directory
+                base_dir = project_dir if generator == "django" else temp_dir
+                for root, _, files in os.walk(base_dir):
                     for file in files:
                         file_path = os.path.join(root, file)
-                        zip_file.write(file_path, os.path.relpath(file_path, temp_dir))
+                        arc_name = os.path.relpath(file_path, base_dir)
+                        zip_file.write(file_path, arc_name)
+            
             zip_buffer.seek(0)
-            # Clean up temp directory
             shutil.rmtree(temp_dir, ignore_errors=True)
-            return StreamingResponse(zip_buffer, media_type="application/zip", 
-                                  headers={"Content-Disposition": f"attachment; filename={file_name}"})
+            return StreamingResponse(
+                zip_buffer, 
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={file_name}"}
+            )
 
-        # For other generators, return the single file
+        # Rest of the function remains the same for non-zip generators
         output_file_path = os.path.join(temp_dir, file_name)
         if not os.path.exists(output_file_path):
             raise ValueError(f"{generator} generation failed: Output file was not created.")
 
-        # Read file content before deleting
         with open(output_file_path, 'rb') as f:
             file_content = f.read()
         
-        # Clean up temp directory
         shutil.rmtree(temp_dir, ignore_errors=True)
-        
-        return Response(content=file_content, media_type="text/plain", 
-                      headers={"Content-Disposition": f"attachment; filename={file_name}"})
+        return Response(
+            content=file_content, 
+            media_type="text/plain",
+            headers={"Content-Disposition": f"attachment; filename={file_name}"}
+        )
 
     except Exception as e:
-        # Ensure cleanup on error
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
         print(f"Error during file generation or response: {str(e)}")
@@ -169,6 +212,35 @@ async def get_json_model(buml_file: UploadFile = File(...)):
         print(f"Error in get_json_model: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/check-ocl")
+async def check_ocl(input_data: ClassDiagramInput):
+    try:
+        # Convert diagram to BUML model
+        json_data = {"elements": input_data.elements}
+        buml_model = process_class_diagram(json_data)
+        
+        if not buml_model:
+            return {
+                "success": False,
+                "message": "Failed to create BUML model"
+            }
+        
+        # Check OCL constraints
+        result = check_ocl_constraint(buml_model)
+        
+        # Add warnings to the message if they exist
+        if hasattr(buml_model, 'ocl_warnings') and buml_model.ocl_warnings:
+            warnings_text = "\n\nWarnings:\n" + "\n".join(buml_model.ocl_warnings)
+            result['message'] = result['message'] + warnings_text
+            
+        return result
+        
+    except Exception as e:
+        print(f"Error in check_ocl: {str(e)}")  # Debug print
+        return {
+            "success": False,
+            "message": f"Error checking OCL constraints: {str(e)}"
+        }
 
 if __name__ == "__main__":
     import uvicorn

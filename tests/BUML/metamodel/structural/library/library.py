@@ -1,7 +1,6 @@
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
     Multiplicity, BinaryAssociation, StringType, IntegerType, DateType
 from besser.generators.python_classes import PythonGenerator
-from besser.generators.django import DjangoGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.rest_api import RESTAPIGenerator
@@ -49,9 +48,6 @@ for attribute in book.attributes:
 
 python_model = PythonGenerator(model=library_model)
 python_model.generate()
-
-django = DjangoGenerator(model=library_model)
-django.generate()
 
 sql_alchemy = SQLAlchemyGenerator(model=library_model)
 sql_alchemy.generate()

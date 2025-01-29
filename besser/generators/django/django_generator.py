@@ -66,8 +66,8 @@ class DjangoGenerator(GeneratorInterface):
         template = self.env.get_template(template_name)
         file_path = os.path.join(self.project_name, output_name)
         with open(file_path, mode="w", newline='\n', encoding='utf-8') as f:
-            f.write(template.render(app_name=self.app_name, 
-                                    project_name=self.project_name, 
+            f.write(template.render(app_name=self.app_name,
+                                    project_name=self.project_name,
                                     model=self.model,
                                     sort=sort_by_timestamp))
 

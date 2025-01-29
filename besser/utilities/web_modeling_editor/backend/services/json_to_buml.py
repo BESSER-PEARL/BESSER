@@ -1,13 +1,7 @@
 import re
-import uuid
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
     Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint
-from besser.BUML.metamodel.state_machine import Body, Event, StateMachine
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
-from besser.utilities.web_modeling_editor.backend.services.layout_calculator import (
-    determine_connection_direction, calculate_connection_points,
-    calculate_path_points, calculate_relationship_bounds
-)
 
 def parse_attribute(attribute_name, domain_model=None):
     """Parse an attribute string to extract visibility, name, and type, removing any colons."""
@@ -43,7 +37,6 @@ def parse_method(method_str):
     "- findBook(title: str): Book" -> ("private", "findBook", [{"name": "title", "type": "str"}], "Book")
     "validate()" -> ("public", "validate", [], None)
     """
-    import re
 
     # Default values
     visibility = "public"
@@ -172,7 +165,7 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel, counter: i
     domain_classes = {cls.name.lower(): cls for cls in domain_model.types}
 
     for line in lines:
-        
+
         line = line.strip().replace('\n', '')
         if not line or not line.lower().startswith('context'):
             continue
@@ -275,10 +268,10 @@ def process_class_diagram(json_data):
                     # If attr_type is a string matching an enumeration name, get the actual enumeration
                     if any(isinstance(t, Enumeration) and t.name == attr_type for t in domain_model.types):
                         enum_type = next(t for t in domain_model.types if isinstance(t, Enumeration) and t.name == attr_type)
-                        property = Property(name=name, type=enum_type, visibility=visibility)
+                        property_ = Property(name=name, type=enum_type, visibility=visibility)
                     else:
-                        property = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility)
-                    cls.attributes.add(property)
+                        property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility)
+                    cls.attributes.add(property_)
 
             # Add methods
             for method_id in element.get("methods", []):
@@ -373,7 +366,7 @@ def process_class_diagram(json_data):
             )
             target_property = Property(
                 name=target.get("role", ""),
-                type=target_class, 
+                type=target_class,
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,
                 is_composite=is_composite
@@ -468,7 +461,7 @@ def process_state_machine(json_data):
         if element.get("type") == "State":
             is_initial = False
             for rel in relationships.values():
-                if (rel.get("type") == "StateTransition" and 
+                if (rel.get("type") == "StateTransition" and
                     rel.get("target", {}).get("element") == element_id and
                     elements.get(rel.get("source", {}).get("element", ""), {}).get("type") == "StateInitialNode"):
                     is_initial = True

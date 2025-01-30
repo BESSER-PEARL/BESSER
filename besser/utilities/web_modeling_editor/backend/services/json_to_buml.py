@@ -5,28 +5,53 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import VIS
 
 def parse_attribute(attribute_name, domain_model=None):
     """Parse an attribute string to extract visibility, name, and type, removing any colons."""
-    parts = attribute_name.replace(":", "").split()  # Remove colons from the attribute name
-    if len(parts) == 1:
-        visibility = "public"
-        name = parts[0]
-        attr_type = "str"
-    else:
-        visibility_symbol = parts[0] if parts[0] in VISIBILITY_MAP else "+"
-        visibility = VISIBILITY_MAP.get(visibility_symbol, "public")  # Default to "public"
-        name = parts[1] if len(parts) > 1 else "Unnamed"
+    # Split the string by colon first to separate name and type
+    name_type_parts = attribute_name.split(":")
+    
+    if len(name_type_parts) > 1:
+        name_part = name_type_parts[0].strip()
+        type_part = name_type_parts[1].strip()
 
-        # Check if type is specified
-        if len(parts) > 2:
-            type_name = parts[2]
-            # Check if type is an enumeration in the domain model
-            if domain_model and any(isinstance(t, Enumeration) and t.name == type_name for t in domain_model.types):
-                attr_type = type_name  # Keep the enumeration type name
-            else:
-                # Convert to primitive type if not an enumeration
-                attr_type = VALID_PRIMITIVE_TYPES.get(type_name.lower(), "str")
+        # Check for visibility symbol at start of name
+        if name_part[0] in VISIBILITY_MAP:
+            visibility = VISIBILITY_MAP[name_part[0]]
+            name = name_part[1:].strip()
         else:
-            attr_type = "str"  # Default to "str" if no type specified
+            # Existing split logic for space-separated visibility
+            name_parts = name_part.split()
+            if len(name_parts) > 1:
+                visibility_symbol = name_parts[0] if name_parts[0] in VISIBILITY_MAP else "+"
+                visibility = VISIBILITY_MAP.get(visibility_symbol, "public")
+                name = name_parts[1]
+            else:
+                visibility = "public"
+                name = name_parts[0]
 
+        # Handle the type
+        if domain_model and any(isinstance(t, Enumeration) and t.name == type_part for t in domain_model.types):
+            attr_type = type_part
+        else:
+            attr_type = VALID_PRIMITIVE_TYPES.get(type_part.lower(), "str")
+    else:
+        # Handle case without type specification
+        parts = attribute_name.split()
+
+        if len(parts) == 1:
+            part = parts[0].strip()
+            if part and part[0] in VISIBILITY_MAP:
+                visibility = VISIBILITY_MAP[part[0]]
+                name = part[1:].strip()
+                attr_type = "str"
+            else:
+                visibility = "public"
+                name = part
+                attr_type = "str"
+        else:
+            visibility_symbol = parts[0] if parts[0] in VISIBILITY_MAP else "+"
+            visibility = VISIBILITY_MAP.get(visibility_symbol, "public")
+            name = parts[1]
+            attr_type = "str"
+            
     return visibility, name, attr_type
 
 def parse_method(method_str):

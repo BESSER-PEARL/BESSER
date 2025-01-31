@@ -1,0 +1,96 @@
+{#- Django model template generator #}
+{%- import "django_fields.py.j2" as django_fields %}
+{#- django_fields.j2 should contain mappings to Django's ORM field types #}
+from django.db import models
+
+
+
+{%- set processed_associations = [] %}
+{%- for class_obj in model.classes_sorted_by_inheritance() %}
+{%-set fk_list = []%}
+{#- start of extract fk_list #} 
+{%- set generals = namespace(names=[]) %}
+    {%- for parent in class_obj.parents() %}
+      {%- set _ = generals.names.append(parent.name) %}
+    {%- endfor %}
+        {%- set inheritance = generals.names | join(', ') %}
+        {%- for association in class_obj.associations %}
+            {%- if association.ends|length == 2 and association.name not in processed_associations %}
+                {%- set ns = namespace(end1=None, end2=None) %}
+                {%- for end in association.ends %}
+                  {%- set ns.end1=end if end.type.name == class_obj.name else ns.end1 %}
+                  {%- set ns.end2=end if end.type.name != class_obj.name else ns.end2 %}
+                {%- endfor %}
+                    {%- set class1_name = ns.end1.type.name %}
+                    {%- set class2_name = ns.end2.type.name %}
+                        {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+                           {%- set _ = fk_list.append(ns.end2.name.replace(' ', '_')) %}
+                        {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
+                        {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+                        {%- endif %}
+            {%- endif %}
+        {%- endfor %}
+    {#- end of extract fk_list #} 
+
+
+
+    {%- set generals = namespace(names=[]) %}
+    {%- for parent in class_obj.parents() %}
+        {%- set _ = generals.names.append(parent.name) %}
+    {%- endfor %}
+    {%- set inheritance = generals.names | join(', ') %}
+
+
+class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
+    """
+    Represents a {{ class_obj.name[0].lower() + class_obj.name[1:] }} in the system.
+    """
+{%- for attr in class_obj.attributes %}
+    {{ attr.name }} ={{ django_fields.get_field(attr.type.name, attr.properties) }}
+{%- endfor %}
+    {%- for association in class_obj.associations %}
+        {%- if association.ends|length == 2 and association.name not in processed_associations %} 
+            {%- set ns = namespace(end1=None, end2=None) %}
+            {%- for end in association.ends %}
+                {%- set ns.end1=end if end.type.name == class_obj.name else ns.end1 %}
+                {%- set ns.end2=end if end.type.name != class_obj.name else ns.end2 %}
+            {%- endfor %}
+            {%- set class1_name = ns.end1.type.name %}
+            {%- set class2_name = ns.end2.type.name %}
+            {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
+            {#- N:M Relationship: Use ManyToManyField in Django #}
+            {%- if fk_list|length == 1%}
+    {{ ns.end2.name.replace(' ', '_') }} = models.ManyToManyField(
+        '{{ class2_name }}', related_name='{{ class_obj.name[0].lower() + class_obj.name[1:] }}s'{%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+            {%- else %}
+            {%- endif %}
+            {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+            {#- N:1 Relationship: Use ForeignKey in Django #}
+    {{ ns.end2.name.replace(' ', '_') }} = models.ForeignKey(
+        '{{ class2_name }}', on_delete=models.PROTECT, related_name='{{ class_obj.name[0].lower() + class_obj.name[1:] }}s'{%- if ns.end2.is_composite %}, on_delete=models.PROTECT{%- endif %}
+                {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+
+            {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+            {#- 1:1 Relationship: Use OneToOneField in Django #}
+    {{ ns.end2.name.replace(' ', '_') }} = models.OneToOneField('{{ class2_name }}'{%- if ns.end2.is_composite %}, on_delete=models.CASCADE{%- endif %}
+                {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+
+            {%- endif %}
+        {%- endif %}
+    {%- endfor %}
+
+    class Meta:
+        verbose_name = "{{ class_obj.name[0].upper() + class_obj.name[1:] }}"
+        verbose_name_plural = "{{ class_obj.name[0].upper() + class_obj.name[1:] }}s"
+
+    def __str__(self):
+        """
+        Returns a string representation of the {{ class_obj.name[0].lower() + class_obj.name[1:] }}
+        """
+        {%- for attr in class_obj.attributes %}
+           {%- if attr.name == 'name' or attr.name == 'title'%}
+        return self.{{attr.name}}   
+           {%- endif %}
+        {%- endfor %}
+{%- endfor %}
+

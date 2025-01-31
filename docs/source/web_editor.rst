@@ -38,7 +38,7 @@ Follow these steps to set up the editor:
       git submodule update
       docker-compose up
 
-Once the setup is complete, open your browser and navigate to ``http://localhost:8888``.
+Once the setup is complete, open your browser and navigate to ``http://localhost:8080``.
 
 
 Using the BESSER Web Editor
@@ -46,7 +46,7 @@ Using the BESSER Web Editor
 
 Modeling
 ^^^^^^^^
-1. Open the web modeling editor in your browser (``http://localhost:8888``).
+1. Open the web modeling editor in your browser (``http://localhost:8080``).
 2. Select the diagram type (Class or State Machine).
 3. Use the toolbar to add elements and relationships.
 4. Models are automatically saved and synchronized.

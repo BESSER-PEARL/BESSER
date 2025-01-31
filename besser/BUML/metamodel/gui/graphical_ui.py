@@ -413,10 +413,10 @@ class Screen(ViewContainer):
         """str: Set the size of the screen.
 
         Raises:
-            ValueError: If the size provided is not one of the allowed options: 'SmallScreen','MediumScreen', 'LargScreen', 'xLargeScreen'
+            ValueError: If the size provided is not one of the allowed options: 'Small','Medium', 'Large', 'xLarge'
         """
 
-        if size not in ['SmallScreen', 'MediumScreen', 'LargScreen', 'xLargeScreen']:
+        if size not in ['Small', 'Medium', 'Large', 'xLarge']:
            raise ValueError("Invalid value of size")
            self.__size = size
 

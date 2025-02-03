@@ -7,7 +7,7 @@ def parse_attribute(attribute_name, domain_model=None):
     """Parse an attribute string to extract visibility, name, and type, removing any colons."""
     # Split the string by colon first to separate name and type
     name_type_parts = attribute_name.split(":")
-    
+
     if len(name_type_parts) > 1:
         name_part = name_type_parts[0].strip()
         type_part = name_type_parts[1].strip()
@@ -51,7 +51,8 @@ def parse_attribute(attribute_name, domain_model=None):
             visibility = VISIBILITY_MAP.get(visibility_symbol, "public")
             name = parts[1]
             attr_type = "str"
-            
+    if not name:  # Skip if name is empty
+        return None, None, None
     return visibility, name, attr_type
 
 def parse_method(method_str):
@@ -257,6 +258,8 @@ def process_class_diagram(json_data):
                 attr = elements.get(attr_id)
                 if attr:
                     visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
+                    if name is None:  # Skip if no name was returned
+                        continue
                     if any(isinstance(t, Enumeration) and t.name == attr_type for t in domain_model.types):
                         enum_type = next(t for t in domain_model.types if isinstance(t, Enumeration) and t.name == attr_type)
                         property_ = Property(name=name, type=enum_type, visibility=visibility)

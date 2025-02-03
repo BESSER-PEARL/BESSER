@@ -2,6 +2,7 @@ import re
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
     Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
+from fastapi import HTTPException
 
 def parse_attribute(attribute_name, domain_model=None):
     """Parse an attribute string to extract visibility, name, and type, removing any colons."""
@@ -254,12 +255,16 @@ def process_class_diagram(json_data):
             cls = Class(name=class_name, is_abstract=is_abstract)
 
             # Add attributes
+            attribute_names = set()
             for attr_id in element.get("attributes", []):
                 attr = elements.get(attr_id)
                 if attr:
                     visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
                     if name is None:  # Skip if no name was returned
                         continue
+                    if name in attribute_names:
+                        raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
+                    attribute_names.add(name)
                     if any(isinstance(t, Enumeration) and t.name == attr_type for t in domain_model.types):
                         enum_type = next(t for t in domain_model.types if isinstance(t, Enumeration) and t.name == attr_type)
                         property_ = Property(name=name, type=enum_type, visibility=visibility)
@@ -302,7 +307,6 @@ def process_class_diagram(json_data):
                             # If not a class, treat as primitive type
                             method_obj.type = PrimitiveDataType(return_type)
                     cls.methods.add(method_obj)
-
             domain_model.types.add(cls)
 
     # Processing relationships (Associations, Generalizations, and Compositions)

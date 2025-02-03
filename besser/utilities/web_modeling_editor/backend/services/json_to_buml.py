@@ -222,24 +222,6 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel, counter: i
 
     return constraints, warnings
 
-def generate_unique_class_name(base_name, existing_names):
-    """Generate a unique class name by appending a number if necessary."""
-    # If base_name is "Class", always add a number
-    if base_name == "Class":
-        counter = 1
-        while f"{base_name}{counter}" in existing_names:
-            counter += 1
-        return f"{base_name}{counter}"
-
-    # For other names, only add number if name exists
-    if base_name not in existing_names:
-        return base_name
-
-    counter = 1
-    while f"{base_name}{counter}" in existing_names:
-        counter += 1
-    return f"{base_name}{counter}"
-
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""
     domain_model = DomainModel("Class Diagram")
@@ -247,12 +229,6 @@ def process_class_diagram(json_data):
     # Get elements and OCL constraints from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})
-
-    # print(f"Elements: {elements}")
-    # print(f"Relationships: {relationships}")
-
-    # Track existing class names
-    existing_class_names = set()
 
     # First process enumerations to have them available for attribute types
     for element_id, element in elements.items():
@@ -266,31 +242,21 @@ def process_class_diagram(json_data):
                     literals.add(literal_obj)
             enum = Enumeration(name=element_name, literals=literals)
             domain_model.types.add(enum)
-            existing_class_names.add(element_name)
 
     # Then process classes with attributes that might reference enumerations
     for element_id, element in elements.items():
         # Check for both regular Class and AbstractClass
         if element.get("type") in ["Class", "AbstractClass"]:
             # Set is_abstract based on the type
-            original_name = element.get("name")
-            unique_name = generate_unique_class_name(original_name, existing_class_names)
-            existing_class_names.add(unique_name)
-
-            # Create the class with the unique name
+            class_name = element.get("name")
             is_abstract = element.get("type") == "AbstractClass"
-            cls = Class(name=unique_name, is_abstract=is_abstract)
-
-            # Store the mapping of original to unique name if needed
-            element["original_name"] = original_name
-            element["unique_name"] = unique_name
+            cls = Class(name=class_name, is_abstract=is_abstract)
 
             # Add attributes
             for attr_id in element.get("attributes", []):
                 attr = elements.get(attr_id)
                 if attr:
                     visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
-                    # If attr_type is a string matching an enumeration name, get the actual enumeration
                     if any(isinstance(t, Enumeration) and t.name == attr_type for t in domain_model.types):
                         enum_type = next(t for t in domain_model.types if isinstance(t, Enumeration) and t.name == attr_type)
                         property_ = Property(name=name, type=enum_type, visibility=visibility)
@@ -376,13 +342,6 @@ def process_class_diagram(json_data):
             source_multiplicity = parse_multiplicity(source.get("multiplicity", "1"))
             target_multiplicity = parse_multiplicity(target.get("multiplicity", "1"))
 
-            # Use unique names to find the correct classes
-            source_unique_name = source_element.get("unique_name", source_element.get("name", ""))
-            target_unique_name = target_element.get("unique_name", target_element.get("name", ""))
-
-            source_class = domain_model.get_class_by_name(source_unique_name)
-            target_class = domain_model.get_class_by_name(target_unique_name)
-
             source_property = Property(
                 name=source.get("role") or str(source_class.name),
                 type=source_class,
@@ -397,7 +356,7 @@ def process_class_diagram(json_data):
                 is_composite=is_composite
             )
 
-            association_name = relationship.get("name") or f"{source_unique_name}_{target_unique_name}"
+            association_name = relationship.get("name") or f"{source_class.name}_{target_class.name}"
 
             association = BinaryAssociation(
                 name=association_name,

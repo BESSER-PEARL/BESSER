@@ -384,13 +384,13 @@ def process_class_diagram(json_data):
             target_class = domain_model.get_class_by_name(target_unique_name)
 
             source_property = Property(
-                name=source.get("role", ""),
+                name=source.get("role") or str(source_class.name),
                 type=source_class,
                 multiplicity=source_multiplicity,
                 is_navigable=source_navigable
             )
             target_property = Property(
-                name=target.get("role", ""),
+                name=target.get("role") or str(target_class.name),
                 type=target_class,
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,

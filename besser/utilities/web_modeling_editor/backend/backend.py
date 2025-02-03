@@ -137,7 +137,11 @@ async def generate_output(input_data: ClassDiagramInput):
             media_type="text/plain",
             headers={"Content-Disposition": f"attachment; filename={file_name}"}
         )
-
+    except HTTPException as e:
+        # Handle known exceptions with specific status codes
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise e
     except Exception as e:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)

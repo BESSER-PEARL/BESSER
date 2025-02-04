@@ -43,8 +43,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
                 {% do processed_associations.append(association.name) %}
             {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
             {# 1:1 Relationship: Use OneToOneField in Django #}
-    {{ ns.end2.name.replace(' ', '_') }} = models.OneToOneField('{{ class2_name }}'{% if ns.end2.is_composite %}, on_delete=models.CASCADE{% endif %}
-                {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{% endif %})
+    {{ ns.end2.name.replace(' ', '_') }} = models.OneToOneField('{{ class2_name }}', on_delete=models.{{ 'SET_NULL, blank=True, null=True' if ns.end2.multiplicity.min == 0 else 'CASCADE' }})
                 {% do processed_associations.append(association.name) %}
             {% endif %}
         {% endif %}

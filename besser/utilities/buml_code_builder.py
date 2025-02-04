@@ -1,5 +1,6 @@
 import os
 from besser.BUML.metamodel.structural.structural import DomainModel
+from besser.utilities import sort_by_timestamp as sort
 
 PRIMITIVE_TYPE_MAPPING = {
     'str': 'StringType',
@@ -46,10 +47,10 @@ def domain_model_to_code(model: DomainModel, file_path: str):
 
         # Write enumerations
         f.write("# Enumerations\n")
-        for enum in model.get_enumerations():
+        for enum in sort(model.get_enumerations()):
             f.write(f"{enum.name}: Enumeration = Enumeration(\n")
             f.write(f"    name=\"{enum.name}\",\n")
-            literals_str = ",\n\t\t\t".join([f"EnumerationLiteral(name=\"{lit.name}\")" for lit in enum.literals])
+            literals_str = ",\n\t\t\t".join([f"EnumerationLiteral(name=\"{lit.name}\")" for lit in sort(enum.literals)])
             f.write(
                 f"    literals={{\n"
                 f"            {literals_str}"
@@ -58,29 +59,30 @@ def domain_model_to_code(model: DomainModel, file_path: str):
 
         # Write classes
         f.write("# Classes\n")
-        for cls in model.get_classes():
+        for cls in sort(model.get_classes()):
+            print("buml-gen: " + cls.name + str(cls.timestamp))
             f.write(f"{cls.name} = Class(name=\"{cls.name}\"{', is_abstract=True' if cls.is_abstract else ''})\n")
         f.write("\n")
 
         # Write class members
-        for cls in model.get_classes():
+        for cls in sort(model.get_classes()):
             f.write(f"# {cls.name} class attributes and methods\n")
 
             # Write attributes
-            for attr in cls.attributes:
+            for attr in sort(cls.attributes):
                 attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, attr.type.name)
                 visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
                 f.write(f"{cls.name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
                        f"type={attr_type}{visibility_str})\n")
 
             # Write methods
-            for method in cls.methods:
+            for method in sort(cls.methods):
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, method.type.name) if method.type else None
                 visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
                 
                 # Build parameters dictionary
                 params = {}
-                if method.parameters:
+                if sort(method.parameters):
                     for param in method.parameters:
                         param_type = PRIMITIVE_TYPE_MAPPING.get(param.type.name, param.type.name)
                         default_str = f", default_value='{param.default_value}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
@@ -96,10 +98,10 @@ def domain_model_to_code(model: DomainModel, file_path: str):
                            f"{visibility_str}, parameters={params_str})\n")
 
             # Write assignments
-            if cls.attributes:
+            if sort(cls.attributes):
                 attrs_str = ", ".join([f"{cls.name}_{attr.name}" for attr in cls.attributes])
                 f.write(f"{cls.name}.attributes={{{attrs_str}}}\n")
-            if cls.methods:
+            if sort(cls.methods):
                 methods_str = ", ".join([f"{cls.name}_m_{method.name}" for method in cls.methods])
                 f.write(f"{cls.name}.methods={{{methods_str}}}\n")
             f.write("\n")
@@ -107,9 +109,9 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         # Write relationships
         if model.associations:
             f.write("# Relationships\n")
-            for assoc in model.associations:
+            for assoc in sort(model.associations):
                 ends_str = []
-                for end in assoc.ends:
+                for end in sort(assoc.ends):
                     # Determine max value for multiplicity
                     max_value = '"*"' if end.multiplicity.max == "*" else end.multiplicity.max
                     # Build each property string with all attributes on the same line
@@ -133,7 +135,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         # Write generalizations
         if model.generalizations:
             f.write("# Generalizations\n")
-            for gen in model.generalizations:
+            for gen in sort(model.generalizations):
                 f.write(f"gen_{gen.specific.name}_{gen.general.name} = Generalization"
                         f"(general={gen.general.name}, specific={gen.specific.name})\n")
             f.write("\n")
@@ -141,7 +143,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         # Write OCL constraints if they exist
         if hasattr(model, 'constraints') and model.constraints:
             f.write("\n# OCL Constraints\n")
-            for constraint in model.constraints:
+            for constraint in sort(model.constraints):
                 constraint_name = constraint.name.replace("-", "_")
                 f.write(f"{constraint_name}: Constraint = Constraint(\n")
                 f.write(f"    name=\"{constraint.name}\",\n")
@@ -155,20 +157,20 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         f.write("# Domain Model\n")
         f.write("domain_model = DomainModel(\n")
         f.write(f"    name=\"{model.name}\",\n")
-        class_names = ', '.join(cls.name for cls in model.get_classes())
-        enum_names = ', '.join(enum.name for enum in model.get_enumerations())
+        class_names = ', '.join(cls.name for cls in sort(model.get_classes()))
+        enum_names = ', '.join(enum.name for enum in sort(model.get_enumerations()))
         types_str = (f"{class_names}, {enum_names}" if class_names and enum_names else
                     class_names or enum_names)
         f.write(f"    types={{{types_str}}},\n")
         if model.associations:
-            f.write(f"    associations={{{', '.join(assoc.name for assoc in model.associations)}}},\n")
+            f.write(f"    associations={{{', '.join(assoc.name for assoc in sort(model.associations))}}},\n")
         else:
             f.write("    associations={},\n")
         if hasattr(model, 'constraints') and model.constraints:
-            constraints_str = ', '.join(c.name.replace("-", "_") for c in model.constraints)
+            constraints_str = ', '.join(c.name.replace("-", "_") for c in sort(model.constraints))
             f.write(f"    constraints={{{constraints_str}}},\n")
         if model.generalizations:
-            f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in model.generalizations)}}}\n")
+            f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))}}}\n")
         else:
             f.write("    generalizations={}\n")
         f.write(")\n")

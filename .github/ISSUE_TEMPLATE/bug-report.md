@@ -1,5 +1,5 @@
 ---
-name: Bug report"
+name: "Bug report"
 about: Something on BESSER is not working as expected? Create a report to help us
   improve.
 labels: bug

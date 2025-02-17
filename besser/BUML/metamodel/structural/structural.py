@@ -7,7 +7,20 @@ import time
 UNLIMITED_MAX_MULTIPLICITY = 9999
 
 class Element(ABC):
-    pass
+
+    def __init__(self, timestamp: datetime = None):
+        self.timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
+                         timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
+
+    @property
+    def timestamp(self) -> datetime:
+        """str: Get the timestamp of the element."""
+        return self.__timestamp
+
+    @timestamp.setter
+    def timestamp(self, timestamp: datetime):
+        """str: Set the timestamp of the element."""
+        self.__timestamp = timestamp
 
 class NamedElement(Element):
     """The NamedElement is the Superclass of all structural elements with a name.
@@ -30,8 +43,6 @@ class NamedElement(Element):
     def __init__(self, name: str, timestamp: datetime = None, synonyms: List[str] = None, 
                  visibility: str = "public", is_derived: bool = False):
         self.name: str = name
-        self.timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
-                         timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
         self.synonyms: List[str] = synonyms
         self.visibility: str = visibility
         self.is_derived: bool = is_derived
@@ -52,16 +63,6 @@ class NamedElement(Element):
         if ' ' in name:
             raise ValueError("Name cannot contain blank spaces")
         self.__name = name
-
-    @property
-    def timestamp(self) -> datetime:
-        """str: Get the timestamp of the named element."""
-        return self.__datestamp
-
-    @timestamp.setter
-    def timestamp(self, timestamp: datetime):
-        """str: Set the timestamp of the named element."""
-        self.__datestamp = timestamp
 
     @property
     def visibility(self) -> str:
@@ -165,9 +166,9 @@ class PrimitiveDataType(DataType):
         Raises:
             ValueError: If an invalid primitive data type is provided.
                         Allowed values are int, float, str, bool, time, date, 
-                        datetime, and timedelta.
+                        datetime, timedelta, and any.
         """
-        if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
+        if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta', 'any']:
             raise ValueError("Invalid primitive data type")
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
@@ -183,8 +184,9 @@ TimeType = PrimitiveDataType("time")
 DateType = PrimitiveDataType("date")
 DateTimeType = PrimitiveDataType("datetime")
 TimeDeltaType = PrimitiveDataType("timedelta")
+AnyType = PrimitiveDataType("any")
 primitive_data_types = {StringType, IntegerType, FloatType, BooleanType,
-                        TimeType, DateType, DateTimeType, TimeDeltaType}
+                        TimeType, DateType, DateTimeType, TimeDeltaType, AnyType}
 
 class EnumerationLiteral(NamedElement):
     """Class representing an enumeration literal.
@@ -341,7 +343,7 @@ class TypedElement(NamedElement):
         """Type: Set the type of the typed element."""
         self.__type = type
 
-class Multiplicity:
+class Multiplicity(Element):
     """Represents the multiplicity of a Property.
 
     It consists of a minimum and maximum value, indicating the allowed range.
@@ -750,6 +752,8 @@ class Class(Type):
                 raise ValueError("A class cannot have more than one attribute marked as 'id'")
 
             for attribute in attributes:
+                if attribute.owner and attribute.owner != self:
+                    attribute.owner.attributes.discard(attribute)
                 attribute.owner = self
             self.__attributes = attributes
         else:
@@ -814,6 +818,8 @@ class Class(Type):
         if self.attributes is not None:
             if attribute.name in [attribute.name for attribute in self.attributes]:
                 raise ValueError(f"A class cannot have two attributes with the same name: '{attribute.name}'")
+        if attribute.owner and attribute.owner != self:
+            attribute.owner.attributes.discard(attribute)
         attribute.owner = self
         self.attributes.add(attribute)
 
@@ -1075,9 +1081,9 @@ class Generalization(Element):
     """
 
     def __init__(self, general: Class, specific: Class, timestamp: int = None):
+        super().__init__(timestamp)
         self.general: Class = general
         self.specific: Class = specific
-        self.timestamp: datetime = timestamp
 
     @property
     def general(self) -> Class:
@@ -1111,16 +1117,6 @@ class Generalization(Element):
             self.specific._delete_generalization(generalization=self)
         specific._add_generalization(generalization=self)
         self.__specific = specific
-
-    @property
-    def timestamp(self) -> datetime:
-        """str: Get the timestamp of the generalization."""
-        return self.__datestamp
-
-    @timestamp.setter
-    def timestamp(self, timestamp: datetime):
-        """str: Set the timestamp of the generalization."""
-        self.__datestamp = timestamp
 
     def __repr__(self):
         return f'Generalization({self.general}, {self.specific}, {self.timestamp})'
@@ -1491,7 +1487,8 @@ class DomainModel(Model):
 
     def classes_sorted_by_inheritance(self) -> list[Class]:
         """list[Class]: Get the list of classes ordered by inheritance."""
-        classes = self.get_classes()
+        from besser.utilities import sort_by_timestamp
+        classes = sort_by_timestamp(self.get_classes())
         # Set up a dependency graph
         child_map = {cl: set() for cl in classes}
         # Populating the child_map based on generalizations (edges in top-sort graph)

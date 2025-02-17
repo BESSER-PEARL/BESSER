@@ -10,3 +10,4 @@ Model types
   model_types/ocl
   model_types/deployment
   model_types/state_machine
+  model_types/feature_model

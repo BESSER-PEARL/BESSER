@@ -7,7 +7,7 @@ from django.db import models
 {% for enum in model.get_enumerations() %}
 class {{ enum.name }}(models.TextChoices):
     {% for literal in enum.literals %}
-    {{ literal.name }} = '{{ literal.name }}', '{{ literal.name }}'
+    {{ literal.name|upper }} = '{{ literal.name }}', '{{ literal.name }}'
     {% endfor %}
 
 {% endfor %}
@@ -21,7 +21,7 @@ class {{ enum.name }}(models.TextChoices):
     {% set inheritance = generals.names | join(', ') %}
 class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     {% for attr in sort(class_obj.attributes) %}
-    {{ attr.name }} = {{ django_fields.get_field(attr.type, model.enumerations) }}
+    {{ attr.name }} = {{ django_fields.get_field(attr.type, model.get_enumerations()) }}
     {%- endfor %}
     {% for association in class_obj.associations %}
         {% if association.ends|length == 2 and association.name not in processed_associations %}

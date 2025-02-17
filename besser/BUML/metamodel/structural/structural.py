@@ -729,6 +729,8 @@ class Class(Type):
                 raise ValueError("A class cannot have more than one attribute marked as 'id'")
 
             for attribute in attributes:
+                if attribute.owner and attribute.owner != self:
+                    attribute.owner.attributes.discard(attribute)
                 attribute.owner = self
             self.__attributes = attributes
         else:
@@ -793,6 +795,8 @@ class Class(Type):
         if self.attributes is not None:
             if attribute.name in [attribute.name for attribute in self.attributes]:
                 raise ValueError(f"A class cannot have two attributes with the same name: '{attribute.name}'")
+        if attribute.owner and attribute.owner != self:
+            attribute.owner.attributes.discard(attribute)
         attribute.owner = self
         self.attributes.add(attribute)
 

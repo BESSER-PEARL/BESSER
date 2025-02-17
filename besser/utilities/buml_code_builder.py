@@ -13,7 +13,8 @@ PRIMITIVE_TYPE_MAPPING = {
     'time': 'TimeType',
     'date': 'DateType',
     'datetime': 'DateTimeType',
-    'timedelta': 'TimeDeltaType'
+    'timedelta': 'TimeDeltaType',
+    'any': 'AnyType'
 }
 def domain_model_to_code(model: DomainModel, file_path: str):
     """
@@ -42,7 +43,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         f.write("    Enumeration, EnumerationLiteral, Multiplicity,\n")
         f.write("    StringType, IntegerType, FloatType, BooleanType,\n")
         f.write("    TimeType, DateType, DateTimeType, TimeDeltaType,\n")
-        f.write("    Constraint\n")
+        f.write("    AnyType, Constraint\n")
         f.write(")\n\n")
 
         # Write enumerations

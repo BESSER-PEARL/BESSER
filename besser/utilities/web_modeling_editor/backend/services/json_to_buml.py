@@ -1,6 +1,6 @@
 import re
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
-    Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint
+    Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint, AnyType
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
 from fastapi import HTTPException
 
@@ -113,7 +113,7 @@ def parse_method(method_str):
             if not param:
                 continue
 
-            param_dict = {'name': param, 'type': 'str'}  # Default type
+            param_dict = {'name': param, 'type': 'any'}
 
             # Handle parameter with default value
             if '=' in param:

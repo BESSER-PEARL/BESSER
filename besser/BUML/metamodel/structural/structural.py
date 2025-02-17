@@ -146,9 +146,9 @@ class PrimitiveDataType(DataType):
         Raises:
             ValueError: If an invalid primitive data type is provided.
                         Allowed values are int, float, str, bool, time, date, 
-                        datetime, and timedelta.
+                        datetime, timedelta, and any.
         """
-        if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
+        if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta', 'any']:
             raise ValueError("Invalid primitive data type")
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
@@ -164,8 +164,9 @@ TimeType = PrimitiveDataType("time")
 DateType = PrimitiveDataType("date")
 DateTimeType = PrimitiveDataType("datetime")
 TimeDeltaType = PrimitiveDataType("timedelta")
+AnyType = PrimitiveDataType("any")
 primitive_data_types = {StringType, IntegerType, FloatType, BooleanType,
-                        TimeType, DateType, DateTimeType, TimeDeltaType}
+                        TimeType, DateType, DateTimeType, TimeDeltaType, AnyType}
 
 class EnumerationLiteral(NamedElement):
     """Class representing an enumeration literal.

@@ -371,7 +371,7 @@ class Multiplicity:
         """
         if max_multiplicity == "*":
             max_multiplicity = UNLIMITED_MAX_MULTIPLICITY
-        if max_multiplicity < 0:
+        if max_multiplicity <= 0:
             raise ValueError("Invalid max multiplicity")
         if max_multiplicity < self.min:
             raise ValueError("Invalid max multiplicity")

@@ -1,6 +1,6 @@
 import re
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
-    Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint
+    Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint, AnyType
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
 
 def parse_attribute(attribute_name, domain_model=None):
@@ -9,7 +9,7 @@ def parse_attribute(attribute_name, domain_model=None):
     if len(parts) == 1:
         visibility = "public"
         name = parts[0]
-        attr_type = "str"
+        attr_type = "any"
     else:
         visibility_symbol = parts[0] if parts[0] in VISIBILITY_MAP else "+"
         visibility = VISIBILITY_MAP.get(visibility_symbol, "public")  # Default to "public"
@@ -23,9 +23,9 @@ def parse_attribute(attribute_name, domain_model=None):
                 attr_type = type_name  # Keep the enumeration type name
             else:
                 # Convert to primitive type if not an enumeration
-                attr_type = VALID_PRIMITIVE_TYPES.get(type_name.lower(), "str")
+                attr_type = VALID_PRIMITIVE_TYPES.get(type_name.lower(), "any")
         else:
-            attr_type = "str"  # Default to "str" if no type specified
+            attr_type = "any"  # Default to "any" if no type specified
 
     return visibility, name, attr_type
 
@@ -86,7 +86,7 @@ def parse_method(method_str):
             if not param:
                 continue
 
-            param_dict = {'name': param, 'type': 'str'}  # Default type
+            param_dict = {'name': param, 'type': 'any'}
 
             # Handle parameter with default value
             if '=' in param:

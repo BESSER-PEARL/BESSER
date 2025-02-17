@@ -243,3 +243,15 @@ def test_synonyms():
     assert class_a.synonyms[0] == "synonym1"
     assert class_a.synonyms[1] == "synonym2"
     assert class_a.synonyms[2] == "synonym3"
+
+def test_attribute_reassignment():
+    attribute1: Property = Property(name="attr1", type=StringType)
+    class1: Class = Class(name="Cls1", attributes={attribute1})
+    class2: Class = Class(name="Cls2", attributes=set())
+
+    # Reassign attribute1 to class2
+    class2.attributes = {attribute1}
+
+    assert attribute1 in class2.attributes
+    assert attribute1 not in class1.attributes
+    assert attribute1.owner == class2

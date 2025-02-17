@@ -137,7 +137,11 @@ async def generate_output(input_data: ClassDiagramInput):
             media_type="text/plain",
             headers={"Content-Disposition": f"attachment; filename={file_name}"}
         )
-
+    except HTTPException as e:
+        # Handle known exceptions with specific status codes
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise e
     except Exception as e:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -176,8 +180,13 @@ async def export_buml(input_data: ClassDiagramInput):
         else:
             raise ValueError(f"Unsupported or missing diagram type: {elements_data.get('type')}")
 
+    except HTTPException as e:
+        # Handle known exceptions with specific status codes
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise e
     except Exception as e:
-        # Ensure cleanup on error
+        # Handle unexpected exceptions
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
         print(f"Error during BUML export: {str(e)}")

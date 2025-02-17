@@ -2,31 +2,58 @@ import re
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
     Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint, AnyType
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
+from fastapi import HTTPException
 
 def parse_attribute(attribute_name, domain_model=None):
     """Parse an attribute string to extract visibility, name, and type, removing any colons."""
-    parts = attribute_name.replace(":", "").split()  # Remove colons from the attribute name
-    if len(parts) == 1:
-        visibility = "public"
-        name = parts[0]
-        attr_type = "any"
-    else:
-        visibility_symbol = parts[0] if parts[0] in VISIBILITY_MAP else "+"
-        visibility = VISIBILITY_MAP.get(visibility_symbol, "public")  # Default to "public"
-        name = parts[1] if len(parts) > 1 else "Unnamed"
+    # Split the string by colon first to separate name and type
+    name_type_parts = attribute_name.split(":")
 
-        # Check if type is specified
-        if len(parts) > 2:
-            type_name = parts[2]
-            # Check if type is an enumeration in the domain model
-            if domain_model and any(isinstance(t, Enumeration) and t.name == type_name for t in domain_model.types):
-                attr_type = type_name  # Keep the enumeration type name
-            else:
-                # Convert to primitive type if not an enumeration
-                attr_type = VALID_PRIMITIVE_TYPES.get(type_name.lower(), "any")
+    if len(name_type_parts) > 1:
+        name_part = name_type_parts[0].strip()
+        type_part = name_type_parts[1].strip()
+
+        # Check for visibility symbol at start of name
+        if name_part[0] in VISIBILITY_MAP:
+            visibility = VISIBILITY_MAP[name_part[0]]
+            name = name_part[1:].strip()
         else:
-            attr_type = "any"  # Default to "any" if no type specified
+            # Existing split logic for space-separated visibility
+            name_parts = name_part.split()
+            if len(name_parts) > 1:
+                visibility_symbol = name_parts[0] if name_parts[0] in VISIBILITY_MAP else "+"
+                visibility = VISIBILITY_MAP.get(visibility_symbol, "public")
+                name = name_parts[1]
+            else:
+                visibility = "public"
+                name = name_parts[0]
 
+        # Handle the type
+        if domain_model and any(isinstance(t, Enumeration) and t.name == type_part for t in domain_model.types):
+            attr_type = type_part
+        else:
+            attr_type = VALID_PRIMITIVE_TYPES.get(type_part.lower(), "str")
+    else:
+        # Handle case without type specification
+        parts = attribute_name.split()
+
+        if len(parts) == 1:
+            part = parts[0].strip()
+            if part and part[0] in VISIBILITY_MAP:
+                visibility = VISIBILITY_MAP[part[0]]
+                name = part[1:].strip()
+                attr_type = "str"
+            else:
+                visibility = "public"
+                name = part
+                attr_type = "str"
+        else:
+            visibility_symbol = parts[0] if parts[0] in VISIBILITY_MAP else "+"
+            visibility = VISIBILITY_MAP.get(visibility_symbol, "public")
+            name = parts[1]
+            attr_type = "str"
+    if not name:  # Skip if name is empty
+        return None, None, None
     return visibility, name, attr_type
 
 def parse_method(method_str):
@@ -197,24 +224,6 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel, counter: i
 
     return constraints, warnings
 
-def generate_unique_class_name(base_name, existing_names):
-    """Generate a unique class name by appending a number if necessary."""
-    # If base_name is "Class", always add a number
-    if base_name == "Class":
-        counter = 1
-        while f"{base_name}{counter}" in existing_names:
-            counter += 1
-        return f"{base_name}{counter}"
-
-    # For other names, only add number if name exists
-    if base_name not in existing_names:
-        return base_name
-
-    counter = 1
-    while f"{base_name}{counter}" in existing_names:
-        counter += 1
-    return f"{base_name}{counter}"
-
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""
     domain_model = DomainModel("Class Diagram")
@@ -222,12 +231,6 @@ def process_class_diagram(json_data):
     # Get elements and OCL constraints from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})
-
-    # print(f"Elements: {elements}")
-    # print(f"Relationships: {relationships}")
-
-    # Track existing class names
-    existing_class_names = set()
 
     # First process enumerations to have them available for attribute types
     for element_id, element in elements.items():
@@ -241,31 +244,27 @@ def process_class_diagram(json_data):
                     literals.add(literal_obj)
             enum = Enumeration(name=element_name, literals=literals)
             domain_model.types.add(enum)
-            existing_class_names.add(element_name)
 
     # Then process classes with attributes that might reference enumerations
     for element_id, element in elements.items():
         # Check for both regular Class and AbstractClass
         if element.get("type") in ["Class", "AbstractClass"]:
             # Set is_abstract based on the type
-            original_name = element.get("name")
-            unique_name = generate_unique_class_name(original_name, existing_class_names)
-            existing_class_names.add(unique_name)
-
-            # Create the class with the unique name
+            class_name = element.get("name")
             is_abstract = element.get("type") == "AbstractClass"
-            cls = Class(name=unique_name, is_abstract=is_abstract)
-
-            # Store the mapping of original to unique name if needed
-            element["original_name"] = original_name
-            element["unique_name"] = unique_name
+            cls = Class(name=class_name, is_abstract=is_abstract)
 
             # Add attributes
+            attribute_names = set()
             for attr_id in element.get("attributes", []):
                 attr = elements.get(attr_id)
                 if attr:
                     visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
-                    # If attr_type is a string matching an enumeration name, get the actual enumeration
+                    if name is None:  # Skip if no name was returned
+                        continue
+                    if name in attribute_names:
+                        raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
+                    attribute_names.add(name)
                     if any(isinstance(t, Enumeration) and t.name == attr_type for t in domain_model.types):
                         enum_type = next(t for t in domain_model.types if isinstance(t, Enumeration) and t.name == attr_type)
                         property_ = Property(name=name, type=enum_type, visibility=visibility)
@@ -308,7 +307,6 @@ def process_class_diagram(json_data):
                             # If not a class, treat as primitive type
                             method_obj.type = PrimitiveDataType(return_type)
                     cls.methods.add(method_obj)
-
             domain_model.types.add(cls)
 
     # Processing relationships (Associations, Generalizations, and Compositions)
@@ -351,28 +349,21 @@ def process_class_diagram(json_data):
             source_multiplicity = parse_multiplicity(source.get("multiplicity", "1"))
             target_multiplicity = parse_multiplicity(target.get("multiplicity", "1"))
 
-            # Use unique names to find the correct classes
-            source_unique_name = source_element.get("unique_name", source_element.get("name", ""))
-            target_unique_name = target_element.get("unique_name", target_element.get("name", ""))
-
-            source_class = domain_model.get_class_by_name(source_unique_name)
-            target_class = domain_model.get_class_by_name(target_unique_name)
-
             source_property = Property(
-                name=source.get("role", ""),
+                name=source.get("role") or str(source_class.name),
                 type=source_class,
                 multiplicity=source_multiplicity,
                 is_navigable=source_navigable
             )
             target_property = Property(
-                name=target.get("role", ""),
+                name=target.get("role") or str(target_class.name),
                 type=target_class,
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,
                 is_composite=is_composite
             )
 
-            association_name = relationship.get("name") or f"{source_unique_name}_{target_unique_name}"
+            association_name = relationship.get("name") or f"{source_class.name}_{target_class.name}"
 
             association = BinaryAssociation(
                 name=association_name,

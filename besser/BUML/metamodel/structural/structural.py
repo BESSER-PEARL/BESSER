@@ -43,7 +43,14 @@ class NamedElement(Element):
 
     @name.setter
     def name(self, name: str):
-        """str: Set the name of the named element."""
+        """
+        str: Set the name of the named element.
+        
+        Raises:
+            ValueError: If the name contains blank spaces.
+        """
+        if ' ' in name:
+            raise ValueError("Name cannot contain blank spaces")
         self.__name = name
 
     @property

@@ -306,3 +306,13 @@ def test_all_parents_and_inherited_attributes():
     assert class_parent1.all_attributes() == {attribute1, attribute2}
     assert class_parent2.all_attributes() == {attribute1, attribute3}
     assert class_grandparent.all_attributes() == {attribute1}
+
+def test_named_element_blank_spaces():
+    # Test that names with spaces raise ValueError
+    with pytest.raises(ValueError) as excinfo:
+        named_element = NamedElement(name="element with spaces")
+    assert "Name cannot contain blank spaces" in str(excinfo.value)
+
+    # Test that names without spaces work fine
+    named_element = NamedElement(name="element_without_spaces")
+    assert named_element.name == "element_without_spaces"

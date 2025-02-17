@@ -30,19 +30,22 @@ class NamedElement(Element):
         timestamp (datetime): Object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the named element (None as default).
         visibility (str): Determines the kind of visibility of the named element (public as default).
+        is_derived (bool): Indicates whether the element is derived (False as default).
 
     Attributes:
         name (str): The name of the named element
         timestamp (datetime): Object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the named element (None as default).
         visibility: Determines the kind of visibility of the named element (public as default).
+        is_derived (bool): Indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, timestamp: datetime = None, synonyms: List[str] = None, visibility: str = "public"):
-        super().__init__(timestamp)
+    def __init__(self, name: str, timestamp: datetime = None, synonyms: List[str] = None, 
+                 visibility: str = "public", is_derived: bool = False):
         self.name: str = name
         self.synonyms: List[str] = synonyms
         self.visibility: str = visibility
+        self.is_derived: bool = is_derived
 
     @property
     def name(self) -> str:
@@ -51,7 +54,14 @@ class NamedElement(Element):
 
     @name.setter
     def name(self, name: str):
-        """str: Set the name of the named element."""
+        """
+        str: Set the name of the named element.
+        
+        Raises:
+            ValueError: If the name contains blank spaces.
+        """
+        if ' ' in name:
+            raise ValueError("Name cannot contain blank spaces")
         self.__name = name
 
     @property
@@ -81,6 +91,16 @@ class NamedElement(Element):
     def synonyms(self, synonyms: List[str]):
         """List[str]: Set the list of synonyms of the named element."""
         self.__synonyms = synonyms
+
+    @property
+    def is_derived(self) -> bool:
+        """bool: Get whether the element is derived."""
+        return self.__is_derived
+
+    @is_derived.setter
+    def is_derived(self, is_derived: bool):
+        """bool: Set whether the element is derived."""
+        self.__is_derived = is_derived
 
 class Type(NamedElement):
     """Type is the Superclass of classes and data types in the model.
@@ -374,7 +394,7 @@ class Multiplicity(Element):
         """
         if max_multiplicity == "*":
             max_multiplicity = UNLIMITED_MAX_MULTIPLICITY
-        if max_multiplicity < 0:
+        if max_multiplicity <= 0:
             raise ValueError("Invalid max multiplicity")
         if max_multiplicity < self.min:
             raise ValueError("Invalid max multiplicity")

@@ -5,6 +5,15 @@ from besser.utilities import sort_by_timestamp
 def test_named_element():
     named_element: NamedElement = NamedElement(name="element1")
     assert named_element.name == "element1"
+    assert named_element.is_derived == False  # Default value should be False
+    
+    # Test setting is_derived
+    named_element.is_derived = True
+    assert named_element.is_derived == True
+    
+    # Test initialization with is_derived
+    derived_element: NamedElement = NamedElement(name="element2", is_derived=True)
+    assert derived_element.is_derived == True
 
 
 def test_model_initialization():

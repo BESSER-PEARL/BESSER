@@ -5,7 +5,7 @@ To develop mobile applications with BESSER, you can use our :doc:`Flutter Code G
 we will create a mobile application for the :doc:`Library example<../examples/library_example>` domain. This example consists of detailed
 instructions and code snippets, guiding you through the seamless integration of the generated code into your Flutter application.
 
-The Flutter Code Generator requires two different B-UML models as input: the :doc:`structural<../buml_language/model_types/structural>` 
+The Flutter Code Generator requires two different B-UML models as input: the :doc:`structural<../buml_language/model_types/structural>`
 and the :doc:`GUI<../buml_language/model_types/gui>` models.
 
 Input models definition
@@ -21,8 +21,8 @@ Input models definition
 
   # The GUI will use the Library structural model classes
   # to create views and handle data operations
-  from library import * 
-   
+  from library import *
+
   # The GUI will use the Library structural model classes
   # to create views and handle data operations
   from library import *
@@ -49,7 +49,7 @@ Input models definition
 
   # Library directory screen definition
   LibraryListScreen: Screen = Screen(name="LibraryListScreen", description="Explore a collection of libraries",
-                          x_dpi="x_dpi", y_dpi="y_dpi", size="SmallScreen", view_elements={libraryAddingButton, libraryList})
+                          x_dpi="x_dpi", y_dpi="y_dpi", size="Small", view_elements={libraryAddingButton, libraryList})
 
 
   #####  Elements for Author Screen   #####
@@ -64,7 +64,7 @@ Input models definition
 
   # Author directory screen definition
   AuthorListScreen: Screen = Screen(name="AuthorListScreen", description="Explore a collection of authors",
-                          x_dpi="x_dpi", y_dpi="y_dpi", size="SmallScreen", view_elements={authorAddingButton, authorList})
+                          x_dpi="x_dpi", y_dpi="y_dpi", size="Small", view_elements={authorAddingButton, authorList})
 
   #####  Elements for Book Screen   #####
   # Button6:
@@ -78,8 +78,8 @@ Input models definition
 
   # Book directory screen definition
   BookListScreen: Screen = Screen(name="BookListScreen", description="Explore a collection of books",
-                          x_dpi="x_dpi", y_dpi="y_dpi", size="SmallScreen", view_elements={bookAddingButton, BookList})
-                          
+                          x_dpi="x_dpi", y_dpi="y_dpi", size="Small", view_elements={bookAddingButton, BookList})
+
 
   #####  Elements for Home page Screen   #####
 
@@ -97,14 +97,14 @@ Input models definition
 
   # Home page Screen definition
   MyHomeScreen: Screen = Screen(name="Book Library Manager", description="Effortlessly manage your books, libraries, and authors, with the ability to view and update their information.",
-                          x_dpi="x_dpi", y_dpi="y_dpi", size="SmallScreen", view_elements={libraryButton, authorButton, bookButton})
+                          x_dpi="x_dpi", y_dpi="y_dpi", size="Small", view_elements={libraryButton, authorButton, bookButton}, is_main_page= True)
 
 
   # Module definition:
   MyModule: Module = Module(name="module_name", screens={MyHomeScreen, LibraryListScreen, AuthorListScreen, BookListScreen})
 
-  # Application definition:
-  MyApp: Application = Application(name="Library Management", package="com.example.librarymanagement", versionCode="1",
+  # GUI model definition:
+  library_gui_model: GUIModel = GUIModel(name="Library Management", package="com.example.librarymanagement", versionCode="1",
                                  versionName="1.0", description="This is a comprehensive Flutter application for managing a library.",
                                  screenCompatibility=True, modules={MyModule})
 
@@ -119,7 +119,7 @@ To use the Flutter code generator, simply provide the input models and use the `
   from besser.generators.flutter import FlutterGenerator
   from library import library_model # Structural model
   from gui import MyApp, MyHomeScreen # GUI model
-  
+
   code_gen = FlutterGenerator(model=library_model, application=MyApp, main_page=MyHomeScreen)
   code_gen.generate()
 
@@ -128,7 +128,7 @@ The ``output/`` folder with the ``main.dart``, ``sql_helper.dart``, and ``pubspe
 Application running
 -------------------
 
-After generating these files, you will need to incorporate them into your Flutter application. 
+After generating these files, you will need to incorporate them into your Flutter application.
 Please ensure that you create an app with the same name as specified for the ``Application`` object in the GUI model
 (``Library Management`` for this example). To do so, follow these steps:
 
@@ -173,7 +173,7 @@ After entering three libraries, the "Library Directory" page would appear as sho
 
 Each library entry is accompanied by two icons: a pen icon for performing update operations and a delete icon for deletion operations.
 
-Similarly, on the "Author Directory" page, you can enter multiple authors along with their respective information. 
+Similarly, on the "Author Directory" page, you can enter multiple authors along with their respective information.
 The figure below showcases the content of this page after entering three authors:
 
 
@@ -182,7 +182,7 @@ The figure below showcases the content of this page after entering three authors
   :alt: add three authors
   :align: center
 
-On the "Book Directory" page, you can enter multiple books along with their corresponding information. 
+On the "Book Directory" page, you can enter multiple books along with their corresponding information.
 The figure below illustrates the steps required to enter a book with the following details: title = "The Great Gatsby", pages = "180", library = "New York Public Library", and author = "F. Scott Fitzgerald".
 
 .. image:: ../img/book_list.png
@@ -199,7 +199,7 @@ Upon entering three books, the "Book Directory" page would appear as follows:
 
 Additionally, you can view the entered elements in the database for the following tables:
 
-"Library" table: 
+"Library" table:
 
 .. image:: ../img/library_table.png
   :width: 450
@@ -207,7 +207,7 @@ Additionally, you can view the entered elements in the database for the followin
   :align: center
 
 
-"Author" table: 
+"Author" table:
 
 .. image:: ../img/author_table.png
   :width: 450
@@ -215,14 +215,14 @@ Additionally, you can view the entered elements in the database for the followin
   :align: center
 
 
-"Book" table: 
+"Book" table:
 
 .. image:: ../img/book_table.png
   :width: 450
   :alt: book table
   :align: center
 
-"book_author_assoc" table: 
+"book_author_assoc" table:
 
 .. image:: ../img/book_author_assoc_table.png
   :width: 300

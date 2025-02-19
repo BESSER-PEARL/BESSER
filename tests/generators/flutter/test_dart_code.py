@@ -1,6 +1,5 @@
-import pytest
 import os
-from besser.generators.flutter import FlutterSQLHelperGenerator, FlutterMainDartGenerator, FlutterPubspecGenerator, FlutterGenerator
+from besser.generators.flutter import FlutterSQLHelperGenerator, FlutterMainDartGenerator
 from besser.BUML.metamodel.structural import *
 from besser.BUML.metamodel.gui import *
 import shutil
@@ -14,7 +13,7 @@ def test_screen_generation():
     class1_name: Property = Property(name="name", type="int")
     class1: Class = Class(name="Class1", attributes=[class1_name])
     # Domain model definition
-    model : DomainModel = DomainModel(name="model", types={class1}, 
+    model : DomainModel = DomainModel(name="model", types={class1},
                                           associations={})
     # DataSource definition
     datasource: ModelElement = ModelElement(name="Data Source", dataSourceClass=class1, fields=[class1_name])
@@ -28,7 +27,7 @@ def test_screen_generation():
         description="Explore a collection of pets",
         x_dpi="x_dpi",
         y_dpi="y_dpi",
-        size="SmallScreen",
+        size="Small",
         view_elements={myList}
     )
 
@@ -46,7 +45,7 @@ def test_screen_generation():
     MyModule: Module = Module(name="module_name", screens={myHomeScreen, myScreen})
 
     # Application definition:
-    MyApp: Application = Application(
+    gui_model: GUIModel = GUIModel(
         name="app",
         package="com.example.app",
         versionCode="1",
@@ -58,7 +57,7 @@ def test_screen_generation():
 
     # Generate the file
     output_file = 'output/main.dart'
-    code_gen = FlutterMainDartGenerator(model=model, application=MyApp, main_page=myHomeScreen, module=MyModule)
+    code_gen = FlutterMainDartGenerator(model=model, application=gui_model, main_page=myHomeScreen, module=MyModule)
     code_gen.generate()
 
     # Check if the file exists
@@ -82,7 +81,7 @@ def test_Error_Handling():
     # Class1 attributes definition
     class1_name: Property = Property(name="name", type="int")
     class1: Class = Class(name="Class1", attributes=[class1_name])
-    
+
     # Class2 attributes definition
     class2_name: Property = Property(name="name", type="int")
     class2: Class = Class(name="Class2", attributes=[class2_name])
@@ -102,7 +101,7 @@ def test_Error_Handling():
     class1_class3_association: BinaryAssociation = BinaryAssociation(name="class1_class3_assoc", ends={end3, end4})
 
     # Domain model definition
-    model : DomainModel = DomainModel(name="model", types={class1, class2, class3}, 
+    model : DomainModel = DomainModel(name="model", types={class1, class2, class3},
                                           associations={class1_class2_association, class1_class3_association})
     # DataSource definition
     datasource: ModelElement = ModelElement(name="Data Source", dataSourceClass=class1, fields=[class1_name])
@@ -119,7 +118,7 @@ def test_Error_Handling():
         size="SmallScreen",
         view_elements={myList}
     )
- 
+
     # HomeScreen definition
     myHomeScreen: Screen = Screen(
         name="MyHomeScreen",
@@ -134,7 +133,7 @@ def test_Error_Handling():
     MyModule: Module = Module(name="module_name", screens={myHomeScreen, myScreen})
 
     # Application definition:
-    MyApp: Application = Application(
+    gui_model: GUIModel = GUIModel(
         name="app",
         package="com.example.app",
         versionCode="1",
@@ -146,9 +145,9 @@ def test_Error_Handling():
 
     # Generate the file
     output_file = 'output/main.dart'
-    code_gen = FlutterMainDartGenerator(model=model, application=MyApp, main_page=myHomeScreen, module=MyModule)
+    code_gen = FlutterMainDartGenerator(model=model, application=gui_model, main_page=myHomeScreen, module=MyModule)
     code_gen.generate()
-       
+
     # Check if the file exists
     assert os.path.exists(output_file), "The file was not created."
 
@@ -159,7 +158,7 @@ def test_Error_Handling():
     # Check for expected lines in the file
     assert not f"Please specify the {end1.type}" in content, "Missing error handling in the generated file."
     assert not f"Please select at least one {end4.type}" in content, "Missing error handling in the generated file."
-         
+
     #os.remove(output_file)
     shutil.rmtree("output")
 
@@ -171,7 +170,7 @@ def test_CRUD_Operations():
     class1: Class = Class(name="Class1", attributes=[class1_name])
 
     # Domain model definition
-    model : DomainModel = DomainModel(name="model", types={class1}, 
+    model : DomainModel = DomainModel(name="model", types={class1},
                                           associations={})
     # DataSource definition
     datasource: ModelElement = ModelElement(name="Data Source", dataSourceClass=class1, fields=[class1_name])
@@ -203,7 +202,7 @@ def test_CRUD_Operations():
     MyModule: Module = Module(name="module_name", screens={myHomeScreen, myScreen})
 
     # Application definition:
-    MyApp: Application = Application(
+    gui_model: GUIModel = GUIModel(
         name="app",
         package="com.example.app",
         versionCode="1",
@@ -254,7 +253,7 @@ def test_Operations_many_to_many():
     class1_class2_association: BinaryAssociation = BinaryAssociation(name="class1_class2_assoc", ends={end1, end2})
 
     # Domain model definition
-    model : DomainModel = DomainModel(name="model", types={class1, class2}, 
+    model : DomainModel = DomainModel(name="model", types={class1, class2},
                                           associations={class1_class2_association})
 
     # DataSource definition
@@ -287,7 +286,7 @@ def test_Operations_many_to_many():
     MyModule: Module = Module(name="module_name", screens={myHomeScreen, myScreen})
 
     # Application definition:
-    MyApp: Application = Application(
+    gui_model: GUIModel = GUIModel(
         name="app",
         package="com.example.app",
         versionCode="1",
@@ -313,7 +312,7 @@ def test_Operations_many_to_many():
     # Check for expected lines in the file
     assert f"static Future<List<String>> get{class1.name}NamesBy{class2.name}Id" in content, "Missing get{class1.name}NamesBy{class2.name}Id method in the generated file."
     assert f"static Future<List<String>> get{class2.name}NamesBy{class1.name}Id" in content, "Missing get{class2.name}NamesBy{class1.name}Id method in the generated file."
-   
+
     #os.remove(output_file)
     shutil.rmtree("output")
-    
+

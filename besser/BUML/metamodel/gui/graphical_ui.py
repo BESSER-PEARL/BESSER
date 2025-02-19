@@ -14,7 +14,7 @@ class FileSourceType:
         name (str): The name of the file source type.
         type (str): The type of the file source, such as 'FileSystem', 'LocalStorage', or 'DatabaseFileSystem'.
     """
-    
+
     def __init__(self, name: str, type: str):
         self.type: str = type
         self.name: str = name
@@ -62,7 +62,7 @@ class CollectionSourceType:
         name (str): The name of the collection source type.
         type (str): The type of the collection source, such as 'List', 'Table', 'Tree', 'Grid', 'Array', or 'Stack'.
     """
-    
+
     def __init__(self, name: str, type: str):
         self.type: str = type
         self.name: str = name
@@ -182,7 +182,7 @@ class ModelElement(DataSource):
         dataSourceClass (Class): The class representing the data source.
         fields: set[Property]: The fields representing the attributes of the model element.
     """
-    
+
     def __init__(self, name: str, dataSourceClass: Class, fields: set[Property]):
         super().__init__(name)
         self.dataSourceClass: Class = dataSourceClass
@@ -227,7 +227,7 @@ class File(DataSource):
         name (str): The name of the file data source.
         type (FileSourceType): The type of the file data source.
     """
-    
+
     def __init__(self, name: str, type:FileSourceType):
         super().__init__(name)
         self.type: FileSourceType = type
@@ -287,7 +287,7 @@ class ViewElement(NamedElement):
         name (str): The name of the view element.
         description (str): the description of the view element.
     """
-    
+
     def __init__(self, name: str, description: str, visibility: str = "public"):
         super().__init__(name, visibility)
         self.description: str = description
@@ -317,7 +317,7 @@ class ViewComponent(ViewElement):
         name (str): The name of the view component.
         description (str): The description of the view component.
     """
-    
+
     def __init__(self, name: str, description: str):
         super().__init__(name, description)
 
@@ -336,7 +336,7 @@ class ViewContainer(ViewElement):
         name (str): The name of the view container.
         description (str): The description of the view container.
     """
-    
+
     def __init__(self, name: str, description: str, view_elements: set[ViewElement]):
         super().__init__(name, description)
         self.view_elements: set[ViewElement] = view_elements
@@ -368,6 +368,7 @@ class Screen(ViewContainer):
         x_dpi (str): The X DPI (dots per inch) of the screen.
         y_dpi (str): The Y DPI (dots per inch) of the screen.
         size (str): The size of the screen.
+        is_main_page (bool): wether this screen serves as the main page of the model.
 
     Attributes:
         name (str): The name of the screen.
@@ -375,14 +376,16 @@ class Screen(ViewContainer):
         x_dpi (str): The X DPI (dots per inch) of the screen.
         y_dpi (str): The Y DPI (dots per inch) of the screen.
         size (str): The size of the screen.
+        is_main_page (bool): wether this screen serves as the main page of the model.
     """
-    
-    def __init__(self, name: str, description: str, view_elements: set[ViewElement], x_dpi: str, y_dpi: str, size: str):
+
+    def __init__(self, name: str, description: str, view_elements: set[ViewElement], x_dpi: str, y_dpi: str, size: str, is_main_page: bool = False):
         super().__init__(name, description, view_elements)
         self.x_dpi: str = x_dpi
         self.y_dpi: str = y_dpi
         self.size: str = size
-    
+        self.is_main_page: bool = is_main_page
+
     @property
     def x_dpi(self) -> str:
       """str: Get the X DPI (dots per inch) of the screen."""
@@ -420,8 +423,19 @@ class Screen(ViewContainer):
            raise ValueError("Invalid value of size")
            self.__size = size
 
+    @property
+    def is_main_page(self) -> bool:
+        """bool: Get whether the screen is main page."""
+        return self.__is_main_page
+
+    @is_main_page.setter
+    def is_main_page(self, is_main_page: bool):
+        """bool: Set whether the screen is main page."""
+        self.__is_main_page = is_main_page
+
+
     def __repr__(self):
-      return f'Screen({self.name}, {self.x_dpi}, {self.y_dpi}, {self.size}, {self.view_elements})'
+      return f'Screen({self.name}, {self.x_dpi}, {self.y_dpi}, {self.size}, {self.view_elements}, {self.is_main_page})'
 
 #Module
 class Module(NamedElement):
@@ -435,7 +449,7 @@ class Module(NamedElement):
         name (str): name (str): The name of the module.
         screens (set[Screen]): The set of screens contained in the module.
     """
-    
+
     def __init__(self, name: str, screens: set[Screen], visibility: str = "public"):
         super().__init__(name, visibility)
         self.screens: set[Screen] = screens
@@ -469,11 +483,11 @@ class DataList(ViewComponent):
         name (str): The name of the list.
         list_sources (set[DataSource]): The set of data sources associated with the list.
     """
-    
+
     def __init__(self, name: str, description: str, list_sources: set[DataSource]):
         super().__init__(name, description)
         self.list_sources: set[DataSource] = list_sources
-    
+
     @property
     def list_sources(self) -> set[DataSource]:
         """set[DataSource]: Get the set of data sources associated with the list."""
@@ -486,7 +500,7 @@ class DataList(ViewComponent):
             names = [DataSource.name for DataSource in list_sources]
             if len(names) != len(set(names)):
                raise ValueError("A list cannot have two items with the same name.")
-        self.__list_sources = list_sources   
+        self.__list_sources = list_sources
 
     def __repr__(self):
      return f'DataList({self.name}, {self.list_sources})'
@@ -511,7 +525,7 @@ class Button(ViewComponent):
         actionType (ButtonActionType): The action type of the button.
         targetScreen (Screen, optional): The target Screen associated with the button when the actionType is "Navigate"
     """
-    
+
     def __init__(self, name: str, description: str, label: str, buttonType: ButtonType, actionType: ButtonActionType, targetScreen: Screen = None):
         super().__init__(name, description)
         self.label=label
@@ -528,7 +542,7 @@ class Button(ViewComponent):
     def label(self, label: str):
         """str: Set the label of the button."""
         self.__label = label
-    
+
     @property
     def buttonType(self) -> ButtonType:
         """str: Get the type of the button."""
@@ -585,11 +599,11 @@ class Image(ViewComponent):
 
     Args:
         name (str): The name of the image.
-        
+
     Attributes:
         name (str): The name of the image.
     """
-    
+
     def __init__(self, name: str, description: str):
         super().__init__(name, description)
 
@@ -613,7 +627,7 @@ class InputField(ViewComponent):
         fieldType (str): The type of the input field.
         validationRules (str): The validation rules for the input field.
     """
-    
+
     def __init__(self, name: str, description: str, fieldType: str, validationRules: str):
         super().__init__(name, description)
         self.fieldType: str= fieldType
@@ -642,7 +656,7 @@ class InputField(ViewComponent):
         """str: Get the validation rules of the input field."""
         return self.__validationRules
 
-    
+
     @validationRules.setter
     def validationRules(self, str):
         """str: Set the validation rules of the input field."""
@@ -659,17 +673,17 @@ class Form(ViewComponent):
         name (str): The name of the form.
         description (str): The description of the form.
         inputFields (set[InputField]): The set of input fields contained in the form.
-        
+
     Attributes:
         name (str): The name of the form.
         description (str): The description of the form.
         inputFields (set[InputField]): The set of input fields contained in the form.
     """
-    
+
     def __init__(self, name: str, description: str, inputFields: set[InputField]):
         super().__init__(name, description)
         self.inputFields: set[InputField] = inputFields
-     
+
     @property
     def inputFields(self) -> set[InputField]:
         """set[InputField]: Get the set of input Fields contained in the form."""
@@ -689,11 +703,11 @@ class MenuItem:
 
     Args:
         label (str): The label of the menu item.
-        
+
     Attributes:
         label (str): The label of the menu item.
     """
-    
+
     def __init__(self, label: str):
         self.label: str = label
 
@@ -708,13 +722,13 @@ class Menu(ViewComponent):
         name (str): The name of the menu.
         description (str): The description of the menu.
         menuItems (set[MenuItem]): The set of menu items contained in the menu.
-        
+
     Attributes:
         name (str): The name of the menu.
         description (str): The description of the menu.
         menuItems (set[MenuItem]): The set of menu items contained in the menu.
     """
-    
+
     def __init__(self, name: str, description: str, menuItems: set[MenuItem]):
         super().__init__(name, description)
         self.menuItems: set[MenuItem] = menuItems
@@ -732,28 +746,28 @@ class Menu(ViewComponent):
     def __repr__(self):
      return f'Menu({self.name},{self.description}, {self.menuItems})'
 
-#Application
-class Application(Model):
-    """It is a subclass of the NamedElement class and encapsulates the properties and behavior of an application, including its name, 
+#GUIModel
+class GUIModel(Model):
+    """It is a subclass of the NamedElement class and encapsulates the properties and behavior of the GUI part of an application, including its name,
        package, version code, version name, modules, description, and screen compatibility.
 
     Args:
-        name (str): The name of the application.
-        package (str): The package of the application.
-        versionCode (str): The version code of the application.
-        versionName (str): The version name of the application.
-        modules (set[Module]): The set of modules contained in the application.
-        description (str): The description of the application.
-        screenCompatibility (bool): Indicates whether the application has screen compatibility.
+        name (str): The name of the model.
+        package (str): The package of the model.
+        versionCode (str): The version code of the model.
+        versionName (str): The version name of the model.
+        modules (set[Module]): The set of modules contained in the model.
+        description (str): The description of the model.
+        screenCompatibility (bool): Indicates whether the model has screen compatibility.
 
     Attributes:
-        name (str): The name of the application.
-        package (str): The package of the application.
-        versionCode (str): The version code of the application.
-        versionName (str): The version name of the application.
-        modules (set[Module]): The set of modules contained in the application.
-        description (str): The description of the application.
-        screenCompatibility (bool): Indicates whether the application has screen compatibility.
+        name (str): The name of the model.
+        package (str): The package of the model.
+        versionCode (str): The version code of the model.
+        versionName (str): The version name of the model.
+        modules (set[Module]): The set of modules contained in the model.
+        description (str): The description of the model.
+        screenCompatibility (bool): Indicates whether the model has screen compatibility.
     """
     def __init__(self, name: str, package: str, versionCode: str, versionName: str, modules: set[Module], description: str, screenCompatibility: bool = False):
         super().__init__(name)
@@ -766,62 +780,62 @@ class Application(Model):
 
     @property
     def package(self) -> str:
-        """str: Get the package of the application."""
+        """str: Get the package of the model."""
         return self.__package
 
     @package.setter
     def package(self, package: str):
-        """str: Set the package of the application."""
+        """str: Set the package of the model."""
         self.__package = package
 
     @property
     def versionCode(self) -> str:
-        """str: Get the version code of the application."""
+        """str: Get the version code of the model."""
         return self.__versionCode
 
     @versionCode.setter
     def versionCode(self, versionCode: str):
-        """str: Set the version code of the application."""
+        """str: Set the version code of the model."""
         self.__versionCode = versionCode
 
     @property
     def versionName(self) -> str:
-        """str: Get the version name of the application."""
+        """str: Get the version name of the model."""
         return self.__versionName
 
     @versionName.setter
     def versionName(self, versionName: str):
-        """str: Set the version name of the application."""
+        """str: Set the version name of the model."""
         self.__versionName = versionName
 
     @property
     def description(self) -> str:
-        """str: Get the description of the application."""
+        """str: Get the description of the model."""
         return self.__description
 
     @description.setter
     def description(self, description: str):
-        """str: Set the description of the application."""
+        """str: Set the description of the model."""
         self.__description = description
 
     @property
     def screenCompatibility(self) -> bool:
-        """bool: Get the screen compatibility of the application."""
+        """bool: Get the screen compatibility of the model."""
         return self.__screenCompatibility
 
     @screenCompatibility.setter
     def screenCompatibility(self, screenCompatibility: bool):
-        """bool: Set the screen compatibility of the application."""
+        """bool: Set the screen compatibility of the model."""
         self.__screenCompatibility = screenCompatibility
 
     @property
     def modules(self) -> set[Module]:
-        """set[Module]: Get the set of modules contained in the application."""
+        """set[Module]: Get the set of modules contained in the model."""
         return self.__modules
 
     @modules.setter
     def modules(self, modules: set[Module]):
-       """set[Module]: Set the set of modules contained in the application."""
+       """set[Module]: Set the set of modules contained in the model."""
        if modules is not None:
             names = [module.name for module in modules]
             if len(names) != len(set(names)):
@@ -830,7 +844,7 @@ class Application(Model):
 
 
     def __repr__(self):
-        return f'Application({self.name}, {self.package}, {self.versionCode}, {self.versionName},{self.description},{self.screenCompatibility}, {self.modules})'
+        return f'GUIModel({self.name}, {self.package}, {self.versionCode}, {self.versionName},{self.description},{self.screenCompatibility}, {self.modules})'
 
 
 

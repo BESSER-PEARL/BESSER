@@ -34,6 +34,7 @@ services:
       - APOLLON_REDIS_DIAGRAM_TTL=${APOLLON_REDIS_DIAGRAM_TTL}
       - APOLLON_REDIS_MIGRATE_FROM_FILE=true
       - DEPLOYMENT_URL=${DEPLOYMENT_URL}
+      - BACKEND_URL=${BACKEND_URL}      
     volumes:
       - ./diagrams:/app/diagrams
     restart: always
@@ -48,4 +49,5 @@ volumes:
 
 networks:
   besser_network:
+    name: besser_network
     driver: bridge

@@ -8,7 +8,6 @@ UNLIMITED_MAX_MULTIPLICITY = 9999
 
 class Element(ABC):
     def __init__(self, timestamp: datetime = None):
-        super().__init__()
         self.__timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
                          timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
 

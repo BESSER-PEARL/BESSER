@@ -235,7 +235,12 @@ def process_class_diagram(json_data):
     # First process enumerations to have them available for attribute types
     for element_id, element in elements.items():
         if element.get("type") == "Enumeration":
-            element_name = element.get("name")
+            element_name = element.get("name", "").strip()  # Add strip() here
+            if not element_name or any(char.isspace() for char in element_name):
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid enumeration name: '{element_name}'. Names cannot contain whitespace or be empty."
+                )
             literals = set()
             for literal_id in element.get("attributes", []):
                 literal = elements.get(literal_id)
@@ -250,9 +255,17 @@ def process_class_diagram(json_data):
         # Check for both regular Class and AbstractClass
         if element.get("type") in ["Class", "AbstractClass"]:
             # Set is_abstract based on the type
-            class_name = element.get("name")
+            class_name = element.get("name", "").strip()  # Add strip() here
+            if not class_name or any(char.isspace() for char in class_name):
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid class name: '{class_name}'. Names cannot contain whitespace or be empty."
+                )
             is_abstract = element.get("type") == "AbstractClass"
-            cls = Class(name=class_name, is_abstract=is_abstract)
+            try:
+                cls = Class(name=class_name, is_abstract=is_abstract)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
             # Add attributes
             attribute_names = set()

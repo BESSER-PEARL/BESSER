@@ -7,9 +7,9 @@ import time
 UNLIMITED_MAX_MULTIPLICITY = 9999
 
 class Element(ABC):
-
     def __init__(self, timestamp: datetime = None):
-        self.timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
+        super().__init__()
+        self.__timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
                          timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
 
     @property
@@ -42,10 +42,11 @@ class NamedElement(Element):
 
     def __init__(self, name: str, timestamp: datetime = None, synonyms: List[str] = None, 
                  visibility: str = "public", is_derived: bool = False):
-        self.name: str = name
-        self.synonyms: List[str] = synonyms
-        self.visibility: str = visibility
-        self.is_derived: bool = is_derived
+        super().__init__(timestamp)  # Call Element's __init__ with timestamp
+        self.__name: str = name
+        self.__synonyms: List[str] = synonyms
+        self.__visibility: str = visibility
+        self.__is_derived: bool = is_derived
 
     @property
     def name(self) -> str:
@@ -58,10 +59,12 @@ class NamedElement(Element):
         str: Set the name of the named element.
         
         Raises:
-            ValueError: If the name contains blank spaces.
+            ValueError: If the name is empty or contains any whitespace characters.
         """
-        if ' ' in name:
-            raise ValueError("Name cannot contain blank spaces")
+        if not name or name.isspace():
+            raise ValueError("Name cannot be empty")
+        if any(char.isspace() for char in name):
+            raise ValueError("Name cannot contain whitespace characters")
         self.__name = name
 
     @property

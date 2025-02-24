@@ -32,13 +32,13 @@
                     {%- endfor %}
                     {%- for end in class.association_ends() if end.is_navigable %}
                     {%- if end.multiplicity.max > 1 %}
-                    "{{ end.type.name }}": {
+                    "{{ end.name }}": {
                         "type": "array",
                         "items": {
                             "$ref": "#/definitions/{{ end.type.name }}"
                         }
                     }{%- else %}
-                    "{{ end.type.name }}": {
+                    "{{ end.name }}": {
                         "$ref": "#/definitions/{{ end.type.name }}"
                     }{%- endif %}
                     {%- if not loop.last %},{% endif %}
@@ -101,13 +101,13 @@
                     {%- endfor %}
                     {%- for end in class.association_ends() if end.is_navigable %}
                     {%- if end.multiplicity.max > 1 %}
-                    "{{ end.type.name }}": {
+                    "{{ end.name }}": {
                         "type": "array",
                         "items": {
                             "$ref": "#/definitions/{{ end.type.name }}"
                         }
                     }{%- else %}
-                    "{{ end.type.name }}": {
+                    "{{ end.name }}": {
                         "$ref": "#/definitions/{{ end.type.name }}"
                     }{%- endif %}
                     {%- if not loop.last %},{% endif %}

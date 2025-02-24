@@ -8,7 +8,7 @@ from django.db import models
 {%- set processed_associations = [] %}
 {%- for class_obj in model.classes_sorted_by_inheritance() %}
 {%-set fk_list = []%}
-{#- start of extract fk_list #} 
+{#- start of extract fk_list #}
 {%- set generals = namespace(names=[]) %}
     {%- for parent in class_obj.parents() %}
       {%- set _ = generals.names.append(parent.name) %}
@@ -30,7 +30,7 @@ from django.db import models
                         {%- endif %}
             {%- endif %}
         {%- endfor %}
-    {#- end of extract fk_list #} 
+    {#- end of extract fk_list #}
 
 
 
@@ -46,10 +46,10 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     Represents a {{ class_obj.name[0].lower() + class_obj.name[1:] }} in the system.
     """
 {%- for attr in class_obj.attributes %}
-    {{ attr.name }} ={{ django_fields.get_field(attr.type.name, attr.properties) }}
+    {{ attr.name }} ={{ django_fields.get_field(attr.type, model.get_enumerations()) }}
 {%- endfor %}
     {%- for association in class_obj.associations %}
-        {%- if association.ends|length == 2 and association.name not in processed_associations %} 
+        {%- if association.ends|length == 2 and association.name not in processed_associations %}
             {%- set ns = namespace(end1=None, end2=None) %}
             {%- for end in association.ends %}
                 {%- set ns.end1=end if end.type.name == class_obj.name else ns.end1 %}
@@ -89,7 +89,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         """
         {%- for attr in class_obj.attributes %}
            {%- if attr.name == 'name' or attr.name == 'title'%}
-        return self.{{attr.name}}   
+        return self.{{attr.name}}
            {%- endif %}
         {%- endfor %}
 {%- endfor %}

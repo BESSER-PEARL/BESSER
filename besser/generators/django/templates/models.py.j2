@@ -45,7 +45,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     """
     Represents a {{ class_obj.name[0].lower() + class_obj.name[1:] }} in the system.
     """
-{%- for attr in class_obj.attributes %}
+{%- for attr in sort_by_timestamp(class_obj.attributes) %}
     {{ attr.name }} ={{ django_fields.get_field(attr.type, model.get_enumerations()) }}
 {%- endfor %}
     {%- for association in class_obj.associations %}
@@ -87,7 +87,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         """
         Returns a string representation of the {{ class_obj.name[0].lower() + class_obj.name[1:] }}
         """
-        {%- for attr in class_obj.attributes %}
+        {%- for attr in sort_by_timestamp(class_obj.attributes) %}
            {%- if attr.name == 'name' or attr.name == 'title'%}
         return self.{{attr.name}}
            {%- endif %}

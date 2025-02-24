@@ -23,10 +23,6 @@ Input models definition
   # to create views and handle data operations
   from library import *
 
-  # The GUI will use the Library structural model classes
-  # to create views and handle data operations
-  from library import *
-
   ##################################
   #      GUI model definition      #
   ##################################

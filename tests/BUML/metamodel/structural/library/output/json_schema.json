@@ -1,0 +1,147 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Generated JSON Schema",
+    "type": "object",
+    "properties": {
+        "Book": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "pages": {
+                        "type": "integer"
+                    },
+                    "title": {
+                        "type": "string"
+                    },
+                    "release": {
+                        "type": "string"
+                    },
+                    "locatedIn": {
+                        "$ref": "#/definitions/Library"
+                    },
+                    "writtenBy": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Author"
+                        }
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Author": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "publishes": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Book"
+                        }
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Library": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "address": {
+                        "type": "string"
+                    },
+                    "has": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Book"
+                        }
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]}
+    },
+    "definitions": {
+        "Book": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "pages": {
+                        "type": "integer"
+                    },
+                    "title": {
+                        "type": "string"
+                    },
+                    "release": {
+                        "type": "string"
+                    },
+                    "locatedIn": {
+                        "$ref": "#/definitions/Library"
+                    },
+                    "writtenBy": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Author"
+                        }
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Author": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "email": {
+                        "type": "string"
+                    },
+                    "name": {
+                        "type": "string"
+                    },
+                    "publishes": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Book"
+                        }
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Library": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "address": {
+                        "type": "string"
+                    },
+                    "has": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Book"
+                        }
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]}
+    }
+}

@@ -120,7 +120,7 @@ To use the Flutter code generator, simply provide the input models and use the `
   from library import library_model # Structural model
   from gui import MyApp, MyHomeScreen # GUI model
 
-  code_gen = FlutterGenerator(model=library_model, application=MyApp, main_page=MyHomeScreen)
+  code_gen = FlutterGenerator(model=library_model, gui_model=library_gui_model, main_page=MyHomeScreen)
   code_gen.generate()
 
 The ``output/`` folder with the ``main.dart``, ``sql_helper.dart``, and ``pubspec.yaml`` files will be produced.

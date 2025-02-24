@@ -1,7 +1,7 @@
 import os
 import shutil
 
-from besser.generators.django_docker_extend.django_generator import DjangoGenerator
+from besser.generators.django import DjangoGenerator
 from besser.BUML.metamodel.structural import DomainModel, Property, Class, \
     BinaryAssociation, Multiplicity
 from besser.BUML.metamodel.gui import GUIModel, Module, DataList, \

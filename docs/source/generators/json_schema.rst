@@ -3,11 +3,11 @@ JSON Schema Generator
 
 The JSON Schema generator produces a JSON Schema definition based on a given B-UML model. This schema can then be used to validate JSON objects against the model's structure and constraints.
 
-Let's generate the JSON Schema for our :doc:`../examples/library_example` structural model example. You should create a ``JSONSchemaGenerator`` object, provide the :doc:`../buml_language/model_types/structural`, and use the ``generate`` method as follows:
+Let's generate the JSON Schema for our :doc:`../examples/library_example`. You should create a ``JSONSchemaGenerator`` object, provide the :doc:`../buml_language/model_types/structural`, and use the ``generate`` method as follows:
 
 .. code-block:: python
     
-    from besser.generators.json.json_schema_generator import JSONSchemaGenerator
+    from besser.generators.json import JSONSchemaGenerator
 
     generator: JSONSchemaGenerator = JSONSchemaGenerator(model=library_model)
     generator.generate()

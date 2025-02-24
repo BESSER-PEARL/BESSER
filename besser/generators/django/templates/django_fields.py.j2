@@ -1,4 +1,4 @@
-{% macro get_field(attr_type, enumerations) %}
+{%- macro get_field(attr_type, enumerations) %}
     {%- if attr_type.name == "str" %} models.CharField(max_length=255)
     {%- elif attr_type.name == "int" %} models.IntegerField()
     {%- elif attr_type.name == "float" %} models.FloatField()
@@ -11,5 +11,5 @@
     {%- else %}
     {# Unknown field type #}
 None
-    {% endif %}
-{% endmacro %}
+    {%- endif %}
+{%- endmacro %}

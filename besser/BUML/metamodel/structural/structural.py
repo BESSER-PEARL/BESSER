@@ -40,8 +40,9 @@ class NamedElement(Element):
         is_derived (bool): Indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, timestamp: datetime = None, synonyms: List[str] = None, 
+    def __init__(self, name: str, timestamp: datetime = None, synonyms: List[str] = None,
                  visibility: str = "public", is_derived: bool = False):
+        super().__init__(timestamp)
         self.name: str = name
         self.synonyms: List[str] = synonyms
         self.visibility: str = visibility

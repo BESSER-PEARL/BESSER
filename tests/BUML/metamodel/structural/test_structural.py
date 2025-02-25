@@ -166,7 +166,7 @@ def test_generalization_set_initialization():
     class3: Class = Class(name="name3", attributes=None)
     generalization1: Generalization = Generalization(general=class1, specific=class2)
     generalization2: Generalization = Generalization(general=class1, specific=class3)
-    generalization_set: GeneralizationSet = GeneralizationSet(name="Generalization Set", generalizations={
+    generalization_set: GeneralizationSet = GeneralizationSet(name="GeneralizationSet", generalizations={
         generalization1,generalization2}, is_disjoint=True, is_complete=True)
     assert generalization_set.is_disjoint == True
     assert generalization_set.is_complete == True

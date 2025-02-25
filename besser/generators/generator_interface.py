@@ -11,7 +11,7 @@ class GeneratorInterface(ABC):
         self.output_dir = output_dir
 
     @abstractmethod
-    def generate(self, *args):
+    def generate(self):
         pass
 
     @property

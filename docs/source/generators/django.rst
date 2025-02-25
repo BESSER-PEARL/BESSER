@@ -5,7 +5,7 @@ BESSER provides a code generator for `Django web applications <https://www.djang
 You can create the application in two ways:
 
 1. **Minimal Django Web App:** A Django application with database models and CRUD functionality, accessible via Django’s admin panel.
-2. **Full Django Web App:** a full Django application with predefined user interfaces, including forms and templates.
+2. **Full Django Web App:** A full Django application with predefined user interfaces, including forms and templates.
 
 1. Minimal Django Web App
 -------------------------
@@ -68,7 +68,7 @@ predefined UI components (forms, templates, views, etc.).
 
 **Getting Started**
 
-To generate a Django web app using this approach, follow these steps. You can use our :doc:`../examples/library_example` 
+To generate a Django web app using this approach, follow these steps. You can use our :doc:`../examples/library_example`
 and our :doc:`../examples/mobile_app_example` as input to test the generator.
 
 .. code-block:: python
@@ -92,9 +92,21 @@ and our :doc:`../examples/mobile_app_example` as input to test the generator.
 
 **Output**
 
-Add here the files.....
+After running the generator, the following files will be created:
 
-Once the application is generated, follow the steps in :ref:deploy to set it up.
+- A project folder containing essential Django files such as `settings.py`, `urls.py`, etc.
+- An application folder including `models.py`, `views.py`, `urls.py`, and `forms.py`.
+- Required HTML template files inside the application folder.
+- `manage.py` and `requirements.txt` for managing the application.
+
+If `containerization=True`, the following files will also be generated for Docker deployment:
+
+- `docker-compose.yml`
+- `Dockerfile`
+- `entrypoint.sh`
+
+Once the application is generated, follow the steps in :ref:`deploy` to set it up.
+
 
 .. _deploy:
 
@@ -154,6 +166,9 @@ This is the admin panel for a minimal Django web app generated using this :doc:`
    :alt: Application screenshot
    :align: center
 
+
+
+**Output for Full Django Web App:**
 
 On the other hand, if you generate the full web app, you can check the home page and different forms at:
 

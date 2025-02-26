@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "9000:9000"
     volumes:
       - ./:/app
     working_dir: /app/besser

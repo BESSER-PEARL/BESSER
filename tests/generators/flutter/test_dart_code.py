@@ -37,14 +37,14 @@ def test_screen_generation():
         description="Explore a collection of pets",
         x_dpi="x_dpi",
         y_dpi="y_dpi",
-        size="SmallScreen",
+        size="Small",
         view_elements={}
     )
 
     # Module definition:
     MyModule: Module = Module(name="module_name", screens={myHomeScreen, myScreen})
 
-    # Application definition:
+    # GUI model definition:
     gui_model: GUIModel = GUIModel(
         name="app",
         package="com.example.app",
@@ -57,7 +57,7 @@ def test_screen_generation():
 
     # Generate the file
     output_file = 'output/main.dart'
-    code_gen = FlutterMainDartGenerator(model=model, application=gui_model, main_page=myHomeScreen, module=MyModule)
+    code_gen = FlutterMainDartGenerator(model=model, gui_model=gui_model, main_page=myHomeScreen, module=MyModule)
     code_gen.generate()
 
     # Check if the file exists
@@ -115,7 +115,7 @@ def test_Error_Handling():
         description="Explore a collection of pets",
         x_dpi="x_dpi",
         y_dpi="y_dpi",
-        size="SmallScreen",
+        size="Small",
         view_elements={myList}
     )
 
@@ -125,14 +125,14 @@ def test_Error_Handling():
         description="Explore a collection of pets",
         x_dpi="x_dpi",
         y_dpi="y_dpi",
-        size="SmallScreen",
+        size="Small",
         view_elements={}
     )
 
     # Module definition:
     MyModule: Module = Module(name="module_name", screens={myHomeScreen, myScreen})
 
-    # Application definition:
+    # GUI model definition:
     gui_model: GUIModel = GUIModel(
         name="app",
         package="com.example.app",
@@ -145,7 +145,7 @@ def test_Error_Handling():
 
     # Generate the file
     output_file = 'output/main.dart'
-    code_gen = FlutterMainDartGenerator(model=model, application=gui_model, main_page=myHomeScreen, module=MyModule)
+    code_gen = FlutterMainDartGenerator(model=model, gui_model=gui_model, main_page=myHomeScreen, module=MyModule)
     code_gen.generate()
 
     # Check if the file exists
@@ -184,7 +184,7 @@ def test_CRUD_Operations():
         description="Explore a collection of pets",
         x_dpi="x_dpi",
         y_dpi="y_dpi",
-        size="SmallScreen",
+        size="Small",
         view_elements={myList}
     )
 
@@ -194,14 +194,14 @@ def test_CRUD_Operations():
         description="Explore a collection of pets",
         x_dpi="x_dpi",
         y_dpi="y_dpi",
-        size="SmallScreen",
+        size="Small",
         view_elements={}
     )
 
     # Module definition:
     MyModule: Module = Module(name="module_name", screens={myHomeScreen, myScreen})
 
-    # Application definition:
+    # GUI model definition:
     gui_model: GUIModel = GUIModel(
         name="app",
         package="com.example.app",
@@ -268,7 +268,7 @@ def test_Operations_many_to_many():
         description="Explore a collection of pets",
         x_dpi="x_dpi",
         y_dpi="y_dpi",
-        size="SmallScreen",
+        size="Small",
         view_elements={myList}
     )
 
@@ -278,14 +278,14 @@ def test_Operations_many_to_many():
         description="Explore a collection of pets",
         x_dpi="x_dpi",
         y_dpi="y_dpi",
-        size="SmallScreen",
+        size="Small",
         view_elements={}
     )
 
     # Module definition:
     MyModule: Module = Module(name="module_name", screens={myHomeScreen, myScreen})
 
-    # Application definition:
+    # GUI model definition:
     gui_model: GUIModel = GUIModel(
         name="app",
         package="com.example.app",

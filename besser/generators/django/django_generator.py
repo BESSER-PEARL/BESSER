@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, ModelElement
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
 from jinja2 import Environment, FileSystemLoader
@@ -85,6 +85,12 @@ class DjangoGenerator(GeneratorInterface):
         return isinstance(value, ModelElement)
 
 
+    @staticmethod
+    def is_primitive_data_type(value):
+        """Check if the given value is an instance of PrimitiveDataType class."""
+        return isinstance(value, PrimitiveDataType)
+
+
     ## DjangoGeneratorModelsFile:
     def generate_models(self):
 
@@ -104,11 +110,10 @@ class DjangoGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
         template = env.get_template('models.py.j2')
+        env.tests['is_primitive_data_type'] = self.is_primitive_data_type
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(model=self.model, sort_by_timestamp=sort_by_timestamp)
             f.write(generated_code)
-            print("Models code generated in the location: " + file_path)
-
 
 
     ## DjangoGeneratorURLsFile:
@@ -151,9 +156,6 @@ class DjangoGenerator(GeneratorInterface):
         else:
             print("Warning: No main page found.")
 
-        for scr in screens:
-            print(scr.name + " ::  ")
-
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(
                 app=self.gui_model,
@@ -162,7 +164,6 @@ class DjangoGenerator(GeneratorInterface):
                 model=self.model,
             )
             f.write(generated_code)
-            print("URLs code generated in the location: " + file_path)
 
 
     ## DjangoGeneratorFormsFile:
@@ -215,7 +216,6 @@ class DjangoGenerator(GeneratorInterface):
                 associations=self.model.associations
             )
             f.write(generated_code)
-            print("Forms Code generated in the location: " + file_path)
 
 
     ##  views Generator:
@@ -267,7 +267,6 @@ class DjangoGenerator(GeneratorInterface):
                 associations=self.model.associations
             )
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
 
 
   ##  Home Page Template Generator:
@@ -318,7 +317,6 @@ class DjangoGenerator(GeneratorInterface):
                 screen=main_page,
             )
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
 
     ## base Pages Template Generator:
     def generate_base_pages(self):
@@ -368,9 +366,6 @@ class DjangoGenerator(GeneratorInterface):
                                 # Write to the HTML file
                             with open(file_path, mode="w", encoding="utf-8") as f:
                                 f.write(rendered_html)
-                                print(f"Generated HTML for {source_name} at {file_path}")
-
-        print("HTML files generated for all components.")
 
 
     # List Pages Template Generator
@@ -423,9 +418,6 @@ class DjangoGenerator(GeneratorInterface):
                                 # Write to the HTML file
                                 with open(file_path, mode="w", encoding="utf-8") as f:
                                     f.write(rendered_html)
-                                    print(f"Generated HTML for {source_name} at {file_path}")
-
-        print("HTML files generated for all components.")
 
 
     ## Form Pages Template Generator:
@@ -477,9 +469,6 @@ class DjangoGenerator(GeneratorInterface):
                                 # Write to the HTML file
                                 with open(file_path, mode="w", encoding="utf-8") as f:
                                     f.write(rendered_html)
-                                    print(f"Generated HTML for {source_name} at {file_path}")
-
-        print("HTML files generated for all components.")
 
 
     ## project urls file Generator:
@@ -505,7 +494,6 @@ class DjangoGenerator(GeneratorInterface):
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(app=self.app_name)
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
 
     def create_file_from_template(self, template_name, output_name):
         """Create a file from a Jinja2 template."""
@@ -652,12 +640,11 @@ JAZZMIN_SETTINGS = {{
 
             # Step 5: Generate models
             self.generate_models()
+            self.create_file_from_template('admin.py.j2',
+                            os.path.join(self.app_name, "admin.py"))
 
             # Step 6: Generate either admin panel or GUI-based components
-            if self.gui_model is None:
-                self.create_file_from_template('admin.py.j2',
-                            os.path.join(self.app_name, "admin.py"))
-            else:
+            if self.gui_model:
                 self.generate_urls()
                 self.generate_forms()
                 self.generate_views()
@@ -673,3 +660,4 @@ JAZZMIN_SETTINGS = {{
             print(f"❌ Error during project generation: {e}")
         except Exception as e:
             print(f"❌ Unexpected error: {e}")
+

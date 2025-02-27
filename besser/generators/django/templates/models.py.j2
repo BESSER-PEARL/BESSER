@@ -67,7 +67,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
             {#- N:M Relationship: Use ManyToManyField in Django #}
             {%- if fk_list|length == 1%}
     {{ ns.end2.name.replace(' ', '_') }} = models.ManyToManyField(
-        '{{ class2_name }}', related_name='{{ class_obj.name[0].lower() + class_obj.name[1:] }}s'{%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+        '{{ class2_name }}', related_name='{{ ns.end2.name.replace(' ', '_') }}'{%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
             {%- else %}
             {%- endif %}
             {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
@@ -88,14 +88,18 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         verbose_name = "{{ class_obj.name[0].upper() + class_obj.name[1:] }}"
         verbose_name_plural = "{{ class_obj.name[0].upper() + class_obj.name[1:] }}s"
 
+    {%- set attr_primitive_data_type = [] %}
+        {%- for attr in sort_by_timestamp(class_obj.attributes) %}
+            {%- if attr.type is is_primitive_data_type %}
+              {%- set _ = attr_primitive_data_type.append(attr) %}
+            {%- endif %}
+        {%- endfor %}
+    {%- if attr_primitive_data_type %}
+    {%- set first_attr = attr_primitive_data_type[0] %}
     def __str__(self):
         """
         Returns a string representation of the {{ class_obj.name[0].lower() + class_obj.name[1:] }}
         """
-        {%- for attr in sort_by_timestamp(class_obj.attributes) %}
-           {%- if attr.name == 'name' or attr.name == 'title'%}
-        return self.{{attr.name}}
-           {%- endif %}
-        {%- endfor %}
-{%- endfor %}
-
+        return str(self.{{ first_attr.name }})
+    {%- endif %}
+{%- endfor%}

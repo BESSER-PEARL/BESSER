@@ -16,7 +16,7 @@
             <form id="{{data_source_name_lower}}Form" action="{% raw %}{%{% endraw %} if is_edit %}{% raw %}{% url 'edit_{% endraw %}{{data_source_name_lower}}' form.instance.id %}{% raw %}{%{% endraw %} else %}{% raw %}{% url 'create_{% endraw %}{{data_source_name_lower}}' %}{% raw %}{%{% endraw %} endif %}" method="POST" class="space-y-6">
                 {% raw %}{% csrf_token %}{% endraw %}
                 {%-set fk_list = []%}
-                {#- start of extract fk_list #} 
+                {#- start of extract fk_list #}
                  {%- for class_obj in model.classes_sorted_by_inheritance() %}
         {%- if class_obj.name == source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:] %}
             {%- set generals = namespace(names=[]) %}
@@ -41,8 +41,8 @@
                     {%- endif %}
                 {%- endfor %}
         {%- endif %}
-    {%- endfor%} 
-                {#- end of extract fk_list #} 
+    {%- endfor%}
+                {#- end of extract fk_list #}
         {%- for component in screen.view_elements %}
         {%- if component is is_List%}
             {%- for source in component.list_sources%}
@@ -50,14 +50,14 @@
                    {%- set source_name= source.dataSourceClass%}
                    {%- set fieldsList = source.fields|list %}
                        {%- for field in fieldsList%}
-                       
-                <div class="form-group">      
+
+                <div class="form-group">
                     <label for="{% raw %}{{{% endraw %} form.{{ field.name }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{ field.name[0].upper() + field.name[1:] }}</label>
                     {% raw %}{{{% endraw %} form.{{ field.name }} }}
-                </div>                   
-                       {%- endfor %}    
+                </div>
+                       {%- endfor %}
                 {%- endif %}
-            {%- endfor %}     
+            {%- endfor %}
         {%- endif %}
     {%- endfor %}
                 {%- for class_obj in model.classes_sorted_by_inheritance() %}
@@ -76,21 +76,26 @@
                         {%- endfor %}
                           {%- set class1_name = ns.end1.type.name %}
                           {%- set class2_name = ns.end2.type.name %}
-                            {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %} 
-                            {%- if fk_list|length == 1%}
-                <div class="form-group">      
-                    <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
-                    {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
-                </div>   
-                            {%- else %}
-                            {%- endif %}
+                            {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
 
-                            {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %} 
-                        
-                <div class="form-group">      
+                <div class="form-group">
                     <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
                     {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
-                </div>        
+                </div>
+
+
+                            {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+
+                <div class="form-group">
+                    <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
+                    {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                </div>
+                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
+
+                <div class="form-group">
+                    <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
+                    {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                </div>
                                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
                             {%- endif %}
                     {%- endif %}

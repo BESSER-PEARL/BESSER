@@ -3,6 +3,7 @@
 {#- django_fields.j2 should contain mappings to Django's ORM field types #}
 from django.db import models
 
+{%-set created_associations = []%}
 {#- Enumeration definition#}
 {%- for enum in model.get_enumerations() %}
 class {{ enum.name }}(models.TextChoices):
@@ -40,6 +41,7 @@ class {{ enum.name }}(models.TextChoices):
     {#- end of extract fk_list #}
 
 
+
     {%- set generals = namespace(names=[]) %}
     {%- for parent in class_obj.parents() %}
         {%- set _ = generals.names.append(parent.name) %}
@@ -67,19 +69,41 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
             {#- N:M Relationship: Use ManyToManyField in Django #}
             {%- if fk_list|length == 1%}
     {{ ns.end2.name.replace(' ', '_') }} = models.ManyToManyField(
-        '{{ class2_name }}', related_name='{{ ns.end2.name.replace(' ', '_') }}'{%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+        '{{ class2_name }}', related_name='{{ ns.end1.name.replace(' ', '_') }}'{%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+            {%- set _ = created_associations.append(association.name) %}
             {%- else %}
+            {%- if created_associations|length > 0%}
+                 {%- if association.name in created_associations %}
+                 {%- else %}
+    {{ ns.end2.name.replace(' ', '_') }} = models.ManyToManyField(
+        '{{ class2_name }}', related_name='{{ ns.end1.name.replace(' ', '_') }}'{%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+                 {%- endif %}
+            {%- else %}
+    {{ ns.end2.name.replace(' ', '_') }} = models.ManyToManyField(
+        '{{ class2_name }}', related_name='{{ ns.end1.name.replace(' ', '_') }}'{%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+            {%- set _ = created_associations.append(association.name) %}
+              {%- endif %}
             {%- endif %}
             {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
             {#- N:1 Relationship: Use ForeignKey in Django #}
     {{ ns.end2.name.replace(' ', '_') }} = models.ForeignKey(
         '{{ class2_name }}', on_delete=models.PROTECT, related_name='{{ class_obj.name[0].lower() + class_obj.name[1:] }}s'{%- if ns.end2.is_composite %}, on_delete=models.PROTECT{%- endif %}
                 {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+                {%- set _ = created_associations.append(association.name) %}
 
             {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
             {#- 1:1 Relationship: Use OneToOneField in Django #}
-    {{ ns.end2.name.replace(' ', '_') }} = models.OneToOneField('{{ class2_name }}'{%- if ns.end2.is_composite %}, on_delete=models.CASCADE{%- endif %}
-                {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+            {%- if created_associations|length > 0%}
+               {%- if not association.name in created_associations %}
+    {{ ns.end2.name.replace(' ', '_') }} = models.OneToOneField('{{ class2_name }}'{%- if ns.end2.is_composite %}, on_delete=models.CASCADE{% else %}, on_delete=models.CASCADE{%- endif %}
+    {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+    {%- set _ = created_associations.append(association.name) %}
+              {%- endif%}
+            {%- else %}
+    {{ ns.end2.name.replace(' ', '_') }} = models.OneToOneField('{{ class2_name }}'{%- if ns.end2.is_composite %}, on_delete=models.CASCADE{% else %}, on_delete=models.CASCADE{%- endif %}
+    {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
+    {%- set _ = created_associations.append(association.name) %}
+            {%- endif%}
             {%- endif %}
         {%- endif %}
     {%- endfor %}

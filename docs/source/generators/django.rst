@@ -4,11 +4,18 @@ Django Generator
 BESSER provides a code generator for `Django web applications <https://www.djangoproject.com/>`_.
 You can create the application in two ways:
 
-1. **Minimal Django Web App:** A Django application with database models and CRUD functionality, accessible via Django’s admin panel.
+1. **Basic Django Web App:** A Django application with database models and CRUD functionality, accessible via Django’s admin panel.
 2. **Full Django Web App:** A full Django application with predefined user interfaces, including forms and templates.
 
-1. Minimal Django Web App
--------------------------
+.. note::
+
+   The :doc:`../web_editor` supports only the generation of basic Django web apps. To generate a full Django web app, 
+   you must use the Python API.
+
+.. _basic_app:
+
+1. Basic Django Web App
+-----------------------
 This approach creates a Django application with database models and basic CRUD functionality. It does not generate custom UI
 components beyond Django’s built-in admin panel.
 
@@ -92,18 +99,10 @@ and our :doc:`../examples/mobile_app_example` as input to test the generator.
 
 **Output**
 
-After running the generator, the following files will be created:
+In addition to the files generated for a :ref:`basic Django web app <basic_app>`, this approach also includes:
 
-- A project folder containing essential Django files such as `settings.py`, `urls.py`, etc.
-- An application folder including `models.py`, `views.py`, `urls.py`, and `forms.py`.
-- Required HTML template files inside the application folder.
-- `manage.py` and `requirements.txt` for managing the application.
-
-If `containerization=True`, the following files will also be generated for Docker deployment:
-
-- `docker-compose.yml`
-- `Dockerfile`
-- `entrypoint.sh`
+- `views.py`, `urls.py`, and `forms.py` for handling user interactions.
+- Predefined HTML templates for the application's UI.
 
 Once the application is generated, follow the steps in :ref:`deploy` to set it up.
 
@@ -152,27 +151,28 @@ Enter the project folder and run this command:
 Access the Web Application
 --------------------------
 
+**Admin panel**
+
 To access the admin panel of your web app, open your browser and navigate to:
 
-**http://localhost:8000/admin**
+`http://localhost:8000/admin <http://localhost:8000/admin>`_
 
 Login Credentials:
-    + **If containerized**: The default username and password are both ``admin``.
-    + **If not containerized**: Use the username and password you set in Section 3.1 (``createsuperuser``).
+    + *If containerized*: The default username and password are both ``admin``.
+    + *If not containerized*: Use the username and password you set in Section 3.1 (``createsuperuser``).
 
-This is the admin panel for a minimal Django web app generated using this :doc:`../buml_language/model_types/structural`:
+The following is the admin panel for a basic Django web app generated using this :doc:`../buml_language/model_types/structural`:
 
 .. image:: ../img/django-lib.png
    :alt: Application screenshot
    :align: center
 
 
-
-**Output for Full Django Web App:**
+**Home page**
 
 On the other hand, if you generate the full web app, you can check the home page and different forms at:
 
-**http://127.0.0.1:8000/**
+`http://localhost:8000 <http://localhost:8000>`_
 
 The following is an screenshoot of the application generated using the :doc:`../buml_language/model_types/structural`
 and the GUI model from :doc:`../examples/mobile_app_example`:

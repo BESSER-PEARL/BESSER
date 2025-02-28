@@ -4,18 +4,18 @@ Django Generator
 BESSER provides a code generator for `Django web applications <https://www.djangoproject.com/>`_.
 You can create the application in two ways:
 
-1. **Basic Django Web App:** A Django application with database models and CRUD functionality, accessible via Django’s admin panel.
-2. **Full Django Web App:** A full Django application with predefined user interfaces, including forms and templates.
+1. **Django App with Admin Panel:** A Django application with database models and CRUD functionality, accessible via Django’s admin panel.
+2. **Django App with Admin Panel & UI Components:** Includes everything from the Admin Panel version, plus predefined user interfaces such as forms and templates.
 
 .. note::
 
-   The :doc:`../web_editor` supports only the generation of basic Django web apps. To generate a full Django web app, 
+   The :doc:`../web_editor` supports only the generation of Django apps with the Admin Panel. To generate a Django app with UI Components,
    you must use the Python API.
 
 .. _basic_app:
 
-1. Basic Django Web App
------------------------
+1. Django App with Admin Panel
+------------------------------
 This approach creates a Django application with database models and basic CRUD functionality. It does not generate custom UI
 components beyond Django’s built-in admin panel.
 
@@ -62,9 +62,9 @@ If `containerization=True`, the following files will also be generated for Docke
 
 To run the application, follow the steps in :ref:`deploy`.
 
-2. Full Django Web App
-----------------------
-This approach generates a fully functional Django application with both database models and
+2. Django App with Admin Panel & UI Components
+----------------------------------------------
+This approach generates a Django application with both database models and
 predefined UI components (forms, templates, views, etc.).
 
 **B-UML Models required**
@@ -99,7 +99,7 @@ and our :doc:`../examples/mobile_app_example` as input to test the generator.
 
 **Output**
 
-In addition to the files generated for a :ref:`basic Django web app <basic_app>`, this approach also includes:
+In addition to the files generated for a :ref:`Django app with Admin Panel <basic_app>`, this approach also includes:
 
 - `views.py`, `urls.py`, and `forms.py` for handling user interactions.
 - Predefined HTML templates for the application's UI.
@@ -161,7 +161,7 @@ Login Credentials:
     + *If containerized*: The default username and password are both ``admin``.
     + *If not containerized*: Use the username and password you set in Section 3.1 (``createsuperuser``).
 
-The following is the admin panel for a basic Django web app generated using this :doc:`../buml_language/model_types/structural`:
+The following is the admin panel for a Django web app generated using this :doc:`../buml_language/model_types/structural`:
 
 .. image:: ../img/django-lib.png
    :alt: Application screenshot

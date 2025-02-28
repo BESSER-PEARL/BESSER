@@ -26,8 +26,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# API sub-application
+api = FastAPI()
+
 # Set up CORS middleware
-app.add_middleware(
+api.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -46,7 +49,11 @@ GENERATOR_CONFIG = {
     "backend": (BackendGenerator, "backend.zip")
 }
 
-@app.post("/generate-output")
+@api.get("/")
+def read_api_root():
+    return {"message": "BESSER API is running"}
+
+@api.post("/generate-output")
 async def generate_output(input_data: ClassDiagramInput):
     temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
     try:
@@ -148,7 +155,7 @@ async def generate_output(input_data: ClassDiagramInput):
         print(f"Error during file generation or response: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-@app.post("/export-buml")
+@api.post("/export-buml")
 async def export_buml(input_data: ClassDiagramInput):
     # Create unique temporary directory for this request
     temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
@@ -192,7 +199,7 @@ async def export_buml(input_data: ClassDiagramInput):
         print(f"Error during BUML export: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-@app.post("/get-json-model")
+@api.post("/get-json-model")
 async def get_json_model(buml_file: UploadFile = File(...)):
     try:
         content = await buml_file.read()
@@ -221,7 +228,7 @@ async def get_json_model(buml_file: UploadFile = File(...)):
         print(f"Error in get_json_model: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/check-ocl")
+@api.post("/check-ocl")
 async def check_ocl(input_data: ClassDiagramInput):
     try:
         # Convert diagram to BUML model
@@ -250,6 +257,9 @@ async def check_ocl(input_data: ClassDiagramInput):
             "success": False,
             "message": f"Error checking OCL constraints: {str(e)}"
         }
+
+#Mount the `api` app under `/api` 
+app.mount("/api", api)
 
 if __name__ == "__main__":
     import uvicorn

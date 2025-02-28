@@ -40,7 +40,7 @@ def domain_model():
                                                 ends={written_by, publishes})
 
     # Domain model definition
-    model = DomainModel(name="Library model", types={library, book, author},
+    model = DomainModel(name="Library_Model", types={library, book, author},
                         associations={lib_book_association, book_author_association})
 
     return model

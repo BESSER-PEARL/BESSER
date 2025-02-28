@@ -107,25 +107,54 @@ class DjangoGenerator(GeneratorInterface):
             None, but stores the generated code as a file named models.py.
         """
 
+        assoc_class = []
+        asso_dict = dict()
+
+        for association in self.model.associations:
+            ends = list(association.ends)  # Convert set to list
+
+            # One-to-one
+            if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
+                str_var = ends[0].type.name + '.' + association.name
+                assoc_class.append(str_var)
+
+            # Append to list
+            if association.name not in asso_dict:
+                asso_dict[association.name] = []  # Initialize list if not exists
+                asso_dict[association.name].append(ends[0].type.name)
+
+            # ForeignKey
+            elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max == 1:
+                    str_var = ends[0].type.name + '.' + association.name
+                    assoc_class.append(str_var)
+
+            # Append to list
+            if association.name not in asso_dict:
+                    asso_dict[association.name] = []  # Initialize list if not exists
+                    asso_dict[association.name].append(ends[0].type.name)
+
+            elif ends[0].multiplicity.max == 1 and ends[1].multiplicity.max > 1 :
+                    str_var = ends[1].type.name + '.' + association.name
+                    assoc_class.append(str_var)
+
+            # Append to list
+            if association.name not in asso_dict:
+                    asso_dict[association.name] = []  # Initialize list if not exists
+                    asso_dict[association.name].append(ends[1].type.name)
+
+
         file_path = os.path.join(self.project_name, self.app_name, "models.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
         template = env.get_template('models.py.j2')
-        # Define the initial set
-        my_list = []
+
         env.tests['is_primitive_data_type'] = self.is_primitive_data_type
         with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(model=self.model, sort_by_timestamp=sort_by_timestamp, my_list=my_list)
+            generated_code = template.render(model=self.model, sort_by_timestamp=sort_by_timestamp, asso_dict=asso_dict)
             f.write(generated_code)
 
-        # Extract `assoc_class` from the generated code using regex
-        match = re.search(r"# assoc_class=(\[.*?\])", generated_code)
-        if match:
-            assoc_class = ast.literal_eval(match.group(1))  # Convert string back to Python list
-
-        print("Extracted assoc_class:", assoc_class)  # ✅ Now contains updated values
-        return assoc_class
+        return asso_dict
 
 
     ## DjangoGeneratorURLsFile:
@@ -179,7 +208,7 @@ class DjangoGenerator(GeneratorInterface):
 
 
     ## DjangoGeneratorFormsFile:
-    def generate_forms(self, assoc_class):
+    def generate_forms(self, asso_dict):
 
         """
         Generates the Django Forms file for a web application based on
@@ -226,7 +255,7 @@ class DjangoGenerator(GeneratorInterface):
                 screen=main_page,
                 model=self.model,
                 associations=self.model.associations,
-                assoc_class=assoc_class
+                asso_dict=asso_dict
             )
             f.write(generated_code)
 
@@ -382,7 +411,7 @@ class DjangoGenerator(GeneratorInterface):
 
 
     # List Pages Template Generator
-    def generate_list_html_pages(self, assoc_class):
+    def generate_list_html_pages(self, asso_dict):
         """
         Generate List HTML files for each screen in the module, using a Jinja template.
         Each HTML file is saved in the output directory, named based on the screen's name_list.
@@ -426,7 +455,7 @@ class DjangoGenerator(GeneratorInterface):
                                     screens=screens,
                                     screen=screen,
                                     source_name=source_name,
-                                    assoc_class=assoc_class
+                                    asso_dict=asso_dict
                                 )
 
                                 # Write to the HTML file
@@ -435,7 +464,7 @@ class DjangoGenerator(GeneratorInterface):
 
 
     ## Form Pages Template Generator:
-    def generate_form_html_pages(self, assoc_class):
+    def generate_form_html_pages(self, asso_dict):
         """
         Generate HTML files for each screen in the module, using a Jinja template.
         Each HTML file is saved in the output directory, named based on the screen's name_form.
@@ -478,7 +507,7 @@ class DjangoGenerator(GeneratorInterface):
                                     screens=screens,
                                     screen=screen,
                                     source_name=source_name,
-                                    assoc_class=assoc_class
+                                    asso_dict=asso_dict
                                 )
 
                                 # Write to the HTML file
@@ -655,19 +684,19 @@ JAZZMIN_SETTINGS = {{
 
             # Step 5: Generate models
 
-            assoc_class=self.generate_models()
+            asso_dict=self.generate_models()
             self.create_file_from_template('admin.py.j2',
                             os.path.join(self.app_name, "admin.py"))
 
             # Step 6: Generate either admin panel or GUI-based components
             if self.gui_model:
                 self.generate_urls()
-                self.generate_forms(assoc_class=assoc_class)
+                self.generate_forms(asso_dict=asso_dict)
                 self.generate_views()
                 self.generate_home_page()
                 self.generate_base_pages()
-                self.generate_list_html_pages(assoc_class=assoc_class)
-                self.generate_form_html_pages(assoc_class=assoc_class)
+                self.generate_list_html_pages(asso_dict=asso_dict)
+                self.generate_form_html_pages(asso_dict=asso_dict)
                 self.generate_project_urls()
 
             print("✅ Django project generation completed successfully!")

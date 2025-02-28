@@ -66,6 +66,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                             {%- set class1_name = ns.end1.type.name %}
                             {%- set class2_name = ns.end2.type.name %}
                                 {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+                                   {%- if class2_name in asso_dict[association.name] %}
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelChoiceField(
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -83,6 +84,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
             )
         })
     )
+                                 {%- endif %}
                                {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
 
 
@@ -106,7 +108,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
 
 
                                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
-                                {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}
+                                {%- if class2_name in asso_dict[association.name] %}
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelMultipleChoiceField(
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -124,12 +126,12 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
             )
         })
     )
-                            {% else %}
-                            {% endif%}
+                            {%- else %}
+                            {%- endif%}
 
 
                                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
-                                    {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}
+                                    {%- if class_obj.name in asso_dict[association.name] %}
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelChoiceField (
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -181,12 +183,12 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                           {%- set class1_name = ns.end1.type.name %}
                           {%- set class2_name = ns.end2.type.name %}
                             {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}'{{ ns.end2.name.replace(' ', '_') }}',
-                               {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %} '{{ ns.end2.name.replace(' ', '_') }}',
-                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %} {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}'{{ ns.end2.name.replace(' ', '_') }}',{% else%}{% endif %}
+                               {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %} {%- if class2_name in asso_dict[association.name] %}'{{ ns.end2.name.replace(' ', '_') }}',{%- else%}{%- endif %}
+                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %} {%- if class2_name in asso_dict[association.name] %}'{{ ns.end2.name.replace(' ', '_') }}',{%- else%}{%- endif %}
                                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
-                               {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}'{{ ns.end2.name.replace(' ', '_') }}',{%- endif %}
+                               {%- if class_obj.name in asso_dict[association.name] %}'{{ ns.end2.name.replace(' ', '_') }}',{%- endif %}
 
-                            {% endif %}
+                            {%- endif %}
                     {%- endif %}
                 {%- endfor %}
     {%- endif %}
@@ -198,7 +200,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                 {%- set source_name = source.dataSourceClass %}
                 {%- set fieldsList = source.fields|list %}
                 {%- for field in fieldsList %}'{{ field.name }}'
-                    {%- if not loop.last %}, {% endif %}
+                    {%- if not loop.last %}, {%- endif %}
                 {%- endfor %}
             {%- endif %}
         {%- endfor %}

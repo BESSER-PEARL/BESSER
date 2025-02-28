@@ -83,15 +83,15 @@
                     {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
                 </div>
 
-
                             {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
-
+                               {%- if class2_name in asso_dict[association.name] %}
                 <div class="form-group">
                     <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
                     {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
                 </div>
+                                {%- endif %}
                                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
-                {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}
+                {%- if class2_name in asso_dict[association.name] %}
                 <div class="form-group">
                     <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
                     {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
@@ -99,7 +99,7 @@
                 {% else%}
                 {% endif %}
                                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
-                               {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}
+                               {%- if class_obj.name in asso_dict[association.name] %}
                 <div class="form-group">
                     <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
                     {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}

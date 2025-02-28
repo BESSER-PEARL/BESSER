@@ -107,7 +107,6 @@ class DjangoGenerator(GeneratorInterface):
             None, but stores the generated code as a file named models.py.
         """
 
-        assoc_class = []
         asso_dict = dict()
 
         for association in self.model.associations:
@@ -115,30 +114,21 @@ class DjangoGenerator(GeneratorInterface):
 
             # One-to-one
             if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
-                str_var = ends[0].type.name + '.' + association.name
-                assoc_class.append(str_var)
-
             # Append to list
-            if association.name not in asso_dict:
-                asso_dict[association.name] = []  # Initialize list if not exists
-                asso_dict[association.name].append(ends[0].type.name)
+               if association.name not in asso_dict:
+                 asso_dict[association.name] = []  # Initialize list if not exists
+                 asso_dict[association.name].append(ends[0].type.name)
 
             # ForeignKey
             elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max == 1:
-                    str_var = ends[0].type.name + '.' + association.name
-                    assoc_class.append(str_var)
-
             # Append to list
-            if association.name not in asso_dict:
+                if association.name not in asso_dict:
                     asso_dict[association.name] = []  # Initialize list if not exists
                     asso_dict[association.name].append(ends[0].type.name)
 
             elif ends[0].multiplicity.max == 1 and ends[1].multiplicity.max > 1 :
-                    str_var = ends[1].type.name + '.' + association.name
-                    assoc_class.append(str_var)
-
-            # Append to list
-            if association.name not in asso_dict:
+                # Append to list
+                if association.name not in asso_dict:
                     asso_dict[association.name] = []  # Initialize list if not exists
                     asso_dict[association.name].append(ends[1].type.name)
 

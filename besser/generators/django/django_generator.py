@@ -143,6 +143,7 @@ class DjangoGenerator(GeneratorInterface):
                     asso_dict[association.name].append(ends[1].type.name)
 
 
+
         file_path = os.path.join(self.project_name, self.app_name, "models.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")

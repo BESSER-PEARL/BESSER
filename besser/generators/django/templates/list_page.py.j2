@@ -117,12 +117,22 @@
                     </div>
                                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
 
+                    {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}
                     <div class="form-group">
                         <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block text-gray-700 font-semibold mb-2">{{class2_name}}</label>
                         {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
                     </div>
 
+                    {% else%}
+                    {% endif%}
+
                                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+                                    {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}
+                    <div class="form-group">
+                        <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
+                        {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                    </div>
+                               {%- endif %}
                             {%- endif %}
                     {%- endif %}
                 {%- endfor %}

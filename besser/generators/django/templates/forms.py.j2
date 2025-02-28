@@ -106,6 +106,7 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
 
 
                                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
+                                {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}
     {{ ns.end2.name.replace(' ', '_') }} = forms.ModelMultipleChoiceField(
         queryset={{ class2_name }}.objects.all(),
         {%- for end in association.ends%}
@@ -123,9 +124,32 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
             )
         })
     )
+                            {% else %}
+                            {% endif%}
 
 
                                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+                                    {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}
+    {{ ns.end2.name.replace(' ', '_') }} = forms.ModelChoiceField (
+        queryset={{ class2_name }}.objects.all(),
+        {%- for end in association.ends%}
+            {%- if end.type.name[0].lower() + end.type.name[1:] == class2_name[0].lower() + class2_name[1:]%}
+                    {%- if end.multiplicity.min == 1%}
+                    {%- else%}
+        required=False,
+                    {%- endif%}
+            {%- endif%}
+        {%- endfor%}
+        widget=forms.Select(attrs={
+            'class': (
+                'form-select mt-1 block w-full rounded-md '
+                'border-2 p-2 border-gray-300 shadow-sm'
+            )
+        })
+    )
+
+
+                                    {%- endif %}
                                 {%- endif %}
                     {%- endif %}
                 {%- endfor %}
@@ -158,8 +182,10 @@ class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]
                           {%- set class2_name = ns.end2.type.name %}
                             {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}'{{ ns.end2.name.replace(' ', '_') }}',
                                {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %} '{{ ns.end2.name.replace(' ', '_') }}',
-                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %} '{{ ns.end2.name.replace(' ', '_') }}',
+                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %} {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}'{{ ns.end2.name.replace(' ', '_') }}',{% else%}{% endif %}
                                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+                               {%- if class_obj.name ~ '.' ~ association.name in assoc_class %}'{{ ns.end2.name.replace(' ', '_') }}',{%- endif %}
+
                             {% endif %}
                     {%- endif %}
                 {%- endfor %}

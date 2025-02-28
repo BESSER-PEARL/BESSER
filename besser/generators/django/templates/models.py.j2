@@ -4,6 +4,8 @@
 from django.db import models
 
 {%-set created_associations = []%}
+{%- set assoc_class = []%}
+{%- set one_to_many_associations = []%}
 {#- Enumeration definition#}
 {%- for enum in model.get_enumerations() %}
 class {{ enum.name }}(models.TextChoices):
@@ -90,7 +92,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         '{{ class2_name }}', on_delete=models.PROTECT, related_name='{{ class_obj.name[0].lower() + class_obj.name[1:] }}s'{%- if ns.end2.is_composite %}, on_delete=models.PROTECT{%- endif %}
                 {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
                 {%- set _ = created_associations.append(association.name) %}
-
+                {%- set _ = assoc_class.append(class1_name ~ '.' ~ association.name) %}
             {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
             {#- 1:1 Relationship: Use OneToOneField in Django #}
             {%- if created_associations|length > 0%}
@@ -98,11 +100,15 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     {{ ns.end2.name.replace(' ', '_') }} = models.OneToOneField('{{ class2_name }}'{%- if ns.end2.is_composite %}, on_delete=models.CASCADE{% else %}, on_delete=models.CASCADE{%- endif %}
     {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
     {%- set _ = created_associations.append(association.name) %}
+    {% set my_list = my_list + [class1_name ~ '.' ~ association.name] %}
+    {%- set _ = assoc_class.append(class1_name ~ '.' ~ association.name) %}
               {%- endif%}
             {%- else %}
     {{ ns.end2.name.replace(' ', '_') }} = models.OneToOneField('{{ class2_name }}'{%- if ns.end2.is_composite %}, on_delete=models.CASCADE{% else %}, on_delete=models.CASCADE{%- endif %}
     {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
     {%- set _ = created_associations.append(association.name) %}
+    {% set my_list = my_list + [class1_name ~ '.' ~ association.name] %}
+    {%- set _ = assoc_class.append(class1_name ~ '.' ~ association.name) %}
             {%- endif%}
             {%- endif %}
         {%- endif %}
@@ -127,3 +133,5 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         return str(self.{{ first_attr.name }})
     {%- endif %}
 {%- endfor%}
+# assoc_class={{ assoc_class }}
+

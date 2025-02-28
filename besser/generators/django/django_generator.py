@@ -107,6 +107,20 @@ class DjangoGenerator(GeneratorInterface):
             None, but stores the generated code as a file named models.py.
         """
 
+        assoc_class = []
+        new_dict = dict()
+
+        for association in self.model.associations:
+            ends = association.ends
+            # One-to-one
+            if ends(0).multiplicity.max == 1 and ends(1).multiplicity.max == 1:
+                str_var = ends(0).type.name + '.' + association.name
+                assoc_class.append(str_var)
+                new_dict[association.name] = ends(0).type.name
+            # FK
+
+
+
         file_path = os.path.join(self.project_name, self.app_name, "models.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
@@ -116,7 +130,7 @@ class DjangoGenerator(GeneratorInterface):
         my_list = []
         env.tests['is_primitive_data_type'] = self.is_primitive_data_type
         with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(model=self.model, sort_by_timestamp=sort_by_timestamp, my_list=my_list)
+            generated_code = template.render(model=self.model, sort_by_timestamp=sort_by_timestamp, asso_dict=new_dict)
             f.write(generated_code)
 
         # Extract `assoc_class` from the generated code using regex

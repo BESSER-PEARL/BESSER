@@ -97,7 +97,9 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
             {#- 1:1 Relationship: Use OneToOneField in Django #}
             {%- if created_associations|length > 0%}
                {%- if not association.name in created_associations %}
+    {{ if asso_dict[association.name] == class_obj.name }} ###########
     {{ ns.end2.name.replace(' ', '_') }} = models.OneToOneField('{{ class2_name }}'{%- if ns.end2.is_composite %}, on_delete=models.CASCADE{% else %}, on_delete=models.CASCADE{%- endif %}
+    {{ endif }} #########
     {%- if ns.end2.multiplicity.min == 0 %}, blank=True, null=True{%- endif %})
     {%- set _ = created_associations.append(association.name) %}
     {% set my_list = my_list + [class1_name ~ '.' ~ association.name] %}

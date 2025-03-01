@@ -4,13 +4,11 @@ This module generates Django code using Jinja2 templates based on BUML models.
 import os
 import subprocess
 import sys
+from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, ModelElement
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
-from jinja2 import Environment, FileSystemLoader
-import re
-import ast
 
 ##############################
 #    Django Generator
@@ -108,31 +106,35 @@ class DjangoGenerator(GeneratorInterface):
         """
 
         asso_dict = dict()
+        one_to_one = dict()
+        fkeys = dict()
+        many_to_many = dict()
 
         for association in self.model.associations:
             ends = list(association.ends)  # Convert set to list
 
             # One-to-one
             if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
-            # Append to list
-               if association.name not in asso_dict:
-                 asso_dict[association.name] = []  # Initialize list if not exists
-                 asso_dict[association.name].append(ends[0].type.name)
+                asso_dict[association.name] = ends[0].type.name
+                one_to_one[association.name] = ends[0].type.name
+                if ends[1].multiplicity.min == 0:
+                    asso_dict[association.name] = ends[1].type.name
+                    one_to_one[association.name] = ends[1].type.name
 
-            # ForeignKey
-            elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max == 1:
-            # Append to list
-                if association.name not in asso_dict:
-                    asso_dict[association.name] = []  # Initialize list if not exists
-                    asso_dict[association.name].append(ends[0].type.name)
+            # Foreign Keys
+            elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max <= 1:
+                asso_dict[association.name] = ends[0].type.name
+                fkeys[association.name] = ends[0].type.name
 
-            elif ends[0].multiplicity.max == 1 and ends[1].multiplicity.max > 1 :
-                # Append to list
-                if association.name not in asso_dict:
-                    asso_dict[association.name] = []  # Initialize list if not exists
-                    asso_dict[association.name].append(ends[1].type.name)
+            elif ends[0].multiplicity.max <= 1 and ends[1].multiplicity.max > 1:
+                asso_dict[association.name] = ends[1].type.name
+                fkeys[association.name] = ends[1].type.name
 
-
+            # Many to many
+            elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max > 1:
+                many_to_many[association.name] = ends[0].type.name
+                if ends[0].multiplicity.min >= 1:
+                    many_to_many[association.name] = ends[1].type.name
 
         file_path = os.path.join(self.project_name, self.app_name, "models.py")
         templates_path = os.path.join(os.path.dirname(
@@ -142,7 +144,12 @@ class DjangoGenerator(GeneratorInterface):
 
         env.tests['is_primitive_data_type'] = self.is_primitive_data_type
         with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(model=self.model, sort_by_timestamp=sort_by_timestamp, asso_dict=asso_dict)
+            generated_code = template.render(model=self.model,
+                                            sort_by_timestamp=sort_by_timestamp,
+                                            asso_dict=asso_dict,
+                                            one_to_one = one_to_one,
+                                            many_to_many = many_to_many,
+                                            fkeys =  fkeys)
             f.write(generated_code)
 
         return asso_dict
@@ -696,4 +703,3 @@ JAZZMIN_SETTINGS = {{
             print(f"❌ Error during project generation: {e}")
         except Exception as e:
             print(f"❌ Unexpected error: {e}")
-

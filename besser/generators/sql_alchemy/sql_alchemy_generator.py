@@ -50,6 +50,27 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
         return ids_dict
 
+    def get_foreign_keys(self):
+        fkeys = dict()
+
+        for association in self.model.associations:
+            ends = list(association.ends)  # Convert set to list
+
+            # One-to-one
+            if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
+                fkeys[association.name] = ends[0].type.name
+                if ends[1].multiplicity.min == 0:
+                    fkeys[association.name] = ends[1].type.name
+
+            # Many to one
+            elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max <= 1:
+                fkeys[association.name] = ends[0].type.name
+
+            elif ends[0].multiplicity.max <= 1 and ends[1].multiplicity.max > 1:
+                fkeys[association.name] = ends[1].type.name
+
+        return fkeys
+
     def generate(self, dbms: str = "sqlite"):
         """
         Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified output directory.
@@ -78,7 +99,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 enumerations=self.model.get_enumerations(),
                 model_name=self.model.name,
                 dbms=dbms,
-                ids=self.get_ids()
+                ids=self.get_ids(),
+                fkeys=self.get_foreign_keys()
             )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

@@ -53,7 +53,7 @@ def test_create_name1():
     client = TestClient(app)
     data = {
         "attr1": 1,
-        "name2s_id": []  # Adjust this list according to your requirements
+        "name2s_id": [] 
     }
     response = client.post(f"{BASE_URL}/name1/", json=data)
     assert response.status_code == 200

@@ -127,8 +127,10 @@ def get_input_shape_all(x, model):
     preceeding layer, which is not always correct.
     It is used because it enables to cover all the layers including
     the ones defined in a sub neural network. Its output is further
-    corrected but the second method that gets the shapes from the
-    call method of the NN.
+    corrected buy the input_shape_from_call function that gets 
+    the shapes from the call method of the NN.
+    For the case of a sequential architecture, the output of this function
+    alone is accurate.
     """
     input_shape_all = {}
 
@@ -216,8 +218,7 @@ print(input_shape_all)
     else:
         function_code = f"""\
 input_data = get_data({loader_name}, {shape})
-x = input_data
-input_shape_all = get_input_shape_all(x, {nn_name})
+input_shape_all = get_input_shape_all(input_data, {nn_name})
 print(input_shape_all)
     """
 

@@ -15,7 +15,7 @@ from besser.generators.nn.tf.utils_tf import (
 from besser.generators.nn.pytorch.utils_pytorch import (
     SetupLayerSyntax as SetupLayerTorch
 )
-from besser.generators.nn.pytorch.utils_pytorch import adjust_actv_func_names
+from besser.generators.nn.pytorch.utils_pytorch import adjust_actv_func_name
 from besser.generators.nn.utils_nn import handle_layer, handle_tensorop, \
     add_in_out_var_to_subnn
 
@@ -115,7 +115,7 @@ class NNCodeGenerator(GeneratorInterface):
                 modules_details = handle_tensorop(
                     module, modules_details, self.get_tensorop_syntax)
         if actv_func:
-            modules_details = adjust_actv_func_names(modules_details)
+            modules_details = adjust_actv_func_name(modules_details)
         return modules_details
 
     def build_generation_path(self, file_name:str) -> str:

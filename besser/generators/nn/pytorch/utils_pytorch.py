@@ -234,7 +234,7 @@ def get_tensorop_syntax(tensorop, modules_details, in_var=None):
     return ts_op_synt
 
 
-def adjust_actv_func_names(modules_details):
+def adjust_actv_func_name(modules_details):
     """Renames activation functions as activ_func_1, activ_func_2, ..."""
     actv_dict = {}
     counter = 1
@@ -249,3 +249,17 @@ def adjust_actv_func_names(modules_details):
                 activ_def = synt.split("=")[1]
                 mdl_details[0] = f"self.{actv_dict[activ_type]} = {activ_def}"
     return modules_details
+
+
+def get_activation_function(activ):
+    """
+    It returns the activation function syntax if the user does not
+    explicitely provide the activation function name in the BUML model.
+    """
+    activ_func = {"relu": "ReLU", "leaky_relu": "LeakyReLU",
+                  "sigmoid": "Sigmoid", "softmax": "Softmax", "tanh": "Tanh"}
+    activ = activ.lower()
+
+    if activ in activ_func:
+        return f"nn.{activ_func[activ]}()"
+    raise ValueError(f"The activation function {activ} is invalid")

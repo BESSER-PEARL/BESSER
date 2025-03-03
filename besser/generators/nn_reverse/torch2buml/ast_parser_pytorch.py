@@ -86,11 +86,11 @@ class ASTParserTorch(ASTParser):
         This method: 1) retrieves the input and output variables of 
         modules and the activation functions and adds them as 
         parameters to their layers. It also adds the permute op as 
-        parameter to its following layer if it is of type cnn or 
-        rnn (the permute op is sometimes used before a cnn and rnn layer 
-        to make pytorch and tensorflow models equivalent as cnn and rnn
-        in both frameworks receive data in a different order). This 
-        method also extracts tensorops details and stores the order 
+        parameter to its following layer if it is of type cnn (the 
+        permute op is sometimes used before a cnn layer to make 
+        pytorch and tensorflow models equivalent as cnn in both 
+        frameworks receive data in a different order). This method 
+        also extracts tensorops details and stores the order 
         of calling the modules in the 'modules' dict.
         """
         if node.value.func.value.id == "self":
@@ -135,7 +135,6 @@ class ASTParserTorch(ASTParser):
         rnn_in = node.value.args[0].id
         self.inputs_outputs[module_name] = [rnn_in, rnn_out]
         self.layer_of_output[rnn_out] = module_name
-        #self.is_permute_before_cnn(module_name)
         self.populate_modules(module_name)
         self.previous_assign = node
 
@@ -201,7 +200,7 @@ class ASTParserTorch(ASTParser):
     def is_permute_before_cnn(self, layer_name):
         """
         It adds the permute op as parameter to its following layer if
-        it is a cnn or rnn layer.
+        it is a cnn layer.
         """
         if (self.modules["layers"][layer_name][0] in cnn_layers and
             len(self.modules["tensorops"])!=0):
@@ -286,7 +285,7 @@ class ASTParserTorch(ASTParser):
             permute_dim=[ops_args[0].value, ops_args[1].value,
                          ops_args[2].value]
             tensorop_param = {"tns_type": "permute",
-                            "permute_dim": permute_dim}
+                              "permute_dim": permute_dim}
         return tensorop_param
 
     def handle_outer_attribute_assignment(self, node):

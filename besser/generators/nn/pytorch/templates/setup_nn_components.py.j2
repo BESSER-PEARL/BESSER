@@ -25,7 +25,7 @@ from datetime import datetime
 {% if model.train_data is not none %}import torch
 from datetime import datetime {%- set ti.torch_imported = True %}{% endif %}
 {%- for module_name, module_details in modules_details.items() -%}{% if ti.torch_imported == False and ((module_name.endswith("op") and module_details[0].startswith("torch")) or (module_details[-1].__class__.mro()[1].__name__ == "RNN" and module_details[-1].bidirectional and module_details[-1].return_type == "hidden"))%}import torch {%- set ti.torch_imported = True -%}{%- endif %}{%- endfor %}
-{% for module_name, module_details in modules_details.items() -%}{% if actv.actv_imported == False and "get_activation_function" in module_details[0] %}from besser.generators.nn.utils_nn import get_activation_function {% set actv.actv_imported = True %}
+{% for module_name, module_details in modules_details.items() -%}{% if actv.actv_imported == False and "get_activation_function" in module_details[0] %}from besser.generators.nn.pytorch.utils_pytorch import get_activation_function {% set actv.actv_imported = True %}
 {% elif perm.imported == False and "Permute" in module_details[0] %}from besser.generators.nn.utils_nn import Permute {% set perm.imported = True %} 
 {% elif perm.imported == False and module_name.endswith("nn") %} {%- for subnn_key, subnn_value in module_details.items() %} {% if perm.imported == False and "Permute" in subnn_value[0] %}from besser.generators.nn.utils_nn import Permute {%- set perm.imported = True -%} {%- endif %}{%- endfor %}
 {%- endif %}{%- endfor %}

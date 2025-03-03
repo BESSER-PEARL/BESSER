@@ -129,20 +129,6 @@ def initialize_layer_vars(layer):
     return out_var_layer, in_var_layer, out_var_actv, in_var_actv
 
 
-def get_activation_function(activ):
-    """
-    It returns the activation function syntax if the user does not
-    explicitely provide the activation function name in the BUML model.
-    """
-    activ_func = {"relu": "ReLU", "leaky_relu": "LeakyReLU",
-                  "sigmoid": "Sigmoid", "softmax": "Softmax", "tanh": "Tanh"}
-    activ = activ.lower()
-
-    if activ in activ_func:
-        return f"nn.{activ_func[activ]}()"
-    raise ValueError(f"The activation function {activ} is invalid")
-
-
 
 def get_layer_syntax(setup_layer_cls, layer, modules_details,
                      in_layer, actv_func_synt):

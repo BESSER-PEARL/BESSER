@@ -71,7 +71,7 @@ layers_fixed_params = {
 }
 
 rnn_layers = ["LSTM", "GRU", "SimpleRNN",
-                  "Conv1D", "Conv2D", "Conv3D"]
+              "Conv1D", "Conv2D", "Conv3D"]
 
 config_list = ["batch_size", "epochs", "learning_rate",
                "optimizer", "metrics", "loss_function"]

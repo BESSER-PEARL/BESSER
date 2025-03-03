@@ -59,8 +59,10 @@ layers_fixed_params = {
     "BatchNorm3d": {"dimension": "3D"},
 }
 
-cnn_layers = ["LSTM", "GRU", "SimpleRNN",
-                  "Conv1d", "Conv2d", "Conv3d"]
+cnn_layers = ["Conv1d", "Conv2d", "Conv3d", "MaxPool1d", "MaxPool2d",
+              "MaxPool3d", "AvgPool1d", "AvgPool2d", "AvgPool3d",
+              "AdaptiveAvgPool1d", "AdaptiveAvgPool2d", "AdaptiveAvgPool3d",
+              "AdaptiveMaxPool1d", "AdaptiveMaxPool2d", "AdaptiveMaxPool3d"]
 
 config_list = ["batch_size", "epochs", "learning_rate",
                "optimizer", "metrics", "loss_function"]

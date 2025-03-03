@@ -55,20 +55,20 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                 {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
                     {%- if nested_creations %}
                         {%- if backend %}
-    {{ ns.end2.type.name.lower() }}s: Optional[List[Union["{{ ns.end2.type.name }}Create", int]]] = None  # N:M Relationship
+    {{ ns.end2.name }}: Optional[List[Union["{{ ns.end2.type.name }}Create", int]]] = None  # N:M Relationship
                         {% endif %}
                         {%- if not backend %}
-    {{ ns.end2.type.name.lower() }}s: Set["{{ ns.end2.type.name }}"]  # N:M Relationship
+    {{ ns.end2.name }}: Set["{{ ns.end2.type.name }}"]  # N:M Relationship
                         {%- endif %}
                     {%- else %}
-    {{ ns.end2.type.name.lower() }}s_id: List[int]
+    {{ ns.end2.name }}: List[int]
                     {%- endif %}
                 {%- endif %}
                 {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
-    {{ ns.end2.type.name.lower() }}_id: int  # N:1 Relationship
+    {{ ns.end2.name }}: int  # N:1 Relationship
                 {% endif %}
                 {%- if ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 and not backend %}
-    {{ ns.end2.type.name.lower() }}: "{{ ns.end2.type.name }}"  # 1:1 Relationship
+    {{ ns.end2.name }}: "{{ ns.end2.type.name }}"  # 1:1 Relationship
                 {% endif %}
             {%- endif %}
             {%- if not backend %}

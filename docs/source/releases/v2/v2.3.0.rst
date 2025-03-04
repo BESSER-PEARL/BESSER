@@ -1,0 +1,26 @@
+Version 2.3.0
+=============
+
+New Features
+------------
+
+* Feature metamodel extension: In B-UML you can define now feature models to define structured representations of the features (functionalities or characteristics) of a system, capturing their variability and dependencies.
+* JSON Schema generator: This generator consumes a B-UML structural model and produces the equivalent JSON schema that can be used to validate whether given JSON objects conform to the schema.
+
+Improvements
+------------
+
+* The `is_derived` boolean attribute was included for classes in the structural metamodel
+* New constraint included in structural models to avoid spaces in the names of objects
+* SQL Alchemy generator: Added a new attribute for the database management system (DBMS) to be used. Defaults to `sqlite`
+
+Fixes
+-----
+
+* Fixed issues: `228 <https://github.com/BESSER-PEARL/BESSER/issues/228>`_ `56 <https://github.com/BESSER-PEARL/BESSER/issues/56>`_ `226 <https://github.com/BESSER-PEARL/BESSER/issues/226>`_ `213 <https://github.com/BESSER-PEARL/BESSER/issues/213>`_ `8 <https://github.com/BESSER-PEARL/BESSER/issues/8>`_ `190 <https://github.com/BESSER-PEARL/BESSER/issues/190>`_ `220 <https://github.com/BESSER-PEARL/BESSER/issues/220>`_
+
+Documentation
+-------------
+
+* Updated SQLAlchemy generator docs
+* Feature metamodel docs added

@@ -77,7 +77,7 @@ constraintifElseSize: Constraint = Constraint(name ="constraintifElseSize", cont
 
 
 # Domain model definition
-library_model : DomainModel = DomainModel(name="Library model", types={library, book, author}, 
+library_model : DomainModel = DomainModel(name="Library_model", types={library, book, author}, 
                                           associations={lib_book_association, book_author_association},
                                           constraints={
                                               constraintBookPageNumber,
@@ -108,14 +108,14 @@ library_model : DomainModel = DomainModel(name="Library model", types={library, 
 library_obj_name: AttributeLink = AttributeLink(attribute=library_name, value=DataValue(classifier=StringType, value="Library test"))
 library_obj_address: AttributeLink = AttributeLink(attribute=address, value=DataValue(classifier=StringType, value="street 123"))
 # Library object
-library_obj: Object = Object(name="Library Object", classifier=library, slots=[library_obj_name, library_obj_address])
+library_obj: Object = Object(name="Library_Object", classifier=library, slots=[library_obj_name, library_obj_address])
 
 # Book object attributes
 book_obj_name: AttributeLink = AttributeLink(attribute=title, value=DataValue(classifier=StringType, value="Book tittle"))
 book_obj_pages: AttributeLink = AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=100))
 book_obj_release: AttributeLink = AttributeLink(attribute=release, value=DataValue(classifier=DateType, value=datetime.datetime(2020, 3, 15)))
 # Book object
-book_obj: Object = Object(name="Book Object", classifier=book, slots=[book_obj_name, book_obj_pages])
+book_obj: Object = Object(name="Book_Object", classifier=book, slots=[book_obj_name, book_obj_pages])
 
 # Book_2 object attributes
 
@@ -123,13 +123,13 @@ book_obj_name_2: AttributeLink = AttributeLink(attribute=title, value=DataValue(
 book_obj_pages_2: AttributeLink = AttributeLink(attribute=pages, value=DataValue(classifier=IntegerType, value=400))
 book_obj_release_2: AttributeLink = AttributeLink(attribute=release, value=DataValue(classifier=DateType, value=datetime.datetime(2024, 3, 15)))
 # Book object
-book_obj_2: Object = Object(name="Book 2 Object", classifier=book, slots=[book_obj_name_2, book_obj_pages_2])
+book_obj_2: Object = Object(name="Book_2_Object", classifier=book, slots=[book_obj_name_2, book_obj_pages_2])
 
 # Author object attributes
 author_obj_name: AttributeLink = AttributeLink(attribute=author_name, value=DataValue(classifier=StringType, value="John Doe"))
 author_obj_email: AttributeLink = AttributeLink(attribute=email, value=DataValue(classifier=StringType, value="john@doe.com"))
 # Author object
-author_obj: Object = Object(name="Author Object", classifier=author, slots=[author_obj_name, author_obj_email])
+author_obj: Object = Object(name="Author_Object", classifier=author, slots=[author_obj_name, author_obj_email])
 
 # Book object and Author object link
 book_link_end1: LinkEnd = LinkEnd(name="book_end1", association_end=publishes, object=book_obj)
@@ -154,4 +154,4 @@ library_book_link3: Link = Link(name="library_book_link3", association=book_auth
 
 
 # Object model definition
-object_model: ObjectModel = ObjectModel(name="Object model", instances={library_obj, author_obj, book_obj,book_obj_2}, links={author_book_link, library_book_link,author_book_link2,library_book_link3})
+object_model: ObjectModel = ObjectModel(name="Object_model", instances={library_obj, author_obj, book_obj,book_obj_2}, links={author_book_link, library_book_link,author_book_link2,library_book_link3})

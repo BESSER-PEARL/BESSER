@@ -5,6 +5,15 @@ from besser.utilities import sort_by_timestamp
 def test_named_element():
     named_element: NamedElement = NamedElement(name="element1")
     assert named_element.name == "element1"
+    assert named_element.is_derived == False  # Default value should be False
+    
+    # Test setting is_derived
+    named_element.is_derived = True
+    assert named_element.is_derived == True
+    
+    # Test initialization with is_derived
+    derived_element: NamedElement = NamedElement(name="element2", is_derived=True)
+    assert derived_element.is_derived == True
 
 
 def test_model_initialization():
@@ -52,6 +61,11 @@ def test_attribute_type_and_multiplicity_violation():
     with pytest.raises(ValueError) as excinfo:
         attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"),
                                         multiplicity=Multiplicity(2, 1))
+    assert "Invalid max multiplicity" in str(excinfo.value)
+
+    with pytest.raises(ValueError) as excinfo:
+        attribute1: Property = Property(name="attribute1", type=PrimitiveDataType("int"),
+                                        multiplicity=Multiplicity(0, 0))
     assert "Invalid max multiplicity" in str(excinfo.value)
 
     with pytest.raises(ValueError) as excinfo:
@@ -152,7 +166,7 @@ def test_generalization_set_initialization():
     class3: Class = Class(name="name3", attributes=None)
     generalization1: Generalization = Generalization(general=class1, specific=class2)
     generalization2: Generalization = Generalization(general=class1, specific=class3)
-    generalization_set: GeneralizationSet = GeneralizationSet(name="Generalization Set", generalizations={
+    generalization_set: GeneralizationSet = GeneralizationSet(name="GeneralizationSet", generalizations={
         generalization1,generalization2}, is_disjoint=True, is_complete=True)
     assert generalization_set.is_disjoint == True
     assert generalization_set.is_complete == True
@@ -243,3 +257,112 @@ def test_synonyms():
     assert class_a.synonyms[0] == "synonym1"
     assert class_a.synonyms[1] == "synonym2"
     assert class_a.synonyms[2] == "synonym3"
+
+# Testing all_parents and inherited_attributes methods
+# GrandParent (attr1)
+#           /           \
+#    Parent1 (attr2)    Parent2 (attr3)
+#          |
+#    Child (attr4)
+#~The test verifies:
+# The all_parents() method by checking that each class correctly identifies its parent classes up the hierarchy
+# The inherited_attributes() method by verifying that each class correctly inherits attributes from its parent classes
+# The all_attributes() method by checking that each class has both its own attributes and inherited attributes
+# The test checks multiple inheritance paths and ensures that attributes are correctly inherited through the class hierarchy.
+
+def test_all_parents_and_inherited_attributes():
+    # Create a hierarchy of classes with attributes
+    attribute1: Property = Property(name="attr1", type=PrimitiveDataType("int"), multiplicity=Multiplicity(1, 1))
+    attribute2: Property = Property(name="attr2", type=PrimitiveDataType("str"), multiplicity=Multiplicity(1, 1))
+    attribute3: Property = Property(name="attr3", type=PrimitiveDataType("bool"), multiplicity=Multiplicity(1, 1))
+    attribute4: Property = Property(name="attr4", type=PrimitiveDataType("float"), multiplicity=Multiplicity(1, 1))
+    
+    # Create classes with their attributes
+    class_grandparent: Class = Class(name="GrandParent", attributes={attribute1})
+    class_parent1: Class = Class(name="Parent1", attributes={attribute2})
+    class_parent2: Class = Class(name="Parent2", attributes={attribute3})
+    class_child: Class = Class(name="Child", attributes={attribute4})
+    
+    # Create generalizations
+    generalization1: Generalization = Generalization(general=class_grandparent, specific=class_parent1)
+    generalization2: Generalization = Generalization(general=class_grandparent, specific=class_parent2)
+    generalization3: Generalization = Generalization(general=class_parent1, specific=class_child)
+    
+    # Test all_parents()
+    assert class_child.parents() == {class_parent1}
+    assert class_child.all_parents() == {class_parent1, class_grandparent}
+    assert class_parent1.all_parents() == {class_grandparent}
+    assert class_parent2.all_parents() == {class_grandparent}
+    assert class_grandparent.all_parents() == set()
+    
+    # Test inherited_attributes()
+    assert class_child.inherited_attributes() == {attribute1, attribute2}
+    assert class_parent1.inherited_attributes() == {attribute1}
+    assert class_parent2.inherited_attributes() == {attribute1}
+    assert class_grandparent.inherited_attributes() == set()
+    
+    # Test all_attributes() which includes own and inherited attributes
+    assert class_child.all_attributes() == {attribute1, attribute2, attribute4}
+    assert class_parent1.all_attributes() == {attribute1, attribute2}
+    assert class_parent2.all_attributes() == {attribute1, attribute3}
+    assert class_grandparent.all_attributes() == {attribute1}
+
+def test_named_element_blank_spaces():
+    # Test that names with spaces raise ValueError
+    with pytest.raises(ValueError) as excinfo:
+        named_element = NamedElement(name="element with spaces")
+    assert "Name cannot contain blank spaces" in str(excinfo.value)
+
+    # Test that names without spaces work fine
+    named_element = NamedElement(name="element_without_spaces")
+    assert named_element.name == "element_without_spaces"
+
+def test_attribute_reassignment():
+    attribute1: Property = Property(name="attr1", type=StringType)
+    class1: Class = Class(name="Cls1", attributes={attribute1})
+    class2: Class = Class(name="Cls2", attributes=set())
+
+    # Reassign attribute1 to class2
+    class2.attributes = {attribute1}
+
+    assert attribute1 in class2.attributes
+    assert attribute1 not in class1.attributes
+    assert attribute1.owner == class2
+
+    def test_package_initialization():
+        # Create classes
+        class1: Class = Class(name="Class1", attributes=set())
+        class2: Class = Class(name="Class2", attributes=set())
+
+        # Create associations
+        aend1: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
+        aend2: Property = Property(name="end2", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
+        association1: BinaryAssociation = BinaryAssociation(name="Association1", ends={aend1, aend2})
+
+        aend3: Property = Property(name="end3", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
+        aend4: Property = Property(name="end4", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
+        association2: BinaryAssociation = BinaryAssociation(name="Association2", ends={aend3, aend4})
+
+        # Create enumeration
+        literal1: EnumerationLiteral = EnumerationLiteral(name="Literal1", owner=None)
+        enumeration: Enumeration = Enumeration(name="Enumeration", literals={literal1, literal2})
+
+        # Create package
+        package: Package = Package(name="Package1", elements={class1, class2, association1, association2,enumeration})
+
+        # Test get_classes method
+        classes = package.get_classes()
+        assert len(classes) == 2
+        assert class1 in classes
+        assert class2 in classes
+
+        # Test get_associations method
+        associations = package.get_associations()
+        assert len(associations) == 2
+        assert association1 in associations
+        assert association2 in associations
+
+        # Test get_enumerations method
+        enumerations = package.get_enumerations()
+        assert len(enumerations) == 1
+        assert enumeration in enumerations

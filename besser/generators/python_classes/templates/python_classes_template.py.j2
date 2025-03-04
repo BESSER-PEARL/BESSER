@@ -1,7 +1,7 @@
 {% import "class_parameters.py.j2" as class_parameters %}
 from datetime import datetime, date, time
 {% set ns = namespace(abstract_found=false) -%}
-{% for class in domain.get_classes() -%}
+{% for class in domain.classes_sorted_by_inheritance() -%}
     {% if class.is_abstract -%}
         {% set ns.abstract_found = true -%}
     {% endif -%}    
@@ -26,29 +26,29 @@ class {{ enum.name }}(Enum):
 # Classes are defined here
 ############################################
 {# Two newlines are added here unconditionally #}
-{% for class in domain.get_classes() %}
+{% for class in domain.classes_sorted_by_inheritance() %}
 class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC){% endif %}:
-    def __init__({{ class_parameters.init_parameters(class) }}):
-        {{ class_parameters.init_parameters_definition(class) }}
+    def __init__({{ class_parameters.init_parameters(class, sort_by_timestamp) }}):
+        {{ class_parameters.init_parameters_definition(class, sort_by_timestamp) }}
 
     {%- for attribute in class.attributes %}
     @property
     def {{ attribute.name }}(self) -> {{ attribute.type.name }}:
         return self.__{{ attribute.name }}
-    
+
     @{{ attribute.name }}.setter
     def {{ attribute.name }}(self, {{ attribute.name }}: {{ attribute.type.name }}):
         self.__{{ attribute.name }} = {{ attribute.name }}
-    {% endfor -%}
+{% endfor -%}
 
     {% for end in class.association_ends() %}{% if end.is_navigable == True %}
     @property
     def {{ end.name }}(self):
         return self.__{{ end.name }}
-    
+
     @{{ end.name }}.setter
     def {{ end.name }}(self, {{ end.name }}):
         self.__{{ end.name }} = {{ end.name }}
-    {% endif -%}{% endfor -%}
+{% endif -%}{% endfor -%}
 
 {% endfor %}

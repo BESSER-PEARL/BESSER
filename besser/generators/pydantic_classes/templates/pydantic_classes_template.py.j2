@@ -62,9 +62,9 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                         {%- endif %}
                     {%- else %}
     {{ ns.end2.name }}: List[int]
-                    {%- endif %}
+                    {% endif %}
                 {%- endif %}
-                {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+                {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
     {{ ns.end2.name }}: int  # N:1 Relationship
                 {% endif %}
                 {%- if ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 and not backend %}

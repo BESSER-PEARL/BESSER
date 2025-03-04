@@ -37,7 +37,7 @@ written_by: Property = Property(name="writtenBy", type=author, multiplicity=Mult
 book_author_association: BinaryAssociation = BinaryAssociation(name="book_author_assoc", ends={written_by, publishes})
 
 # Domain model definition
-library_model: DomainModel = DomainModel(name="LibraryModel", types={library, book, author},
+library_model: DomainModel = DomainModel(name="Library_model", types={library, book, author},
                                          associations={lib_book_association, book_author_association})
 
 # Getting the attributes of the Book class

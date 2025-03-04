@@ -10,7 +10,6 @@ textX>=3.1.1
 jinja2>=3.1.2
 antlr4-python3-runtime>=4.13.1
 requests>=2.31.0
-fastapi>=0.115.9
 pydantic>=2.6.3
 uvicorn>=0.28.0
 SQLAlchemy>=2.0.29

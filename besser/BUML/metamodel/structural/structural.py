@@ -6,11 +6,22 @@ import time
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
 
-class Element(ABC):
+class ModelElement(ABC):
+    """ModelElement is the Superclass of all structural model elements.
 
-    def __init__(self, timestamp: datetime = None):
+    Args:
+        timestamp (datetime): Object creation datetime (default is current time).
+        is_derived (bool): Indicates whether the element is derived (False as default).
+    
+    Attributes:
+        timestamp (datetime): Object creation datetime (default is current time).
+        is_derived (bool): Indicates whether the element is derived (False as default).
+    """
+
+    def __init__(self, timestamp: datetime = None, is_derived: bool = False):
         self.timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
                          timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
+        self.is_derived: bool = is_derived
 
     @property
     def timestamp(self) -> datetime:
@@ -22,8 +33,18 @@ class Element(ABC):
         """str: Set the timestamp of the element."""
         self.__timestamp = timestamp
 
-class NamedElement(Element):
-    """The NamedElement is the Superclass of all structural elements with a name.
+    @property
+    def is_derived(self) -> bool:
+        """bool: Get whether the element is derived."""
+        return self.__is_derived
+
+    @is_derived.setter
+    def is_derived(self, is_derived: bool):
+        """bool: Set whether the element is derived."""
+        self.__is_derived = is_derived
+
+class NamedElement(ModelElement):
+    """NamedElement represent a structural element with a name.
 
     Args:
         name (str): The name of the named element
@@ -42,11 +63,10 @@ class NamedElement(Element):
 
     def __init__(self, name: str, timestamp: datetime = None, synonyms: List[str] = None,
                  visibility: str = "public", is_derived: bool = False):
-        super().__init__(timestamp)
+        super().__init__(timestamp, is_derived)
         self.name: str = name
         self.synonyms: List[str] = synonyms
         self.visibility: str = visibility
-        self.is_derived: bool = is_derived
 
     @property
     def name(self) -> str:
@@ -92,16 +112,6 @@ class NamedElement(Element):
     def synonyms(self, synonyms: List[str]):
         """List[str]: Set the list of synonyms of the named element."""
         self.__synonyms = synonyms
-
-    @property
-    def is_derived(self) -> bool:
-        """bool: Get whether the element is derived."""
-        return self.__is_derived
-
-    @is_derived.setter
-    def is_derived(self, is_derived: bool):
-        """bool: Set whether the element is derived."""
-        self.__is_derived = is_derived
 
 class Type(NamedElement):
     """Type is the Superclass of classes and data types in the model.
@@ -349,7 +359,7 @@ class TypedElement(NamedElement):
         """Type: Set the type of the typed element."""
         self.__type = type
 
-class Multiplicity(Element):
+class Multiplicity(ModelElement):
     """Represents the multiplicity of a Property.
 
     It consists of a minimum and maximum value, indicating the allowed range.
@@ -357,13 +367,16 @@ class Multiplicity(Element):
     Args:
         min_multiplicity (int): The minimum multiplicity.
         max_multiplicity (int): The maximum multiplicity. Use "*" for unlimited.
+        is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
 
     Attributes:
         min (int): The minimum multiplicity.
         max (int): The maximum multiplicity. Use "*" for unlimited.
+        is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, min_multiplicity: int, max_multiplicity: int):
+    def __init__(self, min_multiplicity: int, max_multiplicity: int, is_derived: bool = False):
+        super().__init__(is_derived=is_derived)
         self.min: int = min_multiplicity
         self.max: int = max_multiplicity
 
@@ -407,7 +420,7 @@ class Multiplicity(Element):
         self.__max = max_multiplicity
 
     def __repr__(self):
-        return f'Multiplicity({self.min}, {self.max})'
+        return f'Multiplicity({self.min}, {self.max}, is_derived={self.is_derived})'
 
 
 # Properties are owned by a class or an association and point to a type with a multiplicity
@@ -1097,7 +1110,7 @@ class AssociationClass(Class):
             f'{self.synonyms}, is_derived={self.is_derived})'
         )
 
-class Generalization(Element):
+class Generalization(ModelElement):
     """Represents a generalization relationship between two classes.
 
     A Generalization is a relationship between two classes, where one class (specific)
@@ -1107,15 +1120,17 @@ class Generalization(Element):
         general (Class): The general (parent) class in the generalization relationship.
         specific (Class): The specific (child) class in the generalization relationship.
         timestamp (datetime): Object creation datetime (default is current time).
+        is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     
     Attributes:
         general (Class): The general (parent) class in the generalization relationship.
         specific (Class): The specific (child) class in the generalization relationship.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
+        is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, general: Class, specific: Class, timestamp: int = None):
-        super().__init__(timestamp)
+    def __init__(self, general: Class, specific: Class, timestamp: int = None, is_derived: bool = False):
+        super().__init__(timestamp, is_derived)
         self.general: Class = general
         self.specific: Class = specific
 
@@ -1153,7 +1168,7 @@ class Generalization(Element):
         self.__specific = specific
 
     def __repr__(self):
-        return f'Generalization({self.general}, {self.specific}, {self.timestamp})'
+        return f'Generalization({self.general}, {self.specific}, {self.timestamp}, is_derived={self.is_derived})'
 
 class GeneralizationSet(NamedElement):
     """Represents a set of generalization relationships.
@@ -1352,15 +1367,32 @@ class Model(NamedElement):
         timestamp (datetime): Object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        elements (set[ModelElement]): Set of ModelElements in the Model.
         
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the model.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        elements (set[ModelElement]): Set of ModelElements in the Model.
     """
-    def __init__(self, name: str, timestamp: int = None, synonyms: List[str] = None, is_derived: bool = False):
+    def __init__(self, name: str, timestamp: int = None, synonyms: List[str] = None, is_derived: bool = False,
+                elements: set[ModelElement] = None):
         super().__init__(name, timestamp, synonyms, is_derived=is_derived)
+        self.elements: set[ModelElement] = elements if elements is not None else set()
+
+    @property
+    def elements(self) -> set[ModelElement]:
+        """set[ModelElement]: Get the set of model elements in the model."""
+        return self.__elements
+
+    @elements.setter
+    def elements(self, elements: set[ModelElement]):
+        """set[ModelElement]: Set the set of model elements in the model."""
+        if elements is not None:
+            self.__elements = elements
+        else:
+            self.__elements = set()
 
 class DomainModel(Model):
     """A domain model comprises a number of types, associations, 
@@ -1376,6 +1408,7 @@ class DomainModel(Model):
         timestamp (datetime): Object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the domain model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        elements (set[ModelElement]): Set of ModelElements in the Model. This property is derived (auto-calculated).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the domain model.
@@ -1387,18 +1420,30 @@ class DomainModel(Model):
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the domain model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        elements (set[ModelElement]): Set of ModelElements in the Model. This property is derived (auto-calculated).
     """
 
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None,
                 generalizations: set[Generalization] = None, packages: set[Package] = None,
                 constraints: set[Constraint] = None, timestamp: int = None, synonyms: List[str] = None,
-                is_derived: bool = False):
-        super().__init__(name, timestamp, synonyms, is_derived=is_derived)
+                is_derived: bool = False, elements: set[ModelElement] = None):
+        super().__init__(name, timestamp, synonyms, is_derived=is_derived, elements=elements)
+        # A flag to prevent premature `_update_elements` calls during initialization
+        self.__initializing = True
         self.types: set[Type] = types if types is not None else set()
         self.packages: set[Package] = packages if packages is not None else set()
         self.constraints: set[Constraint] = constraints if constraints is not None else set()
         self.associations: set[Association] = associations if associations is not None else set()
         self.generalizations: set[Generalization] = generalizations if generalizations is not None else set()
+        # initialization is done, we update elements
+        self.__initializing = False
+        self._update_elements()
+
+    def _update_elements(self):
+        """Recalculates the elements property by combining all relevant sets."""
+        if not self.__initializing:
+            self.elements = set(self.types) | set(self.packages) | set(self.constraints) \
+                            | set(self.associations) | set(self.generalizations)
 
     @property
     def types(self) -> set[Type]:
@@ -1425,6 +1470,7 @@ class DomainModel(Model):
         if duplicates:
             raise ValueError(f"The model cannot have types with duplicate names: {', '.join(duplicates)}")
         self.__types = types
+        self._update_elements()
 
     def get_type_by_name(self, type_name: str) -> Type:
         """Type: Gets an Type by name."""
@@ -1465,6 +1511,8 @@ class DomainModel(Model):
         else:
             self.__associations = set()
 
+        self._update_elements()
+
     def add_association(self, association: Association):
         """Association: Add an association to the set of associations of the model."""
         self.associations = self.associations | {association}
@@ -1481,6 +1529,8 @@ class DomainModel(Model):
             self.__generalizations = generalizations
         else:
             self.__generalizations = set()
+
+        self._update_elements()
 
     def add_generalization(self, generalization: Generalization):
         """Generalization: Add a generalization to the set of generalizations of the model."""
@@ -1519,6 +1569,8 @@ class DomainModel(Model):
         else:
             self.__packages = set()
 
+        self._update_elements()
+
     @property
     def constraints(self) -> set[Constraint]:
         """set[Constraint]: Get the set of constraints in the domain model."""
@@ -1539,6 +1591,8 @@ class DomainModel(Model):
             self.__constraints = constraints
         else:
             self.__constraints = set()
+
+        self._update_elements()
 
     def get_classes(self) -> set[Class]:
         """set[Class]: Get all classes within the domain model."""

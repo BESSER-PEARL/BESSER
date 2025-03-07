@@ -18,6 +18,7 @@ class MemberType(Enum):
 
 library_output = """
 class Library:
+
     def __init__(self, name: str, address: str, Book_end: set["Book"]):
         self.name = name
         self.address = address
@@ -26,6 +27,7 @@ class Library:
 
 author_output = """
 class Author:
+
     def __init__(self, email: str, member: MemberType, Book_end: set["Book"]):
         self.email = email
         self.member = member
@@ -34,6 +36,7 @@ class Author:
 
 book_output = """
 class Book:
+
     def __init__(self, release: date, title: str, pages: int, Library_end: "Library", writtenBy: set["Author"]):
         self.release = release
         self.title = title

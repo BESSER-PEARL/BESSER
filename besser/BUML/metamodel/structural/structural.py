@@ -62,7 +62,7 @@ class NamedElement(Element):
             ValueError: If the name contains blank spaces.
         """
         if ' ' in name:
-            raise ValueError("Name cannot contain blank spaces")
+            raise ValueError(f"'{name}' is invalid. Name cannot contain spaces.")
         self.__name = name
 
     @property

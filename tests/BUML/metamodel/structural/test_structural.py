@@ -345,7 +345,7 @@ def test_attribute_reassignment():
 
         # Create enumeration
         literal1: EnumerationLiteral = EnumerationLiteral(name="Literal1", owner=None)
-        enumeration: Enumeration = Enumeration(name="Enumeration", literals={literal1, literal2})
+        enumeration: Enumeration = Enumeration(name="Enumeration", literals={literal1})
 
         # Create package
         package: Package = Package(name="Package1", elements={class1, class2, association1, association2,enumeration})

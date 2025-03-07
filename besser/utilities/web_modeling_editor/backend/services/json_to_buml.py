@@ -226,7 +226,11 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel, counter: i
 
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""
-    domain_model = DomainModel("Class Diagram")
+    title = json_data.get('diagramTitle', '')
+    if ' ' in title:
+        title = title.replace(' ', '_')
+
+    domain_model = DomainModel(title)
 
     # Get elements and OCL constraints from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})

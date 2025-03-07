@@ -7,6 +7,7 @@ class DjangoConfig(BaseModel):
     containerization: bool = False
 
 class ClassDiagramInput(BaseModel):
+    diagramTitle: str = "Diagram"
     elements: Dict[str, Any]
     generator: Optional[str] = None
     config: Optional[DjangoConfig] = None

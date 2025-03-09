@@ -17,7 +17,9 @@
             {%- endfor %})
         {% endif %}
         {%- for attribute in sort_by_timestamp(class.attributes) %}self.{{ attribute.name }} = {{ attribute.name }}
+        {% endfor %}
+        {%- for end in sort_by_timestamp(class.association_ends()) %}
+        {%- if end.is_navigable == True %}self.{{ end.name }} = {{ end.name }}
+        {% endif -%}
         {% endfor -%}
-        {% for end in sort_by_timestamp(class.association_ends()) %}{% if end.is_navigable == True %}self.{{ end.name }} = {{ end.name }} 
-{% endif %}{% endfor -%}
 {% endmacro -%}

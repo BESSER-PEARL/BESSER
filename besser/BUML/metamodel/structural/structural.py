@@ -6,8 +6,8 @@ import time
 # constant
 UNLIMITED_MAX_MULTIPLICITY = 9999
 
-class ModelElement(ABC):
-    """ModelElement is the Superclass of all structural model elements.
+class Element(ABC):
+    """Element is the Superclass of all structural model elements.
 
     Args:
         timestamp (datetime): Object creation datetime (default is current time).
@@ -43,7 +43,7 @@ class ModelElement(ABC):
         """bool: Set whether the element is derived."""
         self.__is_derived = is_derived
 
-class NamedElement(ModelElement):
+class NamedElement(Element):
     """NamedElement represent a structural element with a name.
 
     Args:
@@ -359,7 +359,7 @@ class TypedElement(NamedElement):
         """Type: Set the type of the typed element."""
         self.__type = type
 
-class Multiplicity(ModelElement):
+class Multiplicity(Element):
     """Represents the multiplicity of a Property.
 
     It consists of a minimum and maximum value, indicating the allowed range.
@@ -1110,7 +1110,7 @@ class AssociationClass(Class):
             f'{self.synonyms}, is_derived={self.is_derived})'
         )
 
-class Generalization(ModelElement):
+class Generalization(Element):
     """Represents a generalization relationship between two classes.
 
     A Generalization is a relationship between two classes, where one class (specific)
@@ -1367,28 +1367,28 @@ class Model(NamedElement):
         timestamp (datetime): Object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
-        elements (set[ModelElement]): Set of ModelElements in the Model.
+        elements (set[Element]): Set of model Elements in the Model.
         
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the model.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
-        elements (set[ModelElement]): Set of ModelElements in the Model.
+        elements (set[Element]): Set of model Elements in the Model.
     """
     def __init__(self, name: str, timestamp: int = None, synonyms: List[str] = None, is_derived: bool = False,
-                elements: set[ModelElement] = None):
+                elements: set[Element] = None):
         super().__init__(name, timestamp, synonyms, is_derived=is_derived)
-        self.elements: set[ModelElement] = elements if elements is not None else set()
+        self.elements: set[Element] = elements if elements is not None else set()
 
     @property
-    def elements(self) -> set[ModelElement]:
-        """set[ModelElement]: Get the set of model elements in the model."""
+    def elements(self) -> set[Element]:
+        """set[Element]: Get the set of model elements in the model."""
         return self.__elements
 
     @elements.setter
-    def elements(self, elements: set[ModelElement]):
-        """set[ModelElement]: Set the set of model elements in the model."""
+    def elements(self, elements: set[Element]):
+        """set[Element]: Set the set of model elements in the model."""
         if elements is not None:
             self.__elements = elements
         else:
@@ -1408,7 +1408,7 @@ class DomainModel(Model):
         timestamp (datetime): Object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the domain model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
-        elements (set[ModelElement]): Set of ModelElements in the Model. This property is derived (auto-calculated).
+        elements (set[Element]): Set of model Elements in the Model. This property is derived (auto-calculated).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the domain model.
@@ -1420,13 +1420,13 @@ class DomainModel(Model):
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the domain model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
-        elements (set[ModelElement]): Set of ModelElements in the Model. This property is derived (auto-calculated).
+        elements (set[Element]): Set of model Elements in the Model. This property is derived (auto-calculated).
     """
 
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None,
                 generalizations: set[Generalization] = None, packages: set[Package] = None,
                 constraints: set[Constraint] = None, timestamp: int = None, synonyms: List[str] = None,
-                is_derived: bool = False, elements: set[ModelElement] = None):
+                is_derived: bool = False, elements: set[Element] = None):
         super().__init__(name, timestamp, synonyms, is_derived=is_derived, elements=elements)
         # A flag to prevent premature `_update_elements` calls during initialization
         self.__initializing = True

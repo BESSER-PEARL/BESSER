@@ -366,14 +366,39 @@ def process_class_diagram(json_data):
             source_multiplicity = parse_multiplicity(source.get("multiplicity", "1"))
             target_multiplicity = parse_multiplicity(target.get("multiplicity", "1"))
 
+            source_role = source.get("role")
+            if not source_role:
+                source_role = source_class.name.lower()
+                existing_roles = {end.name for assoc in domain_model.associations for end in assoc.ends}
+
+                if source_role in existing_roles:
+                    counter = 1
+                    while f"{source_role}_{counter}" in existing_roles:
+                        counter += 1
+                    source_role = f"{source_role}_{counter}"
+
+
             source_property = Property(
-                name=source.get("role") or str(source_class.name),
+                name=source_role,
                 type=source_class,
                 multiplicity=source_multiplicity,
                 is_navigable=source_navigable
             )
+
+            target_role = target.get("role")
+            if not target_role:
+                target_role = target_class.name.lower()
+                existing_roles = {end.name for assoc in domain_model.associations for end in assoc.ends}
+
+                if target_role in existing_roles:
+                    counter = 1
+                    while f"{target_role}_{counter}" in existing_roles:
+                        counter += 1
+                    target_role = f"{target_role}_{counter}"
+
+
             target_property = Property(
-                name=target.get("role") or str(target_class.name),
+                name=target_role,
                 type=target_class,
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,

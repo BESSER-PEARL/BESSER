@@ -382,6 +382,13 @@ def process_class_diagram(json_data):
 
             association_name = relationship.get("name") or f"{source_class.name}_{target_class.name}"
 
+            # Check if association name already exists and add increment if needed
+            if association_name in [assoc.name for assoc in domain_model.associations]:
+                counter = 1
+                while f"{association_name}_{counter}" in [assoc.name for assoc in domain_model.associations]:
+                    counter += 1
+                association_name = f"{association_name}_{counter}"
+
             association = BinaryAssociation(
                 name=association_name,
                 ends={source_property, target_property}

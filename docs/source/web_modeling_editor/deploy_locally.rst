@@ -1,5 +1,5 @@
 Deploying Locally
-================
+=================
 
 The BESSER web editor can be launched as Docker containers using `Docker Compose <https://docs.docker.com/compose/>`_.
 

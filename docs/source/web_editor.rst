@@ -2,7 +2,7 @@ Web Modeling Editor
 ===================
 
 One of the practical ways to use BESSER is through the Web Modeling Editor, where you can rapidly 
-design :doc:`B-UML <../buml_language>` models and try the :doc:`BESSER code generators <../generators>`.
+design :doc:`B-UML <../buml_language>` models and use the :doc:`BESSER code generators <../generators>`.
 
 .. note::
    The BESSER Web Editor is now live and available at `editor.besser-pearl.org <https://editor.besser-pearl.org>`_. You can access and use it directly in your browser without installing anything locally.

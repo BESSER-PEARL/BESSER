@@ -398,4 +398,4 @@ def test_domain_model_elements_recalculation():
 
     # Verify elements property
     expected_elements = {class1, class2, association1, generalization1, package1, constraint1}
-    assert domain_model.elements == (expected_elements | primitive_data_types)
+    assert domain_model.elements == (expected_elements | data_types)

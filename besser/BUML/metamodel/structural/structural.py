@@ -182,7 +182,7 @@ class PrimitiveDataType(DataType):
                         Allowed values are int, float, str, bool, time, date, 
                         datetime, timedelta, and any.
         """
-        if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta', 'any']:
+        if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
             raise ValueError("Invalid primitive data type")
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
@@ -198,9 +198,9 @@ TimeType = PrimitiveDataType("time")
 DateType = PrimitiveDataType("date")
 DateTimeType = PrimitiveDataType("datetime")
 TimeDeltaType = PrimitiveDataType("timedelta")
-AnyType = PrimitiveDataType("any")
-primitive_data_types = {StringType, IntegerType, FloatType, BooleanType,
-                        TimeType, DateType, DateTimeType, TimeDeltaType, AnyType}
+AnyType = DataType("any")
+data_types = {StringType, IntegerType, FloatType, BooleanType,
+              TimeType, DateType, DateTimeType, TimeDeltaType, AnyType}
 
 class EnumerationLiteral(NamedElement):
     """Class representing an enumeration literal.
@@ -1458,7 +1458,7 @@ class DomainModel(Model):
         Raises:
             ValueError: if there are two types with the same name.
         """
-        types = types | primitive_data_types
+        types = types | data_types
         names_seen = set()
         duplicates = set()
 

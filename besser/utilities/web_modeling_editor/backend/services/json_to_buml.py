@@ -58,7 +58,7 @@ def parse_attribute(attribute_name, domain_model=None):
         return None, None, None
     return visibility, name, attr_type
 
-def parse_method(method_str):
+def parse_method(method_str, domain_model=None):
     """
     Parse a method string to extract visibility, name, parameters, and return type.
     Examples:
@@ -140,12 +140,17 @@ def parse_method(method_str):
             elif ':' in param:
                 param_name, param_type = [p.strip() for p in param.split(':')]
 
-                if not VALID_PRIMITIVE_TYPES.get(param_type.lower()):
-                    raise ValueError(f"Invalid type '{param_type}' for the parameter '{param_name}'")
-                
+                # Handle the type
+                if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == param_type for t in domain_model.types):
+                    type_param = param_type
+                else:
+                    type_param = VALID_PRIMITIVE_TYPES.get(param_type.lower(), None)
+                    if type_param is None:
+                        raise ValueError(f"Invalid type '{param_type}' for the parameter '{param_name}'")
+
                 param_dict.update({
                     'name': param_name,
-                    'type': VALID_PRIMITIVE_TYPES.get(param_type.lower(), param_type)
+                    'type': type_param
                 })
             else:
                 param_dict['name'] = param.strip()
@@ -156,11 +161,12 @@ def parse_method(method_str):
     if return_type:
         return_type = return_type.strip()
         # Keep the original return type if it's not a primitive type
-        # (it might be a class name)
-        if return_type.lower() in VALID_PRIMITIVE_TYPES:
-            return_type = VALID_PRIMITIVE_TYPES[return_type.lower()]
+        if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == return_type for t in domain_model.types):
+            type_return = return_type
         else:
-            raise ValueError(f"Invalid return type '{return_type}' for the method '{method_name}'")
+            type_return = VALID_PRIMITIVE_TYPES.get(return_type.lower(), None)
+            if type_return is None:
+                raise ValueError(f"Invalid return type '{return_type}' for the method '{method_name}'")
 
     return visibility, method_name, parameters, return_type
 
@@ -301,7 +307,7 @@ def process_class_diagram(json_data):
             for method_id in element.get("methods", []):
                 method = elements.get(method_id)
                 if method:
-                    visibility, name, parameters, return_type = parse_method(method.get("name", ""))
+                    visibility, name, parameters, return_type = parse_method(method.get("name", ""), domain_model)
 
                     # Create method parameters
                     method_params = []

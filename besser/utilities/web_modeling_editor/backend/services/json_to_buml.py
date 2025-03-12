@@ -32,7 +32,9 @@ def parse_attribute(attribute_name, domain_model=None):
         if domain_model and any(isinstance(t, Enumeration) and t.name == type_part for t in domain_model.types):
             attr_type = type_part
         else:
-            attr_type = VALID_PRIMITIVE_TYPES.get(type_part.lower(), "str")
+            attr_type = VALID_PRIMITIVE_TYPES.get(type_part.lower(), None)
+            if attr_type is None:
+                raise ValueError(f"Invalid data type: {type_part}")
     else:
         # Handle case without type specification
         parts = attribute_name.split()

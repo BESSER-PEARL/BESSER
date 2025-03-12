@@ -29,12 +29,12 @@ def parse_attribute(attribute_name, domain_model=None):
                 name = name_parts[0]
 
         # Handle the type
-        if domain_model and any(isinstance(t, Enumeration) and t.name == type_part for t in domain_model.types):
+        if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == type_part for t in domain_model.types):
             attr_type = type_part
         else:
             attr_type = VALID_PRIMITIVE_TYPES.get(type_part.lower(), None)
             if attr_type is None:
-                raise ValueError(f"Invalid data type: {type_part}")
+                raise ValueError(f"Invalid type: {type_part}")
     else:
         # Handle case without type specification
         parts = attribute_name.split()
@@ -139,6 +139,10 @@ def parse_method(method_str):
             # Handle parameter with type annotation
             elif ':' in param:
                 param_name, param_type = [p.strip() for p in param.split(':')]
+
+                if not VALID_PRIMITIVE_TYPES.get(param_type.lower()):
+                    raise ValueError(f"Invalid type '{param_type}' for the parameter '{param_name}'")
+                
                 param_dict.update({
                     'name': param_name,
                     'type': VALID_PRIMITIVE_TYPES.get(param_type.lower(), param_type)
@@ -155,6 +159,8 @@ def parse_method(method_str):
         # (it might be a class name)
         if return_type.lower() in VALID_PRIMITIVE_TYPES:
             return_type = VALID_PRIMITIVE_TYPES[return_type.lower()]
+        else:
+            raise ValueError(f"Invalid return type '{return_type}' for the method '{method_name}'")
 
     return visibility, method_name, parameters, return_type
 

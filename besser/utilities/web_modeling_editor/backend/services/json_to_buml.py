@@ -250,10 +250,11 @@ def process_class_diagram(json_data):
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})
 
-    # First process enumerations to have them available for attribute types
+    # FIRST PASS: Process all type declarations (enumerations and classes)
+    # 1. First process enumerations
     for element_id, element in elements.items():
         if element.get("type") == "Enumeration":
-            element_name = element.get("name", "").strip()  # Add strip() here
+            element_name = element.get("name", "").strip()
             if not element_name or any(char.isspace() for char in element_name):
                 raise HTTPException(
                     status_code=400, 
@@ -267,13 +268,11 @@ def process_class_diagram(json_data):
                     literals.add(literal_obj)
             enum = Enumeration(name=element_name, literals=literals)
             domain_model.types.add(enum)
-
-    # Then process classes with attributes that might reference enumerations
+    
+    # 2. Then create all class structures without attributes or methods
     for element_id, element in elements.items():
-        # Check for both regular Class and AbstractClass
         if element.get("type") in ["Class", "AbstractClass"]:
-            # Set is_abstract based on the type
-            class_name = element.get("name", "").strip()  # Add strip() here
+            class_name = element.get("name", "").strip()
             if not class_name or any(char.isspace() for char in class_name):
                 raise HTTPException(
                     status_code=400, 
@@ -282,9 +281,19 @@ def process_class_diagram(json_data):
             is_abstract = element.get("type") == "AbstractClass"
             try:
                 cls = Class(name=class_name, is_abstract=is_abstract)
+                domain_model.types.add(cls)
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 
+    # SECOND PASS: Now add attributes and methods to classes
+    for element_id, element in elements.items():
+        if element.get("type") in ["Class", "AbstractClass"]:
+            class_name = element.get("name", "").strip()
+            cls = domain_model.get_class_by_name(class_name)
+            
+            if not cls:
+                continue  # Skip if class wasn't created successfully in first pass
+                
             # Add attributes
             attribute_names = set()
             for attr_id in element.get("attributes", []):
@@ -296,9 +305,16 @@ def process_class_diagram(json_data):
                     if name in attribute_names:
                         raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
                     attribute_names.add(name)
-                    if any(isinstance(t, Enumeration) and t.name == attr_type for t in domain_model.types):
-                        enum_type = next(t for t in domain_model.types if isinstance(t, Enumeration) and t.name == attr_type)
-                        property_ = Property(name=name, type=enum_type, visibility=visibility)
+                    
+                    # Find the type in the domain model
+                    type_obj = None
+                    for t in domain_model.types:
+                        if isinstance(t, (Enumeration, Class)) and t.name == attr_type:
+                            type_obj = t
+                            break
+                    
+                    if type_obj:
+                        property_ = Property(name=name, type=type_obj, visibility=visibility)
                     else:
                         property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility)
                     cls.attributes.add(property_)
@@ -312,10 +328,21 @@ def process_class_diagram(json_data):
                     # Create method parameters
                     method_params = []
                     for param in parameters:
-                        param_type = PrimitiveDataType(param['type'])
+                        param_type_obj = None
+                        param_type_name = param['type']
+                        
+                        # Try to find parameter type in domain model
+                        for t in domain_model.types:
+                            if isinstance(t, (Enumeration, Class)) and t.name == param_type_name:
+                                param_type_obj = t
+                                break
+                                
+                        if not param_type_obj:
+                            param_type_obj = PrimitiveDataType(param_type_name)
+                            
                         param_obj = Property(
                             name=param['name'],
-                            type=param_type,
+                            type=param_type_obj,
                             visibility='public'
                         )
                         if 'default' in param:
@@ -328,17 +355,22 @@ def process_class_diagram(json_data):
                         visibility=visibility,
                         parameters=method_params
                     )
+                    
                     # Handle return type
                     if return_type:
-                        # Check if return type is a class in the domain model
-                        return_class = domain_model.get_class_by_name(return_type)
-                        if return_class:
-                            method_obj.type = return_class
+                        return_type_obj = None
+                        # Find return type in domain model
+                        for t in domain_model.types:
+                            if isinstance(t, (Enumeration, Class)) and t.name == return_type:
+                                return_type_obj = t
+                                break
+                                
+                        if return_type_obj:
+                            method_obj.type = return_type_obj
                         else:
-                            # If not a class, treat as primitive type
                             method_obj.type = PrimitiveDataType(return_type)
+                    
                     cls.methods.add(method_obj)
-            domain_model.types.add(cls)
 
     # Processing relationships (Associations, Generalizations, and Compositions)
     for rel_id, relationship in relationships.items():

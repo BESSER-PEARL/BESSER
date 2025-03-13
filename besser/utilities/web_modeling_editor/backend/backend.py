@@ -152,7 +152,6 @@ async def generate_output(input_data: ClassDiagramInput):
     except Exception as e:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
-        print(f"Error during file generation or response: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 @api.post("/export-buml")
@@ -196,7 +195,6 @@ async def export_buml(input_data: ClassDiagramInput):
         # Handle unexpected exceptions
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
-        print(f"Error during BUML export: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 @api.post("/get-json-model")

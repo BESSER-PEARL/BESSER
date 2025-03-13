@@ -278,7 +278,7 @@ async def check_ocl(input_data: ClassDiagramInput):
         print(f"Error in check_ocl: {str(e)}")  # Debug print
         return {
             "success": False,
-            "message": f"Error checking OCL constraints: {str(e)}"
+            "message": f"{str(e)}"
         }
 
 #Mount the `api` app under `/besser_api` 

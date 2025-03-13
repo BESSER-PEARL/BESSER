@@ -461,7 +461,7 @@ class CNN(Layer):
         return (
             f'CNN({self.name}, {self.actv_func}, {self.kernel_dim}, '
             f'{self.stride_dim}, {self.padding_amount}, {self.padding_type}, '
-            f'{self.permute_in}, {self.permute_out}'
+            f'{self.permute_in}, {self.permute_out}, '
             f'{self.name_module_input}, {self.input_reused})'
         )
 

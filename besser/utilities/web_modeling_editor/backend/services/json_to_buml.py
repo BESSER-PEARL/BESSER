@@ -29,10 +29,12 @@ def parse_attribute(attribute_name, domain_model=None):
                 name = name_parts[0]
 
         # Handle the type
-        if domain_model and any(isinstance(t, Enumeration) and t.name == type_part for t in domain_model.types):
+        if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == type_part for t in domain_model.types):
             attr_type = type_part
         else:
-            attr_type = VALID_PRIMITIVE_TYPES.get(type_part.lower(), "str")
+            attr_type = VALID_PRIMITIVE_TYPES.get(type_part.lower(), None)
+            if attr_type is None:
+                raise ValueError(f"Invalid type: {type_part}")
     else:
         # Handle case without type specification
         parts = attribute_name.split()
@@ -56,7 +58,7 @@ def parse_attribute(attribute_name, domain_model=None):
         return None, None, None
     return visibility, name, attr_type
 
-def parse_method(method_str):
+def parse_method(method_str, domain_model=None):
     """
     Parse a method string to extract visibility, name, parameters, and return type.
     Examples:
@@ -137,9 +139,18 @@ def parse_method(method_str):
             # Handle parameter with type annotation
             elif ':' in param:
                 param_name, param_type = [p.strip() for p in param.split(':')]
+
+                # Handle the type
+                if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == param_type for t in domain_model.types):
+                    type_param = param_type
+                else:
+                    type_param = VALID_PRIMITIVE_TYPES.get(param_type.lower(), None)
+                    if type_param is None:
+                        raise ValueError(f"Invalid type '{param_type}' for the parameter '{param_name}'")
+
                 param_dict.update({
                     'name': param_name,
-                    'type': VALID_PRIMITIVE_TYPES.get(param_type.lower(), param_type)
+                    'type': type_param
                 })
             else:
                 param_dict['name'] = param.strip()
@@ -150,9 +161,12 @@ def parse_method(method_str):
     if return_type:
         return_type = return_type.strip()
         # Keep the original return type if it's not a primitive type
-        # (it might be a class name)
-        if return_type.lower() in VALID_PRIMITIVE_TYPES:
-            return_type = VALID_PRIMITIVE_TYPES[return_type.lower()]
+        if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == return_type for t in domain_model.types):
+            type_return = return_type
+        else:
+            type_return = VALID_PRIMITIVE_TYPES.get(return_type.lower(), None)
+            if type_return is None:
+                raise ValueError(f"Invalid return type '{return_type}' for the method '{method_name}'")
 
     return visibility, method_name, parameters, return_type
 
@@ -226,16 +240,26 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel, counter: i
 
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""
-    domain_model = DomainModel("Class Diagram")
+    title = json_data.get('diagramTitle', '')
+    if ' ' in title:
+        title = title.replace(' ', '_')
+
+    domain_model = DomainModel(title)
 
     # Get elements and OCL constraints from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})
 
-    # First process enumerations to have them available for attribute types
+    # FIRST PASS: Process all type declarations (enumerations and classes)
+    # 1. First process enumerations
     for element_id, element in elements.items():
         if element.get("type") == "Enumeration":
-            element_name = element.get("name")
+            element_name = element.get("name", "").strip()
+            if not element_name or any(char.isspace() for char in element_name):
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid enumeration name: '{element_name}'. Names cannot contain whitespace or be empty."
+                )
             literals = set()
             for literal_id in element.get("attributes", []):
                 literal = elements.get(literal_id)
@@ -244,16 +268,32 @@ def process_class_diagram(json_data):
                     literals.add(literal_obj)
             enum = Enumeration(name=element_name, literals=literals)
             domain_model.types.add(enum)
-
-    # Then process classes with attributes that might reference enumerations
+    
+    # 2. Then create all class structures without attributes or methods
     for element_id, element in elements.items():
-        # Check for both regular Class and AbstractClass
         if element.get("type") in ["Class", "AbstractClass"]:
-            # Set is_abstract based on the type
-            class_name = element.get("name")
+            class_name = element.get("name", "").strip()
+            if not class_name or any(char.isspace() for char in class_name):
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Invalid class name: '{class_name}'. Names cannot contain whitespace or be empty."
+                )
             is_abstract = element.get("type") == "AbstractClass"
-            cls = Class(name=class_name, is_abstract=is_abstract)
+            try:
+                cls = Class(name=class_name, is_abstract=is_abstract)
+                domain_model.types.add(cls)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
+    # SECOND PASS: Now add attributes and methods to classes
+    for element_id, element in elements.items():
+        if element.get("type") in ["Class", "AbstractClass"]:
+            class_name = element.get("name", "").strip()
+            cls = domain_model.get_class_by_name(class_name)
+            
+            if not cls:
+                continue  # Skip if class wasn't created successfully in first pass
+                
             # Add attributes
             attribute_names = set()
             for attr_id in element.get("attributes", []):
@@ -265,9 +305,16 @@ def process_class_diagram(json_data):
                     if name in attribute_names:
                         raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
                     attribute_names.add(name)
-                    if any(isinstance(t, Enumeration) and t.name == attr_type for t in domain_model.types):
-                        enum_type = next(t for t in domain_model.types if isinstance(t, Enumeration) and t.name == attr_type)
-                        property_ = Property(name=name, type=enum_type, visibility=visibility)
+                    
+                    # Find the type in the domain model
+                    type_obj = None
+                    for t in domain_model.types:
+                        if isinstance(t, (Enumeration, Class)) and t.name == attr_type:
+                            type_obj = t
+                            break
+                    
+                    if type_obj:
+                        property_ = Property(name=name, type=type_obj, visibility=visibility)
                     else:
                         property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility)
                     cls.attributes.add(property_)
@@ -276,15 +323,26 @@ def process_class_diagram(json_data):
             for method_id in element.get("methods", []):
                 method = elements.get(method_id)
                 if method:
-                    visibility, name, parameters, return_type = parse_method(method.get("name", ""))
+                    visibility, name, parameters, return_type = parse_method(method.get("name", ""), domain_model)
 
                     # Create method parameters
                     method_params = []
                     for param in parameters:
-                        param_type = PrimitiveDataType(param['type'])
+                        param_type_obj = None
+                        param_type_name = param['type']
+                        
+                        # Try to find parameter type in domain model
+                        for t in domain_model.types:
+                            if isinstance(t, (Enumeration, Class)) and t.name == param_type_name:
+                                param_type_obj = t
+                                break
+                                
+                        if not param_type_obj:
+                            param_type_obj = PrimitiveDataType(param_type_name)
+                            
                         param_obj = Property(
                             name=param['name'],
-                            type=param_type,
+                            type=param_type_obj,
                             visibility='public'
                         )
                         if 'default' in param:
@@ -297,17 +355,22 @@ def process_class_diagram(json_data):
                         visibility=visibility,
                         parameters=method_params
                     )
+                    
                     # Handle return type
                     if return_type:
-                        # Check if return type is a class in the domain model
-                        return_class = domain_model.get_class_by_name(return_type)
-                        if return_class:
-                            method_obj.type = return_class
+                        return_type_obj = None
+                        # Find return type in domain model
+                        for t in domain_model.types:
+                            if isinstance(t, (Enumeration, Class)) and t.name == return_type:
+                                return_type_obj = t
+                                break
+                                
+                        if return_type_obj:
+                            method_obj.type = return_type_obj
                         else:
-                            # If not a class, treat as primitive type
                             method_obj.type = PrimitiveDataType(return_type)
+                    
                     cls.methods.add(method_obj)
-            domain_model.types.add(cls)
 
     # Processing relationships (Associations, Generalizations, and Compositions)
     for rel_id, relationship in relationships.items():
@@ -349,14 +412,39 @@ def process_class_diagram(json_data):
             source_multiplicity = parse_multiplicity(source.get("multiplicity", "1"))
             target_multiplicity = parse_multiplicity(target.get("multiplicity", "1"))
 
+            source_role = source.get("role")
+            if not source_role:
+                source_role = source_class.name.lower()
+                existing_roles = {end.name for assoc in domain_model.associations for end in assoc.ends}
+
+                if source_role in existing_roles:
+                    counter = 1
+                    while f"{source_role}_{counter}" in existing_roles:
+                        counter += 1
+                    source_role = f"{source_role}_{counter}"
+
+
             source_property = Property(
-                name=source.get("role") or str(source_class.name),
+                name=source_role,
                 type=source_class,
                 multiplicity=source_multiplicity,
                 is_navigable=source_navigable
             )
+
+            target_role = target.get("role")
+            if not target_role:
+                target_role = target_class.name.lower()
+                existing_roles = {end.name for assoc in domain_model.associations for end in assoc.ends}
+
+                if target_role in existing_roles:
+                    counter = 1
+                    while f"{target_role}_{counter}" in existing_roles:
+                        counter += 1
+                    target_role = f"{target_role}_{counter}"
+
+
             target_property = Property(
-                name=target.get("role") or str(target_class.name),
+                name=target_role,
                 type=target_class,
                 multiplicity=target_multiplicity,
                 is_navigable=target_navigable,
@@ -364,6 +452,13 @@ def process_class_diagram(json_data):
             )
 
             association_name = relationship.get("name") or f"{source_class.name}_{target_class.name}"
+
+            # Check if association name already exists and add increment if needed
+            if association_name in [assoc.name for assoc in domain_model.associations]:
+                counter = 1
+                while f"{association_name}_{counter}" in [assoc.name for assoc in domain_model.associations]:
+                    counter += 1
+                association_name = f"{association_name}_{counter}"
 
             association = BinaryAssociation(
                 name=association_name,

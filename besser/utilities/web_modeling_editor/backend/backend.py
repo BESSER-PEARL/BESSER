@@ -26,8 +26,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# API sub-application
+api = FastAPI()
+
 # Set up CORS middleware
-app.add_middleware(
+api.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=True,
@@ -46,7 +49,11 @@ GENERATOR_CONFIG = {
     "backend": (BackendGenerator, "backend.zip")
 }
 
-@app.post("/generate-output")
+@api.get("/")
+def read_api_root():
+    return {"message": "BESSER API is running"}
+
+@api.post("/generate-output")
 async def generate_output(input_data: ClassDiagramInput):
     temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
     try:
@@ -98,6 +105,19 @@ async def generate_output(input_data: ClassDiagramInput):
             finally:
                 # Always restore the original working directory
                 os.chdir(original_cwd)
+        
+        # Handle SQL generator with config
+        elif generator == "sql":
+            dialect = "standard"
+            if input_data.config and "dialect" in input_data.config:
+                dialect = input_data.config["dialect"]
+            
+            generator_instance = generator_class(
+                buml_model, 
+                output_dir=temp_dir,
+                sql_dialect=dialect
+            )
+            generator_instance.generate()
 
         else:
             generator_instance = generator_class(buml_model, output_dir=temp_dir)
@@ -145,10 +165,9 @@ async def generate_output(input_data: ClassDiagramInput):
     except Exception as e:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
-        print(f"Error during file generation or response: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-@app.post("/export-buml")
+@api.post("/export-buml")
 async def export_buml(input_data: ClassDiagramInput):
     # Create unique temporary directory for this request
     temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
@@ -189,10 +208,9 @@ async def export_buml(input_data: ClassDiagramInput):
         # Handle unexpected exceptions
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
-        print(f"Error during BUML export: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-@app.post("/get-json-model")
+@api.post("/get-json-model")
 async def get_json_model(buml_file: UploadFile = File(...)):
     try:
         content = await buml_file.read()
@@ -221,7 +239,7 @@ async def get_json_model(buml_file: UploadFile = File(...)):
         print(f"Error in get_json_model: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/check-ocl")
+@api.post("/check-ocl")
 async def check_ocl(input_data: ClassDiagramInput):
     try:
         # Convert diagram to BUML model
@@ -251,6 +269,9 @@ async def check_ocl(input_data: ClassDiagramInput):
             "message": f"Error checking OCL constraints: {str(e)}"
         }
 
+#Mount the `api` app under `/besser_api` 
+app.mount("/besser_api", api)
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=9000)

@@ -68,6 +68,7 @@ class NamedElement(Element):
         self.synonyms: List[str] = synonyms
         self.visibility: str = visibility
 
+
     @property
     def name(self) -> str:
         """str: Get the name of the named element."""
@@ -79,10 +80,12 @@ class NamedElement(Element):
         str: Set the name of the named element.
         
         Raises:
-            ValueError: If the name contains blank spaces.
+            ValueError: If the name is empty or contains any whitespace characters.
         """
-        if ' ' in name:
-            raise ValueError("Name cannot contain blank spaces")
+        if not name or name.isspace():
+            raise ValueError("Name cannot be empty")
+        if any(char.isspace() for char in name):
+            raise ValueError("Name cannot contain whitespace characters")
         self.__name = name
 
     @property

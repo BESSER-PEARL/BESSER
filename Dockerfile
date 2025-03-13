@@ -17,7 +17,7 @@ ENV PYTHONPATH=/app
 RUN pip install -e .
 
 # Expose the port the app runs on
-EXPOSE 8000
+EXPOSE 9000
 
 # Start the application
 CMD ["python", "besser/utilities/web_modeling_editor/backend/backend.py"]

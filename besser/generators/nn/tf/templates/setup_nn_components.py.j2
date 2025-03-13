@@ -215,7 +215,7 @@ IMAGE_SIZE = {{ IMAGE_SIZE }}
 
 # Function to load and preprocess images
 {%- if train_data.image.normalize %}
-scale, mean, std = compute_mean_std(r"{{ train_data.path_data }}", 
+scale, mean, std = compute_mean_std("{{ train_data.path_data }}", 
                                     num_samples=100, target_size=IMAGE_SIZE)
 def preprocess_image(image, label, to_scale, mean, std):
     if to_scale:
@@ -224,7 +224,7 @@ def preprocess_image(image, label, to_scale, mean, std):
     return image, label
 
 {%- else %}
-scale, _, _ = compute_mean_std(r"{{ train_data.path_data }}", num_samples=100,
+scale, _, _ = compute_mean_std("{{ train_data.path_data }}", num_samples=100,
                                target_size=IMAGE_SIZE)
 def preprocess_image(image, label, to_scale):
     if to_scale:
@@ -256,8 +256,8 @@ def load_dataset(directory, mode, image_size):
     return dataset
 
 # Load datasets
-train_loader = load_dataset(r"{{ train_data.path_data }}", "train", IMAGE_SIZE)
-test_loader = load_dataset(r"{{ test_data.path_data }}", "test", IMAGE_SIZE)
+train_loader = load_dataset("{{ train_data.path_data }}", "train", IMAGE_SIZE)
+test_loader = load_dataset("{{ test_data.path_data }}", "test", IMAGE_SIZE)
 
    {%- else -%}
     def load_dataset(csv_file):
@@ -275,8 +275,8 @@ test_loader = load_dataset(r"{{ test_data.path_data }}", "test", IMAGE_SIZE)
     return dataset
 
 # Load training and test data
-train_dataset = load_dataset(r"{{ train_data.path_data }}")
-test_dataset = load_dataset(r"{{ test_data.path_data }}")
+train_dataset = load_dataset("{{ train_data.path_data }}")
+test_dataset = load_dataset("{{ test_data.path_data }}")
 
 # Create data loaders
 def create_data_loader(dataset, mode):

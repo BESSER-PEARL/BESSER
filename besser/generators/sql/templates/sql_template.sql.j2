@@ -2,8 +2,8 @@
 {# Iterate over classes and generate CREATE TABLE statements #}
 {% for class_obj in model.classes_sorted_by_inheritance() %}
     {% set class_name = class_obj.name %}
-    {% set attributes = class_obj.attributes %}
-    {{- sql_templates.create_table(class_name, attributes, types, sql_dialect) }}
+    {% set attributes = sort(class_obj.attributes) %}
+    {{- sql_templates.create_table(class_name, attributes, types, types_psql, types_mysql, sql_dialect) }}
     {# Handling generalizations (inheritance) #}
     {% if class_obj.generalizations %}
         {% for generalization in class_obj.generalizations %}
@@ -26,21 +26,22 @@
         {# Check multiplicity and generate appropriate SQL statement #}
         {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
         {# N:M Relationship: Create intermediate table #}
-            {{- sql_templates.create_nm_table(class1_name, class2_name, sql_dialect) }}
+            {% set assoc_name = association.name %}
+            {{- sql_templates.create_nm_table(class1_name, class2_name, sql_dialect, assoc_name, ns.end1.name, ns.end2.name) }}
         {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
         {# N:1 Relationship: Add reference to Nary end #}
-            {{- sql_templates.alter_table(class1_name, class2_name, class2_name, class2_name, sql_dialect) }}
+            {{- sql_templates.alter_table(class1_name, ns.end2.name, class2_name, class2_name, sql_dialect) }}
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
         {# 1:N Relationship: Add reference to Nary end #}
-            {{- sql_templates.alter_table(class2_name, class1_name, class1_name, class1_name, sql_dialect) }}
+            {{- sql_templates.alter_table(class2_name, ns.end1.name, class1_name, class1_name, sql_dialect) }}
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
         {# 1:1 Relationship: Add unique reference to one of the ends #}
-            {{- sql_templates.alter_table(class1_name, class2_name, class2_name, class2_name, sql_dialect) }}
+            {{- sql_templates.alter_table(class1_name, ns.end2.name, class2_name, class2_name, sql_dialect) }}
         {% endif %}
     {% else %}
     {# Convert Nary relationship to Binary relationships and intermediate table #}
         {% set intermediate_class = association.name %}
-        {{- sql_templates.create_table(intermediate_class, [], types, sql_dialect) }}
+        {{- sql_templates.create_table(intermediate_class, [], types, types_psql, types_mysql, sql_dialect) }}
         {% set end_intermediate_multiplicity_max = 9999 %}
         {% for end in association.ends %}
             {# Check multiplicity and generate appropriate SQL statement #}
@@ -49,10 +50,11 @@
             {# End of intermediate table should have multiplicity of the original end to the class #}
             {% if end.multiplicity.max > 1 and end_intermediate_multiplicity_max > 1 %}
             {# N:M Relationship: Create intermediate table #}
-                {{- sql_templates.create_nm_table(class1_name, class2_name, sql_dialect) }}
+                {% set assoc_name = association.name %}
+                {{- sql_templates.create_nm_table(class1_name, class2_name, sql_dialect, assoc_name, ns.end1.name, ns.end2.name) }}
             {% elif end.multiplicity.max == 1 and end_intermediate_multiplicity_max > 1 %}
                 {# 1:N Relationship: Add reference to Nary end #}
-                {{- sql_templates.alter_table(class1_name, class2_name, class2_name, class2_name, sql_dialect) }}
+                {{- sql_templates.alter_table(class1_name, ns.end2.name, class2_name, class2_name, sql_dialect) }}
             {% endif %}
         {% endfor %}
     {% endif %}

@@ -166,7 +166,7 @@ def test_generalization_set_initialization():
     class3: Class = Class(name="name3", attributes=None)
     generalization1: Generalization = Generalization(general=class1, specific=class2)
     generalization2: Generalization = Generalization(general=class1, specific=class3)
-    generalization_set: GeneralizationSet = GeneralizationSet(name="Generalization Set", generalizations={
+    generalization_set: GeneralizationSet = GeneralizationSet(name="GeneralizationSet", generalizations={
         generalization1,generalization2}, is_disjoint=True, is_complete=True)
     assert generalization_set.is_disjoint == True
     assert generalization_set.is_complete == True
@@ -328,3 +328,41 @@ def test_attribute_reassignment():
     assert attribute1 in class2.attributes
     assert attribute1 not in class1.attributes
     assert attribute1.owner == class2
+
+    def test_package_initialization():
+        # Create classes
+        class1: Class = Class(name="Class1", attributes=set())
+        class2: Class = Class(name="Class2", attributes=set())
+
+        # Create associations
+        aend1: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
+        aend2: Property = Property(name="end2", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
+        association1: BinaryAssociation = BinaryAssociation(name="Association1", ends={aend1, aend2})
+
+        aend3: Property = Property(name="end3", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
+        aend4: Property = Property(name="end4", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
+        association2: BinaryAssociation = BinaryAssociation(name="Association2", ends={aend3, aend4})
+
+        # Create enumeration
+        literal1: EnumerationLiteral = EnumerationLiteral(name="Literal1", owner=None)
+        enumeration: Enumeration = Enumeration(name="Enumeration", literals={literal1, literal2})
+
+        # Create package
+        package: Package = Package(name="Package1", elements={class1, class2, association1, association2,enumeration})
+
+        # Test get_classes method
+        classes = package.get_classes()
+        assert len(classes) == 2
+        assert class1 in classes
+        assert class2 in classes
+
+        # Test get_associations method
+        associations = package.get_associations()
+        assert len(associations) == 2
+        assert association1 in associations
+        assert association2 in associations
+
+        # Test get_enumerations method
+        enumerations = package.get_enumerations()
+        assert len(enumerations) == 1
+        assert enumeration in enumerations

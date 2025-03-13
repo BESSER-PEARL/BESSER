@@ -95,7 +95,7 @@ class TensorOp:
             'matmultiply', 'permute', 'transpose'
         ]:
             raise ValueError("Invalid value of tensorOp type")
-        elif tns_type == 'reshape' and self.reshape_dim is not None:
+        elif tns_type == 'reshape' and self.reshape_dim is None:
             raise ValueError("reshape_dim parameter cannot be None when type \
                              is 'reshape'")
         elif tns_type == 'concatenate':
@@ -267,14 +267,7 @@ class Layer:
 
     @actv_func.setter
     def actv_func(self, actv_func: str):
-        """
-        str: Set the actv_func.
-
-        Raises:
-            ValueError: If the actv_func is not one of the allowed 
-            options: 'relu', 'leaky_rely', 'sigmoid', 'softmax' and 
-            'tanh'
-        """
+        """str: Set the actv_func."""
         #if actv_func is not None and actv_func not in [
         #    'relu', 'leaky_relu', 'sigmoid', 'softmax', 'tanh'
         #]:

@@ -37,7 +37,7 @@ class SQLGenerator(GeneratorInterface):
         folder.
 
         Returns:
-            None, but store the generated code as a file named sql_alchemy.py 
+            None, but store the generated code as a file named tables.sql.
         """
         file_path = self.build_generation_path(file_name="tables.sql")
         templates_path = os.path.join(os.path.dirname(

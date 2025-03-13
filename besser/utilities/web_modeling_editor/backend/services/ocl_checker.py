@@ -7,7 +7,7 @@ def check_ocl_constraint(domain_model):
     try:
         if not domain_model.constraints:
             return {
-                "success": False,
+                "success": True,
                 "message": "No OCL constraints found in the model"
             }
 

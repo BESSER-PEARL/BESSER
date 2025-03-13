@@ -118,6 +118,18 @@ async def generate_output(input_data: ClassDiagramInput):
                 sql_dialect=dialect
             )
             generator_instance.generate()
+        
+        # Handle SQLAlchemy generator with config
+        elif generator == "sqlalchemy":
+            dbms = "sqlite"
+            if input_data.config and "dbms" in input_data.config:
+                dbms = input_data.config["dbms"]
+            
+            generator_instance = generator_class(
+                buml_model, 
+                output_dir=temp_dir
+            )
+            generator_instance.generate(dbms=dbms)
 
         else:
             generator_instance = generator_class(buml_model, output_dir=temp_dir)

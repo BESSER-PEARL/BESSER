@@ -105,6 +105,19 @@ async def generate_output(input_data: ClassDiagramInput):
             finally:
                 # Always restore the original working directory
                 os.chdir(original_cwd)
+        
+        # Handle SQL generator with config
+        elif generator == "sql":
+            dialect = "standard"
+            if input_data.config and "dialect" in input_data.config:
+                dialect = input_data.config["dialect"]
+            
+            generator_instance = generator_class(
+                buml_model, 
+                output_dir=temp_dir,
+                sql_dialect=dialect
+            )
+            generator_instance.generate()
 
         else:
             generator_instance = generator_class(buml_model, output_dir=temp_dir)

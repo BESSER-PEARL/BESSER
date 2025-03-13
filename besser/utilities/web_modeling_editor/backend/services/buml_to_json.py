@@ -43,7 +43,7 @@ def parse_buml_content(content: str) -> DomainModel:
         }
         
         # Create a new domain model
-        domain_model = DomainModel("Generated Model")
+        domain_model = DomainModel("Generated_Model")
         
         
         # Execute the B-UML content in a safe environment

@@ -44,5 +44,5 @@ def check_ocl_constraint(domain_model):
     except Exception as e:
         return {
             "success": False,
-            "message": f"Error checking OCL constraints: {str(e)}"
+            "message": f"{str(e)}"
         }

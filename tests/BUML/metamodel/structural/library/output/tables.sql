@@ -1,28 +1,28 @@
-CREATE TABLE IF NOT EXISTS Book (
-    Book_id SERIAL PRIMARY KEY,
-    pages int,      
-    release timestamp,      
-    title varchar(100)
-);
-
 CREATE TABLE IF NOT EXISTS Author (
-    Author_id SERIAL PRIMARY KEY,
+    author_id SERIAL PRIMARY KEY,
     name varchar(100),      
     email varchar(100)
 );
 
-CREATE TABLE IF NOT EXISTS Library (
-    Library_id SERIAL PRIMARY KEY,
-    address varchar(100),      
-    name varchar(100)
+CREATE TABLE IF NOT EXISTS Book (
+    book_id SERIAL PRIMARY KEY,
+    title varchar(100),      
+    pages int,      
+    release date
 );
 
-CREATE TABLE IF NOT EXISTS Author_Book (
-    Author_id INT REFERENCES Author(Author_id),
-    Book_id INT REFERENCES Book(Book_id),
-    PRIMARY KEY (Author_id, Book_id)
+CREATE TABLE IF NOT EXISTS Library (
+    library_id SERIAL PRIMARY KEY,
+    name varchar(100),      
+    address varchar(100)
 );
 
 ALTER TABLE Book
-ADD COLUMN Library_id INT REFERENCES Library(Library_id);
+ADD COLUMN locatedIn INT REFERENCES Library(library_id);
+
+CREATE TABLE IF NOT EXISTS book_author_assoc (
+    writtenBy INT REFERENCES Author(author_id),
+    publishes INT REFERENCES Book(book_id),
+    PRIMARY KEY (writtenBy, publishes)
+);
 

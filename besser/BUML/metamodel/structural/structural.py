@@ -82,10 +82,8 @@ class NamedElement(Element):
         Raises:
             ValueError: If the name is empty or contains any whitespace characters.
         """
-        if not name or name.isspace():
-            raise ValueError("Name cannot be empty")
-        if any(char.isspace() for char in name):
-            raise ValueError("Name cannot contain whitespace characters")
+        if ' ' in name:
+            raise ValueError(f"'{name}' is invalid. Name cannot contain spaces.")
         self.__name = name
 
     @property

@@ -2,7 +2,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
-
+from besser.utilities import sort_by_timestamp
 
 class SQLGenerator(GeneratorInterface):
     """
@@ -26,6 +26,28 @@ class SQLGenerator(GeneratorInterface):
         "timedelta": "interval",
     }
 
+    TYPES_PSQL = {
+        "int": "INTEGER",
+        "str": "VARCHAR(100)",
+        "float": "FLOAT8",
+        "bool": "BOOLEAN",
+        "time": "TIME",
+        "date": "DATE",
+        "datetime": "TIMESTAMP",
+        "timedelta": "INTERVAL",
+    }
+
+    TYPES_MYSQL = {
+        "int": "INT",
+        "str": "VARCHAR(100)",
+        "float": "DOUBLE",
+        "bool": "BOOLEAN",
+        "time": "TIME",
+        "date": "DATE",
+        "datetime": "DATETIME",
+        "timedelta": "INT",
+    }
+
     def __init__(self, model: DomainModel, output_dir: str = None, sql_dialect: str = None):
         super().__init__(model, output_dir)
         self.sql_dialect = sql_dialect
@@ -44,7 +66,13 @@ class SQLGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True, lstrip_blocks=True)
         template = env.get_template('sql_template.sql.j2')
-        with open(file_path, mode="w") as f:
-            generated_code = template.render(model=self.model, types=self.TYPES, sql_dialect=self.sql_dialect)
+        with open(file_path, mode="w", encoding="utf-8") as f:
+            generated_code = template.render(model=self.model,
+                                            types=self.TYPES,
+                                            types_psql=self.TYPES_PSQL,
+                                            types_mysql=self.TYPES_MYSQL,
+                                            sql_dialect=self.sql_dialect,
+                                            sort=sort_by_timestamp
+                                            )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)

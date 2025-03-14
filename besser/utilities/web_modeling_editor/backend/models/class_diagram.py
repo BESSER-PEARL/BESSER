@@ -9,6 +9,9 @@ class DjangoConfig(BaseModel):
 class SQLConfig(BaseModel):
     dialect: Literal["standard", "postgresql", "mysql"] = "standard"
 
+class SQLAlchemyConfig(BaseModel):
+    dbms: Literal["sqlite", "postgresql", "mysql"] = "sqlite"
+
 class ClassDiagramInput(BaseModel):
     diagramTitle: str = "Diagram"
     elements: Dict[str, Any]

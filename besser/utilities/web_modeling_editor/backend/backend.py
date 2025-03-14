@@ -14,6 +14,7 @@ from besser.generators.pydantic_classes import PydanticGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.backend import BackendGenerator
+from besser.generators.json import JSONSchemaGenerator
 
 from besser.utilities.web_modeling_editor.backend.models.class_diagram import ClassDiagramInput
 from besser.utilities.web_modeling_editor.backend.services.json_to_buml import process_class_diagram, process_state_machine
@@ -46,7 +47,8 @@ GENERATOR_CONFIG = {
     "pydantic": (PydanticGenerator, "pydantic_classes.py"),
     "sqlalchemy": (SQLAlchemyGenerator, "sql_alchemy.py"),
     "sql": (SQLGenerator, "tables.sql"),
-    "backend": (BackendGenerator, "backend.zip")
+    "backend": (BackendGenerator, "backend.zip"),
+    "jsonschema": (JSONSchemaGenerator, "json_schema.json")
 }
 
 @api.get("/")
@@ -57,7 +59,7 @@ def read_api_root():
 async def generate_output(input_data: ClassDiagramInput):
     temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
     try:
-        json_data = input_data.dict()
+        json_data = input_data.model_dump()
         generator = input_data.generator
         
         if generator not in GENERATOR_CONFIG:
@@ -70,9 +72,9 @@ async def generate_output(input_data: ClassDiagramInput):
         if generator == "django":
             if not input_data.config:
                 raise HTTPException(status_code=400, detail="Django configuration is required")
-            
+
             # Clean up any existing project directory first
-            project_dir = os.path.join(temp_dir, input_data.config.project_name)
+            project_dir = os.path.join(temp_dir, input_data.config['project_name'])
             if os.path.exists(project_dir):
                 shutil.rmtree(project_dir)
             
@@ -82,13 +84,13 @@ async def generate_output(input_data: ClassDiagramInput):
             # Change to temp directory before running django-admin
             original_cwd = os.getcwd()
             os.chdir(temp_dir)
-            
+
             try:
                 generator_instance = generator_class(
                     model=buml_model,
-                    project_name=input_data.config.project_name,
-                    app_name=input_data.config.app_name,
-                    containerization=input_data.config.containerization,
+                    project_name=input_data.config['project_name'],
+                    app_name=input_data.config['app_name'],
+                    containerization=input_data.config['containerization'],
                     output_dir=temp_dir
                 )
                 
@@ -234,14 +236,16 @@ async def get_json_model(buml_file: UploadFile = File(...)):
         if is_state_machine:
             # Convert the state machine Python code directly to JSON
             json_model = state_machine_to_json(buml_content)
+            model_name = buml_file.filename
         else:
             # Parse the BUML content into a domain model and get OCL constraints
             domain_model = parse_buml_content(buml_content)
             # Convert the domain model to JSON format
             json_model = domain_model_to_json(domain_model)
-        
+            model_name = domain_model.name
+
         wrapped_response = {
-            "title": buml_file.filename,
+            "title": model_name,
             "model": json_model,
         }
         

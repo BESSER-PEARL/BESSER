@@ -245,7 +245,6 @@ def process_class_diagram(json_data):
         title = title.replace(' ', '_')
 
     domain_model = DomainModel(title)
-    print
     # Get elements and OCL constraints from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})

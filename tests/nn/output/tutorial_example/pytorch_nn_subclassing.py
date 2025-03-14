@@ -25,7 +25,6 @@ class NeuralNetwork(nn.Module):
 
 
     def forward(self, x):
-        x = x.permute(0, 3, 1, 2)
         x = self.l1(x)
         x = self.actv_func_relu(x)
         x = self.l2(x)
@@ -34,7 +33,6 @@ class NeuralNetwork(nn.Module):
         x = self.l4(x)
         x = self.l5(x)
         x = self.actv_func_relu(x)
-        x = x.permute(0, 2, 3, 1)
         x = self.l6(x)
         x = self.l7(x)
         x = self.actv_func_relu(x)
@@ -54,11 +52,11 @@ transform = transforms.Compose([
 # Directory structure: root/class1/img1.jpg, root/class1/img2.jpg,
 # root/class2/img1.jpg, ...
 train_dataset = datasets.ImageFolder(
-    root=r"dataset\cifar10\train", transform=transform)
+    root="dataset/cifar10/train", transform=transform)
 
 # Load the testing dataset that is in a similar directory structure
 test_dataset = datasets.ImageFolder(
-    root=r"dataset\cifar10\test", transform=transform)
+    root="dataset/cifar10/test", transform=transform)
 
 # Create data loaders
 train_loader = torch.utils.data.DataLoader(

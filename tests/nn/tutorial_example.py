@@ -13,7 +13,7 @@ from besser.generators.nn.tf.tf_code_generator import TFGenerator
 
 nn_model: NN = NN(name="my_model")
 nn_model.add_layer(Conv2D(name="l1", actv_func="relu", in_channels=3,
-                          out_channels=32, kernel_dim=[3, 3], permute_in=True))
+                          out_channels=32, kernel_dim=[3, 3]))
 nn_model.add_layer(PoolingLayer(name="l2", pooling_type="max",
                                 dimension="2D", kernel_dim=[2, 2]))
 
@@ -22,7 +22,7 @@ nn_model.add_layer(Conv2D(name="l3", actv_func="relu", in_channels=32,
 nn_model.add_layer(PoolingLayer(name="l4", pooling_type="max",
                                 dimension="2D", kernel_dim=[2, 2]))
 nn_model.add_layer(Conv2D(name="l5", actv_func="relu", in_channels=64,
-                          out_channels=64, kernel_dim=[3, 3], permute_out=True))
+                          out_channels=64, kernel_dim=[3, 3]))
 nn_model.add_layer(FlattenLayer(name="l6"))
 nn_model.add_layer(LinearLayer(name="l7", actv_func="relu", in_features=1024,
                                out_features=64))
@@ -40,11 +40,11 @@ nn_model.add_configuration(configuration)
 image = Image(shape=[32, 32, 3], normalize=False)
 
 train_data = Dataset(name="train_data",
-                     path_data=r"dataset\cifar10\train",
+                     path_data="dataset/cifar10/train",
                      task_type="multi_class", input_format="images",
                      image=image)
 test_data = Dataset(name="test_data",
-                    path_data=r"dataset\cifar10\test")
+                    path_data="dataset/cifar10/test")
 
 nn_model.add_train_data(train_data)
 nn_model.add_test_data(test_data)

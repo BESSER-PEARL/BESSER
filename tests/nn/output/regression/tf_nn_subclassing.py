@@ -46,8 +46,8 @@ def load_dataset(csv_file):
     return dataset
 
 # Load training and test data
-train_dataset = load_dataset(r"dataset\BostonHousingTrain.csv")
-test_dataset = load_dataset(r"dataset\BostonHousingTest.csv")
+train_dataset = load_dataset("dataset/BostonHousingTrain.csv")
+test_dataset = load_dataset("dataset/BostonHousingTest.csv")
 
 # Create data loaders
 def create_data_loader(dataset, mode):

@@ -25,15 +25,15 @@ parameters: Configuration = Configuration(batch_size=6, epochs=40,
 nn_model.add_configuration(parameters)
 
 train_data = Dataset(name="train_data",
-                     path_data=r"dataset\BostonHousingTrain.csv",
+                     path_data="dataset/BostonHousingTrain.csv",
                      task_type="regression", input_format="csv")
 test_data = Dataset(name="test_data",
-                    path_data=r"dataset\BostonHousingTest.csv")
+                    path_data="dataset/BostonHousingTest.csv")
 
 nn_model.add_train_data(train_data)
 nn_model.add_test_data(test_data)
 
-pytorch_model = PytorchGenerator(model=nn_model, 
+pytorch_model = PytorchGenerator(model=nn_model,
                                  output_dir="output/regression")
 pytorch_model.generate()
 

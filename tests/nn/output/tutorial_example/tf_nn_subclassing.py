@@ -42,7 +42,7 @@ class NeuralNetwork(tf.keras.Model):
 IMAGE_SIZE = (32, 32)
 
 # Function to load and preprocess images
-scale, _, _ = compute_mean_std(r"dataset\cifar10\train", num_samples=100,
+scale, _, _ = compute_mean_std("dataset/cifar10/train", num_samples=100,
                                target_size=IMAGE_SIZE)
 def preprocess_image(image, label, to_scale):
     if to_scale:
@@ -68,8 +68,8 @@ def load_dataset(directory, mode, image_size):
     return dataset
 
 # Load datasets
-train_loader = load_dataset(r"dataset\cifar10\train", "train", IMAGE_SIZE)
-test_loader = load_dataset(r"dataset\cifar10\test", "test", IMAGE_SIZE)
+train_loader = load_dataset("dataset/cifar10/train", "train", IMAGE_SIZE)
+test_loader = load_dataset("dataset/cifar10/test", "test", IMAGE_SIZE)
 
 
 # Define the network, loss function, and optimizer

@@ -2,6 +2,7 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
+from besser.utilities import sort_by_timestamp
 
 class SQLAlchemyGenerator(GeneratorInterface):
     """
@@ -23,7 +24,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         "datetime": "DateTime",
     }
 
-    VALID_DBMS = {"sqlite", "postgresql", "mysql"}
+    VALID_DBMS = {"sqlite", "postgresql", "mysql", "mssql", "mariadb"}
 
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
@@ -78,7 +79,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
         folder.
 
         Args:
-            dbms (str, optional): The database management system to be used. Defaults to "sqlite".
+            dbms (str, optional): The database management system to be used. Values allowed: "sqlite", "postgresql", "mysql",
+            "mssql", or "mariadb". Defaults to "sqlite".
 
         Returns:
             None, but stores the generated code as a file named sql_alchemy.py 
@@ -100,7 +102,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 model_name=self.model.name,
                 dbms=dbms,
                 ids=self.get_ids(),
-                fkeys=self.get_foreign_keys()
+                fkeys=self.get_foreign_keys(),
+                sort=sort_by_timestamp
             )
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            print("Code generated successfully!")

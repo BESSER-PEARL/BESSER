@@ -7,10 +7,10 @@ class DjangoConfig(BaseModel):
     containerization: bool = False
 
 class SQLConfig(BaseModel):
-    dialect: Literal["standard", "postgresql", "mysql"] = "standard"
+    dialect: Literal["sqlite", "postgresql", "mysql", "mssql", "mariadb"] = "sqlite"
 
 class SQLAlchemyConfig(BaseModel):
-    dbms: Literal["sqlite", "postgresql", "mysql"] = "sqlite"
+    dbms: Literal["sqlite", "postgresql", "mysql", "mssql", "mariadb"] = "sqlite"
 
 class ClassDiagramInput(BaseModel):
     diagramTitle: str = "Diagram"

@@ -41,14 +41,14 @@ api.add_middleware(
 
 # Define generator mappings
 GENERATOR_CONFIG = {
-    "python": (PythonGenerator, "classes.py"),
-    "java": (JavaGenerator, "java_classes.zip"),
-    "django": (DjangoGenerator, "django_project.zip"),
-    "pydantic": (PydanticGenerator, "pydantic_classes.py"),
-    "sqlalchemy": (SQLAlchemyGenerator, "sql_alchemy.py"),
-    "sql": (SQLGenerator, "tables.sql"),
-    "backend": (BackendGenerator, "backend.zip"),
-    "jsonschema": (JSONSchemaGenerator, "json_schema.json")
+    "python": PythonGenerator,
+    "java": JavaGenerator,
+    "django": DjangoGenerator,
+    "pydantic": PydanticGenerator,
+    "sqlalchemy": SQLAlchemyGenerator,
+    "sql": SQLGenerator,
+    "backend": BackendGenerator,
+    "jsonschema": JSONSchemaGenerator
 }
 
 @api.get("/")
@@ -66,7 +66,7 @@ async def generate_output(input_data: ClassDiagramInput):
             raise HTTPException(status_code=400, detail="Invalid generator type specified.")
 
         buml_model = process_class_diagram(json_data)
-        generator_class, file_name = GENERATOR_CONFIG[generator]
+        generator_class = GENERATOR_CONFIG[generator]
 
         # Handle Django generator with config
         if generator == "django":
@@ -113,14 +113,13 @@ async def generate_output(input_data: ClassDiagramInput):
             dialect = "standard"
             if input_data.config and "dialect" in input_data.config:
                 dialect = input_data.config["dialect"]
-            
             generator_instance = generator_class(
                 buml_model, 
                 output_dir=temp_dir,
                 sql_dialect=dialect
             )
             generator_instance.generate()
-        
+            
         # Handle SQLAlchemy generator with config
         elif generator == "sqlalchemy":
             dbms = "sqlite"
@@ -150,6 +149,7 @@ async def generate_output(input_data: ClassDiagramInput):
                         zip_file.write(file_path, arc_name)
             
             zip_buffer.seek(0)
+            file_name = f"{generator}_output.zip"
             shutil.rmtree(temp_dir, ignore_errors=True)
             return StreamingResponse(
                 zip_buffer, 
@@ -157,10 +157,13 @@ async def generate_output(input_data: ClassDiagramInput):
                 headers={"Content-Disposition": f"attachment; filename={file_name}"}
             )
 
-        # Rest of the function remains the same for non-zip generators
+        # For non-zip generators, find the generated file
+        files = os.listdir(temp_dir)
+        if not files:
+            raise ValueError(f"{generator} generation failed: No output files were created.")
+        
+        file_name = files[0]
         output_file_path = os.path.join(temp_dir, file_name)
-        if not os.path.exists(output_file_path):
-            raise ValueError(f"{generator} generation failed: Output file was not created.")
 
         with open(output_file_path, 'rb') as f:
             file_content = f.read()

@@ -42,15 +42,16 @@ def parse_buml_content(content: str) -> DomainModel:
             'RDFGenerator': lambda model: type('MockGenerator', (), {'generate': lambda: None})
         }
         
-        # Create a new domain model
-        domain_model = DomainModel("Generated Model")
-        
-        
         # Execute the B-UML content in a safe environment
         local_vars = {}
         exec(content, safe_globals, local_vars)
-        #print("Local variables after execution:", local_vars.keys())
         
+        domain_name = "Imported_Domain_Model"
+        for var_name, var_value in local_vars.items():
+            if isinstance(var_value, DomainModel):
+                domain_name = var_value.name
+
+        domain_model = DomainModel(domain_name)
         # First pass: Add all classes and enumerations
         classes = {}
         for var_name, var_value in local_vars.items():
@@ -60,7 +61,6 @@ def parse_buml_content(content: str) -> DomainModel:
             elif isinstance(var_value, Constraint):
                 domain_model.constraints.add(var_value)
         
-
         # Second pass: Add associations and generalizations
         for var_name, var_value in local_vars.items():
             if isinstance(var_value, BinaryAssociation):

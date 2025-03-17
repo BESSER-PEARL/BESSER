@@ -52,13 +52,13 @@ class {{ class.name }}(
         Base):
     {%- endif %}
     __tablename__ = "{{class.name.lower()}}"
-    {%- for parent in class.parents() %}
+    {%- for parent in sort(class.parents()) %}
     id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
     {%- endfor %}
     {%- if (class.parents()|length == 0) and ((not ids.get(class.name)))%}
     id: Mapped[int] = mapped_column(primary_key=True)
     {%- endif %}
-    {%- for attribute in class.attributes %}
+    {%- for attribute in sort(class.attributes) %}
     {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
     {%- if attribute.is_id or (attribute.name == ids.get(class.name)) %}, primary_key=True{% endif %})
     {%- endfor %}
@@ -69,7 +69,7 @@ class {{ class.name }}(
         "polymorphic_on": "type_spec",
     }
     {%- endif %}
-    {%- for parent in class.parents() %}
+    {%- for parent in sort(class.parents()) %}
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
     }
@@ -108,9 +108,11 @@ class {{ class.name }}(
 {% if dbms == "sqlite" %}
 DATABASE_URL = "sqlite:///{{model_name}}.db"  # SQLite connection
 {% elif dbms == "postgresql" %}
-DATABASE_URL = "postgresql://username:password@localhost:5432/db_name"  # PostgreSQL connection
-{% elif dbms == "mysql" %}
-DATABASE_URL = "mysql://username:password@localhost:3306/db_name"  # MySQL connection
+DATABASE_URL = "postgresql+psycopg2://username:password@localhost:5432/db_name"  # PostgreSQL connection
+{% elif dbms == "mysql" or "mariadb" %}
+DATABASE_URL = "mysql+pymysql://username:password@localhost:3306/db_name"  # MySQL or MariaDB connection
+{% elif dbms == "mssql" %}
+DATABASE_URL = "mssql+pyodbc://username:password@localhost:1433/db_name?driver=SQL+Server" # MSSQL connection
 {% else %}
     {# Fallback if the DBMS is invalid or not supported. This is just a safety measure. #}
     raise ValueError("Invalid DBMS. Valid options are sqlite, postgresql, and mysql.")
@@ -118,4 +120,4 @@ DATABASE_URL = "mysql://username:password@localhost:3306/db_name"  # MySQL conne
 engine = create_engine(DATABASE_URL, echo=True)
 
 # Create tables in the database
-Base.metadata.create_all(engine)
+Base.metadata.create_all(engine, checkfirst=True)

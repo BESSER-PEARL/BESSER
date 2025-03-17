@@ -311,7 +311,7 @@ def test_named_element_blank_spaces():
     # Test that names with spaces raise ValueError
     with pytest.raises(ValueError) as excinfo:
         named_element = NamedElement(name="element with spaces")
-    assert "Name cannot contain blank spaces" in str(excinfo.value)
+    assert "'element with spaces' is invalid. Name cannot contain spaces." in str(excinfo.value)
 
     # Test that names without spaces work fine
     named_element = NamedElement(name="element_without_spaces")
@@ -345,7 +345,7 @@ def test_attribute_reassignment():
 
         # Create enumeration
         literal1: EnumerationLiteral = EnumerationLiteral(name="Literal1", owner=None)
-        enumeration: Enumeration = Enumeration(name="Enumeration", literals={literal1, literal2})
+        enumeration: Enumeration = Enumeration(name="Enumeration", literals={literal1})
 
         # Create package
         package: Package = Package(name="Package1", elements={class1, class2, association1, association2,enumeration})
@@ -366,3 +366,36 @@ def test_attribute_reassignment():
         enumerations = package.get_enumerations()
         assert len(enumerations) == 1
         assert enumeration in enumerations
+
+def test_domain_model_elements_recalculation():
+    # Create types
+    class1: Class = Class(name="Class1")
+    class2: Class = Class(name="Class2")
+
+    # Create associations
+    aend1: Property = Property(name="end1", type=class1, multiplicity=Multiplicity(0, 1))
+    aend2: Property = Property(name="end2", type=class2, multiplicity=Multiplicity(0, 1))
+    association1: BinaryAssociation = BinaryAssociation(name="Association1", ends={aend1, aend2})
+
+    # Create generalizations
+    generalization1: Generalization = Generalization(general=class1, specific=class2)
+
+    # Create packages
+    package1: Package = Package(name="Package1", elements={class1, class2, association1, generalization1})
+
+    # Create constraints
+    constraint1: Constraint = Constraint(name="Constraint1", context=class1, expression="context Class1 inv: self.end1->notEmpty()", language="OCL")
+
+    # Create domain model
+    domain_model: DomainModel = DomainModel(
+        name="TestDomainModel",
+        types={class1, class2},
+        associations={association1},
+        generalizations={generalization1},
+        packages={package1},
+        constraints={constraint1}
+    )
+
+    # Verify elements property
+    expected_elements = {class1, class2, association1, generalization1, package1, constraint1}
+    assert domain_model.elements == (expected_elements | data_types)

@@ -164,7 +164,6 @@ async def generate_output(input_data: ClassDiagramInput):
         
         file_name = files[0]
         output_file_path = os.path.join(temp_dir, file_name)
-
         with open(output_file_path, 'rb') as f:
             file_content = f.read()
         
@@ -172,7 +171,7 @@ async def generate_output(input_data: ClassDiagramInput):
         return Response(
             content=file_content, 
             media_type="text/plain",
-            headers={"Content-Disposition": f"attachment; filename={file_name}"}
+            headers={"Content-Disposition": f'attachment; filename="{file_name}"'}
         )
     except HTTPException as e:
         # Handle known exceptions with specific status codes

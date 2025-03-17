@@ -6,7 +6,7 @@ There are several ways in which you can contribute, beyond writing code. The goa
 
 ## Asking Questions 
 
-Do you have a question? Feel free to [open an issue](https://github.com/YOUR-ORGANIZATION/YOUR-PROJECT/issues/new?assignees=&labels=question&template=question.md).
+Do you have a question? Feel free to [open an issue](https://github.com/BESSER-PEARL/BESSER/issues/new/choose).
 
 Project maintainers will be eager to listen from you and help you out. Please, try to compose a clear and concise question. The more information you provide, the better we will be able to help you.
 

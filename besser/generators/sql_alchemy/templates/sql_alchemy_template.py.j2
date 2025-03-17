@@ -120,4 +120,4 @@ DATABASE_URL = "mssql+pyodbc://username:password@localhost:1433/db_name?driver=S
 engine = create_engine(DATABASE_URL, echo=True)
 
 # Create tables in the database
-Base.metadata.create_all(engine, checkfirst=True, sort_tables=True)
+Base.metadata.create_all(engine, checkfirst=True)

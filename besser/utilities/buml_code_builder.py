@@ -32,13 +32,18 @@ def safe_class_name(name):
     Returns:
     str: A safe variable name for the class
     """
+    if not name:
+        return "unnamed_class"
+        
     if name.endswith('_'):
         base_name = name[:-1]
         if base_name in RESERVED_NAMES:
             return f"{name}var"
         return name
     elif name in RESERVED_NAMES:
-        return f"{name}_" 
+        return f"{name}_"
+    else:
+        return name
 
 def domain_model_to_code(model: DomainModel, file_path: str):
     """

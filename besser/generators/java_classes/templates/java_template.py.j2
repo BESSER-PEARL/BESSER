@@ -1,5 +1,7 @@
 // This is a template example to list the name of the classes
+{% if package_name %}
 package {{ package_name }};
+{% endif %}
 {% import "java_fields.py.j2" as java_fields %}
 {% set attribs = [] %}
 {% for attr in class_obj.attributes %}

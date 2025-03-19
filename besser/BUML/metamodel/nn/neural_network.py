@@ -2129,7 +2129,7 @@ class Dataset:
         """
 
         if task_type not in ['binary', 'multi_class', 'regression']:
-            raise ValueError("Invalid value of task_type")
+            raise ValueError(f"Invalid value of task_type: '{task_type}'")
 
         self.__task_type = task_type
 
@@ -2148,7 +2148,7 @@ class Dataset:
             options: 'csv' and 'images'
         """
         if input_format not in ['csv', 'images']:
-            raise ValueError("Invalid value of input_format")
+            raise ValueError(f"Invalid value of input_format: '{input_format}'")
         self.__input_format = input_format
 
     @property
@@ -2345,7 +2345,7 @@ class Configuration:
         if loss_function not in [
             'crossentropy', 'binary_crossentropy', 'mse'
         ]:
-            raise ValueError("Invalid value of loss_function")
+            raise ValueError(f"Invalid value of loss_function: '{loss_function}'")
         self.__loss_function = loss_function
 
     @property

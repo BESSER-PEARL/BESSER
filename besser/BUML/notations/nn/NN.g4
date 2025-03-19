@@ -6,9 +6,9 @@ neuralNetwork       : ID ':'
                       ('sub_nn' ':' sub_nn+)*
                       ('tensor_ops' ':' tensorOp+)*
                       'modules' ':' modules
-                      'params' ':' parameters
-                      trainingDataset
-                      testDataset
+                      ('config' ':' parameters)?
+                      trainingDataset?
+                      testDataset?
                       ;
 
 parameters          : 'batch_size' '=' INT
@@ -18,6 +18,7 @@ parameters          : 'batch_size' '=' INT
                       'metrics' '=' strList
                       'loss_function' '=' lossFunction
                       'weight_decay' '=' DOUBLE
+                      'momentum' '=' DOUBLE
                        ;
 
 layer               : '-' ID ':'
@@ -29,7 +30,7 @@ layerParams         : ('actv_func' '=' activityFuncType)?
                       ('input_reused' '=' BOOL)?
                       ;
 
-generalLayer        : linear | flatten ;
+generalLayer        : linear | flatten | embedding;
 
 linear              : 'type' '=' 'Linear'
                       layerParams
@@ -42,6 +43,12 @@ flatten             : 'type' '=' 'Flatten'
                       ('start_dim' '=' INT)?
                       ('end_dim' '=' INT)?
                     ;
+
+embedding           : 'type' '=' 'Embedding'
+                      layerParams
+                      'num_embeddings' '=' INT
+                      'embedding_dim' '=' INT
+                      ;
 
 rnn                 : 'type' '=' 'RNN' ;
 

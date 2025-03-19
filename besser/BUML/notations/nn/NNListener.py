@@ -71,6 +71,15 @@ class NNListener(ParseTreeListener):
         pass
 
 
+    # Enter a parse tree produced by NNParser#embedding.
+    def enterEmbedding(self, ctx:NNParser.EmbeddingContext):
+        pass
+
+    # Exit a parse tree produced by NNParser#embedding.
+    def exitEmbedding(self, ctx:NNParser.EmbeddingContext):
+        pass
+
+
     # Enter a parse tree produced by NNParser#rnn.
     def enterRnn(self, ctx:NNParser.RnnContext):
         pass

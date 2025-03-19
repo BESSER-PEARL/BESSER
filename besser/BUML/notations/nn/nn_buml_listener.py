@@ -18,12 +18,12 @@ class NeuralNetworkASTListener(NNListener):
         self.output.write(text)
 
     def enterParameters(self, ctx: NNParser.ParametersContext):
-        text = "# Parameters of the NN\n"
-        text += "parameters = Parameters(batch_size=" + ctx.INT(0).getText() \
+        text = "# Configuration parameters of the NN\n"
+        text += "config_params = Configuration(batch_size=" + ctx.INT(0).getText() \
         + ", epochs=" + ctx.INT(1).getText() + ", learning_rate=" + ctx.DOUBLE(0).getText() \
         + ", optimiser=" + ctx.STRING().getText() + ", metrics=" + ctx.strList().getText() \
         + ", loss_function=\"" + ctx.lossFunction().getText() + "\", weight_decay=" \
-        + ctx.DOUBLE(1).getText() + ")\n\n"
+        + ctx.DOUBLE(1).getText() + "\", momentum=" + ctx.DOUBLE(2).getText() + ")\n\n"
         self.output.write(text)
 
     def enterLayer(self, ctx: NNParser.LayerContext):
@@ -101,9 +101,16 @@ class NeuralNetworkASTListener(NNListener):
         text += ", out_features=" + ctx.INT(1).getText()
         self.output.write(text)
 
+    def enterEmbedding(self, ctx: NNParser.EmbeddingContext):
+        l_name = ctx.parentCtx.parentCtx.ID().getText()
+        text = l_name + " = EmbeddingLayer(name=\"" + l_name +"\""
+        text += ", num_embeddings=" + ctx.INT(0).getText()
+        text += ", embedding_dim=" + ctx.INT(1).getText()
+        self.output.write(text)
+
     def enterSub_nn(self, ctx: NNParser.Sub_nnContext):
         l_name = ctx.ID().getText()
-        text = l_name + ": NN = NN(name=\"" + l_name +"\")\n"
+        text = "\n" + l_name + ": NN = NN(name=\"" + l_name +"\")\n"
         self.output.write(text)
 
     def enterModules(self, ctx: NNParser.ModulesContext):
@@ -118,7 +125,7 @@ class NeuralNetworkASTListener(NNListener):
                 text += "nn_model.add_sub_nn(" + str(module) +')\n'
             elif str(module) in self.__tensor_op:
                 text += "nn_model.add_tensor_op(" + str(module) +')\n'
-        text += "nn_model.add_parameters(parameters)\n"
+        #text += "nn_model.add_parameters(parameters)\n"
         self.output.write(text)
 
     def enterTrainingDataset(self, ctx: NNParser.TrainingDatasetContext):
@@ -148,6 +155,7 @@ class NeuralNetworkASTListener(NNListener):
         if ctx.INT():
             text += ", concatenate_dim=" + ctx.INT().getText()
         if ctx.intStrList():
+            print(dir(ctx.intStrList))
             text += ", layers_of_tensors=" + ctx.intStrList.getText()
         if ctx.reshape:
             text += ", reshape_dim=" + ctx.reshape.getText()
@@ -162,3 +170,42 @@ class NeuralNetworkASTListener(NNListener):
         text += ")\n"
         self.output.write(text)
         self.__tensor_op.append(t_name)
+
+    def exitNeuralNetwork(self, ctx: NNParser.NeuralNetworkContext):
+        if not ctx.parameters():
+            self.default_config_params()
+        text = "nn_model.configuration = config_params\n"
+        if not ctx.trainingDataset():
+            self.default_training_dataset()
+        if not ctx.testDataset():
+            self.default_test_dataset()
+        text += "nn_model.train_data = train_data\n"
+        text += "nn_model.test_data = test_data\n"
+        self.output.write(text)
+    
+    def default_config_params(self):
+        text = "\n# Configuration parameters of the NN\n"
+        text += "config_params = Configuration(batch_size=32, "\
+                + "\n\t" + "epochs=10, "\
+                + "\n\t" + "learning_rate=0.001, "\
+                + "\n\t" + "optimizer=\"adam\", "\
+                + "\n\t" + "metrics=[\"accuracy\"], "\
+                + "\n\t" + "loss_function=\"crossentropy\", "\
+                + "\n\t" + "weight_decay=0.0, momentum=0.0)\n"
+        self.output.write(text)
+
+    def default_training_dataset(self):
+        text = "\n# Training dataset definition\n"
+        text += "train_data = Dataset(name=\"train_data\","\
+                + "\n\t" + "path_data=\"path_to_data\","\
+                + "\n\t" + "task_type=\"binary\","\
+                + "\n\t" + "input_format=\"images\","\
+                + "\n\t" + "image=Image(shape=[224, 224]),"\
+                + "\n\t" + "labels={Label(col_name=\"label\", label_name=\"class\")})\n"
+        self.output.write(text)
+
+    def default_test_dataset(self):
+        text = "\n# Test dataset definition\n"
+        text += "test_data = Dataset(name=\"test_data\","\
+                + "\n\t" + "path_data=\"path_to_data\")\n"
+        self.output.write(text)

@@ -18,7 +18,7 @@ vgg16:
                 in_channels=3
                 out_channels=64
                 kernel_dim=[3, 3]
-                start_dim=[1, 1]
+                stride_dim=[1, 1]
                 padding_amount=1
             - f2:
                 type=Conv2D
@@ -26,7 +26,7 @@ vgg16:
                 in_channels=64
                 out_channels=64
                 kernel_dim=[3, 3]
-                start_dim=[1, 1]
+                stride_dim=[1, 1]
                 padding_amount=1
             - f3:
                 type=Pooling
@@ -62,7 +62,7 @@ vgg16:
                 in_channels=128
                 out_channels=256
                 kernel_dim=[3, 3]
-                start_dim=[1, 1]
+                stride_dim=[1, 1]
                 padding_amount=1
             - f8:
                 type=Conv2D

@@ -19,7 +19,7 @@ alexnet:
                 in_channels=3
                 out_channels=64
                 kernel_dim=[11, 11]
-                start_dim=[4, 4]
+                stride_dim=[4, 4]
                 padding_amount=2
             - f2:
                 type=Pooling

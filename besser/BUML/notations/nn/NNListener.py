@@ -251,6 +251,15 @@ class NNListener(ParseTreeListener):
         pass
 
 
+    # Enter a parse tree produced by NNParser#returnTypeRRN.
+    def enterReturnTypeRRN(self, ctx:NNParser.ReturnTypeRRNContext):
+        pass
+
+    # Exit a parse tree produced by NNParser#returnTypeRRN.
+    def exitReturnTypeRRN(self, ctx:NNParser.ReturnTypeRRNContext):
+        pass
+
+
     # Enter a parse tree produced by NNParser#tensorOpType.
     def enterTensorOpType(self, ctx:NNParser.TensorOpTypeContext):
         pass

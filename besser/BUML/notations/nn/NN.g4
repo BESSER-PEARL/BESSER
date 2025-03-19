@@ -50,7 +50,15 @@ embedding           : 'type' '=' 'Embedding'
                       'embedding_dim' '=' INT
                       ;
 
-rnn                 : 'type' '=' 'RNN' ;
+rnn                 : 'type' '=' rnn_type=('SimpleRNN' | 'LSTM' | 'GRU')
+                      layerParams
+                      'return_type' '=' returnTypeRRN
+                      ('input_size' '=' INT)?
+                      'hidden_size' '=' INT
+                      ('bidirectional' '=' BOOL)?
+                      ('dropout' '=' DOUBLE)?
+                      ('batch_first' '=' BOOL)?
+                      ;
 
 cnn                 : convolutional | pooling ;
 
@@ -133,6 +141,8 @@ activityFuncType    : 'relu'
                       | 'tanh'
                       | 'None'
                       ;
+
+returnTypeRRN       : 'last' | 'full' | 'hidden' ;
 
 tensorOpType        : 'reshape' 
                       | 'concatenate' 

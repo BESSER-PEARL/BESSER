@@ -4,7 +4,7 @@ This module defines the neural network metamodel.
 
 from __future__ import annotations
 from typing import List, Self, Union
-from besser.BUML.metamodel.structural import BehaviorImplementation, NamedElement, Element
+from besser.BUML.metamodel.structural import BehaviorImplementation, NamedElement
 
 
 

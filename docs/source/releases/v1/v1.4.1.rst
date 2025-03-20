@@ -1,0 +1,6 @@
+Version 1.4.1
+=============
+
+Fixes
+------
+* Fixed the name of the parameter ``buml_file_path`` in the ``image_to_buml`` feature.

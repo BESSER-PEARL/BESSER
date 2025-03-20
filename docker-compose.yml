@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  besser-wme-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "9000:9000"
+    volumes:
+      - ./:/app
+    working_dir: /app/besser
+    environment:
+      - PYTHONPATH=/app
+    command: python -m besser.utilities.web_modeling_editor.backend.backend
+    networks:
+      - besser_network
+
+  besser_redis:
+    image: redis/redis-stack-server:latest
+    container_name: besser_redis
+    volumes:
+      - apollon_redis_data:/data
+    networks:
+      - besser_network
+
+  besser-wme-frontend:
+    build:
+      context: ./besser/utilities/web_modeling_editor/BESSER_WME_standalone
+      dockerfile: Dockerfile.redis
+    container_name: besser-wme-frontend
+    environment:
+      - APOLLON_REDIS_URL=redis://besser_redis:6379
+      - APOLLON_REDIS_DIAGRAM_TTL=${APOLLON_REDIS_DIAGRAM_TTL}
+      - APOLLON_REDIS_MIGRATE_FROM_FILE=true
+      - DEPLOYMENT_URL=${DEPLOYMENT_URL}
+      - BACKEND_URL=${BACKEND_URL}
+    volumes:
+      - ./diagrams:/app/diagrams
+    restart: always
+    networks:
+      - besser_network
+    ports:
+      - "8080:8080"
+
+volumes:
+  apollon_redis_data:
+    driver: local
+
+networks:
+  besser_network:
+    name: besser_network
+    driver: bridge

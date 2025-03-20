@@ -1,8 +1,12 @@
 __pycache__/
+.pytest_cache/
+/.idea/
 
-# pipenv
+# virtual env
 Pipfile
 Pipfile.lock
+besser_venv/
+.env
 
 # package
 /dist/
@@ -21,4 +25,9 @@ besser/.idea/workspace.xml
 *.iml
 .idea/inspectionProfiles/profiles_settings.xml
 *.xml
-myenv/
+
+# Backend
+besser/utilities/web_modeling_editor/backend/output
+
+# pylint
+.pylintrc

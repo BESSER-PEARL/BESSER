@@ -1,0 +1,17 @@
+Version 2.0.0
+=============
+
+New features
+------------
+
+**Web Modeling Editor**
+
+* The editor enables the design of B-UML models through a graphical dashboard 
+* It provides access to BESSER code generators to directly download the generated code
+* Import/export models in B-UML and JSON formats
+
+Improvements
+------------
+
+* Extended OCL metamodel to handle DateLiteralExpressions
+* Improved grammar and parser to handle dates and reject construct

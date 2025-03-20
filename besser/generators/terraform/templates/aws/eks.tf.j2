@@ -1,0 +1,164 @@
+resource "aws_iam_role" "{{public_cluster.name}}" {
+    name = "eks-cluster-{{public_cluster.name}}"
+  
+    assume_role_policy = <<POLICY
+{
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Service": "eks.amazonaws.com"
+        },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  }
+  POLICY
+}
+  
+  resource "aws_iam_role_policy_attachment" "{{public_cluster.name}}-AmazonEKSClusterPolicy" {
+    policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+    role       = aws_iam_role.{{public_cluster.name}}.name
+  }
+  
+  variable "cluster_name" {
+    default = "{{public_cluster.name}}"
+    type = string
+    description = "AWS EKS CLuster Name"
+    nullable = false
+  }
+  
+  resource "aws_eks_cluster" "{{public_cluster.name}}" {
+    name     = var.cluster_name
+    role_arn = aws_iam_role.{{public_cluster.name}}.arn
+  
+    vpc_config {
+      subnet_ids = [
+    {%if public_cluster.net_config == True %}
+        aws_subnet.private-us-east-1a.id,
+        aws_subnet.private-us-east-1b.id,
+        aws_subnet.public-us-east-1a.id,
+        aws_subnet.public-us-east-1b.id
+    {%else%}
+        {%for subnet in subnets%}
+        "???"{%if not loop.last%},{%endif%}
+        {%endfor%}
+        {%endif%}
+      ]
+    }
+  
+    depends_on = [aws_iam_role_policy_attachment.{{public_cluster.name}}-AmazonEKSClusterPolicy]
+  }
+  
+  data "aws_eks_cluster_auth" "cluster" {
+    name = aws_eks_cluster.{{public_cluster.name}}.id
+  }
+  provider "kubernetes" {
+    host                   = aws_eks_cluster.{{public_cluster.name}}.endpoint
+    cluster_ca_certificate = base64decode(aws_eks_cluster.{{public_cluster.name}}.certificate_authority.0.data)
+    token                  = data.aws_eks_cluster_auth.cluster.token
+  }
+  
+{% set default_dep = 1 %}
+{% for dep in public_cluster.deployments%}
+resource "kubernetes_deployment_v1" "default-{{default_net}}" {
+{% set default_dep = default_dep + 1 %}
+  wait_for_rollout = true
+    metadata {
+       name = "{{dep.name}}" 
+      labels = {
+        app = "{%for cont in dep.containers%}{{cont.application.name}}{%if not loop.last%},{%endif%}{%endfor%}"
+      }
+    }
+    timeouts {
+      create = "25m"
+      update = "20m"
+      delete = "20m"
+    }
+    spec {
+  
+      replicas = {{dep.replicas}}
+      selector {
+        match_labels = {
+          app = "{%for cont in dep.containers%}{{cont.application.name}}{%if not loop.last%},{%endif%}{%endfor%}"
+        }
+      }
+      template {
+        metadata {
+          labels = {
+            app = "{%for cont in dep.containers%}{{cont.application.name}}{%if not loop.last%},{%endif%}{%endfor%}"
+          }
+        }
+        spec {
+        {%for container in dep.containers%}
+          container {
+            image = "{{container.application.image_repo}}"
+            name  = "{{container.name}}"
+            resources {
+              limits = {
+                cpu    = "{{container.resources_limit.cpu}}"
+                memory = "{{container.resources_limit.memory}}Mi"
+              }
+              requests = {
+                cpu    = "{{container.application.required_resources.cpu}}m"
+                memory = "{{container.application.required_resources.memory}}Mi"
+              }
+        {%endfor%}
+            }
+          }
+        }
+      }
+    }
+    depends_on = ["aws_eks_node_group.private-nodes"]
+  }
+  {%endfor%}
+
+  {% set default_service = 1 %}
+  {% for service in public_cluster.services%}
+resource "kubernetes_service_v1" "default-{{default_service}}" {
+  {% set default_service = default_service + 1 %}
+  metadata {
+    name = "{{service.name}}"
+#    namespace = kubernetes_namespace.app_namespace.metadata[0].name
+  }
+  spec {
+    selector = {
+      app = "{{service.application.name}}"
+    }
+    port {
+      protocol    = "{{service.protocol | to_str}}"
+      port        = {{service.port}}
+      target_port = {{service.target_port}}
+    }
+    type = "{{service.type | to_str}}"
+  }
+}
+{%endfor%}
+
+{% for service in public_cluster.services%}
+{% if "Ingress" in service.type | to_str %}
+resource "kubernetes_ingress_v1" "example" {
+  metadata {
+    name = "example"
+  }
+  spec {
+    rule {
+      http {
+        path {
+          path = "/*"
+          backend {
+            service {
+              name = kubernetes_service_v1.default-1.metadata.0.name
+              port {
+                number = {{service.port}}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+        {% endif %}
+{%endfor%}

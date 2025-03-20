@@ -1,0 +1,80 @@
+@prefix ex: <http://example.org/vocab#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+{# Iterate over classes and generate the clases #}
+# Class definition
+{% for class_obj in model.classes_sorted_by_inheritance() %}
+    {# Handling generalizations (inheritance) #}
+    {% if class_obj.parents() %}
+        {% for parent in class_obj.parents() %}
+ex:{{class_obj.name}} rdf:type rdfs:Class ;
+          rdfs:subClassOf ex:{{parent.name}} .
+
+        {% endfor %}
+    {% else %}
+ex:{{class_obj.name}} rdf:type rdfs:Class .
+
+    {% endif %}
+{% endfor %}
+
+# Property definition
+{% for class_obj in model.classes_sorted_by_inheritance() %}
+    {% for property in class_obj.attributes %}
+ex:{{property.name}} rdf:type rdf:Property ;
+        rdfs:domain ex:{{class_obj.name}} ;
+        {% if types[property.type.name ]%}
+        rdfs:range xsd:{{types[property.type.name]}} .
+
+        {% else %}
+        rdfs:range xsd:{{property.type.name}} .
+
+        {% endif %}
+    {% endfor %}
+{% endfor %}
+
+{# Iterate over associations #}
+# Relationship Definition
+{% for association in model.associations %}
+    {% if association.ends|length == 2 -%}
+        {% set ns = namespace(end1=None, end2=None) %}
+        {% for end in association.ends %}
+            {% set ns.end1=end if loop.index == 1 else ns.end1 %}
+            {% set ns.end2=end if loop.index == 2 else ns.end2 %}
+        {% endfor %}
+        {% set class1_name = ns.end1.type.name %}
+        {% set class2_name = ns.end2.type.name %}
+        {# Check multiplicity and generate appropriate SQL statement #}
+        {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
+        {# N:M #}     
+ex:{{association.name}} rdf:type rdf:Property ;
+    rdfs:domain ex:{{class1_name}} ;
+    rdfs:range ex:{{class2_name}} .
+        {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+        {# N:1 #}
+ex:{{association.name}} rdf:type rdf:Property ;
+    rdfs:domain ex:{{class1_name}} ;
+    rdfs:range ex:{{class2_name}} .
+        {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
+        {# 1:N #}
+ex:{{association.name}} rdf:type rdf:Property ;
+    rdfs:domain ex:{{class2_name}} ;
+    rdfs:range ex:{{class1_name}} .
+        {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+        {# 1:1 Relationship: Add unique reference to one of the ends #}
+ex:{{association.name}} rdf:type rdf:Property ;
+    rdfs:domain ex:{{class1_name}} ;
+    rdfs:range ex:{{class2_name}} .
+        {% endif %}
+    {% endif %}
+{%- endfor %}
+
+{# Iterate over enumerations #}
+# Enumeration definition
+{% for enum in model.get_enumerations() %}
+ex:{{enum.name}} rdf:type rdfs:Class .
+    {% for literal in enum.litelars %}
+ex:{{literal.name}} rdf:type ex:{{enum.name}} .
+    {% endfor %}
+{% endfor %}

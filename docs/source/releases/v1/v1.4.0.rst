@@ -1,0 +1,23 @@
+Version 1.4.0
+=============
+
+
+New features
+------------
+
+* DrawIO to B-UML: Convert DrawIO structural diagrams to B-UML, supporting advanced UML class notations, associations, and enumerations.
+* B-UML to File: Export B-UML models directly to files as Python-based code.
+* Sort by timestamp: The new ``sort_by_timestamp`` feature enables you to retrieve an ordered list of objects (e.g., classes or attributes), sorted by their creation date.
+
+Improvements
+------------
+
+* Code Generators: Python, Pydantic, Django, and Backend generators now include support for enumerations.
+* PlantUML to BUML: Parser modified to return the B-UML model and optionally generates the Python-based code using the B-UML to File feature.
+* Structural metamodel: two parameters added to the NamedElement class. ``time_stamp`` to store the creation date and time of the element, and ``synonyms`` to store alternative names or variations for the named object.
+* File paths are generated using `os.path.join` to ensure compatibility across platforms.
+* Predefined primitive data types included such as `StringType`, `IntegerType`, and more.
+
+Fixes
+------
+* Fixed a typo in a parameter of the DataValue class in the Object metamodel.

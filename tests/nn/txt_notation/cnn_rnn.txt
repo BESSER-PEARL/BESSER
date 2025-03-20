@@ -30,35 +30,6 @@ cnn_rnn:
             pooling_type=max
             dimension=1D
             kernel_dim=[2]
-
-        - l2:
-            type=LSTM
-            return_type=full
-            input_size=326
-            hidden_size=40
-            bidirectional=True
-            dropout=0.5
-            batch_first=True
-        - l3:
-            type=Dropout
-            rate=0.2
-        - l4:
-            type=LSTM
-            return_type=last
-            input_size=80
-            hidden_size=40
-            dropout=0.2
-            batch_first=True
-        - l5:
-            type=Linear
-            actv_func=relu
-            in_features=40
-            out_features=40
-        - l6:
-            type=Linear
-            actv_func=softmax
-            in_features=40
-            out_features=2
         - l7:
             type=Dropout
             rate=0.15

@@ -118,20 +118,6 @@ class NNCodeGenerator(GeneratorInterface):
             modules_details = adjust_actv_func_name(modules_details)
         return modules_details
 
-    def build_generation_path(self, file_name:str) -> str:
-        """
-        It builds the path to the file where the code is generated.
-        """
-        if self.output_dir is not None:
-            if not os.path.exists(self.output_dir):
-                os.makedirs(self.output_dir)
-            file_path = os.path.join(self.output_dir, file_name)
-        else:
-            working_path = os.path.abspath('')
-            os.makedirs(os.path.join(working_path, "output"), exist_ok=True)
-            file_path = os.path.join(working_path, "output", file_name)
-        return file_path
-
     def generate(self, *args):
         """
         Generates NN code based on the provided B-UML model and saves 

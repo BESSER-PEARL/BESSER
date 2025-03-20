@@ -31,7 +31,9 @@ class GeneratorInterface(ABC):
         self.__output_dir = output_dir
 
     def build_generation_path(self, file_name:str) -> str:
-        if self.output_dir != None:
+        if self.output_dir is not None:
+            if not os.path.exists(self.output_dir):
+                os.makedirs(self.output_dir)
             file_path = os.path.join(self.output_dir, file_name)
         else:
             working_path = os.path.abspath('')

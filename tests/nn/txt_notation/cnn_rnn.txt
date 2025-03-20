@@ -78,7 +78,7 @@ cnn_rnn:
             rate=0.1
         - l11:
             type=Linear
-            actv_func=sigmoid
+            actv_func=sigmod
             in_features=400
             out_features=1
         
@@ -86,8 +86,8 @@ cnn_rnn:
     tensor_ops:
         - name=op1
           type=concatenate
-          layers_of_tensors=[l4, l6]
           concatenate_dim=-1
+          layers_of_tensors=[l4, l6]
 
         
 

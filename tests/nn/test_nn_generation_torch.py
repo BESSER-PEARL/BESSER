@@ -1,7 +1,3 @@
-"""
-Module to test the NN metamodel
-"""
-
 import os
 import pytest
 
@@ -11,7 +7,6 @@ from besser.BUML.metamodel.nn import LinearLayer, FlattenLayer, Conv2D, \
 from besser.generators.nn.pytorch.pytorch_code_generator import (
     PytorchGenerator
 )
-
 
 def run_tests():
     """Run tests"""
@@ -54,7 +49,6 @@ def nn_buml():
 
     nn_model.add_configuration(configuration)
 
-
     image = Image(shape=[32, 32, 3], normalize=False)
 
     train_data = Dataset(
@@ -71,22 +65,21 @@ def nn_buml():
 
 
 # Test nn subclassing
-def test_nn_subclassing():
+def test_nn_subclassing(tmpdir):
     """Test nn subclassing"""
     
     nn_model = nn_buml()
 
-    output_dir = "output/example"
+    # Using tmpdir to create a temporary output directory
+    output_dir = tmpdir.mkdir("example")
 
     pytorch_model = PytorchGenerator(
-        model=nn_model, output_dir=output_dir, generation_type="subclassing"
+        model=nn_model, output_dir=str(output_dir), generation_type="subclassing"
     )
     pytorch_model.generate()
 
-
-    output_file = os.path.join(output_dir, 'pytorch_nn_subclassing.py')
+    output_file = os.path.join(str(output_dir), 'pytorch_nn_subclassing.py')
     assert os.path.exists(output_file), "The file was not created."
-
 
     with open(output_file, 'r', encoding="utf-8") as file:
         content = file.read()
@@ -101,27 +94,23 @@ def test_nn_subclassing():
     assert f"for epoch in range({nn_model.configuration.epochs})" in content, "Epochs is incorrect."
     assert f"metrics = {nn_model.configuration.metrics}" in content, "Metrics is incorrect."
 
-    os.remove(output_file)
-
-
 
 # Test nn sequential
-def test_nn_sequential():
+def test_nn_sequential(tmpdir):
     """Test nn sequential"""
     
     nn_model = nn_buml()
 
-    output_dir = "output/example"
+    # Using tmpdir to create a temporary output directory
+    output_dir = tmpdir.mkdir("example")
 
     pytorch_model = PytorchGenerator(
-        model=nn_model, output_dir=output_dir, generation_type="sequential"
+        model=nn_model, output_dir=str(output_dir), generation_type="sequential"
     )
     pytorch_model.generate()
 
-
-    output_file = os.path.join(output_dir, 'pytorch_nn_sequential.py')
+    output_file = os.path.join(str(output_dir), 'pytorch_nn_sequential.py')
     assert os.path.exists(output_file), "The file was not created."
-
 
     with open(output_file, 'r', encoding="utf-8") as file:
         content = file.read()
@@ -129,7 +118,6 @@ def test_nn_sequential():
     # Check for expected lines in the file
     assert f"{nn_model.name} = nn.Sequential(" in content, "Missing NN sequential module in the generated file."
 
-    os.remove(output_file)
 
 if __name__ == "__main__":
     run_tests()

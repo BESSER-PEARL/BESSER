@@ -49,7 +49,7 @@ cnn_rnn:
             rate=0.1
         - l11:
             type=Linear
-            actv_func=sigmod
+            actv_func=sigmoid
             in_features=400
             out_features=1
         

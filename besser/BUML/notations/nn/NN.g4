@@ -136,7 +136,7 @@ intStrList          : '[' (INT|STRING|ID) (',' (INT|STRING|ID))* ']' ;
 
 activityFuncType    : 'relu'
                       | 'leaky_relu'
-                      | 'sigmod'
+                      | 'sigmoid'
                       | 'softmax'
                       | 'tanh'
                       | 'None'

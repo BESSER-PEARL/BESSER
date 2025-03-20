@@ -3,7 +3,7 @@ from enum import Enum
 
 
 # FileSourceType
-class FileSourceType:
+class FileSourceType(NamedElement):
     """Represents the type of a file source.
 
     Args:
@@ -16,18 +16,8 @@ class FileSourceType:
     """
 
     def __init__(self, name: str, type: str):
+        super().__init__(name)
         self.type: str = type
-        self.name: str = name
-
-    @property
-    def name(self) -> str:
-        """str: Get the name of the file source type."""
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        """str: Set the name of the file source type."""
-        self.__name = name
 
     @property
     def type(self) -> str:

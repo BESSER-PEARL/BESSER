@@ -712,6 +712,68 @@ class Method(TypedElement):
             f'is_derived={self.is_derived})'
         )
 
+
+class BehaviorImplementation(NamedElement):
+    """A behaviorImplementation represents the body of a behavior associated with a class.
+
+    Args:
+        name (str): The name of the behavior implementation.
+        
+    Attributes:
+        name (str): The name of the behavior implementation.  
+    """
+    
+    def __init__(self, name: str):
+        super().__init__(name)
+
+
+    def __repr__(self):
+        return f'BehaviorImplementation({self.name})'
+
+
+class BehaviorDeclaration(NamedElement):
+    """A BehaviorDeclaration represents the signature of a behavior associated with a class.
+
+    Args:
+        name (str): The name of the behavior.
+        implementations (set[BehaviorImplementation]): The implementations associated with the behavior.
+        
+    Attributes:
+        name (str): The name of the behavior.
+        implementations (set[BehaviorImplementation]): The implementations associated with the behavior.
+    """
+    
+    def __init__(self, name: str, implementations: set[BehaviorImplementation]):
+        super().__init__(name)
+        self.implementations: set[BehaviorImplementation] = implementations
+
+
+    @property
+    def implementations(self) -> set[BehaviorImplementation]:
+        """set[BehaviorImplementation]: Get the implementations of the behavior."""
+        return self.__implementations
+
+
+    @implementations.setter
+    def implementations(self, implementations: set[BehaviorImplementation]):
+        """
+        set[BehaviorImplementation]: Set the implementations of the behavior.
+
+        Raises:
+            ValueError: if two implementations have the same name.
+        """
+        if implementations is not None:
+            names = [implementation.name for implementation in implementations]
+            if len(names) != len(set(names)):
+                raise ValueError("A behavior cannot have two implementations with the same name")
+            self.__implementations = implementations
+        else:
+            self.__implementations = set()
+
+    def __repr__(self):
+        return f'BehaviorDeclaration({self.name}, {self.implementations})'
+
+
 class Class(Type):
     """Represents a class in a modeling context.
 
@@ -720,10 +782,22 @@ class Class(Type):
 
     Args:
         name (str): The name of the class.
+        attributes (set[Property]): The set of attributes associated with the class.
+        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class (None as default).
+        is_abstract (bool): Indicates whether the class is abstract.
+        is_read_only (bool): Indicates whether the class is read only.
+
+    Attributes:
+        name (str): Inherited from Type, represents the name of the class.
+        attributes (set[Property]): The set of attributes associated with the class.
+        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class (None as default).
+        is_abstract (bool): Indicates whether the class is abstract.
+        is_read_only (bool): Indicates whether the class is read only.
         attributes (set[Property]): The set of attributes associated with the class (set() as default).
         methods (set[Method]): The set of methods of the class (set() as default).
         is_abstract (bool): Indicates whether the class is abstract (False as default).
         is_read_only (bool): Indicates whether the class is read only (False as default).
+        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
         synonyms (List[str]): List of synonyms of the class (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -734,6 +808,7 @@ class Class(Type):
         methods (set[Method]): The set of methods of the class (set() as default).
         is_abstract (bool): Indicates whether the class is abstract (False as default).
         is_read_only (bool): Indicates whether the class is read only (False as default).
+        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class (None as default).
         __associations (set[Association]): Set of associations involving the class.
         __generalizations (set[Generalization]): Set of generalizations involving the class.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
@@ -742,11 +817,12 @@ class Class(Type):
     """
 
     def __init__(self, name: str, attributes: set[Property] = None, methods: set[Method] = None,
-                 is_abstract: bool= False, is_read_only: bool= False, timestamp: int = None,
-                synonyms: List[str] = None, is_derived: bool = False):
+                 is_abstract: bool= False, is_read_only: bool= False, behaviors: set[BehaviorDeclaration] = None,
+                 timestamp: int = None, synonyms: List[str] = None, is_derived: bool = False):
         super().__init__(name, timestamp, synonyms, is_derived=is_derived)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
+        self.behaviors: set[BehaviorDeclaration] = behaviors if behaviors is not None else set()
         self.attributes: set[Property] = attributes if attributes is not None else set()
         self.methods: set[Method] = methods if methods is not None else set()
         self.__associations: set[Association] = set()
@@ -856,6 +932,27 @@ class Class(Type):
             attribute.owner.attributes.discard(attribute)
         attribute.owner = self
         self.attributes.add(attribute)
+
+    @property
+    def behaviors(self) -> set[BehaviorDeclaration]:
+        """set[BehaviorDeclaration]: Get the behaviors associated with the class."""
+        return self.__behaviors
+
+    @behaviors.setter
+    def behaviors(self, behaviors: set[BehaviorDeclaration]):
+        """
+        set[BehaviorDeclaration]: Set the behaviors associated with the class.
+        
+        Raises:
+            ValueError: if two behaviors have the same name.
+        """
+        if behaviors is not None:
+            names = [behavior.name for behavior in behaviors]
+            if len(names) != len(set(names)):
+                raise ValueError("A class cannot have two behaviors with the same name")
+            self.__behaviors = behaviors
+        else:
+            self.__behaviors = set()
 
     @property
     def is_abstract(self) -> bool:

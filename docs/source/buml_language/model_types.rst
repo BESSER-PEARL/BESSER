@@ -11,3 +11,4 @@ Model types
   model_types/deployment
   model_types/state_machine
   model_types/feature_model
+  model_types/nn

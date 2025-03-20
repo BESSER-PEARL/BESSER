@@ -46,6 +46,23 @@ class NeuralNetworkASTListener(NNListener):
         text += ", out_channels=" + ctx.INT(1).getText()
         self.output.write(text)
 
+    def enterRnn(self, ctx: NNParser.RnnContext):
+        l_name = ctx.parentCtx.ID().getText()
+        text = l_name + " = " + ctx.rnn_type.text + "Layer(name=\"" + l_name +"\""
+        text += ", return_type=\"" + ctx.returnTypeRRN().getText() + "\""
+        if ctx.i_size:
+            text += ", input_size=" + ctx.INT(0).getText()
+            text += ", hidden_size=" + ctx.INT(1).getText()
+        else:
+            text += ", hidden_size=" + ctx.INT(0).getText()
+        if ctx.bid:
+            text += ", bidirectional=" + ctx.bid.text
+        if ctx.dout:
+            text += ", dropout=" + ctx.dout.text
+        if ctx.b_first:
+            text += ", batch_first=" + ctx.b_first.text
+        self.output.write(text)
+
     def enterLayerParams(self, ctx: NNParser.LayerParamsContext):
         text = ""
         if ctx.activityFuncType():
@@ -125,7 +142,6 @@ class NeuralNetworkASTListener(NNListener):
                 text += "nn_model.add_sub_nn(" + str(module) +')\n'
             elif str(module) in self.__tensor_op:
                 text += "nn_model.add_tensor_op(" + str(module) +')\n'
-        #text += "nn_model.add_parameters(parameters)\n"
         self.output.write(text)
 
     def enterTrainingDataset(self, ctx: NNParser.TrainingDatasetContext):
@@ -151,12 +167,11 @@ class NeuralNetworkASTListener(NNListener):
 
     def enterTensorOp(self, ctx: NNParser.TensorOpContext):
         t_name = ctx.ID().getText()
-        text = t_name + " = TensorOp(name=\"" + t_name + "\", type=\"" + ctx.tensorOpType().getText() + "\""
+        text = t_name + " = TensorOp(name=\"" + t_name + "\", tns_type=\"" + ctx.tensorOpType().getText() + "\""
         if ctx.INT():
             text += ", concatenate_dim=" + ctx.INT().getText()
         if ctx.intStrList():
-            print(dir(ctx.intStrList))
-            text += ", layers_of_tensors=" + ctx.intStrList.getText()
+            text += ", layers_of_tensors=" + ctx.intStrList().getText()
         if ctx.reshape:
             text += ", reshape_dim=" + ctx.reshape.getText()
         if ctx.transpose:
@@ -174,7 +189,7 @@ class NeuralNetworkASTListener(NNListener):
     def exitNeuralNetwork(self, ctx: NNParser.NeuralNetworkContext):
         if not ctx.parameters():
             self.default_config_params()
-        text = "nn_model.configuration = config_params\n"
+        text = "\n" + "nn_model.configuration = config_params\n"
         if not ctx.trainingDataset():
             self.default_training_dataset()
         if not ctx.testDataset():
@@ -185,12 +200,12 @@ class NeuralNetworkASTListener(NNListener):
     
     def default_config_params(self):
         text = "\n# Configuration parameters of the NN\n"
-        text += "config_params = Configuration(batch_size=32, "\
-                + "\n\t" + "epochs=10, "\
-                + "\n\t" + "learning_rate=0.001, "\
-                + "\n\t" + "optimizer=\"adam\", "\
-                + "\n\t" + "metrics=[\"accuracy\"], "\
-                + "\n\t" + "loss_function=\"crossentropy\", "\
+        text += "config_params = Configuration(batch_size=32,"\
+                + "\n\t" + "epochs=10,"\
+                + "\n\t" + "learning_rate=0.001,"\
+                + "\n\t" + "optimizer=\"adam\","\
+                + "\n\t" + "metrics=[\"accuracy\"],"\
+                + "\n\t" + "loss_function=\"crossentropy\","\
                 + "\n\t" + "weight_decay=0.0, momentum=0.0)\n"
         self.output.write(text)
 

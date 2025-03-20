@@ -53,11 +53,11 @@ embedding           : 'type' '=' 'Embedding'
 rnn                 : 'type' '=' rnn_type=('SimpleRNN' | 'LSTM' | 'GRU')
                       layerParams
                       'return_type' '=' returnTypeRRN
-                      ('input_size' '=' INT)?
+                      ('input_size' '=' i_size=INT)?
                       'hidden_size' '=' INT
-                      ('bidirectional' '=' BOOL)?
-                      ('dropout' '=' DOUBLE)?
-                      ('batch_first' '=' BOOL)?
+                      ('bidirectional' '=' bid=BOOL)?
+                      ('dropout' '=' dout=DOUBLE)?
+                      ('batch_first' '=' b_first=BOOL)?
                       ;
 
 cnn                 : convolutional | pooling ;
@@ -132,7 +132,7 @@ intList             : '[' INT (',' INT)* ']' ;
 
 strList             : '[' STRING (',' STRING)* ']' ;
 
-intStrList          : '[' (INT|STRING) (',' (INT|STRING))* ']' ;
+intStrList          : '[' (INT|STRING|ID) (',' (INT|STRING|ID))* ']' ;
 
 activityFuncType    : 'relu'
                       | 'leaky_relu'
@@ -163,9 +163,9 @@ poolingType         : 'average' | 'max' | 'adaptive_average' | 'adaptive_max' ;
 dimensionality      : '1D' | '2D' | '3D' ;
 
 // Lexer rules
-ID              : [a-zA-Z_][a-zA-Z0-9_]* ;
-INT             : [0-9]+ ;
 BOOL            : 'True' | 'False' ;
+ID              : [a-zA-Z_][a-zA-Z0-9_]* ;
+INT             : '-'?[0-9]+ ;
 WS              : [ \t\r\n]+ -> skip ;
 STRING          : '"' .*? '"'  ;
 DOUBLE          : [0-9]+ '.' [0-9]* ;

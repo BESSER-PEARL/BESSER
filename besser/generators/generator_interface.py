@@ -42,3 +42,4 @@ class GeneratorInterface(ABC):
             working_path = os.path.abspath('')
             os.makedirs(os.path.join(working_path, "output"), exist_ok=True)
             file_path = os.path.join(working_path, "output")
+        return file_path

@@ -468,26 +468,26 @@ class Class(Type):
     Args:
         name (str): The name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
-        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class.
+        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class (None as default).
         is_abstract (bool): Indicates whether the class is abstract.
         is_read_only (bool): Indicates whether the class is read only.
 
     Attributes:
         name (str): Inherited from Type, represents the name of the class.
         attributes (set[Property]): The set of attributes associated with the class.
-        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class.
+        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class (None as default).
         is_abstract (bool): Indicates whether the class is abstract.
         is_read_only (bool): Indicates whether the class is read only.
         __associations (set[Association]): Set of associations involving the class.
         __generalizations (set[Generalization]): Set of generalizations involving the class.
     """
 
-    def __init__(self, name: str, attributes: set[Property], behaviors: set[BehaviorDeclaration], is_abstract: bool= False, is_read_only: bool= False):
+    def __init__(self, name: str, attributes: set[Property], behaviors: set[BehaviorDeclaration] = None, is_abstract: bool= False, is_read_only: bool= False):
         super().__init__(name)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
         self.attributes: set[Property] = attributes
-        self.behaviors: set[BehaviorDeclaration] = behaviors
+        self.behaviors: set[BehaviorDeclaration] = behaviors if behaviors is not None else set()
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
 

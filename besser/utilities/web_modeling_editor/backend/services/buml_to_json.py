@@ -572,13 +572,8 @@ def state_machine_to_json(content: str):
                         "width": 580,
                         "height": 200
                     },
-                    "text": cleaned_source,
+                    "code": cleaned_source,
                     "language": "python",
-                    "code": {
-                        "content": cleaned_source,
-                        "language": "python",
-                        "version": "1.0"
-                    }
                 }
                 created_code_blocks[function_name] = {
                     "id": code_block_id,

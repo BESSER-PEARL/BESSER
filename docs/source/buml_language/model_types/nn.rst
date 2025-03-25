@@ -1,5 +1,5 @@
-NN model
-========
+Neural Network model
+====================
 
 The NN metamodel enables to represent neural networks.
 The key concepts in the NN metamodel are represented using meta-classes and 

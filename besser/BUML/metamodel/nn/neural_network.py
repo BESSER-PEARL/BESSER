@@ -1423,7 +1423,7 @@ class RNN(Layer):
         return_type (str): Whether to return the hidden states, the last 
             output in the output sequence or the full sequence.
     """
-    def __init__(self, name: str, hidden_size: int, return_type: str,
+    def __init__(self, name: str, hidden_size: int, return_type: str = "full",
                  input_size: int = None, bidirectional: bool = False,
                  dropout: float = 0.0, batch_first: bool = True,
                  actv_func: str = None, name_module_input: str = None,

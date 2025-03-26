@@ -1,5 +1,5 @@
 ---
-name: "Bug report"
+name: "🐛 Bug report"
 about: Something on BESSER is not working as expected? Create a report to help us
   improve.
 labels: bug
@@ -11,9 +11,6 @@ labels: bug
 
 #### To Reproduce
 <!-- Steps to reproduce the behavior: -->
-1. Go to '...'
-2. Click on '....'
-3. See error
 
 #### Expected behavior
 <!-- A clear and concise description of what you expected to happen. -->

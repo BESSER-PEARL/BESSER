@@ -2522,7 +2522,7 @@ class NN(BehaviorImplementation):
         List[Union[NN, Layer, TensorOp]]: Set the modules list 
             of the main model.
         """
-        raise AttributeError("modules attribute is read-only")
+        self.__modules = modules
 
     @property
     def configuration(self) -> Configuration:

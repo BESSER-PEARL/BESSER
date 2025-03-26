@@ -1,5 +1,5 @@
-Feature Model
-=============
+Feature model
+==============
 
 This metamodel allows the definition of feature models.
 

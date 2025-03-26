@@ -1,0 +1,8 @@
+Version 2.5.0
+=============
+
+New Features
+------------
+
+* Neural Network metamodel extension: B-UML now supports the definition of neural networks (Inspired by deep learning frameworks like PyTorch and TensorFlow).
+* Grammar to define NNs: A textual notation is available to support the definition of neural networks in B-UML.

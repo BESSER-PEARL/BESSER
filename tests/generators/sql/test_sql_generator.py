@@ -6,43 +6,6 @@ from besser.BUML.metamodel.structural import (
     Property, BinaryAssociation, Multiplicity
 )
 
-# Define the expected output
-association_output = """
-CREATE TABLE book_author_assoc"""
-
-library_output = """
-CREATE TABLE library (
-	id SERIAL NOT NULL, 
-	name VARCHAR(100) NOT NULL, 
-	address VARCHAR(100) NOT NULL, 
-	PRIMARY KEY (id)
-)
-
-;"""
-
-author_output = """
-CREATE TABLE author (
-	id SERIAL NOT NULL, 
-	name VARCHAR(100) NOT NULL, 
-	email VARCHAR(100) NOT NULL, 
-	PRIMARY KEY (id)
-)
-
-;"""
-
-book_output = """
-CREATE TABLE book (
-	id SERIAL NOT NULL, 
-	title VARCHAR(100) NOT NULL, 
-	pages INTEGER NOT NULL, 
-	release DATE NOT NULL, 
-	"locatedIn_id" INTEGER NOT NULL, 
-	PRIMARY KEY (id), 
-	FOREIGN KEY("locatedIn_id") REFERENCES library (id)
-)
-
-;"""
-
 @pytest.fixture
 def domain_model():
     # Library class
@@ -69,7 +32,7 @@ def domain_model():
     # Book-Author association definition
     publishes: Property = Property(name="publishes", type=book, multiplicity=Multiplicity(0, "*"))
     written_by: Property = Property(name="writtenBy", type=author, multiplicity=Multiplicity(1, "*"))
-    book_author_association: BinaryAssociation = BinaryAssociation(name="book_author_assoc", ends={written_by, publishes})
+    book_author_association: BinaryAssociation = BinaryAssociation(name="book_author", ends={written_by, publishes})
 
     # Domain model definition
     model: DomainModel = DomainModel(name="Library_model", types={library, book, author},
@@ -77,25 +40,92 @@ def domain_model():
 
     return model
 
-# Define the test function
-def test_generator(domain_model, tmpdir):
-    # Create an instance of the generator
+def test_tables_exist(domain_model, tmpdir):
     output_dir = tmpdir.mkdir("output")
     generator = SQLGenerator(model=domain_model, output_dir=str(output_dir), sql_dialect="postgresql")
-
-    # Generate SQL statements
     generator.generate()
 
-    # Check if the file was created
     output_file = os.path.join(str(output_dir), "tables_postgresql.sql")
     assert os.path.isfile(output_file)
 
-    # Read the generated file
     with open(output_file, "r", encoding="utf-8") as f:
         generated_code = f.read()
 
-    # Compare the output with the expected output
-    assert association_output in generated_code
-    assert library_output in generated_code
-    assert book_output in generated_code
-    assert author_output in generated_code
+    # Verify CREATE TABLE sentences
+    assert "CREATE TABLE library" in generated_code
+    assert "CREATE TABLE book" in generated_code
+    assert "CREATE TABLE author" in generated_code
+
+def test_columns_exist(domain_model, tmpdir):
+    output_dir = tmpdir.mkdir("output")
+    generator = SQLGenerator(model=domain_model, output_dir=str(output_dir), sql_dialect="postgresql")
+    generator.generate()
+
+    output_file = os.path.join(str(output_dir), "tables_postgresql.sql")
+    assert os.path.isfile(output_file)
+
+    with open(output_file, "r", encoding="utf-8") as f:
+        generated_code = f.read()
+
+    # Verify columns in the library table
+    assert "id SERIAL NOT NULL" in generated_code
+    assert "name VARCHAR(100) NOT NULL" in generated_code
+    assert "address VARCHAR(100) NOT NULL" in generated_code
+
+    # Verify columns in the book table
+    assert "title VARCHAR(100) NOT NULL" in generated_code
+    assert "pages INTEGER NOT NULL" in generated_code
+    assert "release DATE NOT NULL" in generated_code
+
+    # Verify columns in the author table
+    assert "email VARCHAR(100) NOT NULL" in generated_code
+
+def test_primary_keys(domain_model, tmpdir):
+    output_dir = tmpdir.mkdir("output")
+    generator = SQLGenerator(model=domain_model, output_dir=str(output_dir), sql_dialect="postgresql")
+    generator.generate()
+
+    output_file = os.path.join(str(output_dir), "tables_postgresql.sql")
+    assert os.path.isfile(output_file)
+
+    with open(output_file, "r", encoding="utf-8") as f:
+        generated_code = f.read()
+
+    # Verify primary keys
+    assert "PRIMARY KEY (id)" in generated_code
+
+def test_foreign_keys(domain_model, tmpdir):
+    output_dir = tmpdir.mkdir("output")
+    generator = SQLGenerator(model=domain_model, output_dir=str(output_dir), sql_dialect="postgresql")
+    generator.generate()
+
+    output_file = os.path.join(str(output_dir), "tables_postgresql.sql")
+    assert os.path.isfile(output_file)
+
+    with open(output_file, "r", encoding="utf-8") as f:
+        generated_code = f.read()
+
+    # Check that the foreign key constraints exist and reference the correct tables
+    assert 'FOREIGN KEY("locatedIn_id") REFERENCES library (id)' in generated_code
+
+def test_many_to_many_foreign_keys(domain_model, tmpdir):
+    output_dir = tmpdir.mkdir("output")
+    generator = SQLGenerator(model=domain_model, output_dir=str(output_dir), sql_dialect="postgresql")
+    generator.generate()
+
+    output_file = os.path.join(str(output_dir), "tables_postgresql.sql")
+    assert os.path.isfile(output_file)
+
+    with open(output_file, "r", encoding="utf-8") as f:
+        generated_code = f.read()
+
+    # Check that the many-to-many relationship table 'author_book' has two foreign keys
+    assert 'CREATE TABLE book_author (' in generated_code
+    assert 'PRIMARY KEY ("writtenBy", publishes)' in generated_code \
+        or 'PRIMARY KEY (publishes, "writtenBy")' in generated_code
+    assert 'FOREIGN KEY("writtenBy") REFERENCES author (id)' in generated_code
+    assert 'FOREIGN KEY(publishes) REFERENCES book (id)' in generated_code
+
+    # Optional: Check that the correct table names are referenced in the foreign keys
+    assert 'FOREIGN KEY("writtenBy") REFERENCES author (id)' in generated_code
+    assert 'FOREIGN KEY(publishes) REFERENCES book (id)' in generated_code

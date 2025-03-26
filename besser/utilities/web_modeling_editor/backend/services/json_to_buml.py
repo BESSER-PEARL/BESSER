@@ -77,6 +77,7 @@ def parse_method(method_str, domain_model=None):
         return visibility, method_str, parameters, return_type
 
     # Extract visibility if present
+    method_str = method_str.strip()
     if method_str.startswith(tuple(VISIBILITY_MAP.keys())):
         visibility = VISIBILITY_MAP.get(method_str[0], "public")
         method_str = method_str[2:].strip()

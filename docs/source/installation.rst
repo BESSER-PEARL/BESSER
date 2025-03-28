@@ -51,5 +51,5 @@ To verify the setup, you can run a basic example.
 
 .. code-block:: console
 
-    $ cd tests/structural/library
+    $ cd tests/BUML/metamodel/structural/library
     $ python library.py

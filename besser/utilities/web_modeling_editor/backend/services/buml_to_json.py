@@ -613,6 +613,7 @@ def state_machine_to_json(content: str):
                     
                     # Handle when_event_go_to
                     elif node.value.func.attr == 'when_event_go_to':
+                        
                         source_state = node.value.func.value.id
                         rel_id = str(uuid.uuid4())
                         
@@ -622,7 +623,11 @@ def state_machine_to_json(content: str):
                         
                         for kw in node.value.keywords:
                             if kw.arg == 'event':
-                                event_name = kw.value.id
+                                # check if emptyEvent is present
+                                if kw.value.id == "emptyEvent":
+                                    event_name = ""
+                                else:
+                                    event_name = kw.value.id
                             elif kw.arg == 'dest':
                                 target_state = kw.value.id
                             elif kw.arg == 'event_params':

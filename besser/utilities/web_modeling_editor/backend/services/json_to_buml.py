@@ -509,7 +509,12 @@ def process_state_machine(json_data):
     states_by_id = {}
     body_names = set()
     event_names = set()
-
+    # Check for unnamed transitions in order to create emptyEvent
+    unnamed_transition_found = False
+    for rel in relationships.values():
+        if rel.get("type") == "StateTransition" and not rel.get("name"):
+            unnamed_transition_found = True
+            break
     # Collect all body and event names first
     for element in elements.values():
         if element.get("type") == "StateBody":
@@ -523,6 +528,10 @@ def process_state_machine(json_data):
             event_names.add(rel.get("name"))
 
     # Write function definitions first
+    # check if emptyEvent is needed
+    if unnamed_transition_found:
+        code_lines.append("emptyEvent = Body(name='empty', callable=lambda session: True)")
+        code_lines.append("")
     for element in elements.values():
         if element.get("type") == "StateCodeBlock":
             name = element.get("name", "")
@@ -605,5 +614,11 @@ def process_state_machine(json_data):
                     code_lines.append(f"    dest={target_name}_state,")
                     code_lines.append(f"    {event_params}")
                     code_lines.append(")")
-
+                else:
+                    # If no event name is provided, use emptyEvent
+                    code_lines.append(f"{source_name}_state.when_event_go_to(")
+                    code_lines.append(f"    event=emptyEvent,")
+                    code_lines.append(f"    dest={target_name}_state,")
+                    code_lines.append(f"    event_params={{}}")
+                    code_lines.append(")")
     return "\n".join(code_lines)

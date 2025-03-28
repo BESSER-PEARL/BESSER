@@ -1,2 +1,0 @@
-1. Pet relates to Owner as association with cardinality '1..*'.
-2. Pet relates to Clinic as association with cardinality '1..1'

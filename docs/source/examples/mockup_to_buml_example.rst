@@ -1,14 +1,14 @@
 UI Mock-Up to B-UML Example
 ===========================
 
-To generate B-UML model from UI mock-up(s) using BESSER, you can utilize our :doc:`UI Mock-Up to B-UML Generator <../buml_language/model_types/mockup_to_buml>`. 
-In this example, we demonstrate the complete process for the :doc:`Library example<../examples/library_example>`, including detailed instructions and generated code snippets to guide you through the usage of the generator.
+To generate B-UML model from UI mock-up(s) using BESSER, you can utilize our :doc:`UI Mock-Up to B-UML Generator <../buml_language/model_building/mockup_to_buml>`.
+In this example, we demonstrate the complete process for the :doc:`Library example<../examples/library_example>`, including detailed instructions and generated code snippets to help you effectively utilize the transformer.
 
 
 Required Input Files
 ---------------------
 
-The UI Mock-Up to B-UML generator for applications with multiple pages requires several input files:
+The UI Mock-Up to B-UML transformer for applications with multiple pages requires several input files:
 
 1. UI Mock-Ups: For the Library example, we have created three UI mock-ups representing the main pages of the web application:
 
@@ -20,15 +20,7 @@ The UI Mock-Up to B-UML generator for applications with multiple pages requires 
 
 
 
-2. Additional Information File (.txt): To define associations between the main concepts of the application, along with their cardinalities, an input ``.txt`` file is required. 
-For this example, the file contains the following information:
-
-::
-
-    1. Book relates to Author as an association with cardinality '1..*'.
-    2. Book relates to Library as an association with cardinality '1..1'.
-
-3. Navigation Image File: For buttons with the action type ``navigation``, users must provide a simple image to illustrate the navigation between pages. 
+2. Navigation Image File: For buttons with the action type ``navigation``, users must provide a simple image to illustrate the navigation between pages.
 An example navigation image is shown below:
 
 
@@ -39,21 +31,35 @@ An example navigation image is shown below:
   :align: center
 
 
-4. Page Order File (.txt): To specify the sequence of pages in the application, users need to provide a simple ``.txt`` file with the following format:
+
+3. Page Order File (.txt): To specify the sequence of pages in the application, users need to provide a simple ``.txt`` file with the following format:
 
 
 ::
 
-    1. Main Page  
-    2. Book Screen  
-    3. Author Screen  
-    4. Library Screen  
+    1. Main Page
+    2. Book Screen
+    3. Author Screen
+    4. Library Screen
+
+
+
+
+4. Additional Information File (.txt): To define associations between the main concepts of the application, along with their cardinalities, an input ``.txt`` file is required.
+For this example, the file contains the following information:
+
+::
+
+    1. Book relates to Author as an association with cardinality '1..*'.
+    2. Book relates to Library as an association with cardinality '1..1'.
+
+
 
 
 Code Generation
 ---------------
 
-To generate the B-UML model for this example, follow the instructions outlined in the :doc:`UI Mock-Up to B-UML <../buml_language/model_types/mockup_to_buml>` section.
+To generate the B-UML model for this example, follow the instructions outlined in the :doc:`UI Mock-Up to B-UML <../buml_language/model_building/mockup_to_buml>` section.
 Once all steps are completed:
 
 + The Structural Model will be generated in the ``output/buml`` folder, organized as follows:
@@ -141,4 +147,7 @@ Once all steps are completed:
     MyApp = Application(name="Library Management", package="com.example.librarymanagement", versionCode="1", versionName="1.0", description="This is a comprehensive application for managing a library.", screenCompatibility=True, modules={MyModule})
 
 
-By adhering to these instructions, you can seamlessly create both structural and GUI models for your application.
+By adhering to these instructions, you can seamlessly create both Structural and GUI models for your application.
+You can then use these models to build a Django web application.
+
+To learn how to utilize this generator for Django web development, refer to the :doc:` Django Web App Generator<../generators/django>`.

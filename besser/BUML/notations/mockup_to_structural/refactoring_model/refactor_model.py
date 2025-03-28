@@ -1,7 +1,7 @@
 import os
-from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.gui import *
 from besser.BUML.metamodel.structural import *
+from jinja2 import Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
 
 
@@ -10,7 +10,7 @@ from besser.generators import GeneratorInterface
 ##############################
 class RefactoredModelGenerator(GeneratorInterface):
     """
-    GUIGenerator is a class that implements the GeneratorInterface and is responsible for generating
+    GUIGenerator is a class that implements the GeneratorInterface and is responsible for refactoring
     the GUI code based on the input B-UML model and Python code.
 
     Args:
@@ -39,9 +39,11 @@ class RefactoredModelGenerator(GeneratorInterface):
         """
         os.makedirs(self.output_dir, exist_ok=True)
 
+
+
         file_path = os.path.join(self.output_dir, self.output_file_name)
         templates_path = os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), "templates")
+            os.path.abspath(__file__)), "template")
         env = Environment(loader=FileSystemLoader(templates_path))
         template = env.get_template('refactor_code.py.j2')
 

@@ -527,6 +527,14 @@ def process_state_machine(json_data):
         if element.get("type") == "StateCodeBlock":
             name = element.get("name", "")
             code_content = element.get("code", {})
+            
+            # If name is empty, try to extract function name from code content
+            if not name:
+                # Look for "def function_name(" pattern in the code
+                function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
+                if function_match:
+                    name = function_match.group(1)
+                    
             # Clean up the code content by removing extra newlines
             cleaned_code = "\n".join(line for line in code_content.splitlines() if line.strip())
             # Write the function definition with its code content

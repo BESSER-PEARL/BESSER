@@ -1,91 +1,45 @@
-from besser.BUML.metamodel.structural import NamedElement, Class, Property, Model
 from enum import Enum
+from besser.BUML.metamodel.structural import NamedElement, Class, Property, Model, Element
 
 
 # FileSourceType
-class FileSourceType(NamedElement):
+class FileSourceType(Enum):
     """Represents the type of a file source.
-
-    Args:
-        name (str): The name of the file source type.
-        type (str): The type of the file source, such as 'FileSystem', 'LocalStorage', or 'DatabaseFileSystem'.
-
-    Attributes:
-        name (str): The name of the file source type.
-        type (str): The type of the file source, such as 'FileSystem', 'LocalStorage', or 'DatabaseFileSystem'.
     """
+    FileSystem = "FileSystem"
+    LocalStorage = "LocalStorage"
+    DatabaseFileSystem = "DatabaseFileSystem"
 
-    def __init__(self, name: str, type: str):
-        super().__init__(name)
-        self.type: str = type
-
-    @property
-    def type(self) -> str:
-        """str: Get the type of the file source."""
-        return self.__type
-
-    @type.setter
-    def type(self, type: str):
-        """
-        str: Set the type of the file source.
-
-        Raises:
-            ValueError: If the type provided is not one of the allowed values: 'FileSystem', 'LocalStorage',
-                or 'DatabaseFileSystem'.
-        """
-        if type not in ['FileSystem', 'LocalStorage', 'DatabaseFileSystem']:
-            raise ValueError("Invalid value of type")
-            self.__type = type
-
-    def __repr__(self):
-        return f'FileSourceType({self.name}, type={self.type})'
 
 # CollectionSourceType
-class CollectionSourceType:
+class CollectionSourceType(Enum):
     """Represents the type of a collection source.
-
-    Args:
-        name (str): The name of the collection source type.
-        type (str): The type of the collection source, such as 'List', 'Table', 'Tree', 'Grid', 'Array', or 'Stack'.
-
-    Attributes:
-        name (str): The name of the collection source type.
-        type (str): The type of the collection source, such as 'List', 'Table', 'Tree', 'Grid', 'Array', or 'Stack'.
     """
+    List = "List"
+    Table = "Table"
+    Tree = "Tree"
+    Grid = "Grid"
+    Array = "Array"
+    Stack = "Stack"
 
-    def __init__(self, name: str, type: str):
-        self.type: str = type
-        self.name: str = name
 
-    @property
-    def name(self) -> str:
-        """str: Get the name of the collection source type."""
-        return self.__name
+# InputFieldType
+class InputFieldType(Enum):
+    """Represents the type of a Input Field.
+    """
+    Text = "Text"
+    Number = "Number"
+    Email = "Email"
+    Password = "Password"
+    Date = "Date"
+    Time = "Time"
+    File = "File"
+    Color = "Color"
+    Range = "Range"
+    URL = "URL"
+    Tel = "Tel"
+    Search = "Search"
 
-    @name.setter
-    def name(self, name: str):
-        """str: Set the name of the collection source type."""
-        self.__name = name
-
-    @property
-    def type(self) -> str:
-        """str: Get the type of the collection source."""
-        return self.__type
-
-    @type.setter
-    def type(self, type: str):
-        """str: Set the type of the collection source.
-
-        Raises:
-            ValueError: If the type provided is not one of the allowed values: 'List', 'Table', 'Tree', 'Grid',
-                'Array', or 'Stack'.
-        """
-        if type not in ['List', 'Table', 'Tree', 'Grid', 'Array', 'Stack']:
-            raise ValueError("Invalid value of type")
-            self.__type = type
-
-    def __repr__(self):
-        return f'CollectionSourceType({self.name}, type={self.type})'
 
 class ButtonActionType(Enum):
     """Represents a button action type.
@@ -132,7 +86,7 @@ class ButtonType(Enum):
 
 
 #DataSource
-class DataSource:
+class DataSource(NamedElement):
     """Represents a data source.
 
     Args:
@@ -143,23 +97,15 @@ class DataSource:
     """
 
     def __init__(self, name: str):
-        self.name: str = name
+        super().__init__(name)
 
-    @property
-    def name(self) -> str:
-      """str: Get the name of the data source."""
-      return self.__name
-
-    @name.setter
-    def name(self, name: str):
-      """str: Set the name of the data source."""
-      self.__name = name
 
     def __repr__(self):
-      return f'DataSource({self.name})'
+        return f'DataSource({self.name})'
 
-#ModelElementDataSource
-class ModelElement(DataSource):
+
+#DataSourceElement
+class DataSourceElement(DataSource):
     """Represents a data source associated with a model element.
 
     Args:
@@ -203,7 +149,7 @@ class ModelElement(DataSource):
         self.__fields = fields
 
     def __repr__(self):
-      return f'ModelElement({self.name}, {self.dataSourceClass},{self.fields})'
+        return f'DataSourceElement({self.name}, {self.dataSourceClass},{self.fields})'
 
 #FileDataSource
 class File(DataSource):
@@ -224,16 +170,16 @@ class File(DataSource):
 
     @property
     def type(self) -> FileSourceType:
-      """FileSourceType: Get the type of the file data source."""
-      return self.__type
+        """FileSourceType: Get the type of the file data source."""
+        return self.__type
 
     @type.setter
     def type(self, type: FileSourceType):
-      """FileSourceType: Set the type of the file data source."""
-      self.__type = type
+        """FileSourceType: Set the type of the file data source."""
+        self.__type = type
 
     def __repr__(self):
-      return f'File({self.name}, {self.type})'
+        return f'File({self.name}, {self.type})'
 
 
 #CollectionDataSource
@@ -254,28 +200,32 @@ class Collection(DataSource):
 
     @property
     def type(self) -> CollectionSourceType:
-      """CollectionSourceType: Get the type of the collection data source."""
-      return self.__type
+        """CollectionSourceType: Get the type of the collection data source."""
+        return self.__type
 
     @type.setter
     def type(self, type: CollectionSourceType):
-      """CollectionSourceType: Set the type of the collection data source."""
-      self.__type = type
+        """CollectionSourceType: Set the type of the collection data source."""
+        self.__type = type
 
     def __repr__(self):
-      return f'Collection({self.name}, {self.type})'
+        return f'Collection({self.name}, {self.type})'
+
 
 #ViewElement
 class ViewElement(NamedElement):
-    """Represents a view element.
+    """
+    Represents a view element.
 
     Args:
         name (str): The name of the view element.
-        description (str): the description of the view element.
+        description (str): A brief description of the view element.
+        visibility (str, optional): Visibility scope (default: "public").
 
     Attributes:
         name (str): The name of the view element.
-        description (str): the description of the view element.
+        description (str): A brief description of the view element.
+        visibility (str): Visibility scope (default: "public").
     """
 
     def __init__(self, name: str, description: str, visibility: str = "public"):
@@ -293,26 +243,34 @@ class ViewElement(NamedElement):
         self.__description = description
 
     def __repr__(self):
-        return f'ViewElement({self.name})'
+        return (f"ViewElement(name={self.name}, description={self.description}, "
+                f"visibility={self.visibility})")
+
 
 #ViewComponent
 class ViewComponent(ViewElement):
-    """Represents a view component.
+    """
+    Represents a view component that extends a generic ViewElement.
 
     Args:
         name (str): The name of the view component.
-        description (str): The description of the view component.
+        description (str): A brief description of the view component.
+        visibility (str, optional): The visibility scope (default: "public").
+
 
     Attributes:
         name (str): The name of the view component.
-        description (str): The description of the view component.
+        description (str): A brief description of the view component.
+        visibility (str): The visibility scope of the component.
     """
 
-    def __init__(self, name: str, description: str):
-        super().__init__(name, description)
+    def __init__(self, name: str, description: str, visibility: str = "public"):
+        super().__init__(name, description, visibility)
 
     def __repr__(self):
-        return f'ViewComponent({self.name}, description={self.description})'
+        return (f"ViewComponent({self.name}, "
+                f"description={self.description}, "
+                f"visibility={self.visibility})")
 
 #ViewContainer
 class ViewContainer(ViewElement):
@@ -338,15 +296,17 @@ class ViewContainer(ViewElement):
 
     @view_elements.setter
     def view_elements(self, view_elements: set[ViewElement]):
-       """set[ViewElement]: Set the set of view elements on the screen."""
-       if view_elements is not None:
+        """set[ViewElement]: Set the set of view elements on the screen."""
+        if view_elements is not None:
             names = [view_element.name for view_element in view_elements]
             if len(names) != len(set(names)):
                 raise ValueError("A screen cannot have two elements with the same name.")
-       self.__view_elements = view_elements
+        self.__view_elements = view_elements
+
 
     def __repr__(self):
-        return f'ViewContainer({self.name}, description={self.description}, view_elements={self.view_elements})'
+        return (f"ViewContainer({self.name}, description={self.description},"
+                f"view_elements={self.view_elements})")
 
 #Screen
 class Screen(ViewContainer):
@@ -357,7 +317,7 @@ class Screen(ViewContainer):
         view_elements (set[ViewElement]): The set of view elements on the screen.
         x_dpi (str): The X DPI (dots per inch) of the screen.
         y_dpi (str): The Y DPI (dots per inch) of the screen.
-        size (str): The size of the screen.
+        screen_size (str): The size of the screen.
         is_main_page (bool): wether this screen serves as the main page of the model.
 
     Attributes:
@@ -365,53 +325,55 @@ class Screen(ViewContainer):
         view_elements (set[ViewElement]): The set of view elements on the screen.
         x_dpi (str): The X DPI (dots per inch) of the screen.
         y_dpi (str): The Y DPI (dots per inch) of the screen.
-        size (str): The size of the screen.
+        screen_size (str): The size of the screen.
         is_main_page (bool): wether this screen serves as the main page of the model.
     """
 
-    def __init__(self, name: str, description: str, view_elements: set[ViewElement], x_dpi: str, y_dpi: str, size: str, is_main_page: bool = False):
+    def __init__(self, name: str, description: str, view_elements: set[ViewElement], x_dpi: str,
+                 y_dpi: str, screen_size: str, is_main_page: bool = False):
         super().__init__(name, description, view_elements)
         self.x_dpi: str = x_dpi
         self.y_dpi: str = y_dpi
-        self.size: str = size
+        self.screen_size: str = screen_size
         self.is_main_page: bool = is_main_page
 
     @property
     def x_dpi(self) -> str:
-      """str: Get the X DPI (dots per inch) of the screen."""
-      return self.__x_pdi
+        """str: Get the X DPI (dots per inch) of the screen."""
+        return self.__x_dpi
 
     @x_dpi.setter
     def x_dpi(self, x_dpi: str):
-      """str: Set the X DPI (dots per inch) of the screen."""
-      self.__x_pdi = x_dpi
+        """str: Set the X DPI (dots per inch) of the screen."""
+        self.__x_dpi = x_dpi
 
     @property
     def y_dpi(self) -> str:
-      """str: Get the Y DPI (dots per inch) of the screen."""
-      return self.__y_pdi
+        """str: Get the Y DPI (dots per inch) of the screen."""
+        return self.__y_dpi
 
     @y_dpi.setter
     def y_dpi(self, y_dpi: str):
-     """str: Set the Y DPI (dots per inch) of the screen."""
-     self.__y_pdi = y_dpi
+        """str: Set the Y DPI (dots per inch) of the screen."""
+        self.__y_dpi = y_dpi
 
     @property
-    def size(self) -> str:
-      """str: Get the size of the screen."""
-      return self.__size
+    def screen_size(self) -> str:
+        """str: Get the size of the screen."""
+        return self.__screen_size
 
-    @size.setter
-    def size(self, size: str):
+    @screen_size.setter
+    def screen_size(self, screen_size: str):
         """str: Set the size of the screen.
 
         Raises:
-            ValueError: If the size provided is not one of the allowed options: 'Small','Medium', 'Large', 'xLarge'
+            ValueError: If the size provided is not one of the allowed options:
+                                                      'Small','Medium', 'Large', 'xLarge'
         """
+        if screen_size not in ['Small', 'Medium', 'Large', 'xLarge']:
+            raise ValueError("Invalid value of screen size")
 
-        if size not in ['Small', 'Medium', 'Large', 'xLarge']:
-           raise ValueError("Invalid value of size")
-           self.__size = size
+        self.__screen_size = screen_size
 
     @property
     def is_main_page(self) -> bool:
@@ -425,7 +387,8 @@ class Screen(ViewContainer):
 
 
     def __repr__(self):
-      return f'Screen({self.name}, {self.x_dpi}, {self.y_dpi}, {self.size}, {self.view_elements}, {self.is_main_page})'
+        return (f"Screen({self.name}, {self.x_dpi}, {self.y_dpi}, {self.screen_size}, "
+                f"{self.view_elements}, {self.is_main_page})")
 
 #Module
 class Module(NamedElement):
@@ -451,19 +414,20 @@ class Module(NamedElement):
 
     @screens.setter
     def screens(self, screens: set[Screen]):
-       """set[Screen]: Set the set of screens contained."""
-       if screens is not None:
+        """set[Screen]: Set the set of screens contained."""
+        if screens is not None:
             names = [screen.name for screen in screens]
             if len(names) != len(set(names)):
                 raise ValueError("A module cannot have two screens with the same name.")
-       self.__screens = screens
+        self.__screens = screens
 
     def __repr__(self):
         return f'Module({self.name}, {self.screens})'
 
 # DataList is a type of ViewComponent
 class DataList(ViewComponent):
-    """Represents a list component that encapsulates properties unique to lists, such as list sources.
+    """Represents a list component that encapsulates properties
+       unique to lists, such as list sources.
 
     Args:
         name (str): The name of the list.
@@ -474,8 +438,9 @@ class DataList(ViewComponent):
         list_sources (set[DataSource]): The set of data sources associated with the list.
     """
 
-    def __init__(self, name: str, description: str, list_sources: set[DataSource]):
-        super().__init__(name, description)
+    def __init__(self, name: str, description: str, list_sources: set[DataSource],
+                 visibility: str = "public"):
+        super().__init__(name, description, visibility)
         self.list_sources: set[DataSource] = list_sources
 
     @property
@@ -489,15 +454,16 @@ class DataList(ViewComponent):
         if list_sources is not None:
             names = [DataSource.name for DataSource in list_sources]
             if len(names) != len(set(names)):
-               raise ValueError("A list cannot have two items with the same name.")
+                raise ValueError("A list cannot have two items with the same name.")
         self.__list_sources = list_sources
 
     def __repr__(self):
-     return f'DataList({self.name}, {self.list_sources})'
+        return f'DataList({self.name}, {self.list_sources}, {self.visibility})'
 
 # Button is a type of ViewComponent
 class Button(ViewComponent):
-    """Represents a button component and encapsulates specific properties of a button, such as its name and label.
+    """Represents a button component and encapsulates
+       specific properties of a button, such as its name and label.
 
     Args:
         name (str): The name of the button.
@@ -513,15 +479,17 @@ class Button(ViewComponent):
         label (str): The label of the button.
         buttonType (ButtonType): The type of the button.
         actionType (ButtonActionType): The action type of the button.
-        targetScreen (Screen, optional): The target Screen associated with the button when the actionType is "Navigate"
+        targetScreen (Screen, optional): The target Screen associated with
+                                         the button when the actionType is "Navigate"
     """
 
-    def __init__(self, name: str, description: str, label: str, buttonType: ButtonType, actionType: ButtonActionType, targetScreen: Screen = None):
-        super().__init__(name, description)
-        self.label=label
-        self.buttonType: ButtonType = buttonType
-        self.actionType: ButtonActionType=actionType
-        self.targetScreen: Screen = targetScreen
+    def __init__(self, name: str, description: str, label: str, buttonType: ButtonType,
+                 actionType: ButtonActionType, targetScreen: Screen = None, visibility: str = "public"):
+       super().__init__(name, description, visibility)
+       self.label = label
+       self.buttonType = buttonType
+       self.actionType = actionType
+       self.targetScreen = targetScreen
 
     @property
     def label(self) -> str:
@@ -581,7 +549,7 @@ class Button(ViewComponent):
         self.__targetScreen = targetScreen
 
     def __repr__(self):
-     return f'Button({self.name},{self.label}, {self.description}, {self.buttonType}, {self.actionType})'
+     return f'Button({self.name},{self.label}, {self.description}, {self.visibility}, {self.label}, {self.buttonType}, {self.actionType})'
 
 # Image is a type of ViewComponent
 class Image(ViewComponent):
@@ -608,38 +576,32 @@ class InputField(ViewComponent):
      Args:
         name (str): The name of the input field.
         description (str): The description of the input field.
-        fieldType (str): The type of the input field.
+        type (str): The type of the input field.
         validationRules (str): The validation rules for the input field.
 
     Attributes:
         name (str): The name of the input field.
         description (str): The description of the input field.
-        fieldType (str): The type of the input field.
+        type (str): The type of the input field.
         validationRules (str): The validation rules for the input field.
     """
 
-    def __init__(self, name: str, description: str, fieldType: str, validationRules: str):
-        super().__init__(name, description)
-        self.fieldType: str= fieldType
+    def __init__(self, name: str, description: str, type: InputFieldType, validationRules: str = None, visibility: str = "public"):
+        super().__init__(name, description, visibility)
+        self.type: InputFieldType= type
         self.validationRules: str = validationRules
 
+
     @property
-    def fieldType(self) -> str:
-      """str: Get the type of the field."""
-      return self.__fieldType
+    def type(self) -> InputFieldType:
+      """InputFieldType: Get the type of the input field."""
+      return self.__type
 
+    @type.setter
+    def type(self, type: InputFieldType):
+      """InputFieldType: Set the type of the collection data source."""
+      self.__type = type
 
-    @fieldType.setter
-    def fieldType(self, fieldType: str):
-        """str: Set the type of the field.
-
-        Raises:
-            ValueError: If the type provided is not one of the allowed options: 'Text','Number', 'Email', 'Password', 'Date', 'Time', 'File', 'Color', 'Range', 'URL', 'Tel', and 'Search'
-        """
-
-        if fieldType not in ['Text','Number', 'Email', 'Password', 'Date', 'Time', 'File', 'Color', 'Range', 'URL', 'Tel', 'Search']:
-           raise ValueError("Invalid value of fieldType")
-           self.__fieldType = fieldType
 
     @property
     def validationRules(self) -> str:
@@ -648,12 +610,12 @@ class InputField(ViewComponent):
 
 
     @validationRules.setter
-    def validationRules(self, str):
+    def validationRules(self, validationRules: str):
         """str: Set the validation rules of the input field."""
         self.__validationRules = validationRules
 
     def __repr__(self):
-     return f'InputField({self.name},{self.description}, {self.fieldType}, {self.validationRules})'
+     return f'InputField({self.name},{self.description}, {self.type}, {self.validationRules}, {self.visibility})'
 
 # Form is a type of ViewComponent
 class Form(ViewComponent):
@@ -670,8 +632,8 @@ class Form(ViewComponent):
         inputFields (set[InputField]): The set of input fields contained in the form.
     """
 
-    def __init__(self, name: str, description: str, inputFields: set[InputField]):
-        super().__init__(name, description)
+    def __init__(self, name: str, description: str, inputFields: set[InputField], visibility: str = "public"):
+        super().__init__(name, description, visibility)
         self.inputFields: set[InputField] = inputFields
 
     @property
@@ -685,20 +647,23 @@ class Form(ViewComponent):
        self.__inputFields = inputFields
 
     def __repr__(self):
-     return f'Form({self.name},{self.description}, {self.inputFields})'
+     return f'Form({self.name},{self.description}, {self.inputFields}, {self.visibility})'
 
 # MenuItem
-class MenuItem:
+class MenuItem(Element):
     """Represents an item of a menu.
 
     Args:
+        name (str): The name of the item.
         label (str): The label of the menu item.
 
     Attributes:
+        name (str): The name of the item.
         label (str): The label of the menu item.
     """
 
     def __init__(self, label: str):
+        super().__init__()
         self.label: str = label
 
     def __repr__(self):
@@ -719,8 +684,8 @@ class Menu(ViewComponent):
         menuItems (set[MenuItem]): The set of menu items contained in the menu.
     """
 
-    def __init__(self, name: str, description: str, menuItems: set[MenuItem]):
-        super().__init__(name, description)
+    def __init__(self, name: str, description: str, menuItems: set[MenuItem], visibility: str = "public"):
+        super().__init__(name, description, visibility)
         self.menuItems: set[MenuItem] = menuItems
 
     @property
@@ -734,7 +699,7 @@ class Menu(ViewComponent):
         self.__menuItems = menuItems
 
     def __repr__(self):
-     return f'Menu({self.name},{self.description}, {self.menuItems})'
+     return f'Menu({self.name},{self.description}, {self.menuItems}, {self.visibility})'
 
 #GUIModel
 class GUIModel(Model):
@@ -834,9 +799,8 @@ class GUIModel(Model):
 
 
     def __repr__(self):
-        return f'GUIModel({self.name}, {self.package}, {self.versionCode}, {self.versionName},{self.description},{self.screenCompatibility}, {self.modules})'
-
-
-
-
-
+        return (
+        f"GUIModel({self.name}, {self.package}, {self.versionCode}, "
+        f"{self.versionName}, {self.description}, {self.screenCompatibility}, "
+        f"{self.modules})"
+    )

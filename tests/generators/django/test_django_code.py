@@ -5,7 +5,7 @@ from besser.generators.django import DjangoGenerator
 from besser.BUML.metamodel.structural import DomainModel, Property, Class, \
     BinaryAssociation, Multiplicity
 from besser.BUML.metamodel.gui import GUIModel, Module, DataList, \
-    ModelElement, Screen
+    DataSourceElement, Screen
 
 
 @staticmethod
@@ -15,8 +15,8 @@ def is_list(value):
 
 @staticmethod
 def is_model_element(value):
-    """Check if the given value is an instance of ModelElement class."""
-    return isinstance(value, ModelElement)
+    """Check if the given value is an instance of DataSourceElement class."""
+    return isinstance(value, DataSourceElement)
 
 ################ Test GUI Components ################
 def test_screen_generation():
@@ -34,7 +34,7 @@ def test_screen_generation():
     )
 
     # DataSource definition
-    datasource: ModelElement = ModelElement(
+    datasource: DataSourceElement = DataSourceElement(
         name="Data Source",
         dataSourceClass=class1,
         fields=[class1_name]
@@ -53,7 +53,7 @@ def test_screen_generation():
         description="",
         x_dpi="",
         y_dpi="",
-        size="Small",
+        screen_size="Small",
         view_elements={myList}
     )
 
@@ -63,7 +63,7 @@ def test_screen_generation():
         description="",
         x_dpi="",
         y_dpi="",
-        size="Small",
+        screen_size="Small",
         view_elements={},
         is_main_page=True
     )
@@ -179,7 +179,7 @@ def test_CRUD_Operations():
     )
 
     # DataSource definition
-    datasource: ModelElement = ModelElement(
+    datasource: DataSourceElement = DataSourceElement(
         name="Data Source",
         dataSourceClass=class1,
         fields=[class1_name]
@@ -198,7 +198,7 @@ def test_CRUD_Operations():
         description="",
         x_dpi="",
         y_dpi="",
-        size="Small",
+        screen_size="Small",
         view_elements={my_list}
     )
 
@@ -208,7 +208,7 @@ def test_CRUD_Operations():
         description="",
         x_dpi="",
         y_dpi="",
-        size="Small",
+        screen_size="Small",
         view_elements={},
         is_main_page=True
     )
@@ -352,7 +352,7 @@ def test_Operations_many_to_many():
 
     # GUI Model:
     # DataSource definition
-    datasource1: ModelElement = ModelElement(name="Data Source", dataSourceClass=class1, fields=[])
+    datasource1: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass=class1, fields=[])
 
     # List definition
     datalist1: DataList = DataList(name="List1", description="", list_sources={datasource1})
@@ -363,12 +363,12 @@ def test_Operations_many_to_many():
         description="",
         x_dpi="",
         y_dpi="",
-        size="Small",
+        screen_size="Small",
         view_elements={datalist1}
     )
 
     # DataSource definition
-    datasource2: ModelElement = ModelElement(name="Data Source", dataSourceClass=class2, fields=[])
+    datasource2: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass=class2, fields=[])
 
     # List2 definition
     datalist2: DataList = DataList(name="List2", description="", list_sources={datasource2})
@@ -379,12 +379,12 @@ def test_Operations_many_to_many():
         description="",
         x_dpi="",
         y_dpi="",
-        size="Small",
+        screen_size="Small",
         view_elements={datalist2}
     )
 
     # DataSource definition
-    datasource3: ModelElement = ModelElement(name="Data Source", dataSourceClass=class3, fields=[])
+    datasource3: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass=class3, fields=[])
 
     # List3 definition
     datalist: DataList = DataList(name="List3", description="", list_sources={datasource3})
@@ -395,7 +395,7 @@ def test_Operations_many_to_many():
         description="",
         x_dpi="",
         y_dpi="",
-        size="Small",
+        screen_size="Small",
         view_elements={datalist}
     )
 
@@ -405,7 +405,7 @@ def test_Operations_many_to_many():
         description="",
         x_dpi="",
         y_dpi="",
-        size="Small",
+        screen_size="Small",
         view_elements={},
         is_main_page=True
     )

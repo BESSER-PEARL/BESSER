@@ -5,7 +5,7 @@ import os
 import subprocess
 import sys
 from jinja2 import Environment, FileSystemLoader
-from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, ModelElement
+from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSourceElement
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
@@ -81,8 +81,8 @@ class DjangoGenerator(GeneratorInterface):
 
     @staticmethod
     def is_model_element(value):
-        """Check if the given value is an instance of ModelElement class."""
-        return isinstance(value, ModelElement)
+        """Check if the given value is an instance of DataSourceElement class."""
+        return isinstance(value, DataSourceElement)
 
     @staticmethod
     def is_primitive_data_type(value):

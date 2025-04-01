@@ -137,8 +137,8 @@ class FlutterMainDartGenerator(GeneratorInterface):
 
     @staticmethod
     def is_ModelElement(value):
-        """Check if the given value is an instance of ModelElement class."""
-        return isinstance(value, ModelElement)
+        """Check if the given value is an instance of DataSourceElement class."""
+        return isinstance(value, DataSourceElement)
 
     def generate(self):
 

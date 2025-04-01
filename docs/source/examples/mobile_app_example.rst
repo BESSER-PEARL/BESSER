@@ -37,7 +37,7 @@ Input models definition
 
 
   #LibraryDataSource definition
-  datasource_library: ModelElement = ModelElement(name="Library Data Source", dataSourceClass=library, fields=[library_name, address])
+  datasource_library: DataSourceElement = DataSourceElement(name="Library Data Source", dataSourceClass=library, fields=[library_name, address])
 
   #Library List definition
   libraryList: DataList=DataList(name="LibraryList", description="A diverse group of libraries", list_sources={datasource_library})
@@ -45,7 +45,7 @@ Input models definition
 
   # Library directory screen definition
   LibraryListScreen: Screen = Screen(name="LibraryListScreen", description="Explore a collection of libraries",
-                          x_dpi="x_dpi", y_dpi="y_dpi", size="Small", view_elements={libraryAddingButton, libraryList})
+                          x_dpi="x_dpi", y_dpi="y_dpi", screen_size="Small", view_elements={libraryAddingButton, libraryList})
 
 
   #####  Elements for Author Screen   #####
@@ -53,28 +53,28 @@ Input models definition
   authorAddingButton: Button = Button(name="Author Add Button", description="Add an author", label="", buttonType= ButtonType.FloatingActionButton, actionType=ButtonActionType.Add)
 
   #Author DataSource definition
-  datasource_author: ModelElement = ModelElement(name="Author Data Source", dataSourceClass= author, fields=[author_name, email])
+  datasource_author: DataSourceElement = DataSourceElement(name="Author Data Source", dataSourceClass= author, fields=[author_name, email])
 
   # Author List definition
   authorList: DataList=DataList(name="AuthorList", description="A diverse group of authors", list_sources={datasource_author})
 
   # Author directory screen definition
   AuthorListScreen: Screen = Screen(name="AuthorListScreen", description="Explore a collection of authors",
-                          x_dpi="x_dpi", y_dpi="y_dpi", size="Small", view_elements={authorAddingButton, authorList})
+                          x_dpi="x_dpi", y_dpi="y_dpi", screen_size="Small", view_elements={authorAddingButton, authorList})
 
   #####  Elements for Book Screen   #####
   # Button6:
   bookAddingButton: Button = Button(name="Book Add Button", description="Add a book", label="", buttonType= ButtonType.FloatingActionButton, actionType=ButtonActionType.Add)
 
   #Book DataSource definition
-  datasource_book: ModelElement = ModelElement(name="Book Data Source", dataSourceClass= book, fields=[title, pages, release])
+  datasource_book: DataSourceElement = DataSourceElement(name="Book Data Source", dataSourceClass= book, fields=[title, pages, release])
 
   # Book List definition
   BookList: DataList=DataList(name="BookList", description="A diverse group of books", list_sources={datasource_book})
 
   # Book directory screen definition
   BookListScreen: Screen = Screen(name="BookListScreen", description="Explore a collection of books",
-                          x_dpi="x_dpi", y_dpi="y_dpi", size="Small", view_elements={bookAddingButton, BookList})
+                          x_dpi="x_dpi", y_dpi="y_dpi", screen_size="Small", view_elements={bookAddingButton, BookList})
 
 
   #####  Elements for Home page Screen   #####
@@ -93,7 +93,7 @@ Input models definition
 
   # Home page Screen definition
   MyHomeScreen: Screen = Screen(name="Book Library Manager", description="Effortlessly manage your books, libraries, and authors, with the ability to view and update their information.",
-                          x_dpi="x_dpi", y_dpi="y_dpi", size="Small", view_elements={libraryButton, authorButton, bookButton}, is_main_page= True)
+                          x_dpi="x_dpi", y_dpi="y_dpi", screen_size="Small", view_elements={libraryButton, authorButton, bookButton}, is_main_page= True)
 
 
   # Module definition:
@@ -114,7 +114,7 @@ To use the Flutter code generator, simply provide the input models and use the `
 
   from besser.generators.flutter import FlutterGenerator
   from library import library_model # Structural model
-  from gui import MyApp, MyHomeScreen # GUI model
+  from gui import library_gui_model, MyHomeScreen # GUI model
 
   code_gen = FlutterGenerator(model=library_model, gui_model=library_gui_model, main_page=MyHomeScreen)
   code_gen.generate()
@@ -125,7 +125,7 @@ Application running
 -------------------
 
 After generating these files, you will need to incorporate them into your Flutter application.
-Please ensure that you create an app with the same name as specified for the ``Application`` object in the GUI model
+Please ensure that you create an app with the same name as specified for the ``GUIModel`` object in the GUI model
 (``Library Management`` for this example). To do so, follow these steps:
 
 1. Create a new Flutter application with the desired app name.

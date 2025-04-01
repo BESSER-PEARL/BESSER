@@ -1,0 +1,37 @@
+Version 2.4.0
+=============
+
+New Features and Improvements
+-----------------------------
+
+**Web Modeling Editor**
+
+* Now, our WME is online! You can access it at `https://editor.besser-pearl.org <https://editor.besser-pearl.org>`_
+* New interface design.
+* Integrated storage capabilities allow seamless model persistence and cross-device access.
+* Added support for modeling collaboration using the WME. Now, multiple users can work on the same model simultaneously.
+* Optimized Docker Compose configuration for improved resource efficiency and faster deployment.
+
+**BESSER Low-code Platform**
+
+* Structural metamodel: The `Element` class is now the superclass of all structural model elements, including `NamedElement`, `Generalization`, etc. The attributes `is_derived` and `timestamp` have been moved to this class.
+* SQLAlchemy Generator: Added support for MSSQL and MariaDB.
+* SQL DDL Generator: Added support for MSSQL, MariaDB, and SQLite.
+
+Fixes
+-----
+
+**Web Modeling Editor**
+
+* Fixed issues: `214 <https://github.com/BESSER-PEARL/BESSER/issues/214>`_ `219 <https://github.com/BESSER-PEARL/BESSER/issues/219>`_ `217 <https://github.com/BESSER-PEARL/BESSER/issues/217>`_ `159 <https://github.com/BESSER-PEARL/BESSER/issues/159>`_ `164 <https://github.com/BESSER-PEARL/BESSER/issues/164>`_ `166 <https://github.com/BESSER-PEARL/BESSER/issues/166>`_ `170 <https://github.com/BESSER-PEARL/BESSER/issues/170>`_ `168 <https://github.com/BESSER-PEARL/BESSER/issues/168>`_ `172 <https://github.com/BESSER-PEARL/BESSER/issues/172>`_ `174 <https://github.com/BESSER-PEARL/BESSER/issues/174>`_ `177 <https://github.com/BESSER-PEARL/BESSER/issues/177>`_ `175 <https://github.com/BESSER-PEARL/BESSER/issues/175>`_ `184 <https://github.com/BESSER-PEARL/BESSER/issues/184>`_ `192 <https://github.com/BESSER-PEARL/BESSER/issues/192>`_ `194 <https://github.com/BESSER-PEARL/BESSER/issues/194>`_ `195 <https://github.com/BESSER-PEARL/BESSER/issues/195>`_ `200 <https://github.com/BESSER-PEARL/BESSER/issues/200>`_ `201 <https://github.com/BESSER-PEARL/BESSER/issues/201>`_
+
+**BESSER Low-code Platform**
+
+* Fixed issues: `180 <https://github.com/BESSER-PEARL/BESSER/issues/180>`_
+
+Documentation
+-------------
+
+* Updated the Web Modeling Editor documentation.
+* Updated the Structural metamodel documentation.
+* Updated the SQL DDL Generator documentation.

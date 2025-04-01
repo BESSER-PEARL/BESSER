@@ -81,7 +81,7 @@ null
 ']'
 'relu'
 'leaky_relu'
-'sigmod'
+'sigmoid'
 'softmax'
 'tanh'
 'None'

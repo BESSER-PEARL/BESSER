@@ -1,37 +1,40 @@
-from typing import List
-from typing import Optional
-from sqlalchemy import create_engine
-from sqlalchemy import Column
-from sqlalchemy import ForeignKey
-from sqlalchemy import String
-from sqlalchemy import Table
-from sqlalchemy import Text
-from sqlalchemy.orm import column_property
-from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.orm import Mapped
-from sqlalchemy.orm import mapped_column
-from sqlalchemy.orm import relationship
-from sqlalchemy import Boolean, String, Date, Time, DateTime, Float, Integer
+import enum
+from typing import List, Optional
+from sqlalchemy import (
+    create_engine, Column, ForeignKey, Table, Text, Boolean, String, Date, 
+    Time, DateTime, Float, Integer, Enum
+)
+from sqlalchemy.orm import (
+    column_property, DeclarativeBase, Mapped, mapped_column, relationship
+)
 from datetime import datetime, time, date
 
 class Base(DeclarativeBase):
     pass
 
+{% if enumerations %}# Definitions of Enumerations{% endif %}
+{%- for enum in enumerations %}
+class {{ enum.name }}(enum.Enum):
+    {%- for literal in enum.literals %}
+    {{ literal.name }} = "{{ literal.name }}"
+    {%- endfor %}
+{% endfor %}
+
 # Tables definition for many-to-many relationships
 
 {%- for association in associations if association.ends|length == 2 %}
-    {%- set ns = namespace(many_to_many = True) %}
-    {%- for end in association.ends %}
-        {%- if end.multiplicity.max < 2 %} 
-            {%- set ns.many_to_many = False %} 
-        {%- endif %}
-    {%- endfor %}
-    {%- if ns.many_to_many == True %}
+{%- set ns = namespace(many_to_many = True) %}
+{%- for end in association.ends %}
+{%- if end.multiplicity.max < 2 %} 
+{%- set ns.many_to_many = False %} 
+{%- endif %}
+{%- endfor %}
+{%- if ns.many_to_many == True %}
 {{ association.name.lower() }} = Table(
     "{{ association.name.lower() }}",
     Base.metadata,
     {%- for end in association.ends %}
-    Column("{{ end.type.name.lower() }}_id", ForeignKey("{{ end.type.name.lower() }}.id"), primary_key=True),
+    Column("{{ end.name }}", ForeignKey("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True),
     {%- endfor %}
 )
     {%- endif %}
@@ -47,25 +50,26 @@ class {{ class.name }}(
         {% endfor -%}
     {% else -%}
         Base):
-    {% endif %}
+    {%- endif %}
     __tablename__ = "{{class.name.lower()}}"
-    {%- for parent in class.parents() %}
-    id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.id"), primary_key=True)
+    {%- for parent in sort(class.parents()) %}
+    id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
     {%- endfor %}
-    {%- if class.parents()|length == 0 %}
+    {%- if (class.parents()|length == 0) and ((not ids.get(class.name)))%}
     id: Mapped[int] = mapped_column(primary_key=True)
     {%- endif %}
-    {%- for attribute in class.attributes %}
-    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({{types[attribute.type.name]}})
+    {%- for attribute in sort(class.attributes) %}
+    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {%- if attribute.is_id or (attribute.name == ids.get(class.name)) %}, primary_key=True{% endif %})
     {%- endfor %}
     {%- if class.specializations()|length > 0 %}
-    type_spec: Mapped[str]
+    type_spec: Mapped[str] = mapped_column(String(50))
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
         "polymorphic_on": "type_spec",
     }
     {%- endif %}
-    {%- for parent in class.parents() %}
+    {%- for parent in sort(class.parents()) %}
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
     }
@@ -83,15 +87,37 @@ class {{ class.name }}(
             {%- set ns.end_own = a_end %}
         {%- endfor %}
         {%- if end.multiplicity.max > 1 %}
+        {#- relationship for any-to-many #}
 {{class.name}}.{{end.name}}: Mapped[List["{{end.type.name}}"]] = relationship("{{end.type.name}}"
             {%- if ns.end_own.multiplicity.max > 1 -%}
                 , secondary={{ end.owner.name.lower() }}
             {%- endif %}, back_populates="{{ns.end_own.name}}")
         {%- endif %}
-        {%- if end.multiplicity.max == 1 %}
-{{class.name}}.{{end.type.name.lower()}}_id: Mapped["{{end.type.name}}"] = mapped_column(ForeignKey("{{end.type.name.lower()}}.id")
-{%- if end.multiplicity.min > 0 %}, nullable=False{% endif %})
+        {#- Foreign Key #}
+        {%- if class.name == fkeys.get(end.owner.name) %}
+{{class.name}}.{{end.name}}_id: Mapped["{{end.type.name}}"] = mapped_column(ForeignKey("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
+        {%- if end.multiplicity.min > 0 %}, nullable=False{% endif %}){% endif %}
+        {%- if end.owner.name in fkeys and end.multiplicity.max <= 1 %}
+        {#- relationship for any-to-one #}
 {{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{ns.end_own.name}}")
         {%- endif %}
     {%- endfor %}
 {%- endfor %}
+
+# Database connection
+{% if dbms == "sqlite" %}
+DATABASE_URL = "sqlite:///{{model_name}}.db"  # SQLite connection
+{% elif dbms == "postgresql" %}
+DATABASE_URL = "postgresql+psycopg2://username:password@localhost:5432/db_name"  # PostgreSQL connection
+{% elif dbms == "mysql" or "mariadb" %}
+DATABASE_URL = "mysql+pymysql://username:password@localhost:3306/db_name"  # MySQL or MariaDB connection
+{% elif dbms == "mssql" %}
+DATABASE_URL = "mssql+pyodbc://username:password@localhost:1433/db_name?driver=SQL+Server" # MSSQL connection
+{% else %}
+    {# Fallback if the DBMS is invalid or not supported. This is just a safety measure. #}
+    raise ValueError("Invalid DBMS. Valid options are sqlite, postgresql, and mysql.")
+{% endif %}
+engine = create_engine(DATABASE_URL, echo=True)
+
+# Create tables in the database
+Base.metadata.create_all(engine, checkfirst=True)

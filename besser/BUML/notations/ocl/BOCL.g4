@@ -7,11 +7,16 @@ grammar BOCL;
 
 
 // Top-level constructs
-oclFile: contextDeclaration (expression  )* ;
+oclFile: initConstraints| preCondition|postCondition|contextDeclaration (expression  )* ;
+//context Library:: findBook(title:str) pre: self.has->size()>0
+preCondition:CONTEXT ID DoubleCOLON ID LPAREN? (ID? COLON (BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE |  collectionType|SET)?)* RPAREN? PRE COLON expression;
+postCondition:CONTEXT ID DoubleCOLON ID LPAREN? (ID? COLON (BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE |  collectionType|SET)?)* RPAREN? POST COLON expression;
+
+initConstraints: CONTEXT ID DoubleCOLON ID COLON (BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE |  collectionType|SET) INIT COLON expression;
 
 // Context Declarations
 contextDeclaration:
-     CONTEXT ID (COLON type)? LBRACE? constraint* RBRACE? DoubleCOLON? functionCall? COLON? type?  LPAREN? ID? RPAREN? COLON? (DERIVE |BODY| Init | PRE | POST| Def)? COLON? expression? #ContextExp
+     CONTEXT ID (COLON type)? LBRACE? constraint* RBRACE? DoubleCOLON? functionCall? COLON? type?  LPAREN? ID? RPAREN? COLON? (DERIVE |BODY| INIT | PRE | POST| Def)? COLON? expression? #ContextExp
  ;
 
 constraint: (INV | PRE | POST) ID? COLON expression SEMI? ;
@@ -53,9 +58,9 @@ expression:
           | Arrow LAST LPAREN RPAREN+ expression? #LAST
           | Arrow APPEND LPAREN (SingleQuote? expression SingleQuote? COMMA?)*  RPAREN+ expression?   #APPEND
 
-          | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN (ID (COLON ID)? COMMA?)+ PIPE expression RPAREN endExpression? #COLLECTION
+          | Arrow? (FORALL | EXISTS | SELECT|REJECT | COLLECT) LPAREN (ID (COLON ID)? COMMA?)+ PIPE expression RPAREN endExpression? #COLLECTION
 
-          | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN expression RPAREN endExpression? #CollectionExpressionVariable
+          | Arrow? (FORALL | EXISTS | SELECT|REJECT | COLLECT) LPAREN expression RPAREN endExpression? #CollectionExpressionVariable
 //
 //
           | Arrow SYMMETRICDIFFERENCE LPAREN expression RPAREN+ expression? #SYMMETRICDIFFERENCE
@@ -75,6 +80,7 @@ expression:
           | DoubleDots expression #doubleDots
           | AND? OR? ID? DoubleCOLON expression #doubleCOLONs
           | operator numberORUserDefined?  #op
+
           | primaryExpression expression? #ID
 
 
@@ -82,7 +88,7 @@ expression:
 endExpression:  (AND | OR)? expression;
 binaryFunctionCall: operator ((primaryExpression (DOT ID)*) | NUMBER)  ;
 
-binaryExpression:  ((primaryExpression (DOT ID)*) | NUMBER)   (DOT ID)* operator ((primaryExpression (DOT ID)*) | NUMBER) ;
+binaryExpression:  ((primaryExpression (DOT ID)*) | NUMBER| dateLiteral)   (DOT ID)* operator (primaryExpression DoubleCOLON ID|(primaryExpression (DOT ID)*) | NUMBER| dateLiteral) ;
 unaryExpression: (NOT | MINUS|PLUS|Divide|'*') expression ;
 //
 operator: EQUAL | NOTEQUAL| LT | LE | GT | GE | PLUS|'*' | MINUS | EMPTYSTRING | Divide | AND | OR | XOR | IMPLIES ; // Added 'xor' and 'implies'
@@ -92,11 +98,13 @@ numberORUserDefined: NUMBER |SingleQuote? ID LPAREN? RPAREN? SingleQuote?  ;
 primaryExpression: literal | SELF | functionCall | LPAREN expression RPAREN | ID  ;
 
 literal: NUMBER | STRING_LITERAL | BOOLEAN_LITERAL | NULL ;
+dateLiteral : DATE DoubleCOLON? ('now'|'today')? LPAREN? RPAREN? DOT? 'addDays'? LPAREN? NUMBER? RPAREN?;
 // Function and Property Calls
 
 
 CONTEXT: 'context';
 // Keywords
+INIT: 'init';
 INV: 'inv' ;
 PRE: 'pre' ;
 POST: 'post' ;
@@ -104,9 +112,11 @@ SELF: 'self' ;
 FORALL: 'forAll' ;
 EXISTS: 'exists' ;
 SELECT: 'select' ;
+REJECT: 'reject' ;
 COLLECT: 'collect' ;
 OCLANY: 'OclAny' ;
 OCLVOID: 'OclVoid' ;
+DATE: 'date' | 'Date';
 WS: [ \t\r\n]+ -> skip ;
 
 
@@ -127,7 +137,7 @@ SingleQuote: '\'';
 BOOLEAN_TYPE: 'Boolean' ;
 INTEGER_TYPE: 'Integer' ;
 REAL_TYPE: 'Real' ;
-STRING_TYPE: 'String' ;
+STRING_TYPE: 'String' |'str'|'Str'|'string';
 IF: 'if' ;
 THEN: 'then' ;
 ELSE: 'else' ;
@@ -169,7 +179,7 @@ SYMMETRICDIFFERENCE: 'symmetricDifference';
 FIRST: 'first';
 DERIVE: 'derive';
 BODY: 'body';
-Init: 'init';
+//Init: 'init';
 UNION: 'union';
 NULL: 'null';
 LET: 'let';
@@ -178,7 +188,7 @@ Arrow: '->' | '→';
 Def: 'def';
 
 // Basic tokens
-ID: [a-zA-Z_][a-zA-Z0-9@_]* ;
+ID: [a-zA-Z_][a-zA-Z0-9@_]* '@pre'?;
 
 NUMBER: [0-9]+ ('.' [0-9]+)? ;
 STRING_LITERAL: '"' ( ~["\\] | '\\' . )* ID? '"'

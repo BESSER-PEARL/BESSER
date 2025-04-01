@@ -1,0 +1,76 @@
+cnn_rnn:
+
+    layers:
+        - l1:
+            type=Embedding
+            num_embeddings=5000
+            embedding_dim=50
+        - l2:
+            type=Dropout
+            rate=0.5
+        - l3:
+            type=Conv1D
+            actv_func=relu
+            in_channels=50
+            out_channels=200
+            kernel_dim=[4]
+        - l4:
+            type=Pooling
+            pooling_type=max
+            dimension=1D
+            kernel_dim=[2]
+        - l5:
+            type=Conv1D
+            actv_func=relu
+            in_channels=50
+            out_channels=200
+            kernel_dim=[5]
+        - l6:
+            type=Pooling
+            pooling_type=max
+            dimension=1D
+            kernel_dim=[2]
+        - l7:
+            type=Dropout
+            rate=0.15
+        - l8:
+            type=GRU
+            return_type=last
+            input_size=400
+            hidden_size=100
+            batch_first=True
+        - l9:
+            type=Linear
+            actv_func=relu
+            in_features=100
+            out_features=400
+        - l10:
+            type=Dropout
+            rate=0.1
+        - l11:
+            type=Linear
+            actv_func=sigmoid
+            in_features=400
+            out_features=1
+        
+
+    tensor_ops:
+        - name=op1
+          type=concatenate
+          concatenate_dim=-1
+          layers_of_tensors=[l4, l6]
+
+        
+
+    modules:
+        - l1
+        - l2
+        - l3
+        - l4
+        - l5
+        - l6
+        - l7
+        - l8
+        - l9
+        - l10
+        - l11

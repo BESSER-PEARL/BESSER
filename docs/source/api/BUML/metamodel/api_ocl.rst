@@ -1,7 +1,7 @@
 BESSER OCL
 ==========
 
-.. automodule:: besser.BUML.metamodel.ocl.rules
+.. automodule:: besser.BUML.metamodel.ocl.ocl
    :members:
    :private-members:
    :undoc-members:

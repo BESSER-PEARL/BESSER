@@ -4,11 +4,11 @@ This module defines the neural network metamodel.
 
 from __future__ import annotations
 from typing import List, Self, Union
-from besser.BUML.metamodel.structural import BehaviorImplementation
+from besser.BUML.metamodel.structural import BehaviorImplementation, NamedElement
 
 
 
-class TensorOp:
+class TensorOp(NamedElement):
     """
     This class represents a tensor operation. It encapsulates attributes
     such as the name and the type of the tensor operation.
@@ -56,7 +56,7 @@ class TensorOp:
                  transpose_dim: List[int] = None,
                  permute_dim: List[int] = None,
                  input_reused: bool = False):
-        self.name: str = name
+        super().__init__(name)
         self.concatenate_dim: int = concatenate_dim
         self.layers_of_tensors: List[Union[str, float]] = layers_of_tensors
         self.reshape_dim: List[int] = reshape_dim
@@ -64,16 +64,6 @@ class TensorOp:
         self.permute_dim: List[int] = permute_dim
         self.input_reused: bool = input_reused
         self.tns_type: str = tns_type
-
-    @property
-    def name(self) -> str:
-        """str: Get the name of the tensorOp."""
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        """str: Set the name of the tensorOp."""
-        self.__name = name
 
     @property
     def tns_type(self) -> str:
@@ -222,7 +212,7 @@ class TensorOp:
             f'{self.transpose_dim}, {self.permute_dim}, {self.input_reused})'
         )
 
-class Layer:
+class Layer(NamedElement):
     """
     This class represents a layer of the neural network. It encapsulates 
     attributes such as the name of the layer and the activation function.
@@ -245,20 +235,10 @@ class Layer:
     """
     def __init__(self, name: str, actv_func: str = None,
                  name_module_input: str = None, input_reused: bool = False):
-        self.name: str = name
+        super().__init__(name)
         self.actv_func: str = actv_func
         self.name_module_input: str = name_module_input
         self.input_reused: bool = input_reused
-
-    @property
-    def name(self) -> str:
-        """str: Get the name of the layer."""
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        """str: Set the name of the layer."""
-        self.__name = name
 
     @property
     def actv_func(self) -> str:
@@ -683,7 +663,7 @@ class Conv1D(ConvolutionalLayer):
     def __repr__(self):
         return (
             f'Conv1D({self.name}, {self.actv_func}, {self.kernel_dim}, '
-            f'{self.out_channels}, {self.stride_dim}, {self.in_channels}, ' 
+            f'{self.out_channels}, {self.stride_dim}, {self.in_channels}, '
             f'{self.padding_amount}, {self.padding_type}, '
             f'{self.name_module_input}, {self.input_reused}, '
             f'{self.permute_in}, {self.permute_out})'
@@ -1919,7 +1899,7 @@ class EmbeddingLayer(GeneralLayer):
             f'{self.name_module_input}, {self.input_reused})'
         )
 
-class Feature:
+class Feature(NamedElement):
     """
     A feature is a measurable property or characteristic of an object 
     used to represent and describe it within a dataset.
@@ -1930,9 +1910,11 @@ class Feature:
     Attributes:
         name (str): The name of the feature.
     """
+    def __init__(self, name: str):
+        super().__init__(name)
 
     def __repr__(self):
-        return 'Feature()'
+        return f'Feature({self.name}'
 
 class Label:
     """
@@ -2043,13 +2025,11 @@ class Structured(Feature):
         name (str): Inherited from Feature. It represents the name of 
             the feature.
     """
-    def __init__(self, name: str):
-        self.name: str = name
 
     def __repr__(self):
         return f'Structured({self.name})'
 
-class Dataset:
+class Dataset(NamedElement):
     """
     Represents the collection of data instances used for training or 
     evaluation, where each instance comprises features and 
@@ -2082,7 +2062,7 @@ class Dataset:
                  labels: set[Label] = None):
         if labels is None:
             labels = set()
-        self.name: str = name
+        super().__init__(name)
         self.path_data: str = path_data
         if task_type is not None:
             self.task_type: str = task_type
@@ -2090,16 +2070,6 @@ class Dataset:
             self.input_format: str = input_format
         self.image: Image = image
         self.labels: set[Label] = labels
-
-    @property
-    def name(self) -> str:
-        """str: Get the name of the dataset."""
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        """str: Set the name of the dataset."""
-        self.__name = name
 
     @property
     def path_data(self) -> str:

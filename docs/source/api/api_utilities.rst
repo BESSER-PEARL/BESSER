@@ -1,8 +1,7 @@
 Utilities
 =========
 
-.. automodule:: besser.utilities.utils
-   :members:
-   :private-members:
-   :undoc-members:
-   :show-inheritance:
+.. toctree::
+
+   utilities/api_buml_code_builder
+   utilities/api_model_serializer

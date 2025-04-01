@@ -8,13 +8,25 @@ The grammar for OCL is shown below:
 
 .. code-block:: console
 
-    grammar OCLs;
+    grammar BOCL;
+
+    //oclFile: contextDeclaration;
+
+    //contextDeclaration: CONTEXT ID;
+
+
+
     // Top-level constructs
-    oclFile: contextDeclaration (expression  )* ;
+    oclFile: initConstraints| preCondition|postCondition|contextDeclaration (expression  )* ;
+    //context Library:: findBook(title:str) pre: self.has->size()>0
+    preCondition:CONTEXT ID DoubleCOLON ID LPAREN? (ID? COLON (BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE |  collectionType|SET)?)* RPAREN? PRE COLON expression;
+    postCondition:CONTEXT ID DoubleCOLON ID LPAREN? (ID? COLON (BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE |  collectionType|SET)?)* RPAREN? POST COLON expression;
+
+    initConstraints: CONTEXT ID DoubleCOLON ID COLON (BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE |  collectionType|SET) INIT COLON expression;
 
     // Context Declarations
     contextDeclaration:
-         CONTEXT ID (COLON type)? LBRACE? constraint* RBRACE? DoubleCOLON? functionCall? COLON? type?  LPAREN? ID? RPAREN? COLON? (DERIVE |BODY| Init | PRE | POST| Def)? COLON? expression? #ContextExp
+         CONTEXT ID (COLON type)? LBRACE? constraint* RBRACE? DoubleCOLON? functionCall? COLON? type?  LPAREN? ID? RPAREN? COLON? (DERIVE |BODY| INIT | PRE | POST| Def)? COLON? expression? #ContextExp
      ;
 
     constraint: (INV | PRE | POST) ID? COLON expression SEMI? ;
@@ -28,20 +40,23 @@ The grammar for OCL is shown below:
     expression:
               (AND | OR )? binaryExpression expression? #binary
               | unaryExpression expression? #unary
-              | IF expression THEN expression ELSE expression ENDIF  #if
+              | IF expression  #ifExp
+              | THEN expression #thenExp
+              | ELSE expression #elseExp
+              | ENDIF  expression? #endIfExp
               | primaryExpression  (DOT ID)* DOT OCLISTYPEOF LPAREN type RPAREN expression? #OCLISTYPEOF
               | primaryExpression  (DOT ID)* DOT OCLASTYPE LPAREN type RPAREN expression? #OCLASTYPE
               | primaryExpression  (DOT ID)* DOT OCLISKINDOF LPAREN type RPAREN expression? #OCLISKINDOF
 
               | primaryExpression?  (DOT ID)* Arrow ISEMPTY LPAREN RPAREN expression? RPAREN* #ISEMPTY
-              | primaryExpression?  (DOT ID)* Arrow SUM LPAREN RPAREN expression? RPAREN* #SUM
-              | primaryExpression?  (DOT ID)* Arrow SIZE   LPAREN RPAREN expression? RPAREN* #SIZE
+              | primaryExpression?  (DOT ID)* Arrow SUM LPAREN RPAREN  binaryFunctionCall? expression? RPAREN* #SUM
+              | primaryExpression?  (DOT ID)* Arrow SIZE   LPAREN RPAREN binaryFunctionCall? expression? RPAREN* #SIZE
 
               |  Arrow? INCLUDES LPAREN expression RPAREN expression? RPAREN* #INCLUDES
               |  Arrow? EXCLUDES LPAREN expression RPAREN  expression? RPAREN* #EXCLUDES
               |  Arrow? LPAREN* SEQUENCE LBRACE* LPAREN* (SingleQuote? expression SingleQuote? COMMA?)* RBRACE* RPAREN* expression? #SEQUENCE
               |  Arrow? LPAREN* SUBSEQUENCE LBRACE* LPAREN* (SingleQuote? expression SingleQuote? COMMA?)* RPAREN* RBRACE*  expression? #SUBSEQUENCE
-              | Arrow? ALLINSTANCES LPAREN+ expression RPAREN+ expression?  #ALLINSTANCES
+              |  Arrow? ALLINSTANCES LPAREN+ expression? RPAREN+ expression?  #ALLINSTANCES
 
               | Arrow? LPAREN* ORDEREDSET LBRACE (SingleQuote? expression SingleQuote? COMMA?)* RBRACE RPAREN* expression?  #ORDEREDSET
               | Arrow? LPAREN* SUBORDEREDSET LBRACE* LPAREN* (SingleQuote? expression SingleQuote? COMMA?)* RBRACE* RPAREN* expression? RPAREN  #SUBORDEREDSET
@@ -52,8 +67,10 @@ The grammar for OCL is shown below:
               | Arrow PREPEND LPAREN+ (SingleQuote? expression SingleQuote? COMMA?)* RPAREN+ expression? #PREPEND
               | Arrow LAST LPAREN RPAREN+ expression? #LAST
               | Arrow APPEND LPAREN (SingleQuote? expression SingleQuote? COMMA?)*  RPAREN+ expression?   #APPEND
-              | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN (ID (COLON ID)? COMMA?)+ PIPE expression RPAREN expression? #COLLECTION
-              | Arrow? (FORALL | EXISTS | SELECT | COLLECT) LPAREN expression RPAREN expression? #CollectionExpressionVariable
+
+              | Arrow? (FORALL | EXISTS | SELECT|REJECT | COLLECT) LPAREN (ID (COLON ID)? COMMA?)+ PIPE expression RPAREN endExpression? #COLLECTION
+
+              | Arrow? (FORALL | EXISTS | SELECT|REJECT | COLLECT) LPAREN expression RPAREN endExpression? #CollectionExpressionVariable
     //
     //
               | Arrow SYMMETRICDIFFERENCE LPAREN expression RPAREN+ expression? #SYMMETRICDIFFERENCE
@@ -64,34 +81,40 @@ The grammar for OCL is shown below:
               | ID COLON ID EQUAL expression #defIDAssignmentexpression
               | LPAREN*  primaryExpression?  (DOT ID)* operator? primaryExpression?  (DOT ID)+ expression? #PrimaryExp
               | primaryExpression  (DOT)* ID* functionCall operator? expression?  #funcCall
-            | operator numberORUserDefined?  #op
+    //          | operator expression #operatorExp
               | Arrow expression #arrowexp
               | NUMBER expression?  #number
               | Arrow? functionCall expression? #PredefinedfunctionCall
-              | primaryExpression expression? #ID
+
               | SingleQuote expression DOT? SingleQuote DOT? expression? #SingleQuoteExp
               | DoubleDots expression #doubleDots
+              | AND? OR? ID? DoubleCOLON expression #doubleCOLONs
+              | operator numberORUserDefined?  #op
+
+              | primaryExpression expression? #ID
 
 
     ;
+    endExpression:  (AND | OR)? expression;
+    binaryFunctionCall: operator ((primaryExpression (DOT ID)*) | NUMBER)  ;
 
-
-
-    binaryExpression:  ((primaryExpression (DOT ID)*) | NUMBER)   (DOT ID)* operator ((primaryExpression (DOT ID)*) | NUMBER) ;
-    unaryExpression: (NOT | MINUS) expression ;
+    binaryExpression:  ((primaryExpression (DOT ID)*) | NUMBER| dateLiteral)   (DOT ID)* operator (primaryExpression DoubleCOLON ID|(primaryExpression (DOT ID)*) | NUMBER| dateLiteral) ;
+    unaryExpression: (NOT | MINUS|PLUS|Divide|'*') expression ;
     //
-    operator: EQUAL | NOTEQUAL| LT | LE | GT | GE | PLUS | MINUS | EMPTYSTRING | Divide | AND | OR | XOR | IMPLIES ; // Added 'xor' and 'implies'
+    operator: EQUAL | NOTEQUAL| LT | LE | GT | GE | PLUS|'*' | MINUS | EMPTYSTRING | Divide | AND | OR | XOR | IMPLIES ; // Added 'xor' and 'implies'
     //
     numberORUserDefined: NUMBER |SingleQuote? ID LPAREN? RPAREN? SingleQuote?  ;
 
     primaryExpression: literal | SELF | functionCall | LPAREN expression RPAREN | ID  ;
 
     literal: NUMBER | STRING_LITERAL | BOOLEAN_LITERAL | NULL ;
+    dateLiteral : DATE DoubleCOLON? ('now'|'today')? LPAREN? RPAREN? DOT? 'addDays'? LPAREN? NUMBER? RPAREN?;
     // Function and Property Calls
 
 
     CONTEXT: 'context';
     // Keywords
+    INIT: 'init';
     INV: 'inv' ;
     PRE: 'pre' ;
     POST: 'post' ;
@@ -99,10 +122,13 @@ The grammar for OCL is shown below:
     FORALL: 'forAll' ;
     EXISTS: 'exists' ;
     SELECT: 'select' ;
+    REJECT: 'reject' ;
     COLLECT: 'collect' ;
     OCLANY: 'OclAny' ;
     OCLVOID: 'OclVoid' ;
+    DATE: 'date' | 'Date';
     WS: [ \t\r\n]+ -> skip ;
+
 
 
     // Symbols
@@ -121,7 +147,7 @@ The grammar for OCL is shown below:
     BOOLEAN_TYPE: 'Boolean' ;
     INTEGER_TYPE: 'Integer' ;
     REAL_TYPE: 'Real' ;
-    STRING_TYPE: 'String' ;
+    STRING_TYPE: 'String' |'str'|'Str'|'string';
     IF: 'if' ;
     THEN: 'then' ;
     ELSE: 'else' ;
@@ -163,7 +189,7 @@ The grammar for OCL is shown below:
     FIRST: 'first';
     DERIVE: 'derive';
     BODY: 'body';
-    Init: 'init';
+    //Init: 'init';
     UNION: 'union';
     NULL: 'null';
     LET: 'let';
@@ -172,35 +198,32 @@ The grammar for OCL is shown below:
     Def: 'def';
 
     // Basic tokens
-    ID: [a-zA-Z_][a-zA-Z0-9_]* ;
+    ID: [a-zA-Z_][a-zA-Z0-9@_]* '@pre'?;
 
     NUMBER: [0-9]+ ('.' [0-9]+)? ;
-    STRING_LITERAL: '"' ( ~["\\] | '\\' . )* '"' ;
+    STRING_LITERAL: '"' ( ~["\\] | '\\' . )* ID? '"'
+    | SingleQuote ID SingleQuote;
     BOOLEAN_LITERAL: 'true' | 'false';
     COMMENT: '/*' .*? '*/' -> skip ;
     LINE_COMMENT: '//' ~[\r\n]* -> skip ;
 
 
-
-To Parse the OCL Constraints you can create the test case using the following code:
+To Evaluate the OCL Constraints you can create the test case using the following code:
 
 .. code-block:: python
 
-    from antlr4 import *
-    from besser.BUML.notations.ocl.OCLsLexer import OCLsLexer
-    from besser.BUML.notations.ocl.OCLsParser import OCLsParser
-    from besser.BUML.notations.ocl.OCLsListener import OCLsListener
-    import unittest
+    from models.library_object import library_model,object_model
+    from bocl.OCLWrapper import OCLWrapper
 
-    class TestOclParser(unittest.TestCase):
-    # from OCLInterp import OCLInterp
 
-        def test_derive(self):
-
-            ocl = "context LoyaltyAccount::totalPointsEarned : Integer derive :	self.transactions->select( i_Transaction : Transaction | i_Transaction.oclIsTypeOf(Earning) )->collect( i_Transaction : Transaction | i_Transaction.points )->sum()  ;"
-            input_stream = InputStream(ocl)
-            lexer = OCLsLexer(input_stream)
-            stream = CommonTokenStream(lexer)
-            parser = OCLsParser(stream)
-            tree = parser.oclFile()
-            assert parser.getNumberOfSyntaxErrors() == 0
+    def test_1():
+        wrapper = OCLWrapper(library_model, object_model)
+        constraint=list(library_model.constraints)[0]
+        print("Query: " + str(constraint.expression), end=": ")
+        res = None
+        try:
+            res = wrapper.evaluate(constraint)
+        except Exception as error:
+                print('\x1b[0;30;41m' + 'Exception Occured! Info:' + str(error) + '\x1b[0m')
+                res = None
+        assert(res==True)

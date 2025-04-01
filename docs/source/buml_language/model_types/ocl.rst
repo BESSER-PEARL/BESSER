@@ -15,12 +15,19 @@ for expression according to the OCL metamodel shown below
 
   The classes highlighted in green originate from the :doc:`structural metamodel <structural>`.
 
-We are able to parse all the queries from the metamodel. The work on OCL interpreter is ongoing however we are able to interpret basic OCL queries for example:
+The BOCL supports invariants, initialisation constraints, preconditions and postconditions.
+You can define OCL constraints for structural models using the web modeling editor such as:
 
 .. code-block:: python
   :linenos:
 
   context library inv inv1: self.books>0
+
+.. note::
+
+  B-OCL Interpreter is available at https://github.com/BESSER-PEARL/B-OCL-Interpreter. With this interpreter you can validate your OCL constraints defined on B-UML models.
+
+
 
 Supported notations
 -------------------

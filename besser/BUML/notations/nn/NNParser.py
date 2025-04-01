@@ -200,7 +200,7 @@ class NNParser ( Parser ):
                      "'label'", "')'", "'concatenate_dim'", "'layers_of_tensors'", 
                      "'reshape_dim'", "'transpose_dim'", "'permute_dim'", 
                      "'after_activ_func'", "'['", "']'", "'relu'", "'leaky_relu'", 
-                     "'sigmod'", "'softmax'", "'tanh'", "'None'", "'last'", 
+                     "'sigmoid'", "'softmax'", "'tanh'", "'None'", "'last'", 
                      "'full'", "'hidden'", "'reshape'", "'concatenate'", 
                      "'multiply'", "'matmultiply'", "'permute'", "'transpose'", 
                      "'binary'", "'multi_class'", "'regression'", "'csv'", 

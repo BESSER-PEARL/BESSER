@@ -1,0 +1,23 @@
+{% macro get_field(attr_type) %}
+    {%- if attr_type == "str" -%}
+String
+    {%- elif attr_type == "int" -%}
+int
+    {%- elif attr_type == "float" -%}
+float
+    {%- elif attr_type == "date" -%}
+LocalDate
+    {%- elif attr_type == "datetime" -%}
+LocalDateTime
+    {%- elif attr_type == "time" -%}
+LocalTime
+    {%- elif attr_type == "bool" -%}
+boolean
+    {%- elif attr_type == "text" -%}
+String
+    {%- elif attr_type == "uuid" -%}
+UUID
+    {%- else -%}
+None
+    {%- endif -%}
+{% endmacro %}

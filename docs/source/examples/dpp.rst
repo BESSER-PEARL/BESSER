@@ -8,12 +8,12 @@ This initiative consists of collecting and disseminating information on products
 
 In this example, we show how from a plantUML model (which describes a reduced DPP domain) it is possible to obtain 
 a B-UML model, serialize it, and use it as input to our `Django <https://www.djangoproject.com/>`_ code generator to produce 
-the model layer code of a Django web application.
+the web application for DPP.
 
 The PlantUML model (code and graphic representation) that describes the domain is as follows. Copy this code into a new file and 
 store it as ``dpp.plantuml``. 
 
-.. literalinclude:: ../../../tests/structural/dpp/dpp.plantuml
+.. literalinclude:: ../code_eg/dpp/dpp.plantuml
    :language: console
    :linenos:
 
@@ -24,7 +24,7 @@ store it as ``dpp.plantuml``.
 
 To transform this PlantUML model to B-UML and use the Django code generator, you can run the following code.
 
-.. literalinclude:: ../../../tests/structural/dpp/dpp.py
+.. literalinclude:: ../code_eg/dpp/dpp.py
    :language: python
    :linenos:
 
@@ -35,7 +35,7 @@ want to modify your model directly from the base code).
 Now you can create your Django application and use the generated code. Below is the admin panel of a Django 
 web application that uses the code generated for the data layer or model layer.
 
-.. image:: ../img/dpp_django.png
-  :width: 600
+.. image:: ../img/django_dpp.png
+  :width: 800
   :alt: DPP model
   :align: center

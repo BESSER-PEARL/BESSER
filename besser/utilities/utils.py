@@ -1,5 +1,21 @@
 import pickle, os
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel, NamedElement
+
+def sort_by_timestamp(obj_set: set) -> list:
+    """
+    Sorts a set of objects by their `timestamp` attribute.
+
+    This function takes a set of objects (which are instances of the `NamedElement` class in BESSER)
+    and returns a list of those objects, sorted in ascending order based on their `timestamp` attribute.
+
+    Parameters:
+    obj_set (set[NamedElement]): A set of objects to be sorted. Each object must have a `timestamp` attribute.
+
+    Returns:
+    list: A list of the objects sorted by their `timestamp` in ascending order.
+    """
+    return sorted(obj_set, key=lambda x: x.timestamp)
+
 
 class ModelSerializer():
     """

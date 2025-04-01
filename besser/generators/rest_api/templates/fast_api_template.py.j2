@@ -22,21 +22,23 @@ app = FastAPI()
 #
 ############################################
 
-
-{#-To attribute if a class has an id or not /or add in the metamodel for a class has_id#}
-{%- set result = [None] %}
-{%- for attribute in class.attributes %}
-  {%- if attribute.is_id and not result[0] %}
-    {%- set _ = result.pop() %}
-    {%- set _ = result.append(attribute.name) %}
-    {# Exit the loop if we validate the condition #}
-  {%- endif %}
-{%- endfor %}
-
-{%- if not result[0] %}
-  {%- set _ = result.pop() %}
-  {%- set _ = result.append('id_to_change') %}
-{%- endif %}
+{% set ns = namespace(end_name_one=[], end_name_multiple=[], manytomany_associations=[]) %}
+{% for association in class.associations %}
+    {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
+        {% set lns = namespace(end1=None, end2=None) %}
+        {% for end in association.ends %}
+            {% set lns.end1 = end if end.type.name == class.name else lns.end1 %}
+            {% set lns.end2 = end if end.type.name != class.name else lns.end2 %}
+        {% endfor %}
+        {% set class1_name = lns.end1.type.name %}
+        {% set class2_name = lns.end2.type.name %}
+        {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
+            {% do ns.end_name_multiple.append((class2_name, association.name.lower())) %}
+        {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min)) %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
 
 {% if "GET" in http_methods %}
 @app.get("/{{ class.name | lower}}/", response_model=List[{{ class.name }}], tags=["{{ class.name | lower}}"])
@@ -44,38 +46,66 @@ def get_{{ class.name | lower}}():
     return {{ class.name | lower}}_list
 
 {#{% for attribute in class.attributes if attribute.is_id == True %}#}
-@app.get("/{{ class.name | lower}}/{attribute_id}/", response_model={{ class.name }}, tags=["{{ class.name | lower}}"])
-def get_{{ class.name | lower}}(attribute_id : str):   
+@app.get("/{{ class.name | lower}}/{id}/", response_model={{ class.name }}, tags=["{{ class.name | lower}}"])
+def get_{{ class.name | lower}}(id : int):
     for {{ class.name | lower}} in {{ class.name | lower}}_list:
-        if {{ class.name | lower}}.{{ result[0] }}== attribute_id:
+        if {{ class.name | lower}}.id== id:
             return {{ class.name | lower}}
     raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 {#{% endfor %}#}
 {% endif %}
 
 {% if "POST" in http_methods %}
-@app.post("/{{ class.name | lower}}/", response_model={{ class.name }}, tags=["{{ class.name | lower}}"])
-def create_{{ class.name | lower}}({{ class.name | lower}}: {{ class.name }}):
-    {{ class.name | lower}}_list.append({{ class.name | lower}})
-    return {{ class.name | lower}}
+@app.post("/{{ class.name | lower }}/", response_model={{ class.name }}, tags=["{{ class.name | lower }}"])
+def create_{{ class.name | lower }}({{ class.name | lower }}: {{ class.name }}):
+    for existing_{{ class.name | lower }} in {{ class.name | lower }}_list:
+        if existing_{{ class.name | lower }}.id == {{ class.name | lower }}.id:
+            raise HTTPException(status_code=400, detail=f"{{ class.name }} with id {existing_{{ class.name | lower }}.id} already exists")
+
+    {% if ns.end_name_one %}
+    {% for x in ns.end_name_one %}
+    {{ x[0] | lower }}_id = getattr({{ class.name | lower }}, '{{ x[0] | lower }}_id', None)
+    if {{ x[0] | lower }}_id {% if x[1] == 1 %}is not None{% endif %}:
+        {{ x[0] | lower }}_exists = any({{ x[0] | lower }}.id == {{ x[0] | lower }}_id for {{ x[0] | lower }} in {{ x[0] | lower }}_list)
+        if not {{ x[0] | lower }}_exists:
+            raise HTTPException(status_code=400, detail="{{ x[0] }} not found")
+    {% endfor %}
+    {% endif %}
+
+    {% if ns.end_name_multiple %}
+    {% for x in ns.end_name_multiple %}
+    {{ x[0] | lower }}s_id = getattr({{ class.name | lower }}, '{{ x[0] | lower }}s_id', None)
+    if {{ x[0] | lower }}s_id:
+        for id in {{ x[0] | lower }}s_id:
+            {{ x[0] | lower }}_exists = any({{ x[0] | lower }}.id == id for {{ x[0] | lower }} in {{ x[0] | lower }}_list)
+            if not {{ x[0] | lower }}_exists:
+                raise HTTPException(status_code=404, detail=f"{{ x[0] }} with ID {id} not found")
+    {% endfor %}
+    {% endif %}
+
+    {{ class.name | lower }}_list.append({{ class.name | lower }})
+    return {{ class.name | lower }}
 {% endif %}
+
+
+
 
 {% if "PUT" in http_methods %}
 {% if class.is_read_only == False %}
-@app.put("/{{ class.name | lower}}/{attribute_id}/", response_model={{ class.name }}, tags=["{{ class.name | lower}}"]) 
-def change_{{ class.name | lower}}(attribute_id : str, updated_{{ class.name | lower}}: {{ class.name }}): 
+@app.put("/{{ class.name | lower}}/{id}/", response_model={{ class.name }}, tags=["{{ class.name | lower}}"])
+def change_{{ class.name | lower}}(id : int, updated_{{ class.name | lower}}: {{ class.name }}):
     for index, {{ class.name | lower}} in enumerate({{ class.name | lower}}_list): 
-        if {{ class.name | lower}}.{{ result[0] }} == attribute_id:
+        if {{ class.name | lower}}.id == id:
             {{ class.name | lower}}_list[index] = updated_{{ class.name | lower}}
             return updated_{{ class.name | lower}}
     raise HTTPException(status_code=404, detail="{{ class.name }} not found")
 {% endif %}
 
 {% if "PATCH" in http_methods %}
-@app.patch("/{{ class.name | lower}}/{attribute_id}/{attribute_to_change}", response_model={{ class.name }}, tags=["{{ class.name | lower}}"])
-def update_{{ class.name | lower}}(attribute_id : str,  attribute_to_change: str, updated_data: str):
+@app.patch("/{{ class.name | lower}}/{id}/{attribute_to_change}", response_model={{ class.name }}, tags=["{{ class.name | lower}}"])
+def update_{{ class.name | lower}}(id : int,  attribute_to_change: str, updated_data: str):
     for {{ class.name | lower}} in {{ class.name | lower}}_list:
-        if {{ class.name | lower}}.{{ result[0] }} == attribute_id:
+        if {{ class.name | lower}}.id == id:
             if hasattr({{ class.name | lower}}, attribute_to_change):
                 setattr({{ class.name | lower}}, attribute_to_change, updated_data)
                 return {{ class.name | lower}}
@@ -86,10 +116,10 @@ def update_{{ class.name | lower}}(attribute_id : str,  attribute_to_change: str
 {% endif %}
 
 {% if "DELETE" in http_methods %}
-@app.delete("/{{ class.name | lower}}/{attribute_id}/", tags=["{{ class.name | lower}}"])
-def delete_{{ class.name | lower}}(attribute_id : str):   
+@app.delete("/{{ class.name | lower}}/{id}/", tags=["{{ class.name | lower}}"])
+def delete_{{ class.name | lower}}(id : int):
     for index, {{ class.name | lower}} in enumerate({{ class.name | lower}}_list):
-        if {{ class.name | lower}}.{{ result[0] }} == attribute_id:
+        if {{ class.name | lower}}.id == id:
             {{ class.name | lower}}_list.pop(index)
             return {"message": "Item deleted successfully"}
     raise HTTPException(status_code=404, detail="{{ class.name }} not found") 
@@ -112,7 +142,7 @@ if __name__ == "__main__":
     print(f"Writing OpenAPI schema to {output_file}")
     with open(output_file, 'w') as file:
         json.dump(openapi_schema, file)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="127.0.0.1", port=8000)
 
 
 

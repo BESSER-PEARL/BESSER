@@ -12,24 +12,29 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from multiprocessing import Process
 from besser.generators.backend import BackendGenerator
-from besser.BUML.metamodel.structural import DomainModel, Class, Property, PrimitiveDataType, Multiplicity, BinaryAssociation
+from besser.BUML.metamodel.structural import DomainModel, Class, Property, IntegerType, Multiplicity, BinaryAssociation
 
 
 BASE_URL = "http://localhost:8000"
+
+# Add this decorator to filter out the specific deprecation warning
+pytestmark = pytest.mark.filterwarnings(
+    "ignore:The 'app' shortcut is now deprecated.:DeprecationWarning"
+)
 
 def run_tests():
     pytest.main([__file__])
 
 def test_file_generation():
     class1 = Class(name="name1", attributes={
-        Property(name="attr1", type=PrimitiveDataType("int")),
+        Property(name="attr1", type=IntegerType),
     })
     class2 = Class(name="name2", attributes={
-        Property(name="attr2", type=PrimitiveDataType("int"))
+        Property(name="attr2", type=IntegerType)
     })
     association = BinaryAssociation(name="name_assoc", ends={
-        Property(name="attr_assoc1", owner=class2, type=class1, multiplicity=Multiplicity(1, "*")),
-        Property(name="attr_assoc2", owner=class1, type=class2, multiplicity=Multiplicity(1, "*"))
+        Property(name="assocs1", type=class1, multiplicity=Multiplicity(1, "*")),
+        Property(name="assocs2", type=class2, multiplicity=Multiplicity(1, "*"))
     })
 
     domain_model = DomainModel(name="Name", types={class1, class2}, associations={association})
@@ -48,7 +53,7 @@ def test_create_name1():
     client = TestClient(app)
     data = {
         "attr1": 1,
-        "name2s_id": []  # Adjust this list according to your requirements
+        "assocs2": [] 
     }
     response = client.post(f"{BASE_URL}/name1/", json=data)
     assert response.status_code == 200
@@ -67,7 +72,7 @@ def test_update_name1():
     client.get(f"{BASE_URL}/name1/{name1_id}/")
     data = {
         "attr1": 11,
-        "name2s_id": []
+        "assocs2": []
     }
     response = client.put(f"{BASE_URL}/name1/{name1_id}/", json=data)
     assert response.status_code == 200

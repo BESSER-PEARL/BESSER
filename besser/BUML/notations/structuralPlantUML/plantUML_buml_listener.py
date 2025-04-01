@@ -1,191 +1,251 @@
+import warnings
+from besser.BUML.metamodel.structural import DomainModel, Class, Multiplicity, Property, \
+    BinaryAssociation, Generalization, Enumeration, EnumerationLiteral, Method, Parameter
 from .PlantUMLParser import PlantUMLParser
 from .PlantUMLListener import PlantUMLListener
 
 class BUMLGenerationListener(PlantUMLListener):
-    visibility = {"+": "public",
-                  "-": "private",
-                  "#": "protected",
-                  "~": "package"}
+    """
+       This listener class generates a B-UML structural model from a parse-tree that 
+       representing a plantUML textual model
+    """
 
-    def __init__(self, output):
-        self.output = output
-        self.__attr_list: list = list()
-        self.__abstract_class: bool = False
-        self.__dtypes: set = set()
-        self.__classes: list = list()
-        self.__relations: dict = dict()
-        self.__ends: list = list()
-        self.__inheritances: dict = dict()
-        self.__relation_classes: list = list()
-        self.__group_inh: int = 0
-        self.__parent_classes: dict = dict()
-        
-    def enterClass(self, ctx: PlantUMLParser.ClassContext):
-        text = "# " + ctx.ID().getText() + " class definition \n"
-        self.output.write(text)
-        self.__attr_list = []
-        self.__abstract_class = False
-    
-    def exitClass(self, ctx: PlantUMLParser.ClassContext):
-        attributes = list_to_str(self.__attr_list)
-        text = ctx.ID().getText() + ": Class = Class(name=\"" + ctx.ID().getText() + "\", attributes=" + attributes
-        if self.__abstract_class:
-            text += ", is_abstract=True"
-        text += ")\n\n"
-        self.output.write(text)
-        self.__classes.append(ctx.ID().getText())
+    VISIBILITY = {"+": "public", "-": "private", "#": "protected", "~": "package"}
+
+    def __init__(self):
+        self.__buml_model = None
+
+    def get_buml_model(self):
+        """DomainModel: Retrieves the B-UML model instance."""
+        return self.__buml_model
+
+    def enterDomainModel(self, ctx: PlantUMLParser.DomainModelContext):
+        self.__buml_model = DomainModel(name="DomainModel")
+        classes = self.find_descendant_nodes_by_type(node=ctx,
+                                                target_type=PlantUMLParser.ClassContext)
+        for cl in classes:
+            abstract = True if cl.abstract() else False
+            new_class: Class = Class(name=cl.ID().getText(), is_abstract=abstract)
+            self.__buml_model.add_type(new_class)
+            # check extends
+            if cl.extends():
+                general_cl_name = cl.extends().ID().getText()
+                general_class = self.__buml_model.get_class_by_name(class_name=general_cl_name)
+                if general_class is None:
+                    general_class = Class(name=general_cl_name)
+                self.__buml_model.add_type(general_class)
+                # create generalization
+                new_generalization: Generalization = Generalization(general=general_class,
+                                                                    specific=new_class)
+                self.__buml_model.add_generalization(new_generalization)
+
+        enums = self.find_descendant_nodes_by_type(node=ctx,
+                                                target_type=PlantUMLParser.EnumerationContext)
+        for enum in enums:
+            new_enum: Enumeration = Enumeration(name=enum.ID().getText())
+            self.__buml_model.add_type(new_enum)
+
+    def find_descendant_nodes_by_type(self, node, target_type):
+        """
+        Recursively finds and returns all descendant nodes of a specified type.
+
+        Args:
+            node: The node to search for descendants. This can be any node in the parse tree.
+            target_type: The type of node to match against. This should be a class type that 
+                        the nodes are expected to be instances of.
+
+        Returns:
+            A list of nodes that are instances of the specified target type. 
+            If no matching nodes are found, an empty list is returned.
+        """
+        matching_nodes = []
+
+        if isinstance(node, target_type):
+            matching_nodes.append(node)
+
+        for i in range(node.getChildCount()):
+            child = node.getChild(i)
+            matching_nodes.extend(self.find_descendant_nodes_by_type(child, target_type))
+
+        return matching_nodes
 
     def enterAttribute(self, ctx: PlantUMLParser.AttributeContext):
-        attribute_name = ctx.parentCtx.ID().getText() + "_" + ctx.ID().getText()
-        text = attribute_name + ": Property = Property(name=\"" + ctx.ID().getText() + \
-            "\", type="+ ctx.primitiveData().getText() +"_type"
-        if ctx.visibility():
-            text += ", visibility=\"" + self.visibility[ctx.visibility().getText()] + "\""
-        text += ")\n"
-        self.output.write(text)
-        self.__attr_list.append(attribute_name)
-        self.__dtypes.add(ctx.primitiveData().getText())
+        cl_name = ctx.parentCtx.ID().getText()
+        attr_name = ctx.ID().getText()
 
-    def enterAbstract(self, ctx: PlantUMLParser.AbstractContext):
-        self.__abstract_class = True
-    
-    def enterAssociation(self, ctx: PlantUMLParser.AssociationContext):
-        self.__ends = []
-            
-    def exitAssociation(self, ctx: PlantUMLParser.AssociationContext):
-        cl_name_1 = ctx.ID(0).getText()
-        cl_name_2 = ctx.ID(1).getText()
-        if ctx.ID(2) is None:
-            raise ValueError("All the associations in the model must have a name")
-        assoc_name = ctx.ID(2).getText()
-        if assoc_name in self.__relations:
-            raise ValueError("The model cannot have two associations with the same name")
-        text = assoc_name + ": BinaryAssociation = BinaryAssociation(name=\"" + assoc_name + "\", ends={\n\
-        Property(name=\"" + assoc_name + "\", type=" + cl_name_1 + ", multiplicity=" + getMultiplicity(ctx.c_left) + self.__ends[0] + "),\n\
-        Property(name=\"" + assoc_name + "\", type=" + cl_name_2 + ", multiplicity=" + getMultiplicity(ctx.c_right) + self.__ends[1] + ")})\n"
-        self.__relations[assoc_name] = text
-        self.__relation_classes.append(cl_name_1)
-        self.__relation_classes.append(cl_name_2)
+        visibility = self.VISIBILITY[ctx.visibility().getText()] if ctx.visibility() \
+            else "public"
 
-    def enterBidirectional(self, ctx: PlantUMLParser.BidirectionalContext):
-        self.__ends = ["", ""]
-    
-    def enterUnidirectional(self, ctx: PlantUMLParser.UnidirectionalContext):
-        end_1 = ", is_navigable=True" if ctx.nav_l is not None else ", is_navigable=False"
-        end_2 = ", is_navigable=True" if ctx.nav_r is not None else ", is_navigable=False"
-        self.__ends.append(end_1)
-        self.__ends.append(end_2)
+        if ctx.dType().primitiveData():
+            primitive_type = "str" if ctx.dType().primitiveData().getText() == "string" \
+                else ctx.dType().primitiveData().getText()
+            attr_type = self.__buml_model.get_type_by_name(primitive_type)
+        else:
+            attr_type = self.__buml_model.get_type_by_name(ctx.dType().ID().getText())
+        if attr_type is None:
+            raise ValueError("Use a valid type for the \"" + attr_name +  "\" attribute")
 
-    def enterComposition(self, ctx: PlantUMLParser.CompositionContext):
-        end_1 = ", is_navigable=False, is_composite=True" if ctx.comp_l is not None else ""
-        end_2 = ", is_navigable=False, is_composite=True" if ctx.comp_r is not None else ""
-        self.__ends.append(end_1)
-        self.__ends.append(end_2)
+        new_attr: Property = Property(name=attr_name, type=attr_type, visibility=visibility)
+        cl = self.__buml_model.get_class_by_name(class_name=cl_name)
+        cl.add_attribute(attribute=new_attr)
 
-    def enterAggregation(self, ctx: PlantUMLParser.AggregationContext):
-        end_1 = ", is_navigable=False, is_aggregation=True" if ctx.aggr_l is not None else ""
-        end_2 = ", is_navigable=False, is_aggregation=True" if ctx.aggr_r is not None else ""
-        self.__ends.append(end_1)
-        self.__ends.append(end_2)
-    
+
+    def enterMethod(self, ctx: PlantUMLParser.MethodContext):
+        cl_name = ctx.parentCtx.ID().getText()
+        method_name = ctx.ID().getText()
+
+        visibility = self.VISIBILITY[ctx.visibility().getText()] if ctx.visibility() \
+            else "public"
+        abstract = False
+        if ctx.modifier():
+            abstract = True if ctx.modifier().getText() == "{abstract}" else False
+
+        method_type = None
+        if ctx.dType():
+            if ctx.dType().primitiveData():
+                primitive_type = "str" if ctx.dType().primitiveData().getText() == "string" \
+                    else ctx.dType().primitiveData().getText()
+                method_type = self.__buml_model.get_type_by_name(primitive_type)
+            else:
+                method_type = self.__buml_model.get_type_by_name(ctx.dType().ID().getText())
+                if method_type is None:
+                    raise ValueError("Use a valid type for the \"" + method_name +  "\" method")
+
+        new_method: Method = Method(name=method_name,
+                                    visibility=visibility,
+                                    is_abstract=abstract,
+                                    type=method_type)
+
+        cl = self.__buml_model.get_class_by_name(class_name=cl_name)
+        cl.add_method(method=new_method)
+
+    def enterParameter(self, ctx: PlantUMLParser.ParameterContext):
+        cl_name = ctx.parentCtx.parentCtx.ID().getText()
+        method_name = ctx.parentCtx.ID().getText()
+        param_name = ctx.ID().getText()
+
+        if ctx.dType().primitiveData():
+            primitive_type = "str" if ctx.dType().primitiveData().getText() == "string" \
+                else ctx.dType().primitiveData().getText()
+            param_type = self.__buml_model.get_type_by_name(primitive_type)
+        else:
+            param_type = self.__buml_model.get_type_by_name(ctx.dType().ID().getText())
+        if param_type is None:
+            raise ValueError("Use a valid type for the \"" + param_name +  "\" parameter")
+
+        default_value = None
+        if ctx.value():
+            if ctx.value().ID():
+                default_value = ctx.value().ID().getText()
+            elif ctx.value().INT():
+                default_value = int(ctx.value().INT().getText())
+            elif ctx.value().FLOAT():
+                default_value = float(ctx.value().FLOAT().getText())
+            if ctx.value().D_QUOTE(0) and ctx.value().D_QUOTE(1):
+                default_value = str(default_value)
+
+        new_param: Parameter = Parameter(name=param_name,
+                                        type= param_type,
+                                        default_value=default_value)
+        methods = self.__buml_model.get_class_by_name(class_name=cl_name).methods
+        for method in methods:
+            if method.name == method_name:
+                method.add_parameter(new_param)
+
     def enterInheritance(self, ctx: PlantUMLParser.InheritanceContext):
         if ctx.inh_left:
-            general = ctx.ID(0).getText()
-            specific = ctx.ID(1).getText()
+            general = self.__buml_model.get_class_by_name(ctx.ID(0).getText())
+            specific = self.__buml_model.get_class_by_name(ctx.ID(1).getText())
         else:
-            general = ctx.ID(1).getText()
-            specific = ctx.ID(0).getText()
-        inheritance_name = "gen_" + general + "_" + specific
-        text = inheritance_name + ": Generalization = Generalization(general=" + general + ", specific=" + specific + ")\n"
-        self.__inheritances[inheritance_name] = text
-        self.__relation_classes.append(general)
-        self.__relation_classes.append(specific)
+            general = self.__buml_model.get_class_by_name(ctx.ID(1).getText())
+            specific = self.__buml_model.get_class_by_name(ctx.ID(0).getText())
+        new_generalization: Generalization = Generalization(general=general, specific=specific)
+        self.__buml_model.add_generalization(new_generalization)
 
-        if general not in self.__parent_classes:
-            self.__parent_classes[general] = []
-        self.__parent_classes[general].append(inheritance_name)
+    def enterAssociation(self, ctx: PlantUMLParser.AssociationContext):
+        cl_left = self.__buml_model.get_class_by_name(ctx.ID(0).getText())
+        cl_right = self.__buml_model.get_class_by_name(ctx.ID(1).getText())
+        navigation = [True, True]
+        mult_left: Multiplicity = Multiplicity(min_multiplicity=1, max_multiplicity=1)
+        mult_right: Multiplicity = Multiplicity(min_multiplicity=1, max_multiplicity=1)
+        composition = [False, False]
 
-    def enterExtends(self, ctx: PlantUMLParser.ExtendsContext):
-        general = ctx.ID().getText()
-        specific = ctx.parentCtx.ID().getText()
-        inheritance_name = "gen_" + general + "_" + specific
-        text = inheritance_name + ": Generalization = Generalization(general=" + general + ", specific=" + specific + ")\n"
-        self.__inheritances[inheritance_name] = text
-    
-    def enterSkinParam(self, ctx: PlantUMLParser.SkinParamContext):
-        self.__group_inh = int(ctx.INT().getText())
+        if ctx.ID(2) is None:
+            assoc_name = cl_left.name + "_" + cl_right.name
+            warnings.warn(
+                f"No name was provided for the association between '{cl_left.name}' and "
+                f"'{cl_right.name}'. A default name '{assoc_name}' will be auto-assigned.",
+                UserWarning
+            )
+        else:
+            assoc_name = ctx.ID(2).getText()
+            for type_ in self.__buml_model.types:
+                if type_.name.lower() == assoc_name.lower():
+                    warnings.warn(
+                        f"The association name '{assoc_name}' is identical or similar to "
+                        f"the class/enumeration/type '{type_.name}', which may cause issues "
+                        f"with some code generators.", UserWarning
+                    )
 
-    def exitDomainModel(self, ctx: PlantUMLParser.DomainModelContext):
-        self.check_classes_definition()
-        if len(self.__relations) != 0:
-            self.output.write("# Relationships\n")
-            for relation in self.__relations.values():
-                self.output.write(relation)
-        if len(self.__inheritances) != 0:
-            self.output.write("\n# Generalizations\n")
-            for inheritance in self.__inheritances.values():
-                self.output.write(inheritance)
-            if self.__group_inh > 1:
-                self.create_generalization_set()
-        classes = list_to_str(self.__classes)
-        associations = list_to_str(list(self.__relations.keys()))
-        generalizations = list_to_str(list(self.__inheritances.keys()))
-        self.output.write("\n\n# Domain Model\n")
-        self.output.write("domain: DomainModel = DomainModel(name=\"Domain Model\", types=" + classes + ", associations=" + associations + ", generalizations=" + generalizations + ")")
-        text = '''from besser.BUML.metamodel.structural import NamedElement, DomainModel, Type, Class, \\
-        Property, PrimitiveDataType, Multiplicity, Association, BinaryAssociation, Generalization, \\
-        GeneralizationSet, AssociationClass \n\n'''
-        text += "# Primitive Data Types \n"
-        for dtype in self.__dtypes:
-            text += dtype + "_type = PrimitiveDataType(\"" + dtype + "\")\n"
-        text += "\n"
-        self.output.seek(0)
-        content = self.output.read()
-        self.output.seek(0)
-        self.output.write(text + content)
+        if ctx.unidirectional():
+            unidirectional_ctx = ctx.unidirectional()
+            navigation[0] = bool(unidirectional_ctx.nav_l)
+            navigation[1] = bool(unidirectional_ctx.nav_r)
 
-    def check_classes_definition(self):
-        for cls in list(set(self.__relation_classes) - set(self.__classes)):
-            text = "# " + cls + " class definition \n"
-            text += cls + ": Class = Class(name=\"" + cls + "\", attributes={})\n\n"
-            self.output.write(text)
+        if ctx.composition():
+            composition_ctx = ctx.composition()
+            composition[0] = bool(composition_ctx.comp_l)
+            composition[1] = bool(composition_ctx.comp_r)
 
-    def create_generalization_set(self):
-        for key, value in self.__parent_classes.items():
-            if len(value) >= self.__group_inh:
-                generalizations = ", ".join(value)
-                text = key + "_generalization_set: GeneralizationSet = GeneralizationSet(name=\"" + key + \
-                     "_gen_set\", generalizations={" + generalizations + "}, is_disjoint=True, is_complete=True)\n"
-                self.output.write(text)
-    
-def list_to_str(list:list):
-    if len(list) == 0:
-        str_list = "set()"
-    else:
-        str_list = ", ".join(list)
-        str_list = "{" + str_list + "}"
-    return str_list
+        if ctx.c_left:
+            mult_left = self.get_cardinality(ctx.c_left)
+        if ctx.c_right:
+            mult_right = self.get_cardinality(ctx.c_right)
 
-def getMultiplicity(cardinality:PlantUMLParser.CardinalityContext):
-    min = ""
-    max = ""
-    multiplicity = ""
-    if cardinality is None:
-        min = "1"
-        max = "1"
-    else:
-        if cardinality.cardinalityVal(0).INT():
-            min = cardinality.cardinalityVal(0).INT().getText()
-        elif cardinality.cardinalityVal(0).ASTK():
-            min = "\"*\""
-        if cardinality.cardinalityVal(1) and cardinality.cardinalityVal(1).INT():
-            max = cardinality.cardinalityVal(1).INT().getText()
-        elif cardinality.cardinalityVal(1) and cardinality.cardinalityVal(1).ASTK():
-            max = "\"*\""
-        if max == "":
-            max = min
-        if max == "\"*\"" == min:
-            min = "0"
+        end_left: Property = Property(name=ctx.ID(0).getText(),
+                                    type=cl_left,
+                                    multiplicity=mult_left,
+                                    is_composite=composition[0],
+                                    is_navigable=navigation[0])
+        end_right: Property = Property(name=ctx.ID(1).getText(),
+                                    type=cl_right,
+                                    multiplicity=mult_right,
+                                    is_composite=composition[1],
+                                    is_navigable=navigation[1])
+        new_association:BinaryAssociation = BinaryAssociation(name=assoc_name,
+                                    ends={end_left, end_right})
 
-    multiplicity = "Multiplicity(" + min + ", " + max + ")"
-    return (multiplicity)
+        self.__buml_model.add_association(new_association)
+
+    def get_cardinality(self, ctx: PlantUMLParser.CardinalityContext):
+        """
+        Extracts and constructs the cardinality from the given context.
+
+        Args:
+            ctx (PlantUMLParser.CardinalityContext): The context object that 
+                contains the cardinality values to be parsed.
+
+        Returns:
+            Multiplicity: An B-UML Multiplicity object representing the minimum 
+            and maximum cardinality derived from the context.
+        """
+        if ctx.cardinalityVal(0).INT():
+            min_cardinality = max_cardinality = int(ctx.cardinalityVal(0).INT().getText())
+        else:
+            min_cardinality = 0
+            max_cardinality = "*"
+
+        if ctx.cardinalityVal(1):
+            if ctx.cardinalityVal(1).INT():
+                max_cardinality = int(ctx.cardinalityVal(1).INT().getText())
+            else:
+                max_cardinality = "*"
+
+        multiplicity: Multiplicity = Multiplicity(min_multiplicity=min_cardinality,
+                                                  max_multiplicity=max_cardinality)
+        return multiplicity
+
+    def enterEnumLiteral(self, ctx: PlantUMLParser.EnumLiteralContext):
+        new_literal: EnumerationLiteral = EnumerationLiteral(name=ctx.ID().getText())
+        enum = self.__buml_model.get_type_by_name(ctx.parentCtx.ID().getText())
+        enum.add_literal(literal=new_literal)

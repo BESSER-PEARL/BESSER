@@ -21,9 +21,9 @@ class NeuralNetworkASTListener(NNListener):
         text = "# Configuration parameters of the NN\n"
         text += "config_params = Configuration(batch_size=" + ctx.INT(0).getText() \
         + ", epochs=" + ctx.INT(1).getText() + ", learning_rate=" + ctx.DOUBLE(0).getText() \
-        + ", optimiser=" + ctx.STRING().getText() + ", metrics=" + ctx.strList().getText() \
+        + ", optimizer=" + ctx.STRING().getText() + ", metrics=" + ctx.strList().getText() \
         + ", loss_function=\"" + ctx.lossFunction().getText() + "\", weight_decay=" \
-        + ctx.DOUBLE(1).getText() + "\", momentum=" + ctx.DOUBLE(2).getText() + ")\n\n"
+        + ctx.DOUBLE(1).getText() + ", momentum=" + ctx.DOUBLE(2).getText() + ")\n\n"
         self.output.write(text)
 
     def enterLayer(self, ctx: NNParser.LayerContext):

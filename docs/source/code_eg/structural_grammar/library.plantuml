@@ -1,0 +1,30 @@
+@startuml
+class Library {
++ name: str
++ address: str
++ findBook(title: str): Book
+}
+
+class Book {
++ title: str
++ pages: int
++ release: date
+}
+
+class Author {
++ name: str
++ email: str
++ member: MemberType
++ notify(sms: str = "hello")
+}
+
+enum MemberType {
+    CHILD
+    ADULT
+    SENIOR
+    STUDENT
+}
+
+Book "*" -- "1..*" Author: writtenBy
+Library "1" -- "*" Book: has
+@enduml

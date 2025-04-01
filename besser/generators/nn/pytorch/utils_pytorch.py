@@ -97,12 +97,13 @@ class SetupLayerSyntax:
             self.modules_details[perm_name] = [f"Permute(dims={perm_dim})",
                                                in_var_layer]
         else:
-            tns = TensorOp(name=perm_name, tns_type="permute",
-                           permute_dim=perm_dim)
+            tns = TensorOp(
+                name=perm_name, tns_type="permute", permute_dim=perm_dim
+            )
             tns_out = utils.handle_tensorop
-            self.modules_details = tns_out(tns, self.modules_details,
-                                           get_tensorop_syntax,
-                                           in_var_layer)
+            tns_out(
+                tns, self.modules_details, get_tensorop_syntax, in_var_layer
+            )
 
 
     def setup_rnn(self):
@@ -120,7 +121,7 @@ class SetupLayerSyntax:
             f"hidden_size={h_sz}, bidirectional={bd}, dropout={drp}, "
             f"batch_first={btch})"
         )
-        return lyr, self.modules_details
+        return lyr
 
 
     def setup_actv_func(self):
@@ -150,9 +151,7 @@ class SetupLayerSyntax:
         else:
             lyr = self.setup_conv(lyr_name, cls_name)
 
-        #self.modules_details is returned to have the same structure
-        #of setup_rnn from torch
-        return lyr, self.modules_details
+        return lyr
 
     def setup_conv(self, lyr_name, cls_name):
         """It defines the syntax of convolutional layers."""
@@ -248,7 +247,6 @@ def adjust_actv_func_name(modules_details):
                     counter+=1
                 activ_def = synt.split("=")[1]
                 mdl_details[0] = f"self.{actv_dict[activ_type]} = {activ_def}"
-    return modules_details
 
 
 def get_activation_function(activ):

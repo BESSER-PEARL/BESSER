@@ -55,7 +55,7 @@ def add_in_out_var_to_subnn(modules_details):
             # get the output variable of the layer or tns before the sub_nn
             in_out_var = prev_module_details[1]
     modules_details[last_module]["in_out_variable"] = in_out_var
-    return modules_details
+
 
 def get_layers_output_for_tensorops(layers_names, modules_details):
     """
@@ -130,8 +130,7 @@ def initialize_layer_vars(layer):
 
 
 
-def get_layer_syntax(setup_layer_cls, layer, modules_details,
-                     in_layer, actv_func_synt):
+def get_layer_syntax(setup_layer_cls, layer, modules_details, actv_func_synt):
     """
     It retrieves the syntax of the layer (and the activation 
     function in the case of PyTorch) from the ´setup_layer_cls´ 
@@ -140,9 +139,9 @@ def get_layer_syntax(setup_layer_cls, layer, modules_details,
     setup = setup_layer_cls(layer, modules_details)
     parent_class = layer.__class__.mro()[1].__name__
     if (parent_class == "ConvolutionalLayer" or parent_class == "CNN"):
-        layer_synt, modules_details = setup.setup_cnn()
+        layer_synt = setup.setup_cnn()
     elif parent_class == "RNN":
-        layer_synt, modules_details = setup.setup_rnn()
+        layer_synt = setup.setup_rnn()
     elif parent_class == "GeneralLayer":
         layer_synt = setup.setup_general_layer()
     else: #(parent_class == "LayerModifier" or
@@ -152,7 +151,7 @@ def get_layer_syntax(setup_layer_cls, layer, modules_details,
     if actv_func_synt:
         actv_func_synt = setup.setup_actv_func()
 
-    return layer_synt, actv_func_synt, modules_details, setup
+    return layer_synt, actv_func_synt, setup
 
 def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=False,
                  is_seq=False, channel_last=True, is_subnn=False):
@@ -170,15 +169,19 @@ def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=False,
         prev_module = list(modules_details.keys())[-1]
         prev_out_var = get_previous_out_var(modules_details, prev_module)
         out_layer, in_layer, out_actv, in_actv = get_layer_vars(
-            layer, prev_out_var, modules_details)
+            layer, prev_out_var, modules_details
+        )
 
-    layer_synt, actv_func_syntax, modules_details, setup = get_layer_syntax(
-        setup_layer, layer, modules_details, in_layer, actv_func_syntax)
+    layer_synt, actv_func_syntax, setup = get_layer_syntax(
+        setup_layer, layer, modules_details, actv_func_syntax
+    )
 
     if setup.permute_in and channel_last:
         dim = setup.dim
-        setup.add_permute(layer.name, dim, in_layer, permute_in=True,
-                          sequential=is_seq, is_subnn=is_subnn)
+        setup.add_permute(
+            layer.name, dim, in_layer, permute_in=True,
+            sequential=is_seq, is_subnn=is_subnn
+        )
 
     modules_details[layer.name + "_layer"] = [layer_synt, out_layer,
                                               in_layer, layer]
@@ -189,7 +192,7 @@ def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=False,
         dim = setup.dim
         setup.add_permute(layer.name, dim, out_layer, permute_in = False,
                           sequential=is_seq, is_subnn=is_subnn)
-    return modules_details
+
 
 
 def get_tensorop_params(tensorop, modules_details):
@@ -250,7 +253,6 @@ def handle_tensorop(tensorop, modules_details,
             out_var = get_tensorop_out_var(tensorop, prev_out_var)
 
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var]
-    return modules_details
 
 
 def preprocess_image(image_path, target_size):

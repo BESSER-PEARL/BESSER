@@ -88,9 +88,7 @@ class SetupLayerSyntax:
         else:
             lyr = f"self.{lyr_name} = {lyr}"
 
-        #self.modules_details is returned to have the same structure
-        #of setup_rnn from torch
-        return lyr, self.modules_details
+        return lyr
 
     def setup_actv_func(self):
         """
@@ -170,9 +168,7 @@ class SetupLayerSyntax:
         else:
             lyr = self.setup_conv(lyr_name, cls_name)
 
-        #self.modules_details is returned to have the same structure
-        #of setup_rnn from torch
-        return lyr, self.modules_details
+        return lyr
 
 
 def get_tensorop_syntax(tensorop, modules_details, in_var=None):

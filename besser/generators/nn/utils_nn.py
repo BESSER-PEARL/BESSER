@@ -5,28 +5,53 @@ to PyTorch or TensorFlow code.
 
 import os
 import random
-
 from PIL import Image
 import numpy as np
 from torch import nn
 
+from besser.BUML.metamodel.nn import TensorOp, Layer
+from besser.generators.nn.pytorch.utils_pytorch import (
+    SetupLayerSyntax as SetupLayerTorch
+)
+from besser.generators.nn.tf.utils_tf import (
+    SetupLayerSyntax as SetupLayerTF
+)
 
-def get_previous_out_var(modules_details, prev_module):
+
+def get_previous_out_var(modules_details: dict, prev_module: str):
     """
     It retrieves the output variable of the previous module in order to
     use it as the input variable of the current module.
+
+    Arguments:
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+        prev_module (str): The name of the previous module.
+
+    Returns:
+        The previous output variable.
+        
     """
     if isinstance(modules_details[prev_module], dict):
         return modules_details[prev_module]["in_out_variable"]
     else:
         return modules_details[prev_module][1]
 
-def get_input_var(layer, modules_details, prev_out_var):
+def get_input_var(layer: Layer, modules_details: dict, prev_out_var: str):
     """
     It determines the input variable of the current layer. It is either
     the output variable of the module in `name_module_input` attribute 
     (if it is given), or simply the output of the previous module given
     by `get_previous_out_variable` function.
+
+    Arguments:
+        layer (Layer): The layer BUML object.
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+        prev_out_var (str): The previous output variable.
+
+    Returns:
+        The input variable.
     """
     modules_names = list(modules_details.keys())
     lyr_input = layer.name_module_input
@@ -39,10 +64,18 @@ def get_input_var(layer, modules_details, prev_out_var):
         return modules_details[f"{lyr_input}_op"][1]
     return prev_out_var
 
-def add_in_out_var_to_subnn(modules_details):
+def add_in_out_var_to_subnn(modules_details: dict):
     """
     It sets the in_out_variable of subnns, which refers to the input
     and output variable of the subnn.
+
+    Arguments:
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+
+    Returns:
+        None, but stores the in_out_var in modules_details dict.
+        
     """
     last_module = list(modules_details.keys())[-1]
     if len(modules_details) == 1:
@@ -57,10 +90,19 @@ def add_in_out_var_to_subnn(modules_details):
     modules_details[last_module]["in_out_variable"] = in_out_var
 
 
-def get_layers_output_for_tensorops(layers_names, modules_details):
+def get_layers_output_for_tensorops(layers_names: list, modules_details: dict):
     """
     It retrieves the output variables of the layers in `layers_name`
     list to use them as input of the tensorop.
+
+    Arguments:
+        layers_names (list): Names of layers on which the tensorop is applied.
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+
+    Returns:
+        The output variables of the layers in 'layers_names'.
+        
     """
     my_keys = list(modules_details.keys())
     out_vars = []
@@ -71,10 +113,17 @@ def get_layers_output_for_tensorops(layers_names, modules_details):
             out_vars.append(modules_details[layer_name + "_op"][1])
     return out_vars
 
-def initialize_tensorop_var(tensorop):
+def initialize_tensorop_var(tensorop: TensorOp):
     """
     It sets the output variable of the tensorop in the case it is the
     first module in the neural network.
+
+    Arguments:
+        tensorop (TensorOp): The BUML tensorop object.
+
+    Returns:
+        The output variable of the tensorop.
+        
     """
     if tensorop.input_reused is True:
         out_var = "x_1"
@@ -83,11 +132,17 @@ def initialize_tensorop_var(tensorop):
     return out_var
 
 
-def get_out_var_input_reused(prev_out_var):
+def get_out_var_input_reused(prev_out_var: str):
     """
     It sets the output variable of the module in the case the output
     of the previous module is reused (therefore, they need to be 
     different).
+
+    Arguments:
+        prev_out_var (str): The previous output variable.
+    Returns:
+        The current output variable.
+        
     """
     if prev_out_var == "x":
         out_var = "x_1"
@@ -96,9 +151,20 @@ def get_out_var_input_reused(prev_out_var):
     return out_var
 
 
-def get_layer_vars(layer, prev_out_var, modules_details):
+def get_layer_vars(layer: Layer, prev_out_var: str, modules_details: dict):
     """
     It sets the input and output variables of the layer.
+
+    Arguments:
+        layer (Layer): The BUML layer object.
+        prev_out_var (str): The previous output variable.
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+
+    Returns:
+        - The input variable and output variables of both the layer and
+          its activation function.
+        
     """
     out_var_actv, in_var_actv = None, None
     if layer.input_reused:
@@ -111,11 +177,18 @@ def get_layer_vars(layer, prev_out_var, modules_details):
         out_var_actv, in_var_actv = out_var_layer, out_var_layer
     return out_var_layer, in_var_layer, out_var_actv, in_var_actv
 
-def initialize_layer_vars(layer):
+def initialize_layer_vars(layer: Layer):
     """
     It sets the input and output variables of layer (and activation 
     function for PyTorch) in the case it is the first module in 
     the neural network.
+
+    Arguments:
+        layer (Layer): The BUML layer object.
+
+    Returns:
+        - The input variable and output variables of both the layer and
+          its activation function.
     """
     out_var_actv, in_var_actv = None, None
     if layer.input_reused is True:
@@ -130,11 +203,26 @@ def initialize_layer_vars(layer):
 
 
 
-def get_layer_syntax(setup_layer_cls, layer, modules_details, actv_func_synt):
+def get_layer_syntax(setup_layer_cls: SetupLayerTF | SetupLayerTorch,
+                     layer: Layer, modules_details: dict,
+                     actv_func_synt: str | bool ):
     """
     It retrieves the syntax of the layer (and the activation 
-    function in the case of PyTorch) from the ´setup_layer_cls´ 
-    class.
+    function in the case of PyTorch) from the ´setup_layer_cls´ class.
+
+    Arguments:
+        setup_layer_cls (SetupLayerTF | SetupLayerTorch): The class that 
+        constructs the syntax of layers.
+        layer (Layer): The BUML layer object.
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+        actv_func_synt (str | bool): Whether to get the syntax of 
+            the actvation function.
+
+    Returns:
+        The syntax of the layer and its activation function (if relevant) and
+        the class instance.
+
     """
     setup = setup_layer_cls(layer, modules_details)
     parent_class = layer.__class__.mro()[1].__name__
@@ -153,14 +241,33 @@ def get_layer_syntax(setup_layer_cls, layer, modules_details, actv_func_synt):
 
     return layer_synt, actv_func_synt, setup
 
-def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=False,
-                 is_seq=False, channel_last=True, is_subnn=False):
+def handle_layer(layer: Layer, setup_layer: SetupLayerTF | SetupLayerTorch,
+                 modules_details: dict, actv_func_syntax: str | bool = False,
+                 is_seq: bool = False, channel_last: bool | None = True,
+                 is_subnn: bool = False):
     """
     It populates the `modules_details` dictionary with layer's 
     information: Its syntax, input and output variables, and the 
     layer class.
     In the case of PyTorch, the activation function is treated as
     a layer.
+
+    Arguments:
+        setup_layer_cls (SetupLayerTF | SetupLayerTorch): The class that 
+        constructs the syntax of layers.
+        layer (Layer): The BUML layer object.
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+        actv_func_synt (str | bool): Whether to get the syntax of 
+            the actvation function.
+        is_seq (bool): Whether the model is sequential.
+        channel_last (bool, optional): If true, PyTorch conv layers will 
+            have their input and output permuted to match TF convention.
+        is_subnn (bool): if the layer is inside a subnn model.
+
+    Returns:
+        None, but stores the layer details in the modules_details dict.
+        
     """
 
     if len(modules_details) == 0:
@@ -195,11 +302,20 @@ def handle_layer(layer, setup_layer, modules_details, actv_func_syntax=False,
 
 
 
-def get_tensorop_params(tensorop, modules_details):
+def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
     """
     It retrieves tensorops parameters that are used by 
     `get_tensorop_syntax` function defined in PyTorch and 
-    TensorFlow `utils.py` files
+    TensorFlow `utils.py` files.
+
+    Arguments:
+        tensorop (TensorOp): The BUML tensorop object.
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+
+    Returns:
+        - previous output variable and the parameters of the tensorop.
+        
     """
     if len(list(modules_details.keys())) == 0:
         prev_out_var = "x"
@@ -227,9 +343,17 @@ def get_tensorop_params(tensorop, modules_details):
     return prev_out_var, params
 
 
-def get_tensorop_out_var(tensorop, prev_out_var):
+def get_tensorop_out_var(tensorop: TensorOp, prev_out_var: str):
     """
     It sets the output variable of tensorop.
+
+    Arguments:
+        tensorop (TensorOp): The BUML tensorop object.
+        prev_out_var (str): previous output variable.
+
+    Returns:
+        - The current output variable.
+        
     """
     if tensorop.input_reused is True:
         out_var  = get_out_var_input_reused(prev_out_var)
@@ -237,11 +361,21 @@ def get_tensorop_out_var(tensorop, prev_out_var):
         out_var = prev_out_var
     return out_var
 
-def handle_tensorop(tensorop, modules_details,
-                    get_tensorop_syntax, out_var=None):
+def handle_tensorop(tensorop: TensorOp, modules_details: dict,
+                    get_tensorop_syntax: callable, out_var: str | None = None):
     """
     It populates the `modules_details` dictionary with tensorop's 
     information: Its syntax and output variable.
+
+    Arguments:
+        tensorop (TensorOp): The BUML tensorop object.
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+        out_var (str | None): The output variable of the tensorop.
+
+    Returns:
+        None, but stores the tensorop details in the modules_details dict.
+        
     """
     ts_op_synt = get_tensorop_syntax(tensorop, modules_details, out_var)
     if out_var is None:
@@ -255,9 +389,17 @@ def handle_tensorop(tensorop, modules_details,
     modules_details[tensorop.name + "_op"] = [ts_op_synt, out_var]
 
 
-def preprocess_image(image_path, target_size):
+def preprocess_image(image_path: str, target_size: tuple):
     """
     It resizes and returns the images as np arrays.
+
+    Arguments:
+        image_path (str): The path to the images.
+        target_size (tuple): The desired size of the images
+
+    Returns:
+        - The resized image as an np array
+        
     """
     image = Image.open(image_path)
     image = image.resize(target_size)
@@ -266,10 +408,20 @@ def preprocess_image(image_path, target_size):
 
 
 
-def compute_mean_std(image_dir, num_samples=100, target_size=(256, 256)):
+def compute_mean_std(image_dir: str, num_samples: int = 100, 
+                     target_size: tuple = (256, 256)):
     """
     It computes the mean and standard deviation of images and checks
     whether scaling is needed.
+
+    Arguments:
+        image_dir (str): The directory where the images are stored.
+        num_samples (int): Number of samples to use in the calculation.
+        target_size (tuple): The desired size of the iamges.
+
+    Returns:
+        - The mean and std of the samples.
+        
     """
     image_files = [os.path.join(root, file)
                    for root, _, files in os.walk(image_dir)
@@ -294,10 +446,18 @@ def compute_mean_std(image_dir, num_samples=100, target_size=(256, 256)):
             np.std(all_pixels, axis=0).tolist())
 
 
-def format_value(elem):
+def format_value(elem: list):
     """
     It formats BUML list of int. If it contains one element, it is
     returned as `int`. Otherwise, it converts the list to a tuple.
+
+    Arguments:
+        elem (list): a list of int values
+        
+
+    Returns:
+        - The formated elements either as int or tuple.
+        
     """
     if len(elem) == 1:
         return elem[0]

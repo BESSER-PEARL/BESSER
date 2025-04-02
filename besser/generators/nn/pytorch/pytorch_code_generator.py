@@ -16,7 +16,7 @@ class PytorchGenerator(NNCodeGenerator):
     It generates Pytorch code for neural networks training and evaluation 
     based on the B-UML input model.
 
-    Args:
+    Attributes:
         model (NN): An instance of the NN Model class representing 
             the B-UML model.
         setup_layer (SetupLayerSyntax): The class that defines
@@ -27,9 +27,12 @@ class PytorchGenerator(NNCodeGenerator):
             generated code will be saved. Defaults to None.
         file_name (str): The name of the file where the generated
             code is stored.
-        template (str): The name of the jinja template.
+        template_dir (str): The name of the jinja template directory.
+        generation_type (str): 'subclassing' or 'sequential'
+        channel_last (bool, optional): If true, PyTorch conv layers will 
+            have their input and output permuted to match TF convention.
     """
-    def __init__(self, model: NN, output_dir: str,
+    def __init__(self, model: NN, output_dir: str | None = None,
                  generation_type: str = "subclassing",
                  channel_last: bool = True):
 
@@ -40,4 +43,4 @@ class PytorchGenerator(NNCodeGenerator):
         file_name: str = "pytorch_nn.py"
 
         super().__init__(model, setup_layer, setup_tensorop, generation_type,
-                         channel_last, template_dir, file_name, output_dir)
+                         template_dir, channel_last, file_name, output_dir)

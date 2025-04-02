@@ -83,7 +83,7 @@ class BUMLGenerationListener(PlantUMLListener):
         else:
             attr_type = self.__buml_model.get_type_by_name(ctx.dType().ID().getText())
         if attr_type is None:
-            raise ValueError("Use a valid type for the \"" + attr_name +  "\" attribute")
+            raise ValueError("Use a valid type for the " + attr_name +  " attribute")
 
         new_attr: Property = Property(name=attr_name, type=attr_type, visibility=visibility)
         cl = self.__buml_model.get_class_by_name(class_name=cl_name)
@@ -109,7 +109,7 @@ class BUMLGenerationListener(PlantUMLListener):
             else:
                 method_type = self.__buml_model.get_type_by_name(ctx.dType().ID().getText())
                 if method_type is None:
-                    raise ValueError("Use a valid type for the \"" + method_name +  "\" method")
+                    raise ValueError("Use a valid type for the " + method_name +  " method")
 
         new_method: Method = Method(name=method_name,
                                     visibility=visibility,
@@ -131,7 +131,7 @@ class BUMLGenerationListener(PlantUMLListener):
         else:
             param_type = self.__buml_model.get_type_by_name(ctx.dType().ID().getText())
         if param_type is None:
-            raise ValueError("Use a valid type for the \"" + param_name +  "\" parameter")
+            raise ValueError("Use a valid type for the " + param_name +  " parameter")
 
         default_value = None
         if ctx.value():

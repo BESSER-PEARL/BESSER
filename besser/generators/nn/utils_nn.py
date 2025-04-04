@@ -5,17 +5,16 @@ to PyTorch or TensorFlow code.
 
 import os
 import random
+from typing import TYPE_CHECKING
 from PIL import Image
 import numpy as np
 from torch import nn
 
+
 from besser.BUML.metamodel.nn import TensorOp, Layer
-from besser.generators.nn.pytorch.utils_pytorch import (
-    SetupLayerSyntax as SetupLayerTorch
-)
-from besser.generators.nn.tf.utils_tf import (
-    SetupLayerSyntax as SetupLayerTF
-)
+
+if TYPE_CHECKING:
+    from besser.generators.nn.nn_code_generator import NNCodeGenerator
 
 
 def get_previous_out_var(modules_details: dict, prev_module: str):
@@ -203,7 +202,7 @@ def initialize_layer_vars(layer: Layer):
 
 
 
-def get_layer_syntax(setup_layer_cls: SetupLayerTF | SetupLayerTorch,
+def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
                      layer: Layer, modules_details: dict,
                      actv_func_synt: str | bool ):
     """
@@ -211,7 +210,7 @@ def get_layer_syntax(setup_layer_cls: SetupLayerTF | SetupLayerTorch,
     function in the case of PyTorch) from the ´setup_layer_cls´ class.
 
     Arguments:
-        setup_layer_cls (SetupLayerTF | SetupLayerTorch): The class that 
+        setup_layer_cls (NNCodeGenerator): The class that 
         constructs the syntax of layers.
         layer (Layer): The BUML layer object.
         modules_details (dict): A dict storing the NN modules syntax and 
@@ -241,7 +240,7 @@ def get_layer_syntax(setup_layer_cls: SetupLayerTF | SetupLayerTorch,
 
     return layer_synt, actv_func_synt, setup
 
-def handle_layer(layer: Layer, setup_layer: SetupLayerTF | SetupLayerTorch,
+def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
                  modules_details: dict, actv_func_syntax: str | bool = False,
                  is_seq: bool = False, channel_last: bool | None = True,
                  is_subnn: bool = False):
@@ -253,7 +252,7 @@ def handle_layer(layer: Layer, setup_layer: SetupLayerTF | SetupLayerTorch,
     a layer.
 
     Arguments:
-        setup_layer_cls (SetupLayerTF | SetupLayerTorch): The class that 
+        setup_layer_cls (NNCodeGenerator): The class that 
         constructs the syntax of layers.
         layer (Layer): The BUML layer object.
         modules_details (dict): A dict storing the NN modules syntax and 

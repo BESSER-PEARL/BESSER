@@ -13,6 +13,10 @@ design :doc:`B-UML <../buml_language>` models and use the :doc:`BESSER code gene
    :alt: BESSER Web Editor interface
    :align: center
 
+Below, you will find guides on the basics of using the editor and deploying it locally on your machine.
+The editor's source code is available in the `BESSER_WME GitHub repository <https://github.com/BESSER-PEARL/BESSER_WME_standalone>`_,
+where you can find additional information on its usage, configuration, and the technologies used in its development.
+
 .. toctree::
    :maxdepth: 2
    

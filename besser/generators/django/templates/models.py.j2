@@ -25,21 +25,27 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     {{ attr.name }} = {{ django_fields.get_field(attr.type, model.get_enumerations()) }}{%- if not loop.last %}{% endif %}
 {%- endfor %}
     {%- for end in class_obj.association_ends() -%}
+        {%- set ns = namespace(opposite_end=end) %}
+        {%- for end_assoc in end.owner.ends %}
+            {%- if end_assoc != end %}
+                {%- set ns.opposite_end = end_assoc %}
+            {%- endif %}
+        {%- endfor %}
     {# ManyToManyField in Django #}
     {%- if class_obj.name == many_to_many.get(end.owner.name) %}
     {{ end.name.replace(' ', '_') }} = models.ManyToManyField(
-        '{{ end.type.name }}', related_name='{{ end.name.replace(' ', '_') }}'{%- if end.multiplicity.min == 0 %}, blank=True{%- endif %})
+        '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}'{%- if end.multiplicity.min == 0 %}, blank=True{%- endif %})
     {%- endif -%}
     {# ForeignKey in Django #}
     {%- if class_obj.name == fkeys.get(end.owner.name) %}
     {{ end.name.replace(' ', '_') }} = models.ForeignKey(
-        '{{ end.type.name }}', related_name='{{ end.name.replace(' ', '_') }}', on_delete=models.{% if end.is_composite %}CASCADE
+        '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}', on_delete=models.{% if end.is_composite %}CASCADE
                 {%- elif end.multiplicity.min == 0%}SET_NULL, blank=True, null=True{% else %}PROTECT{% endif %})
     {%- endif -%}
     {# OneToOneField in Django #}
     {%- if class_obj.name == one_to_one.get(end.owner.name) %}
     {{ end.name.replace(' ', '_') }} = models.OneToOneField(
-        '{{ end.type.name }}', related_name='{{ end.name.replace(' ', '_') }}', on_delete=models.{% if end.is_composite %}CASCADE
+        '{{ end.type.name }}', related_name='{{ ns.opposite_end.name }}', on_delete=models.{% if end.is_composite %}CASCADE
                 {%- elif end.multiplicity.min == 0%}SET_NULL, blank=True, null=True{% else %}PROTECT{% endif %})
     {%- endif -%}
     {%- endfor %}

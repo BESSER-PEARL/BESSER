@@ -9,8 +9,8 @@ You can create the application in two ways:
 
 .. note::
 
-   The :doc:`../web_editor` supports only the generation of Django apps with the Admin Panel. To generate a Django app with UI Components,
-   you must use the Python API.
+   The :doc:`../web_editor` supports only the generation of Django apps with the Admin Panel, which is the fastest way to generate and deploy
+   a web application. To generate a Django app including UI Components, you must use the Python API of B-UML.
 
 .. _basic_app:
 
@@ -27,7 +27,8 @@ components beyond Django’s built-in admin panel.
 
 Let's generate a Django web app taking as input our :doc:`../examples/library_example`.
 Below is an example of how to implement the code generator with Python (alternatively,
-you can use the :doc:`../web_editor` to generate the code):
+you can use the :doc:`../web_editor` to create the structural model (class diagram)  and
+generate the Django code):
 
 .. code-block:: python
 
@@ -61,6 +62,8 @@ If `containerization=True`, the following files will also be generated for Docke
 - `entrypoint.sh`
 
 To run the application, follow the steps in :ref:`deploy`.
+
+.. _app_gui:
 
 2. Django App with Admin Panel & UI Components
 ----------------------------------------------
@@ -170,7 +173,8 @@ The following is the admin panel for a Django web app generated using this :doc:
 
 **Home page**
 
-On the other hand, if you generate the full web app, you can check the home page and different forms at:
+If you generated the app with a GUI model (following the steps in :ref:`app_gui`),
+you should be able to access the home page and its forms at:
 
 `http://localhost:8000 <http://localhost:8000>`_
 

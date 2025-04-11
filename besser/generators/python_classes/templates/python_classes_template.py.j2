@@ -29,7 +29,7 @@ class {{ enum.name }}(Enum):
 ############################################
 {% for class in domain.classes_sorted_by_inheritance() %}
 class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC){% endif %}:
-{% if class.all_attributes() %}
+{% if class.all_attributes() or class.methods %}
     def __init__({{ class_parameters.init_parameters(class, sort_by_timestamp) }}):
         {{ class_parameters.init_parameters_definition(class, sort_by_timestamp) }}
 
@@ -52,6 +52,19 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
     def {{ end.name }}(self, {{ end.name }}):
         self.__{{ end.name }} = {{ end.name }}
 {% endif -%}{% endfor -%}
+
+    {%- for method in class.methods %}
+    {%- if method.is_abstract %}
+    @abstractmethod
+    {%- endif %}
+    def {{ method.name }}(self{% if method.parameters %}, {% for param in method.parameters %}{{ param.name }}: {{ param.type.name }}{% if param.default_value %} = "{{ param.default_value }}"{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}{% endif %}){%- if method.type %} -> {{ method.type.name }}{% endif %}:
+        {%- if method.is_abstract %}
+        pass
+        {%- else %}
+        # TODO: Implement {{ method.name }} method
+        pass
+        {%- endif %}
+{% endfor -%}
 {%- else %}
     pass
 {%- endif %}

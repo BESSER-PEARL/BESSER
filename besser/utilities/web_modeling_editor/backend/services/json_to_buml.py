@@ -77,6 +77,7 @@ def parse_method(method_str, domain_model=None):
         return visibility, method_str, parameters, return_type
 
     # Extract visibility if present
+    method_str = method_str.strip()
     if method_str.startswith(tuple(VISIBILITY_MAP.keys())):
         visibility = VISIBILITY_MAP.get(method_str[0], "public")
         method_str = method_str[2:].strip()
@@ -498,8 +499,7 @@ def process_state_machine(json_data):
     code_lines = []
     code_lines.append("import datetime")
     code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event\n")
-
-    sm_name = json_data.get("name", "Generated State Machine")
+    sm_name = json_data.get("name", "Generated_State_Machine")
     code_lines.append(f"sm = StateMachine(name='{sm_name}')\n")
 
     elements = json_data.get("elements", {})
@@ -526,11 +526,17 @@ def process_state_machine(json_data):
     for element in elements.values():
         if element.get("type") == "StateCodeBlock":
             name = element.get("name", "")
-            code_content = element.get("code", {}).get("content", "")
-
+            code_content = element.get("code", {})
+            
+            # If name is empty, try to extract function name from code content
+            if not name:
+                # Look for "def function_name(" pattern in the code
+                function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
+                if function_match:
+                    name = function_match.group(1)
+                    
             # Clean up the code content by removing extra newlines
             cleaned_code = "\n".join(line for line in code_content.splitlines() if line.strip())
-
             # Write the function definition with its code content
             code_lines.append(cleaned_code)  # Write the actual function code
             code_lines.append("")  # Add single blank line after function

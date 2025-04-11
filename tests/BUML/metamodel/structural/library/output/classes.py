@@ -6,10 +6,10 @@ from datetime import datetime, date, time
 
 class Author:
 
-    def __init__(self, name: str, email: str, publishes: set["Book"]):
+    def __init__(self, name: str, email: str, publishes: set["Book"] = None):
         self.name = name
         self.email = email
-        self.publishes = publishes
+        self.publishes = publishes if publishes is not None else set()
         
     @property
     def email(self) -> str:
@@ -38,20 +38,20 @@ class Author:
 
 class Book:
 
-    def __init__(self, title: str, pages: int, release: date, locatedIn: "Library", writtenBy: set["Author"]):
+    def __init__(self, title: str, pages: int, release: date, locatedIn: "Library", writtenBy: set["Author"] = None):
         self.title = title
         self.pages = pages
         self.release = release
-        self.locatedIn = locatedIn
-        self.writtenBy = writtenBy
+        self.locatedIn = locatedIn if locatedIn is not None else set()
+        self.writtenBy = writtenBy if writtenBy is not None else set()
         
     @property
-    def pages(self) -> int:
-        return self.__pages
+    def title(self) -> str:
+        return self.__title
 
-    @pages.setter
-    def pages(self, pages: int):
-        self.__pages = pages
+    @title.setter
+    def title(self, title: str):
+        self.__title = title
 
     @property
     def release(self) -> date:
@@ -62,20 +62,12 @@ class Book:
         self.__release = release
 
     @property
-    def title(self) -> str:
-        return self.__title
+    def pages(self) -> int:
+        return self.__pages
 
-    @title.setter
-    def title(self, title: str):
-        self.__title = title
-
-    @property
-    def locatedIn(self):
-        return self.__locatedIn
-
-    @locatedIn.setter
-    def locatedIn(self, locatedIn):
-        self.__locatedIn = locatedIn
+    @pages.setter
+    def pages(self, pages: int):
+        self.__pages = pages
 
     @property
     def writtenBy(self):
@@ -85,22 +77,22 @@ class Book:
     def writtenBy(self, writtenBy):
         self.__writtenBy = writtenBy
 
+    @property
+    def locatedIn(self):
+        return self.__locatedIn
+
+    @locatedIn.setter
+    def locatedIn(self, locatedIn):
+        self.__locatedIn = locatedIn
+
 
 class Library:
 
-    def __init__(self, name: str, address: str, has: set["Book"]):
+    def __init__(self, name: str, address: str, has: set["Book"] = None):
         self.name = name
         self.address = address
-        self.has = has
+        self.has = has if has is not None else set()
         
-    @property
-    def address(self) -> str:
-        return self.__address
-
-    @address.setter
-    def address(self, address: str):
-        self.__address = address
-
     @property
     def name(self) -> str:
         return self.__name
@@ -108,6 +100,14 @@ class Library:
     @name.setter
     def name(self, name: str):
         self.__name = name
+
+    @property
+    def address(self) -> str:
+        return self.__address
+
+    @address.setter
+    def address(self, address: str):
+        self.__address = address
 
     @property
     def has(self):

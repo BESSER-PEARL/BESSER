@@ -1,7 +1,7 @@
 Arpeggio>=2.0.2
 colorama>=0.4.6
 iniconfig>=2.0.0
-packaging
+packaging>=24.2
 pluggy>=1.2.0
 pytest>=7.4.0
 python-multipart>=0.0.17

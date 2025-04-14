@@ -297,10 +297,11 @@ def domain_model_to_code(model: DomainModel, file_path: str):
                     class_names or enum_names)
         f.write(f"    types={{{types_str}}},\n")
         
-        # Include only regular associations (not those used in association classes)
-        assoc_names = ', '.join(assoc.name for assoc in regular_associations)
-        if assoc_names:
-            f.write(f"    associations={{{assoc_names}}},\n")
+        # Include both regular associations and those used in association classes
+        all_assoc_names = ', '.join([assoc.name for assoc in regular_associations] + 
+                                    [ac.association.name for ac in association_classes])
+        if all_assoc_names:
+            f.write(f"    associations={{{all_assoc_names}}},\n")
         else:
             f.write("    associations={},\n")
             

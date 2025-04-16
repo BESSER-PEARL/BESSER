@@ -106,7 +106,7 @@ class NNCodeGenerator(GeneratorInterface):
                 for sub_nn_layer in module.layers:
                     handle_layer(
                         sub_nn_layer, self.setup_layer, subnn_details,
-                        actv_func, is_seq, self.channel_last, is_subnn=True
+                        self.channel_last, actv_func, is_seq, is_subnn=True
                     )
                 name_sub_nn = f"{module.name}_{counter_subnn}_nn"
                 modules_details[name_sub_nn] = subnn_details
@@ -115,7 +115,7 @@ class NNCodeGenerator(GeneratorInterface):
             elif module_type != "TensorOp":
                 handle_layer(
                     module, self.setup_layer, modules_details,
-                    actv_func, is_seq, self.channel_last, is_subnn=False
+                    self.channel_last, actv_func, is_seq, is_subnn=False
                 )
             else:
                 handle_tensorop(
@@ -123,6 +123,7 @@ class NNCodeGenerator(GeneratorInterface):
                 )
         if actv_func:
             adjust_actv_func_name(modules_details)
+
         return modules_details
 
     def generate(self, *args):

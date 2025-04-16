@@ -241,8 +241,8 @@ def get_layer_syntax(setup_layer_cls: 'NNCodeGenerator',
     return layer_synt, actv_func_synt, setup
 
 def handle_layer(layer: Layer, setup_layer: 'NNCodeGenerator',
-                 modules_details: dict, actv_func_syntax: str | bool = False,
-                 is_seq: bool = False, channel_last: bool | None = True,
+                 modules_details: dict, channel_last: bool | None,
+                 actv_func_syntax: str | bool = False, is_seq: bool = False,
                  is_subnn: bool = False):
     """
     It populates the `modules_details` dictionary with layer's 
@@ -335,7 +335,7 @@ def get_tensorop_params(tensorop: TensorOp, modules_details: dict):
     else:
         tensors = tensorop.layers_of_tensors
         if isinstance(tensors[0], str):
-            tensors = get_layers_output_for_tensorops(tensorop,
+            tensors = get_layers_output_for_tensorops(tensors,
                                                       modules_details)
 
         params = ', '.join([str(i) for i in tensors])

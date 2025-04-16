@@ -72,14 +72,11 @@ class SetupLayerSyntax:
                 lyr = f"{lyr}.BatchNorm(){dim}d(num_features={num_f})"
             else: #cls_name == "LayerNormLayer"
                 norm_shape = self.layer.normalized_shape
-                if norm_shape[1] is not None:
-                    if norm_shape[2] is not None:
-                        shape = [norm_shape[0], norm_shape[1], norm_shape[2]]
-                    else:
-                        shape = [norm_shape[0], norm_shape[1]]
-                else:
-                    shape = [norm_shape[0]]
-
+                shape = [norm_shape[0]]
+                if len(norm_shape) == 2:
+                    shape.append(norm_shape[1])
+                elif len(norm_shape) == 3:
+                    shape.extend([norm_shape[1], norm_shape[2]])
                 lyr = f"{lyr}.LayerNorm(normalized_shape={shape})"
         else: #cls_name == "DropoutLayer"
             lyr = f"{lyr}.Dropout(p={self.layer.rate})"

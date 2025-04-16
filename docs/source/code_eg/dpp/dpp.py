@@ -6,5 +6,5 @@ from besser.generators.django import DjangoGenerator
 dpp_buml: DomainModel = plantuml_to_buml(plantUML_model_path='dpp.plantuml')
 
 # Code Generation
-django = DjangoGenerator(model=dpp_buml)
+django = DjangoGenerator(model=dpp_buml, project_name="dpp_project", app_name="dpp_app", containerization=True)
 django.generate()

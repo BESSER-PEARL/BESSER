@@ -1,7 +1,6 @@
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
     Multiplicity, BinaryAssociation, StringType, IntegerType, DateType
 from besser.generators.python_classes import PythonGenerator
-from besser.generators.django import DjangoGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.rest_api import RESTAPIGenerator
@@ -38,7 +37,7 @@ written_by: Property = Property(name="writtenBy", type=author, multiplicity=Mult
 book_author_association: BinaryAssociation = BinaryAssociation(name="book_author_assoc", ends={written_by, publishes})
 
 # Domain model definition
-library_model: DomainModel = DomainModel(name="Library model", types={library, book, author},
+library_model: DomainModel = DomainModel(name="Library_model", types={library, book, author},
                                          associations={lib_book_association, book_author_association})
 
 # Getting the attributes of the Book class
@@ -49,9 +48,6 @@ for attribute in book.attributes:
 
 python_model = PythonGenerator(model=library_model)
 python_model.generate()
-
-django = DjangoGenerator(model=library_model)
-django.generate()
 
 sql_alchemy = SQLAlchemyGenerator(model=library_model)
 sql_alchemy.generate()

@@ -2,7 +2,7 @@
   <img src="./docs/source/_static/besser_logo_light.png" alt="BESSER platform" width="500"/>
 </div>
 
-[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11-blue?logo=python&logoColor=gold)](https://pypi.org/project/besser/)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue?logo=python&logoColor=gold)](https://pypi.org/project/besser/)
 [![PyPI version](https://img.shields.io/pypi/v/besser?logo=pypi&logoColor=white)](https://pypi.org/project/besser/)
 [![PyPI - Downloads](https://static.pepy.tech/badge/besser)](https://pypi.org/project/besser/)
 [![Documentation Status](https://readthedocs.org/projects/besser/badge/?version=latest)](https://besser.readthedocs.io/en/latest/)
@@ -13,13 +13,15 @@
 BESSER is a [low-modeling](https://modeling-languages.com/welcome-to-the-low-modeling-revolution/) [low-code](https://lowcode-book.com/) open-source platform. BESSER (Building bEtter Smart Software fastER) is funded thanks to an [FNR Pearl grant](https://modeling-languages.com/a-smart-low-code-platform-for-smart-software-in-luxembourg-goodbye-barcelona/) led by the [Luxembourg Institute of Science and Technology](https://www.list.lu/) with the participation of the [Snt/University of Luxembourg](https://www.uni.lu/snt-en/) and open to all your contributions!
 
 The BESSER low-code platform is built on top of [B-UML](https://besser.readthedocs.io/en/latest/buml_language.html) our Python-based personal interpretation of a "Universal Modeling Language" (yes, heavily inspired and a simplified version of the better known UML, the Unified Modeling Language). 
-With B-UML you can specify your software application and then use any of the [code-generators available](https://besser.readthedocs.io/en/latest/generators.html) to translate your model into executable code suitable for various applications, such as Django models or database structures compatible with SQLAlchemy.
+With B-UML you can specify your software application and then use any of the [code-generators available](https://besser.readthedocs.io/en/latest/generators.html) to translate your model into executable code suitable for various applications, such as Django web apps or database structures compatible with SQLAlchemy.
+
+**Check out the [BESSER Web Modeling Editor online](https://editor.besser-pearl.org/)**
 
 **Check out the official [documentation](https://besser.readthedocs.io/en/latest/)**
 
 ## Basic Installation
 
-BESSER works with Python 3.9+. We recommend creating a virtual environment (e.g. [venv](https://docs.python.org/3/tutorial/venv.html), [conda](https://docs.conda.io/en/latest/)).
+BESSER works with Python 3.10+. We recommend creating a virtual environment (e.g. [venv](https://docs.python.org/3/tutorial/venv.html), [conda](https://docs.conda.io/en/latest/)).
 
 The latest stable version of BESSER is available in the Python Package Index (PyPi) and can be installed using
 
@@ -48,7 +50,7 @@ Run the setup script to create a virtual environment (if not already created), i
 
 To verify the setup, you can run a basic example.
 
-    $ cd tests/structural/library
+    $ cd tests/BUML/metamodel/structural/library
     $ python library.py
 
 ## Examples
@@ -75,7 +77,7 @@ The development of this project follows the governance rules described in the [G
 ## Contact
 You can reach us at: [info@besser-pearl.org](mailto:info@besser-pearl-org)
 
-Website: https://besser-pearl.github.io/website/
+Website: https://besser-pearl.org
 
 ## License
 

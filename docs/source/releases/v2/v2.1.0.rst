@@ -1,0 +1,22 @@
+Version 2.1.0
+=============
+
+Improvements
+------------
+**Web Modeling Editor**:
+
+* Added the ability to name associations.
+* Introduced an automatic unique naming system to prevent duplicate class names, ensuring compatibility with BUML
+* Enhanced interface navigability for various screen sizes
+
+Fixes
+------
+**Web Modeling Editor**:
+
+* Improved `parse_multiplicity` function to handle single `*` cases and enhanced error handling in the Web Modeling Editor.
+* Fixed type-end handling for binary associations in the Web Modeling Editor.
+* Resolved issues with naming associations.
+
+Documentation
+-------------
+* Updated GUI documentation for better understandability.

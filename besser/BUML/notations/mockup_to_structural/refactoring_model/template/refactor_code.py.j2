@@ -1,0 +1,6 @@
+{%- set target_string = '```' ~ keyworld -%}
+{%- set code_content_trimmed = code_content[code_content.find(target_string) + target_string|length:] -%}
+{%- set code_content_final = code_content_trimmed if code_content_trimmed else code_content %}
+{%- set code_content_correct_syntax = code_content_final.split("```")[0] %}
+
+{{- code_content_correct_syntax }}

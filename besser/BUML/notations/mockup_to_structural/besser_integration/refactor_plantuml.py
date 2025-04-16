@@ -1,5 +1,5 @@
 import os
-from besser.BUML.notations.mockup_to_structural.refactoring_model.refactor_model \
+from besser.BUML.notations.mockup_to_structural.refactoring_model \
     import RefactoredModelGenerator
 
 
@@ -32,4 +32,4 @@ def refactor_plantuml_code(output_folder: str):
 
     # Call the generate method to generate the GUI code
     gui_generator.generate()
-    print(f"Generated final plantuml code saved to {output_dir}")
+    print(f"Generated PlantUML code saved to {code_file}")

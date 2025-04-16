@@ -9,7 +9,7 @@ def count_images(folder_path):
     return [f for f in os.listdir(folder_path) if f.lower().endswith(image_extensions)]
 
 def mockup_to_structural(api_key: str, input_folder: str, output_folder: str = None,
-                              additional_text_file_path: str=None):
+                              additional_info_path: str=None):
     """
     Main function to process mockup images and convert them to Structural model.
 
@@ -47,13 +47,13 @@ def mockup_to_structural(api_key: str, input_folder: str, output_folder: str = N
         print("Processing multiple mockup image...")
         if output_folder:
             mockup_to_structural_multiple_pages(api_key, input_folder, output_folder,
-                                                additional_text_file_path)
+                                                additional_info_path)
         else:
             current_directory = os.getcwd()
             default_output_folder = os.path.join(current_directory, "output")
             mockup_to_structural_multiple_pages(api_key, input_folder, default_output_folder,
-                                                additional_text_file_path)
+                                                additional_info_path)
 
-    print("Processing completed successfully!")
+    print("✅ Processing completed successfully!")
 
 

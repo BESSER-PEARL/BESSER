@@ -471,7 +471,8 @@ class Button(ViewComponent):
         label (str): The label of the button.
         buttonType (ButtonType): The type of the button.
         actionType (ButtonActionType): The action type of the button.
-        targetScreen (Screen, optional): The target Screen associated with the button when the actionType is "Navigate".
+        targetScreen (Screen, optional): The target Screen associated
+                        with the button when the actionType is "Navigate".
 
     Attributes:
         name (str): The name of the button.
@@ -484,12 +485,13 @@ class Button(ViewComponent):
     """
 
     def __init__(self, name: str, description: str, label: str, buttonType: ButtonType,
-                 actionType: ButtonActionType, targetScreen: Screen = None, visibility: str = "public"):
-       super().__init__(name, description, visibility)
-       self.label = label
-       self.buttonType = buttonType
-       self.actionType = actionType
-       self.targetScreen = targetScreen
+                 actionType: ButtonActionType, targetScreen: Screen = None,
+                 visibility: str = "public"):
+        super().__init__(name, description, visibility)
+        self.label = label
+        self.buttonType = buttonType
+        self.actionType = actionType
+        self.targetScreen = targetScreen
 
     @property
     def label(self) -> str:
@@ -535,25 +537,32 @@ class Button(ViewComponent):
             targetScreen (Screen): The target Screen to be associated with the button.
 
         Raises:
-            ValueError: If the actionType is 'Navigate' and the target Screen is not an instance of the Screen class.
+            ValueError: If actionType is 'Navigate' but targetScreen is not an instance of Screen.
             ValueError: If the actionType is not 'Navigate' and an target Screen is specified.
 
         """
         if self.actionType == ButtonActionType.Navigate:
             if targetScreen is None:
-                raise ValueError("A target Screen must be specified for the button when the actionType is 'Navigate'.")
+                raise ValueError("A target Screen must be specified for " \
+                "the button when the actionType is 'Navigate'.")
             elif not isinstance(targetScreen, Screen):
-                raise ValueError("The target Screen must be an instance of the Screen class when the actionType is 'Navigate'.")
+                raise ValueError("The target Screen must be an instance of " \
+                "the Screen class when the actionType is 'Navigate'.")
         elif targetScreen is not None:
-            raise ValueError("A target Screen cannot be specified for the button when the actionType is not 'Navigate'.")
+            raise ValueError("A target Screen cannot be specified "\
+            "for the button when the actionType is not 'Navigate'.")
         self.__targetScreen = targetScreen
 
     def __repr__(self):
-     return f'Button({self.name},{self.label}, {self.description}, {self.visibility}, {self.label}, {self.buttonType}, {self.actionType})'
+        return (
+            f'Button({self.name},{self.label}, {self.description},'
+            f'{self.visibility}, {self.label}, {self.buttonType}, {self.actionType})'
+            )
 
 # Image is a type of ViewComponent
 class Image(ViewComponent):
-    """Represents an image component and encapsulates the specific properties of a image, such as its name.
+    """Represents an image component and encapsulates the specific
+       properties of a image, such as its name.
 
     Args:
         name (str): The name of the image.
@@ -566,12 +575,13 @@ class Image(ViewComponent):
         super().__init__(name, description)
 
     def __repr__(self):
-     return f'Image({self.name},{self.description})'
+        return f'Image({self.name},{self.description})'
 
 
 # InputField is a type of ViewComponent
 class InputField(ViewComponent):
-    """Represents an input field component and encapsulates specific properties of an input field, such as its type and validation rules.
+    """Represents an input field component and encapsulates specific properties
+       of an input field, such as its type and validation rules.
 
      Args:
         name (str): The name of the input field.
@@ -586,7 +596,8 @@ class InputField(ViewComponent):
         validationRules (str): The validation rules for the input field.
     """
 
-    def __init__(self, name: str, description: str, type: InputFieldType, validationRules: str = None, visibility: str = "public"):
+    def __init__(self, name: str, description: str, type: InputFieldType,
+                 validationRules: str = None, visibility: str = "public"):
         super().__init__(name, description, visibility)
         self.type: InputFieldType= type
         self.validationRules: str = validationRules
@@ -594,13 +605,13 @@ class InputField(ViewComponent):
 
     @property
     def type(self) -> InputFieldType:
-      """InputFieldType: Get the type of the input field."""
-      return self.__type
+        """InputFieldType: Get the type of the input field."""
+        return self.__type
 
     @type.setter
     def type(self, type: InputFieldType):
-      """InputFieldType: Set the type of the collection data source."""
-      self.__type = type
+        """InputFieldType: Set the type of the collection data source."""
+        self.__type = type
 
 
     @property
@@ -615,11 +626,16 @@ class InputField(ViewComponent):
         self.__validationRules = validationRules
 
     def __repr__(self):
-     return f'InputField({self.name},{self.description}, {self.type}, {self.validationRules}, {self.visibility})'
+        return (
+            f'InputField({self.name},{self.description}, {self.type},'
+            f'{self.validationRules}, {self.visibility})'
+            )
+
 
 # Form is a type of ViewComponent
 class Form(ViewComponent):
-    """Represents a form component and encapsulates the specific properties of a form, such as its name.
+    """Represents a form component and encapsulates the specific
+        properties of a form, such as its name.
 
     Args:
         name (str): The name of the form.
@@ -632,7 +648,8 @@ class Form(ViewComponent):
         inputFields (set[InputField]): The set of input fields contained in the form.
     """
 
-    def __init__(self, name: str, description: str, inputFields: set[InputField], visibility: str = "public"):
+    def __init__(self, name: str, description: str, inputFields: set[InputField],
+                 visibility: str = "public"):
         super().__init__(name, description, visibility)
         self.inputFields: set[InputField] = inputFields
 
@@ -643,11 +660,11 @@ class Form(ViewComponent):
 
     @inputFields.setter
     def inputFields(self, inputFields: set[InputField]):
-       """set[InputField]: Set the set of input Fields contained in the form."""
-       self.__inputFields = inputFields
+        """set[InputField]: Set the set of input Fields contained in the form."""
+        self.__inputFields = inputFields
 
     def __repr__(self):
-     return f'Form({self.name},{self.description}, {self.inputFields}, {self.visibility})'
+        return f'Form({self.name},{self.description}, {self.inputFields}, {self.visibility})'
 
 # MenuItem
 class MenuItem(Element):
@@ -667,11 +684,12 @@ class MenuItem(Element):
         self.label: str = label
 
     def __repr__(self):
-     return f'MenuItem({self.label})'
+        return f'MenuItem({self.label})'
 
 # Menu is a type of ViewComponent
 class Menu(ViewComponent):
-    """Represents a menu component and encapsulates the specific properties of a menu, such as its name.
+    """Represents a menu component and encapsulates the
+           specific properties of a menu, such as its name.
 
     Args:
         name (str): The name of the menu.
@@ -684,7 +702,8 @@ class Menu(ViewComponent):
         menuItems (set[MenuItem]): The set of menu items contained in the menu.
     """
 
-    def __init__(self, name: str, description: str, menuItems: set[MenuItem], visibility: str = "public"):
+    def __init__(self, name: str, description: str, menuItems: set[MenuItem],
+                 visibility: str = "public"):
         super().__init__(name, description, visibility)
         self.menuItems: set[MenuItem] = menuItems
 
@@ -699,11 +718,12 @@ class Menu(ViewComponent):
         self.__menuItems = menuItems
 
     def __repr__(self):
-     return f'Menu({self.name},{self.description}, {self.menuItems}, {self.visibility})'
+        return f'Menu({self.name},{self.description}, {self.menuItems}, {self.visibility})'
 
 #GUIModel
 class GUIModel(Model):
-    """It is a subclass of the NamedElement class and encapsulates the properties and behavior of the GUI part of an application, including its name,
+    """It is a subclass of the NamedElement class and encapsulates the properties and behavior
+       of the GUI part of an application, including its name,
        package, version code, version name, modules, description, and screen compatibility.
 
     Args:
@@ -724,7 +744,8 @@ class GUIModel(Model):
         description (str): The description of the model.
         screenCompatibility (bool): Indicates whether the model has screen compatibility.
     """
-    def __init__(self, name: str, package: str, versionCode: str, versionName: str, modules: set[Module], description: str, screenCompatibility: bool = False):
+    def __init__(self, name: str, package: str, versionCode: str, versionName: str,
+                 modules: set[Module], description: str, screenCompatibility: bool = False):
         super().__init__(name)
         self.package: str = package
         self.versionCode: str = versionCode
@@ -790,12 +811,12 @@ class GUIModel(Model):
 
     @modules.setter
     def modules(self, modules: set[Module]):
-       """set[Module]: Set the set of modules contained in the model."""
-       if modules is not None:
+        """set[Module]: Set the set of modules contained in the model."""
+        if modules is not None:
             names = [module.name for module in modules]
             if len(names) != len(set(names)):
                 raise ValueError("An app cannot have two modules with the same name")
-       self.__modules = modules
+        self.__modules = modules
 
 
     def __repr__(self):
@@ -804,7 +825,3 @@ class GUIModel(Model):
         f"{self.versionName}, {self.description}, {self.screenCompatibility}, "
         f"{self.modules})"
     )
-
-
-
-

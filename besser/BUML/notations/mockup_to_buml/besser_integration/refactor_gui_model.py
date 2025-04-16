@@ -1,6 +1,6 @@
 import os
-from besser.BUML.notations.mockup_to_buml.refactoring_model.refactor_model import RefactoredModelGenerator
-from besser.BUML.notations.mockup_to_buml.refactoring_model.complete_model import CompeletedCodeGenerator
+from besser.BUML.notations.mockup_to_buml.refactoring_model import RefactoredModelGenerator
+from besser.BUML.notations.mockup_to_buml.refactoring_model import CompeletedCodeGenerator
 
 
 def refactor_gui_code(output_folder: str):

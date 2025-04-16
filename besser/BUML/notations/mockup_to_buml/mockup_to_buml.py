@@ -9,7 +9,7 @@ def count_images(folder_path):
     return [f for f in os.listdir(folder_path) if f.lower().endswith(image_extensions)]
 
 def mockup_to_buml(api_key: str, input_folder: str, navigation_image_path: str=None,
-                        pages_order_file_path: str=None, additional_text_file_path: str=None,
+                        pages_order_file_path: str=None, additional_info_path: str=None,
                         output_folder: str = None):
 
     """
@@ -49,16 +49,16 @@ def mockup_to_buml(api_key: str, input_folder: str, navigation_image_path: str=N
         print("Processing multiple mockup image...")
         if output_folder:
             mockup_to_buml_multiple_pages(api_key, input_folder, navigation_image_path,
-                                          pages_order_file_path, additional_text_file_path,
+                                          pages_order_file_path, additional_info_path,
                                           output_folder)
         else:
             current_directory = os.getcwd()
             default_output_folder = os.path.join(current_directory, "output")
             mockup_to_buml_multiple_pages(api_key, input_folder, navigation_image_path,
-                                          pages_order_file_path, additional_text_file_path,
+                                          pages_order_file_path, additional_info_path,
                                           default_output_folder)
 
-    print("Processing completed successfully!")
+    print("✅ Processing completed successfully!")
 
 
 

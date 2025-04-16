@@ -1,10 +1,9 @@
 import retrying
 import requests
 import os
-from besser.BUML.notations.mockup_to_structural.utilities.image_utils import encode_image
-from besser.BUML.notations.mockup_to_structural.utilities.file_utils import read_file_contents
+from besser.BUML.notations.mockup_to_structural.utilities import encode_image
+from besser.BUML.notations.mockup_to_structural.utilities import read_file_contents
 from besser.BUML.notations.mockup_to_structural.config import *
-
 
 
 # Function to facilitate self-improvement of a PlantUML code representing GUI elements using the GPT-4o model
@@ -212,13 +211,7 @@ def direct_prompting_image_to_plantuml(api_key, mockup_images_path, additional_t
     # Call gpt4o_call to generate the PlantUML code using the direct prompt method
     PlantUML_code = gpt4o_call_palntUML(api_key, direct_prompt, mockup_images_path, additional_text_file_path, plantuml_code_example_path)
 
-    # Write the PlantUML code to a file
-    if PlantUML_code:
-        # Write the PlantUML code to a file
-        with open("output_file.py", "w", encoding="utf-8") as file:
-            file.write(PlantUML_code)
-    else:
-        print("Failed to generate PlantUML code.")
+
     return PlantUML_code
 
 

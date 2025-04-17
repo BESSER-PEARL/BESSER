@@ -1,12 +1,16 @@
-from fastapi import FastAPI, HTTPException, File, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, Response
-import os, io, zipfile, shutil
+import os
+import io
+import zipfile
+import shutil
 import tempfile
 import uuid
 import asyncio
+from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse, Response
 
 from besser.utilities.buml_code_builder import domain_model_to_code
+from besser.utilities.web_modeling_editor.backend.services import run_docker_compose
 from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
 from besser.generators.java_classes import JavaGenerator
@@ -61,7 +65,7 @@ async def generate_output(input_data: ClassDiagramInput):
     try:
         json_data = input_data.model_dump()
         generator = input_data.generator
-        
+
         if generator not in GENERATOR_CONFIG:
             raise HTTPException(status_code=400, detail="Invalid generator type specified.")
 
@@ -77,10 +81,10 @@ async def generate_output(input_data: ClassDiagramInput):
             project_dir = os.path.join(temp_dir, input_data.config['project_name'])
             if os.path.exists(project_dir):
                 shutil.rmtree(project_dir)
-            
+
             # Create a fresh project directory
             os.makedirs(temp_dir, exist_ok=True)
-            
+
             # Change to temp directory before running django-admin
             original_cwd = os.getcwd()
             os.chdir(temp_dir)
@@ -93,21 +97,21 @@ async def generate_output(input_data: ClassDiagramInput):
                     containerization=input_data.config['containerization'],
                     output_dir=temp_dir
                 )
-                
+
                 # Generate the Django project
                 generator_instance.generate()
-                
+
                 # Wait a moment for file system operations to complete
                 await asyncio.sleep(1)
-                
+
                 # Check if the project directory exists and has content
                 if not os.path.exists(project_dir) or not os.listdir(project_dir):
                     raise ValueError("Django project generation failed: Output directory is empty")
-                
+
             finally:
                 # Always restore the original working directory
                 os.chdir(original_cwd)
-        
+
         # Handle SQL generator with config
         elif generator == "sql":
             dialect = "standard"
@@ -119,13 +123,13 @@ async def generate_output(input_data: ClassDiagramInput):
                 sql_dialect=dialect
             )
             generator_instance.generate()
-            
+
         # Handle SQLAlchemy generator with config
         elif generator == "sqlalchemy":
             dbms = "sqlite"
             if input_data.config and "dbms" in input_data.config:
                 dbms = input_data.config["dbms"]
-            
+
             generator_instance = generator_class(
                 buml_model, 
                 output_dir=temp_dir
@@ -147,7 +151,7 @@ async def generate_output(input_data: ClassDiagramInput):
                         file_path = os.path.join(root, file)
                         arc_name = os.path.relpath(file_path, base_dir)
                         zip_file.write(file_path, arc_name)
-            
+
             zip_buffer.seek(0)
             file_name = f"{generator}_output.zip"
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -161,15 +165,15 @@ async def generate_output(input_data: ClassDiagramInput):
         files = os.listdir(temp_dir)
         if not files:
             raise ValueError(f"{generator} generation failed: No output files were created.")
-        
+
         file_name = files[0]
         output_file_path = os.path.join(temp_dir, file_name)
         with open(output_file_path, 'rb') as f:
             file_content = f.read()
-        
+
         shutil.rmtree(temp_dir, ignore_errors=True)
         return Response(
-            content=file_content, 
+            content=file_content,
             media_type="text/plain",
             headers={"Content-Disposition": f'attachment; filename="{file_name}"'}
         )
@@ -181,6 +185,77 @@ async def generate_output(input_data: ClassDiagramInput):
     except Exception as e:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+@api.post("/deploy-app")
+async def deploy_app(input_data: ClassDiagramInput):
+    temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
+    try:
+        json_data = input_data.model_dump()
+        generator = input_data.generator
+
+        if generator not in GENERATOR_CONFIG:
+            raise HTTPException(status_code=400, detail="Invalid generator type specified.")
+
+        buml_model = process_class_diagram(json_data)
+        generator_class = GENERATOR_CONFIG[generator]
+
+        # Handle Django generator with config
+        if generator == "django":
+            if not input_data.config:
+                raise HTTPException(status_code=400, detail="Django configuration is required")
+
+            # Clean up any existing project directory first
+            project_dir = os.path.join(temp_dir, input_data.config['project_name'])
+            if os.path.exists(project_dir):
+                shutil.rmtree(project_dir)
+
+            # Create a fresh project directory
+            os.makedirs(temp_dir, exist_ok=True)
+
+            # Change to temp directory before running django-admin
+            original_cwd = os.getcwd()
+            os.chdir(temp_dir)
+
+            try:
+                generator_instance = generator_class(
+                    model=buml_model,
+                    project_name=input_data.config['project_name'],
+                    app_name=input_data.config['app_name'],
+                    containerization=True,
+                    output_dir=temp_dir
+                )
+
+                # Generate the Django project
+                generator_instance.generate()
+
+                # Wait a moment for file system operations to complete
+                await asyncio.sleep(1)
+
+                # Check if the project directory exists and has content
+                if not os.path.exists(project_dir) or not os.listdir(project_dir):
+                    raise ValueError("Django project generation failed: Output directory is empty")
+
+                full_path = os.path.join(temp_dir, input_data.config['project_name'])
+                run_docker_compose(directory=full_path, project_name=input_data.config['project_name'])
+
+            finally:
+                # Always restore the original working directory
+                os.chdir(original_cwd)
+
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        else:
+            raise ValueError("Deployment only possible for Django projects")
+    except HTTPException as e:
+        # Handle known exceptions with specific status codes
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        raise e
+    except Exception as e:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        print(f"Error during file generation or django deployment: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 @api.post("/export-buml")

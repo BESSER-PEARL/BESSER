@@ -4,120 +4,34 @@ Django Generator
 BESSER provides a code generator for `Django web applications <https://www.djangoproject.com/>`_.
 You can create the application in two ways:
 
-1. **Django App with Admin Panel:** A Django application with database models and CRUD functionality, accessible via Django’s admin panel.
-2. **Django App with Admin Panel & UI Components:** Includes everything from the Admin Panel version, plus predefined user interfaces such as forms and templates.
+1. :doc:`Django App with Admin Panel </generators/django/django_admin_panel>` — A Django application with database models and CRUD functionality, accessible via Django’s admin panel.
+
+2. :doc:`Django App with Admin Panel & UI Components </generators/django/django_ui_components>` — Includes everything from the Admin Panel version, plus predefined user interfaces such as forms and templates.
 
 .. note::
 
-   The :doc:`../web_editor` supports only the generation of Django apps with the Admin Panel, which is the fastest way to generate and deploy
-   a web application. To generate a Django app including UI Components, you must use the Python API of B-UML.
+   The :doc:`../web_editor` supports only the generation of Django apps with the Admin Panel. To generate a Django app with UI Components,
+   you must use the Python API.
 
-.. _basic_app:
 
-1. Django App with Admin Panel
-------------------------------
-This approach creates a Django application with database models and basic CRUD functionality. It does not generate custom UI
-components beyond Django’s built-in admin panel.
 
-**B-UML Model required**
 
-- :doc:`../buml_language/model_types/structural`: This model defines the data structure (classes, relationships, and attributes) that will be used to generate the Django application.
+.. toctree::
+  :maxdepth: 1
 
-**Getting started**
+  django/django_admin_panel
+  django/django_ui_components
 
-Let's generate a Django web app taking as input our :doc:`../examples/library_example`.
-Below is an example of how to implement the code generator with Python (alternatively,
-you can use the :doc:`../web_editor` to create the structural model (class diagram)  and
-generate the Django code):
-
-.. code-block:: python
-
-    from besser.generators.django import DjangoGenerator
-
-    generator: DjangoGenerator = DjangoGenerator(model=library_model,
-                                                project_name="my_django_app",
-                                                app_name="library_app",
-                                                containerization=False)
-    generator.generate()
-
-**Configuration Parameters**
-
-- ``model``: The structural model to be used for generating the Django application.
-- ``project_name``: The name of the Django project to be created.
-- ``app_name``: The name of the Django app to be created within the project.
-- ``containerization``: A boolean flag to enable/disable containerization for deployment.
-
-**Output**
-
-After running the generator, the following files will be created:
-
-- A project folder containing essential Django files such as `settings.py`, `urls.py`, etc.
-- An application folder including `models.py` and `admin.py`.
-- `manage.py` and `requirements.txt` for managing the application.
-
-If `containerization=True`, the following files will also be generated for Docker deployment:
-
-- `docker-compose.yml`
-- `Dockerfile`
-- `entrypoint.sh`
-
-To run the application, follow the steps in :ref:`deploy`.
-
-.. _app_gui:
-
-2. Django App with Admin Panel & UI Components
-----------------------------------------------
-This approach generates a Django application with both database models and
-predefined UI components (forms, templates, views, etc.).
-
-**B-UML Models required**
-
-- :doc:`../buml_language/model_types/structural`: This model defines the data structure (classes, relationships, and attributes) that will be used to generate the Django application.
-
-- :doc:`../buml_language/model_types/gui`: Specifies the user interface components (forms, layouts, navigation) that will be generated as part of the application.
-
-**Getting Started**
-
-To generate a Django web app using this approach, follow these steps. You can use our :doc:`../examples/library_example`
-and our :doc:`../examples/mobile_app_example` as input to test the generator.
-
-.. code-block:: python
-
-    from besser.generators.django import DjangoGenerator
-
-    generator: DjangoGenerator = DjangoGenerator(model=library_model,
-                                                project_name="my_django_app",
-                                                app_name="library_app",
-                                                gui_model=library_gui_model,
-                                                containerization=False)
-    generator.generate()
-
-**Configuration Parameters**
-
-- ``model``: The structural model to be used for generating the Django application.
-- ``project_name``: The name of the Django project to be created.
-- ``app_name``: The name of the Django app to be created within the project.
-- ``gui_model`` The GUI model to be used for generating the Django application.
-- ``containerization``: A boolean flag indicating whether to generate containerization files to deploy the app using containers.
-
-**Output**
-
-In addition to the files generated for a :ref:`Django app with Admin Panel <basic_app>`, this approach also includes:
-
-- `views.py`, `urls.py`, and `forms.py` for handling user interactions.
-- Predefined HTML templates for the application's UI.
-
-Once the application is generated, follow the steps in :ref:`deploy` to set it up.
 
 
 .. _deploy:
 
-3. How to Run the Web Application
+How to Run the Web Application
 ---------------------------------
 
 You can run the application in two ways, depending on whether ``containerization`` is enabled or not.
 
-3.1 Running without containerization (``containerization = False``)
+1. Running without containerization (``containerization = False``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Recommendation**: Use Python 3.12 or higher for optimal performance.
@@ -139,7 +53,7 @@ Enter the project folder and run the following commands:
     # Start the development server
     python manage.py runserver
 
-3.2 Running with containerization (``containerization = True``)
+2. Running with containerization (``containerization = True``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Requirement**: `Docker Compose <https://docs.docker.com/compose/>`_
@@ -173,8 +87,7 @@ The following is the admin panel for a Django web app generated using this :doc:
 
 **Home page**
 
-If you generated the app with a GUI model (following the steps in :ref:`app_gui`),
-you should be able to access the home page and its forms at:
+On the other hand, if you generate the full web app, you can check the home page and different forms at:
 
 `http://localhost:8000 <http://localhost:8000>`_
 

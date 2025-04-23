@@ -13,8 +13,7 @@ You can create the application in two ways:
    The :doc:`../web_editor` supports only the generation of Django apps with the Admin Panel. To generate a Django app with UI Components,
    you must use the Python API.
 
-
-
+Check the guidelines below to learn how to generate a Django app depending on your needs:
 
 .. toctree::
   :maxdepth: 1
@@ -23,15 +22,17 @@ You can create the application in two ways:
   django/django_ui_components
 
 
-
 .. _deploy:
 
 How to Run the Web Application
 ---------------------------------
 
-You can run the application in two ways, depending on whether ``containerization`` is enabled or not.
+After generating the code, you can run the web application locally (either with or without containers) depending on how you configured the generator.
+Keep in mind that the ``containerization`` parameter in the code generator determines whether files for container-based deployment are included.
 
-1. Running without containerization (``containerization = False``)
+.. _no_containerization:
+
+A. Running without containerization (``containerization = False``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Recommendation**: Use Python 3.12 or higher for optimal performance.
@@ -53,7 +54,7 @@ Enter the project folder and run the following commands:
     # Start the development server
     python manage.py runserver
 
-2. Running with containerization (``containerization = True``)
+B. Running with containerization (``containerization = True``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 **Requirement**: `Docker Compose <https://docs.docker.com/compose/>`_
@@ -76,30 +77,14 @@ To access the admin panel of your web app, open your browser and navigate to:
 
 Login Credentials:
     + *If containerized*: The default username and password are both ``admin``.
-    + *If not containerized*: Use the username and password you set in Section 3.1 (``createsuperuser``).
-
-The following is the admin panel for a Django web app generated using this :doc:`../buml_language/model_types/structural`:
-
-.. image:: ../img/django-lib.png
-   :alt: Application screenshot
-   :align: center
-
+    + *If not containerized*: Use the username and password you set in :ref:`Step A <no_containerization>` (``Create a superuser account``).
 
 **Home page**
 
-On the other hand, if you generate the full web app, you can check the home page and different forms at:
+If you have generated the full web app, you can also check the home page and different forms at:
 
 `http://localhost:8000 <http://localhost:8000>`_
 
-The following is an screenshoot of the application generated using the :doc:`../buml_language/model_types/structural`
-and the GUI model from :doc:`../examples/mobile_app_example`:
-
-.. image:: ../img/django_book_page.png
-   :alt: Django Book page screenshot
-   :align: center
-
-
-.. image:: ../img/django_book_form_page.png
-   :alt: Django Book form page screenshot
-   :align: center
-
+Example
+-------
+* :doc:`../examples/dpp`

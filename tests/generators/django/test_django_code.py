@@ -35,7 +35,7 @@ def test_screen_generation():
 
     # DataSource definition
     datasource: DataSourceElement = DataSourceElement(
-        name="Data Source",
+        name="DataSource",
         dataSourceClass=class1,
         fields=[class1_name]
     )
@@ -180,7 +180,7 @@ def test_CRUD_Operations():
 
     # DataSource definition
     datasource: DataSourceElement = DataSourceElement(
-        name="Data Source",
+        name="DataSource",
         dataSourceClass=class1,
         fields=[class1_name]
     )
@@ -352,7 +352,7 @@ def test_Operations_many_to_many():
 
     # GUI Model:
     # DataSource definition
-    datasource1: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass=class1, fields=[])
+    datasource1: DataSourceElement = DataSourceElement(name="DataSource", dataSourceClass=class1, fields=[])
 
     # List definition
     datalist1: DataList = DataList(name="List1", description="", list_sources={datasource1})
@@ -368,7 +368,7 @@ def test_Operations_many_to_many():
     )
 
     # DataSource definition
-    datasource2: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass=class2, fields=[])
+    datasource2: DataSourceElement = DataSourceElement(name="DataSource", dataSourceClass=class2, fields=[])
 
     # List2 definition
     datalist2: DataList = DataList(name="List2", description="", list_sources={datasource2})
@@ -384,7 +384,7 @@ def test_Operations_many_to_many():
     )
 
     # DataSource definition
-    datasource3: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass=class3, fields=[])
+    datasource3: DataSourceElement = DataSourceElement(name="DataSource", dataSourceClass=class3, fields=[])
 
     # List3 definition
     datalist: DataList = DataList(name="List3", description="", list_sources={datasource3})

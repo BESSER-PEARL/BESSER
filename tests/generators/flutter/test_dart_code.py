@@ -16,7 +16,7 @@ def test_screen_generation():
     model : DomainModel = DomainModel(name="model", types={class1},
                                           associations={})
     # DataSource definition
-    datasource: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass=class1, fields=[class1_name])
+    datasource: DataSourceElement = DataSourceElement(name="DataSource", dataSourceClass=class1, fields=[class1_name])
 
     # My List definition
     myList: DataList = DataList(name="MyList", description="A diverse group of elements", list_sources={datasource})
@@ -104,7 +104,7 @@ def test_Error_Handling():
     model : DomainModel = DomainModel(name="model", types={class1, class2, class3},
                                           associations={class1_class2_association, class1_class3_association})
     # DataSource definition
-    datasource: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass=class1, fields=[class1_name])
+    datasource: DataSourceElement = DataSourceElement(name="DataSource", dataSourceClass=class1, fields=[class1_name])
 
     # My List definition
     myList: DataList = DataList(name="MyList", description="A diverse group of elements", list_sources={datasource})
@@ -173,7 +173,7 @@ def test_CRUD_Operations():
     model : DomainModel = DomainModel(name="model", types={class1},
                                           associations={})
     # DataSource definition
-    datasource: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass=class1, fields=[class1_name])
+    datasource: DataSourceElement = DataSourceElement(name="DataSource", dataSourceClass=class1, fields=[class1_name])
 
     # My List definition
     myList: DataList = DataList(name="MyList", description="A diverse group of elements", list_sources={datasource})
@@ -257,7 +257,7 @@ def test_Operations_many_to_many():
                                           associations={class1_class2_association})
 
     # DataSource definition
-    datasource: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass=class1, fields=[class1_name])
+    datasource: DataSourceElement = DataSourceElement(name="DataSource", dataSourceClass=class1, fields=[class1_name])
 
     # My List definition
     myList: DataList = DataList(name="MyList", description="A diverse group of elements", list_sources={datasource})

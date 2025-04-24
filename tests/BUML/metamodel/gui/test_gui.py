@@ -77,7 +77,7 @@ def test_button_properties_must_be_defined():
 
 
 def test_list_sources_must_be_defined():
-    datasource: DataSourceElement = DataSourceElement(name="Data Source", dataSourceClass="", fields=[])
+    datasource: DataSourceElement = DataSourceElement(name="DataSource", dataSourceClass="", fields=[])
     myList: DataList = DataList(name="MyList", description="A diverse group of elements", list_sources={})
 
     with pytest.raises(ValueError) as excinfo:
@@ -96,7 +96,7 @@ def test_fields_synchronized_attributes():
     class2_name: Property = Property(name="name", type="int")
     class1: Class = Class (name="Class2", attributes=[class2_name])
     #class1_DataSource definition
-    datasource_class1: DataSourceElement = DataSourceElement(name="Class1 Data Source", dataSourceClass=class1, fields=[class2_name])
+    datasource_class1: DataSourceElement = DataSourceElement(name="Class1DataSource", dataSourceClass=class1, fields=[class2_name])
     with pytest.raises(ValueError) as excinfo:
         if datasource_class1.fields not in datasource_class1.dataSourceClass.attributes:
             raise ValueError("Fields must be synchronized with the dataSourceClass attributes")

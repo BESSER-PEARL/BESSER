@@ -1,0 +1,108 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: >-
+  BESSER: A Python-based low-modeling low-code platform for
+  smart software
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Iván
+    family-names: Alfonso
+    email: ivan.alfonso@list.lu
+    affiliation: Luxembourg Institute of Science and Technology
+    orcid: 'https://orcid.org/0000-0003-3940-0629'
+  - given-names: Armen
+    family-names: Sulejmani
+    affiliation: Luxembourg Institute of Science and Technology
+    email: armen.sulejmani@list.lu
+    orcid: 'https://orcid.org/0009-0005-9571-8780'
+  - given-names: Fitash
+    family-names: Ul-Haq
+    email: fitash.ulhaq@list.lu
+    affiliation: Luxembourg Institute of Science and Technology
+    orcid: 'https://orcid.org/0000-0003-2253-9085'
+  - email: aaron.conrardy@list.lu
+    given-names: Aaron
+    family-names: Conrardy
+    affiliation: Luxembourg Institute of Science and Technology
+    orcid: 'https://orcid.org/0000-0002-3030-4529'
+  - given-names: Jordi
+    family-names: Cabot
+    email: jordi.cabot@list.lu
+    affiliation: >-
+      Luxembourg Institute of Science and Technology -
+      University of Luxembourg
+    orcid: 'https://orcid.org/0000-0003-2418-2489'
+  - given-names: Atefeh
+    family-names: Nirumand
+    email: atefeh.nirumand@list.lu
+    orcid: 'https://orcid.org/0009-0003-7677-5013'
+    affiliation: Luxembourg Institute of Science and Technology
+  - given-names: Marcos
+    family-names: Gomez-Vazquez
+    email: marcos.gomez@list.lu
+    affiliation: Luxembourg Institute of Science and Technology
+    orcid: 'https://orcid.org/0000-0001-7176-0793'
+  - given-names: Nadia
+    family-names: Daoudi
+    email: nadia.daoudi@list.lu
+    affiliation: Luxembourg Institute of Science and Technology
+    orcid: 'https://orcid.org/0000-0002-1437-667X'
+identifiers:
+  - type: doi
+    value: 10.1007/978-3-031-61007-3_16
+    description: The paper presenting the BESSER platform.
+repository-code: 'https://github.com/BESSER-PEARL/BESSER'
+url: 'https://besser.readthedocs.io/en/latest/'
+abstract: >-
+  BESSER (Building bEtter Smart Software fastER) is a
+  low-modeling low-code open-source platform.
+keywords:
+  - Low-code platform
+  - Model-driven engineering
+  - Language modeling
+  - Smart software
+license: MIT
+version: 1.3.1
+date-released: '2024-08-22'
+preferred-citation:
+  type: conference-paper
+  authors:
+  - family-names: "Alfonso"
+    given-names: "Iván"
+    orcid: "https://orcid.org/0000-0003-3940-0629"
+  - family-names: "Conrardy"
+    given-names: "Aaron"
+    orcid: 'https://orcid.org/0000-0002-3030-4529'
+  - family-names: "Sulejmani"
+    given-names: "Armen"
+    orcid: "https://orcid.org/0009-0005-9571-8780"
+  - family-names: "Nirumand"
+    given-names: "Atefeh"
+    orcid: "https://orcid.org/0009-0003-7677-5013"
+  - family-names: "Ul-Haq"
+    given-names: "Fitash"
+    orcid: "https://orcid.org/0000-0003-2253-9085"
+  - family-names: "Gomez-Vazquez"
+    given-names: "Marcos"
+    orcid: "https://orcid.org/0000-0001-7176-0793"
+  - family-names: "Sottet"
+    given-names: "Jean-Sébastien"
+    orcid: "https://orcid.org/0000-0002-3071-6371"
+  - family-names: "Cabot"
+    given-names: "Jordi"
+    orcid: "https://orcid.org/0000-0003-2418-2489"
+  title: "Building BESSER: An Open-Source Low-Code Platform"
+  conference: 
+    name: "International Conference on Evaluation and Modeling Methods for Systems Analysis and Development, EMMSAD 2024, Limassol, Cyprus, June 3-4, 2024"
+  start: 203 
+  end: 212 
+  year: 2024
+  publisher:
+    name: Springer
+  url: "https://doi.org/10.1007/978-3-031-61007-3_16"
+  doi: "10.1007/978-3-031-61007-3_16"

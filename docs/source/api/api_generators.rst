@@ -12,3 +12,5 @@ Generators
    generators/api_backend
    generators/api_flutter
    generators/api_terraform
+   generators/api_rdf
+   generators/api_jsonschema

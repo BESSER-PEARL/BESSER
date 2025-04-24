@@ -6,13 +6,13 @@ domainModel         : Start NL
                       End
                       ;
 
-element             : skinParam | class | relationship | enumeration ;
+element             : (skinParam | class | relationship | enumeration) NL+ ;
 
 skinParam           : 'skinparam' 'groupInheritance' INT NL ;
 
-class               : (abstract | 'class') ID extends? '{' NL
+class               : (abstract | 'class') ID extends? '{' NL*
                       (attribute | method)*
-                      '}' NL ;
+                      '}' ;
 
 abstract            : 'abstract' 'class'? ;
 
@@ -20,7 +20,7 @@ relationship        : association | inheritance ;
 
 association         : ID c_left=cardinality?
                       (bidirectional | unidirectional | aggregation | composition)
-                      c_right=cardinality? ID (':' ID)? NL
+                      c_right=cardinality? ID (':' ID)?
                       ;
 
 bidirectional       : '--' ;
@@ -31,7 +31,7 @@ aggregation         : (aggr_l='o'? | '<'?) '--' ('>'? | aggr_r='o'?) ;
 
 composition         : (comp_l='*'? | '<'?) '--' ('>'? | comp_r='*'?) ;
 
-inheritance         : ID (inh_left='<|--' | '--|>') ID NL ;
+inheritance         : ID (inh_left='<|--' | '--|>') ID ;
 
 extends             : 'extends' ID ;
 
@@ -53,7 +53,7 @@ dType               : primitiveData | ID ;
 
 enumeration         : 'enum' ID '{' NL
                       enumLiteral*
-                      '}' NL ;
+                      '}' ;
 
 enumLiteral         : ID NL ;
 

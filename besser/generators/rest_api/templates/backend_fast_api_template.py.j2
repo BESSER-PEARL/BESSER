@@ -45,12 +45,14 @@ def get_db():
             {% set lns.end1 = end if end.type.name == class.name else lns.end1 %}
             {% set lns.end2 = end if end.type.name != class.name else lns.end2 %}
         {% endfor %}
-        {% set class1_name = lns.end1.type.name %}
+        {% set class1_name = lns.end1.type.name %} 
         {% set class2_name = lns.end2.type.name %}
+        {% set name_end1 = lns.end1.name %} 
+        {% set name_end2 = lns.end2.name %}
         {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
-            {% do ns.end_name_multiple.append((class2_name, association.name.lower())) %}
+            {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower())) %}
         {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
-            {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min)) %}
+            {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2)) %}
         {% endif %}
     {% endif %}
 {% endfor %}
@@ -70,13 +72,13 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
 
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
-    {{x[0] | lower}}_ids = database.query({{x[1]}}.c.{{x[0]|lower}}_id).filter({{x[1]}}.c.{{ class.name | lower}}_id == db_{{ class.name | lower}}.id).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]|lower}}).filter({{x[4]}}.c.{{x[2]|lower}} == db_{{ class.name | lower}}.id).all()
     {% endfor %}
     {% endif %}
     response_data = {
         "{{class.name | lower}}": db_{{ class.name | lower}},
         {% for x in ns.end_name_multiple %}
-        "{{x[0] | lower}}_ids": [x[0] for x in {{x[0] | lower}}_ids]{% if not loop.last %},{% endif %}
+        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids]{% if not loop.last %},{% endif %}
         {% endfor -%}
     }
     return response_data
@@ -90,9 +92,9 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
 
     {% if ns.end_name_one %}
     {% for x in ns.end_name_one %}
-    if {{ class.name | lower}}_data.{{x[0]|lower}}_id {% if x[1]==1 %}is not None{%endif%}:
-        db_{{x[0]|lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{ class.name | lower}}_data.{{x[0]|lower}}_id).first()
-        if not db_{{x[0]|lower}}:
+    if {{ class.name | lower}}_data.{{x[2]}} {% if x[1]==1 %}is not None{%endif%}:
+        db_{{x[2]}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{ class.name | lower}}_data.{{x[2]}}).first()
+        if not db_{{x[2]}}:
             raise HTTPException(status_code=400, detail="{{x[0]}} not found")
     {%if x[1] == 1 %}
     else:
@@ -100,11 +102,25 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endif -%}{% endfor -%}
     {%- endif %}
 
-    {%if class.attributes%}
-    db_{{ class.name | lower}} = {{ class.name }}({% for attribute in class.attributes %}{{attribute.name}}={{ class.name | lower}}_data.{{attribute.name}}{% if not loop.last %}, {% endif %}{% endfor %}{% if ns.end_name_one %}{% for x in ns.end_name_one %}, {{x[0]|lower}}_id={{ class.name | lower}}_data.{{x[0]|lower}}_id{% endfor %}{% endif %})
+    {% if class.attributes %}
+    db_{{ class.name | lower}} = {{ class.name }}(
+        {% for attribute in class.attributes %}
+        {{attribute.name}}={{ class.name | lower}}_data.{{attribute.name}}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
+        {% endfor %}
+        {% if ns.end_name_one %}
+        {% for x in ns.end_name_one %}, {{x[2]}}=db_{{x[2]}}{% endfor %}
+        {% endif %}
+        )
     {% else %}
-    {% for parent in class.parents()  %}
-    db_{{ class.name | lower}} = {{ class.name }}({%for attrparent in parent.attributes %}{{attrparent.name}}={{ class.name | lower}}_data.{{attrparent.name}}{% if not loop.last %}, {% endif %}{% endfor %}{% if ns.end_name_one %}{% for x in ns.end_name_one %}, {{x[0]|lower}}_id={{ class.name | lower}}_data.{{x[0]|lower}}_id{% endfor %}{% endif %})
+    {% for parent in class.parents() %}
+    db_{{ class.name | lower}} = {{ class.name }}(
+        {% for attrparent in parent.attributes %}
+        {{attrparent.name}}={{ class.name | lower}}_data.{{attrparent.name}}{% if attrparent.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
+        {% endfor %}
+        {% if ns.end_name_one %}
+        {% for x in ns.end_name_one %}, {{x[1]|lower}}_id={{ class.name | lower}}_data.{{x[1]|lower}}_id{% endfor %}
+        {% endif %}
+    )
     {% endfor %}
     {% endif %}
 
@@ -114,13 +130,13 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
 
     {% if ns.end_name_multiple and not nested_creations %}
     {% for x in ns.end_name_multiple %}
-    if {{ class.name | lower}}_data.{{x[0] | lower}}s_id:
-        for id in {{ class.name | lower}}_data.{{x[0] | lower}}s_id:
-            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == id).first()
-            if not db_{{x[0] | lower}}:
-                raise HTTPException(status_code=404, detail=f"{{x[0]}} with ID {id} not found")
+    if {{ class.name | lower}}_data.{{x[3]}}:
+        for id in {{ class.name | lower}}_data.{{x[3]}}:
+            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == id).first()
+            if not db_{{x[1] | lower}}:
+                raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {id} not found")
             # Create the association
-            association = {{x[1]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.id, {{ x[0]|lower }}_id=db_{{ x[0]|lower }}.id)
+            association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ x[0]|lower }}.id, {{ x[3] }}=db_{{ x[1]|lower }}.id)
             database.execute(association)
             database.commit()
     {% endfor -%}
@@ -128,20 +144,24 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
 
     {%if ns.end_name_multiple and nested_creations%}
     {% for x in ns.end_name_multiple %}
-    if {{ class.name | lower}}_data.{{x[0] | lower}}s:
-        for x in {{ class.name | lower}}_data.{{x[0] | lower}}s:
+    if {{ class.name | lower}}_data.{{x[3]}}:
+        for x in {{ class.name | lower}}_data.{{x[3]}}:
             {%for lk_class in classes%}
-            {% if lk_class.name == x[0] %}
+            {% if lk_class.name == x[1] %}
             if isinstance(x, int):
-                db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == x).first()
-                if db_{{x[0] | lower}} is None:
-                    raise HTTPException(status_code=404, detail=f"{{x[0]}} with ID {x} not found")
+                db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == x).first()
+                if db_{{x[1] | lower}} is None:
+                    raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {x} not found")
             else:
-                db_{{x[0] | lower}} = {{x[0]}}({%for attr in lk_class.attributes%}{{attr.name}}=x.{{attr.name}}{% if not loop.last %}, {% endif %}{%endfor%})
-            database.add(db_{{x[0] | lower}})
+                db_{{x[1] | lower}} = {{x[1]}}(
+                    {%for attr in lk_class.attributes%}
+                    {{attr.name}}=x.{{attr.name}}{% if attr.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
+                    {%endfor%}
+                )
+            database.add(db_{{x[1] | lower}})
             database.commit()
             # Create the association
-            association = {{x[1]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.id, {{ x[0]|lower }}_id=db_{{ x[0]|lower }}.id)
+            association = {{x[4]}}.insert().values({{ class.name | lower}}_id=db_{{ class.name | lower}}.id, {{ x[1]|lower }}_id=db_{{ x[1]|lower }}.id)
             database.execute(association)
             database.commit()
             {% endif %}
@@ -163,25 +183,25 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
 
     {# Update attributes of the model -#}
     {% for attribute in class.attributes %}
-    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }})
+    setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
     {% endfor %}
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
-    existing_{{x[0] | lower}}_ids = [assoc.{{x[0]|lower}}_id for assoc in database.execute(
-        {{x[1]}}.select().where({{x[1]}}.c.{{ class.name | lower }}_id == db_{{ class.name | lower }}.id))]
+    existing_{{x[1] | lower}}_ids = [assoc.{{x[3]|lower}} for assoc in database.execute(
+        {{x[4]}}.select().where({{x[4]}}.c.{{x[2]|lower}} == db_{{ class.name | lower }}.id))]
     
-    {{x[0]|lower}}s_to_remove = set(existing_{{x[0]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[0]|lower}}s{%if not nested_creations %}_id{%endif%})
-    for {{x[0]|lower}}_id in {{x[0]|lower}}s_to_remove:
-        association = {{x[1]}}.delete().where(
-            {{x[1]}}.c.{{ class.name | lower }}_id == db_{{ class.name | lower }}.id and {{x[1]}}.c.{{x[0]|lower}}_id == {{x[0]|lower}}_id)
+    {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%})
+    for {{x[1]|lower}}_id in {{x[1]|lower}}s_to_remove:
+        association = {{x[4]}}.delete().where(
+            {{x[4]}}.c.{{x[2]|lower}} == db_{{x[0]|lower}}.id and {{x[4]}}.c.{{x[1]|lower}}_id == {{x[1]|lower}}_id)
         database.execute(association)
 
-    new_{{x[0]|lower}}_ids = set({{ class.name | lower }}_data.{{x[0]|lower}}s{%if not nested_creations %}_id{%endif%}) - set(existing_{{x[0]|lower}}_ids)
-    for {{x[0]|lower}}_id in new_{{x[0]|lower}}_ids:
-        db_{{x[0]|lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{x[0]|lower}}_id).first()
+    new_{{x[1]|lower}}_ids = set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%}) - set(existing_{{x[1]|lower}}_ids)
+    for {{x[1]|lower}}_id in new_{{x[1]|lower}}_ids:
+        db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[0]}}.id == {{x[0]|lower}}_id).first()
         if db_{{x[0]|lower}} is None:
             raise HTTPException(status_code=404, detail="{{x[0]}} with ID {{x[0]|lower}}_id not found")
-        association = {{x[1]}}.insert().values({{ class.name | lower }}_id=db_{{ class.name | lower }}.id, {{x[0]|lower}}_id=db_{{x[0]|lower}}.id)
+        association = {{x[4]}}.insert().values({{x[3]|lower}}=db_{{x[1]|lower}}.id, {{x[2]|lower}}=db_{{x[0]|lower}}.id)
         database.execute(association)
     {% endfor %}
     {% endif %}
@@ -219,10 +239,10 @@ if __name__ == "__main__":
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, 'openapi_specs.json')
     print(f"Writing OpenAPI schema to {output_file}")
-    print("Swagger UI available at 127.0.0.1:8000/docs")
+    print("Swagger UI available at 0.0.0.0:8000/docs")
     with open(output_file, 'w') as file:
         json.dump(openapi_schema, file)
-    uvicorn.run(app, host="127.0.0.1", port= {% if port %}{{ port }}{%else%}8000{%endif%})
+    uvicorn.run(app, host="0.0.0.0", port= {% if port %}{{ port }}{%else%}8000{%endif%})
 
 
 

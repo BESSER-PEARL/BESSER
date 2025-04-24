@@ -1,0 +1,4 @@
+[submodule "besser/utilities/web_modeling_editor/BESSER_WME_standalone"]
+	path = besser/utilities/web_modeling_editor/BESSER_WME_standalone
+	url = https://github.com/BESSER-PEARL/BESSER_WME_standalone
+	branch = main

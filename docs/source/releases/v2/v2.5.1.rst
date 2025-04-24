@@ -1,0 +1,16 @@
+Version 2.5.1
+=============
+
+Improvements
+--------------
+- Includes automatic installation of the following packages when using ``pip install besser[nn]``:
+
+  - pillow>=11.1.0
+  - numpy>=2.2.4
+  - torch>=2.6.0
+- Added support for neural network packages with local installation via ``--nn`` flag in setup_environment.py
+
+.. note::
+
+    The neural network dependencies have been made optional to reduce the installation footprint for users
+    who don't need these capabilities. 

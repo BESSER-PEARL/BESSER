@@ -1,57 +1,68 @@
-from besser.BUML.metamodel.structural import *  
-
-# Primitive Data Types
-str_type = PrimitiveDataType("str")
-int_type = PrimitiveDataType("int")
-date_type = PrimitiveDataType("date")
+# Generated B-UML Model
+from besser.BUML.metamodel.structural import (
+    Class, Property, Method, Parameter,
+    BinaryAssociation, Generalization, DomainModel,
+    Enumeration, EnumerationLiteral, Multiplicity,
+    StringType, IntegerType, FloatType, BooleanType,
+    TimeType, DateType, DateTimeType, TimeDeltaType
+)
 
 # Enumerations
-MemberType = Enumeration(name="MemberType", literals = {
-			EnumerationLiteral(name="CHILD"),
-			EnumerationLiteral(name="ADULT"),
+MemberType: Enumeration = Enumeration(
+    name="MemberType",
+    literals={
+            EnumerationLiteral(name="ADULT"),
 			EnumerationLiteral(name="SENIOR"),
-			EnumerationLiteral(name="STUDENT")})
+			EnumerationLiteral(name="STUDENT"),
+			EnumerationLiteral(name="CHILD")
+    }
+)
 
 # Classes
-Library: Class = Class(name="Library")
-Book: Class = Class(name="Book")
-Author: Class = Class(name="Author")
+Book = Class(name="Book")
+Author = Class(name="Author")
+Library = Class(name="Library")
+
+# Book class attributes and methods
+Book_release: Property = Property(name="release", type=DateType)
+Book_title: Property = Property(name="title", type=StringType)
+Book_pages: Property = Property(name="pages", type=IntegerType)
+Book.attributes={Book_release, Book_title, Book_pages}
+
+# Author class attributes and methods
+Author_email: Property = Property(name="email", type=StringType)
+Author_member: Property = Property(name="member", type=MemberType)
+Author_m_method: Method = Method(name="method", parameters={Parameter(name='sms', type=StringType, default_value='message')})
+Author.attributes={Author_email, Author_member}
+Author.methods={Author_m_method}
 
 # Library class attributes and methods
-Library_name: Property = Property(name="name", type=str_type, visibility="public")
-Library_address: Property = Property(name="address", type=str_type, visibility="public")
-Library_m_findBook: Method = Method(name="findBook", visibility="public", parameters={Parameter(name="title", type=str_type)}, type=Book)
+Library_name: Property = Property(name="name", type=StringType)
+Library_address: Property = Property(name="address", type=StringType)
+Library_m_findBook: Method = Method(name="findBook", parameters={Parameter(name='title', type=StringType)}, type=Book)
 Library.attributes={Library_name, Library_address}
 Library.methods={Library_m_findBook}
 
-# Book class attributes and methods
-Book_title: Property = Property(name="title", type=str_type, visibility="public")
-Book_pages: Property = Property(name="pages", type=int_type, visibility="public")
-Book_release: Property = Property(name="release", type=date_type, visibility="public")
-Book.attributes={Book_title, Book_pages, Book_release}
-
-# Author class attributes and methods
-Author_name: Property = Property(name="name", type=str_type, visibility="public")
-Author_email: Property = Property(name="email", type=str_type, visibility="public")
-Author_member: Property = Property(name="member", type=MemberType, visibility="public")
-Author_m_notify: Method = Method(name="notify", visibility="public", parameters={Parameter(name="sms", type=str_type, default_value="hello")}, type=None)
-Author.attributes={Author_name, Author_email, Author_member}
-Author.methods={Author_m_notify}
-
 # Relationships
-writtenBy: BinaryAssociation = BinaryAssociation(name="writtenBy", ends={
-        Property(name="writtenBy", type=Book, multiplicity=Multiplicity(0, "*")),
-        Property(name="writtenBy", type=Author, multiplicity=Multiplicity(1, "*"))})
-has: BinaryAssociation = BinaryAssociation(name="has", ends={
-        Property(name="has", type=Library, multiplicity=Multiplicity(1, 1)),
-        Property(name="has", type=Book, multiplicity=Multiplicity(0, "*"))})
-
+Has: BinaryAssociation = BinaryAssociation(
+    name="Has",
+    ends={
+        Property(name="Book_end", type=Book, multiplicity=Multiplicity(0, "*")),
+        Property(name="Library_end", type=Library, multiplicity=Multiplicity(1, 1))
+    }
+)
+BookAuthor_Relation: BinaryAssociation = BinaryAssociation(
+    name="BookAuthor_Relation",
+    ends={
+        Property(name="writtenBy", type=Author, multiplicity=Multiplicity(1, "*")),
+        Property(name="Book_end", type=Book, multiplicity=Multiplicity(0, "*"))
+    }
+)
 
 # Domain Model
-domain: DomainModel = DomainModel(
-				name="Domain Model",
-				types={Library, Book, Author},
-				associations={writtenBy, has},
-				generalizations=set(),
-				enumerations={MemberType}
-				)
+domain_model = DomainModel(
+    name="Generated_Model",
+    types={Book, Author, Library, MemberType},
+    associations={Has, BookAuthor_Relation},
+    generalizations={}
+)

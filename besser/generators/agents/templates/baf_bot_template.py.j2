@@ -12,17 +12,20 @@ from besser.agent.nlp.intent_classifier.intent_classifier_configuration import L
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
 
 # Create the bot
-bot = Agent('{{ bot.name }}')
+agent = Agent('{{ agent.name }}')
 # Load bot properties stored in a dedicated file
-bot.load_properties('config.ini')
+agent.load_properties('config.ini')
 # Define the platform your chatbot will use
-{% for platform in bot.platforms -%}
+{% for platform in agent.platforms -%}
 {% if platform.__class__.__name__ == 'WebSocketPlatform' -%}
-websocket_platform = bot.use_websocket_platform(use_ui=True)
+websocket_platform = agent.use_websocket_platform(use_ui=True)
 {% elif platform.__class__.__name__ == 'TelegramPlatform' -%}
-telegram_platform = bot.use_telegram_platform()
+telegram_platform = agent.use_telegram_platform()
 {% endif -%}
 {% endfor -%}
+
+
+websocket_platform = agent.use_websocket_platform(use_ui=True)
 
 {% macro write_ic_config(ic_config) -%}
 {% if is_class(ic_config, 'SimpleIntentClassifierConfiguration') -%}SimpleIntentClassifierConfiguration(
@@ -45,22 +48,22 @@ telegram_platform = bot.use_telegram_platform()
 ){% endif -%}
 {% endmacro -%}
 
-{% if bot.default_ic_config != None -%}
-bot.set_default_ic_config({{ write_ic_config(bot.default_ic_config) }})
+{% if agent.default_ic_config != None -%}
+agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
 {% endif %}
-{% if bot.entities -%}
+{% if agent.entities -%}
 ##############################
 # ENTITIES
 ##############################
 
-{% for entity in bot.entities -%}
+{% for entity in agent.entities -%}
 {% if is_class(entity, 'BaseEntity') -%}
-from besser.bot.library.entity.base_entities import {{ entity.name }}
+from besser.agent.library.entity.base_entities import {{ entity.name }}
 {% endif -%}
 {% endfor %}
-{% for entity in bot.entities -%}
+{% for entity in agent.entities -%}
 {% if is_class(entity, 'CustomEntity') -%}
-{{ entity.name }} = bot.new_entity('{{ entity.name }}',
+{{ entity.name }} = agent.new_entity('{{ entity.name }}',
     {% if entity.description -%}
     description='{{ entity.description }}',
     {%  endif -%}
@@ -81,8 +84,8 @@ from besser.bot.library.entity.base_entities import {{ entity.name }}
 # INTENTS
 ##############################
 
-{% for intent in bot.intents -%}
-{{ intent.name }} = bot.new_intent('{{ intent.name }}', [
+{% for intent in agent.intents -%}
+{{ intent.name }} = agent.new_intent('{{ intent.name }}', [
     {% for training_sentence in intent.training_sentences -%}
     '{{ training_sentence }}',
     {% endfor -%}
@@ -96,20 +99,20 @@ from besser.bot.library.entity.base_entities import {{ entity.name }}
 # STATES
 ##############################
 
-{% for state in bot.states -%}
-{{ state.name }} = bot.new_state('{{ state.name }}'{% if state.initial %}, initial=True{% endif %}{% if state.ic_config != None %},
+{% for state in agent.states -%}
+{{ state.name }} = agent.new_state('{{ state.name }}'{% if state.initial %}, initial=True{% endif %}{% if state.ic_config != None %},
     ic_config={{ write_ic_config(state.ic_config) }}{% endif -%})
 {% endfor %}
 
-{% if bot.global_initial_states != [] -%}
+{% if agent.global_initial_states != [] -%}
 # GLOBAL STATES
 
-{% for (state, intent) in bot.global_initial_states -%}
+{% for (state, intent) in agent.global_initial_states -%}
 {{ state.name }}.set_global({{ intent.name }})
 {% endfor %}
 {% endif -%}
 {% set ns = namespace(custom_events=[], bodies=[]) -%}
-{% for state in bot.states -%}
+{% for state in agent.states -%}
 # {{ state.name }}
 {% if state.body != None -%}
 {% if state.body.name not in ns.bodies -%}
@@ -148,4 +151,4 @@ from besser.bot.library.entity.base_entities import {{ entity.name }}
 # RUN APPLICATION
 
 if __name__ == '__main__':
-    bot.run()
+    agent.run()

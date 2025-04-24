@@ -1,8 +1,11 @@
 import re
+import json
+
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
     Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint, AnyType
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
 from fastapi import HTTPException
+
 
 def parse_attribute(attribute_name, domain_model=None):
     """Parse an attribute string to extract visibility, name, and type, removing any colons."""
@@ -606,4 +609,187 @@ def process_state_machine(json_data):
                     code_lines.append(f"    {event_params}")
                     code_lines.append(")")
 
+    return "\n".join(code_lines)
+
+
+def process_agent_diagram(json_data):
+    """Process Agent Diagram specific elements and return Python code as string."""
+    code_lines = []
+    code_lines.append("import datetime")
+    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event")
+    code_lines.append("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession")
+    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import Body, ConfigProperty")
+    # code_lines.append("from besser.agent.nlp.llm.llm_openai_api import LLMOpenAI\n") wrong library, i should import from besser not baf
+    sm_name = json_data.get("name", "Generated_State_Machine")
+    code_lines.append(f"agent = Agent('{sm_name}')\n")
+    code_lines.append("agent.add_property(ConfigProperty('websocket_platform', 'websocket.host', 'localhost'))\n")
+    code_lines.append("agent.add_property(ConfigProperty('websocket_platform', 'websocket.port', 8765))\n")
+    code_lines.append("agent.add_property(ConfigProperty('websocket_platform', 'streamlit.host', 'localhost'))\n")
+    code_lines.append("agent.add_property(ConfigProperty('websocket_platform', 'streamlit.port', 5000))\n")
+    code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.language', 'en'))\n")
+    code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.region', 'US'))\n")
+    code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.timezone', 'Europe/Madrid'))\n")
+    code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.pre_processing', True))\n")
+    code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.intent_threshold', 0.4))\n")
+
+    code_lines.append("# INTENTS\n")
+    elements = json_data.get("elements", {})
+    relationships = json_data.get("relationships", {})
+
+    # Track states by ID for later reference
+    states_by_id = {}
+    body_names = set()
+    event_names = set()
+    intents = {}
+    # Collect all body, event and intents first
+    for element in elements.values():
+        if element.get("type") == "AgentStateBody":
+            body_names.add(element.get("name"))
+        elif element.get("type") == "AgentStateFallbackBody":
+            body_names.add(element.get("name"))
+        elif element.get("type") == "Intent":
+            intents[element.get("name")] = []
+            for intent_body in element.get("bodies"):
+                intents[element.get("name")].append(elements.get(intent_body).get("name"))
+    # Collect event names from transitions
+    for rel in relationships.values():
+        if rel.get("type") == "StateTransition" and rel.get("name"):
+            event_names.add(rel.get("name"))
+    # Write intents first
+    for intent in intents.keys():
+        intent_name = intent
+        intent_values = intents[intent]
+        code_lines.append(f"{intent_name} = agent.new_intent('{intent_name}', [")
+        for value in intent_values:
+            code_lines.append(f"    '{value}',")
+        code_lines.append("])\n")
+    # Write function definitions first
+    
+    print("oueoueoueu")
+    try:
+        if '"replyType": "llm"' in json.dumps(json_data):
+            print("ww")
+            # code_lines.append("llm = LLMOpenAI(agent=agent, name='gpt-4o-mini', parameters={})\n")
+    except Exception as e:
+        print(f"Error: {e}")
+    
+    for element in elements.values():
+        if element.get("type") == "AgentState":
+            name = element.get("name")  # throw error if no name
+            if element.get("bodies") != []:
+                bodyCode = [f"def {name}_body(session: AgentSession):"]
+                for body in element.get("bodies"):
+                    if elements.get(body).get("replyType") == "text":
+                        bodyCode.append(f"    session.reply('{elements.get(body).get('name')}')")
+                    elif elements.get(body).get("replyType") == "llm":
+                        print("not supported yet")
+                        # bodyCode.append(f"    session.reply(llm.predict(session.event.message))") not supported by besser yet
+                    elif elements.get(body).get("replyType") == "code":
+                        code_lines.append(elements.get(body).get('name').strip())
+                        # Extract the function name from the code
+                        function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', elements.get(body).get('name'))
+                        if function_match:
+                            function_name = function_match.group(1)
+                            elements.get(body)["name"] = function_name
+                        code_lines.append("")  # Add single blank line after function
+                        bodyCode = ""
+                code_lines.append("\n".join(bodyCode))
+                code_lines.append("")  # Add single blank line after function
+            if element.get("fallbackBodies") != []:
+                fallbackBodyCode = [f"def {name}_fallback_body(session: AgentSession):"]
+                for fallbackBody in element.get("fallbackBodies"):
+                    if elements.get(fallbackBody).get("replyType") == "text":
+                        fallbackBodyCode.append(f"    session.reply('{elements.get(fallbackBody).get('name')}')")
+                    elif elements.get(fallbackBody).get("replyType") == "code":
+                        print("todo")
+                code_lines.append("\n".join(fallbackBodyCode))
+                code_lines.append("")  # Add single blank line after function   
+    """
+    for element in elements.values():
+        if element.get("type") == "StateCodeBlock":
+            name = element.get("name", "")
+            code_content = element.get("code", {})
+            
+            # If name is empty, try to extract function name from code content
+            if not name:
+                # Look for "def function_name(" pattern in the code
+                function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
+                if function_match:
+                    name = function_match.group(1)
+                    
+            # Clean up the code content by removing extra newlines
+            cleaned_code = "\n".join(line for line in code_content.splitlines() if line.strip())
+            # Write the function definition with its code content
+            code_lines.append(cleaned_code)  # Write the actual function code
+            code_lines.append("")  # Add single blank line after function
+
+            if name in body_names:
+                code_lines.append(f"{name} = Body(name='{name}', callable={name})")
+            if name in event_names:
+                code_lines.append(f"{name} = Event(name='{name}', callable={name})")
+            code_lines.append("")  # Add blank line after Body/Event creation
+            """
+    # Create states
+    print("keke")
+    for element_id, element in elements.items():
+        if element.get("type") == "AgentState":
+            is_initial = False
+            for rel in relationships.values():
+                if (rel.get("type") == "StateTransition" and
+                    rel.get("target", {}).get("element") == element_id and
+                    elements.get(rel.get("source", {}).get("element", ""), {}).get("type") == "StateInitialNode"):
+                    is_initial = True
+                    break
+
+            state_name = element.get("name", "")
+            code_lines.append(f"{state_name}_state = agent.new_state(name='{state_name}', initial={str(is_initial)})")
+            states_by_id[element_id] = state_name
+    code_lines.append("")
+    # Assign bodies to states
+    try:
+        for element_id, element in elements.items():
+            if element.get("type") == "AgentState":
+                state_name = element.get("name", "")
+                if element.get("bodies") != []:
+                    for body in element.get("bodies"):
+                        if elements.get(body).get("replyType") == "code":
+                            # Extract the function name from the code
+                            code_lines.append(f"{state_name}_state.set_body(Body('{elements.get(body).get('name')}', {elements.get(body).get('name')}))")
+                        else:
+                            code_lines.append(f"{state_name}_state.set_body(Body('{state_name}_body', {state_name}_body))")
+                if element.get("fallbackBodies") != []:
+                    for body in element.get("fallbackBodies"):
+                        if elements.get(body).get("replyType") == "code":
+                            # Extract the function name from the code
+                            code_lines.append(f"{state_name}_state.set_fallback_body(Body('{elements.get(body).get('name')}', {elements.get(body).get('name')}))")
+                        else:
+                            code_lines.append(f"{state_name}_state.set_fallback_body(Body('{state_name}_fallback_body', {state_name}_fallback_body))")
+                    
+        code_lines.append("")
+    except Exception as e:
+        print(f"Error: {e}")
+    print("lee")
+    # Write transitions
+    for relationship in relationships.values():
+        if relationship.get("type") == "StateTransition":
+            source_id = relationship.get("source", {}).get("element")
+            target_id = relationship.get("target", {}).get("element")
+
+            if elements.get(source_id, {}).get("type") == "StateInitialNode":
+                continue
+
+            source_name = states_by_id.get(source_id)
+            target_name = states_by_id.get(target_id)
+
+            if source_name and target_name:
+                event_name = relationship.get("name", "")
+                params = relationship.get("params")
+
+                if event_name:
+                    code_lines.append(f"{source_name}_state.when_intent_matched_go_to(")
+                    code_lines.append(f"    {event_name},")
+                    code_lines.append(f"    {target_name}_state")
+                    code_lines.append(")")
+                else:
+                    code_lines.append(f"{source_name}_state.when_no_intent_matched_go_to({target_name}_state)")
     return "\n".join(code_lines)

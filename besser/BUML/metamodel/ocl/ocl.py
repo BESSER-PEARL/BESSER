@@ -1,5 +1,9 @@
 from typing import Any
-from besser.BUML.metamodel.structural import Class, NamedElement, TypedElement, Type, PrimitiveDataType, Property, Constraint
+from besser.BUML.metamodel.structural import (
+    Class, TypedElement, Type, StringType,
+    Property, Constraint, BooleanType, FloatType,
+    IntegerType, DateType
+)
 
 
 class OCLExpression(TypedElement):
@@ -80,7 +84,7 @@ class IntegerLiteralExpression(LiteralExpression):
     """
 
     def __init__(self, name: str, value: int):
-        super().__init__(name, type=PrimitiveDataType(name="int"), value=value)
+        super().__init__(name, type=IntegerType, value=value)
 
     def __repr__(self):
         return f'IntegerLiteralExpression({self.value})'
@@ -135,7 +139,7 @@ class OperationCallExpression(OCLExpression):
     """
 
     def __init__(self, name: str, operation: str, arguments: list[OCLExpression]):
-        super().__init__(name, Type(PrimitiveDataType("bool")))  # Type for now is always boolean, it should be the return type of the operation
+        super().__init__(name, BooleanType)  # Type for now is always boolean, it should be the return type of the operation
         self.operation: str = operation
         self.arguments: list[OCLExpression] = arguments
 
@@ -347,7 +351,7 @@ class RealLiteralExpression(LiteralExpression):
     """
 
     def __init__(self, name: str, value: float):
-        super().__init__(name, type=PrimitiveDataType(name="float"), value=value)
+        super().__init__(name, type=FloatType, value=value)
 
     def __repr__(self):
         return f'RealLiteralExpression({self.value})'
@@ -514,7 +518,7 @@ class BooleanLiteralExpression(LiteralExpression):
     """
 
     def __init__(self, name: str, value: bool):
-        super().__init__(name, type=PrimitiveDataType(name="bool"), value=value)
+        super().__init__(name, type=BooleanType, value=value)
 
     def __repr__(self):
         return f'BooleanLiteralExpression({self.value})'
@@ -528,7 +532,7 @@ class DateLiteralExpression(LiteralExpression):
     """
 
     def __init__(self, name: str, value: str):
-        super().__init__(name, type=PrimitiveDataType(name="date"), value=value)
+        super().__init__(name, type=DateType, value=value)
 
     def __repr__(self):
         return f'DateLiteralExpression({self.value})'
@@ -543,7 +547,7 @@ class StringLiteralExpression(LiteralExpression):
     """
 
     def __init__(self, name: str, value: str):
-        super().__init__(name, type=PrimitiveDataType(name="str"), value=value)
+        super().__init__(name, type=StringType, value=value)
 
     def __repr__(self):
         return f'StringLiteralExpression({self.value})'

@@ -3,6 +3,13 @@
 REM Get the current directory path (where the .bat file is executed)
 set "PROJECT_PATH=%~dp0"
 
+REM Get requirements file path from command line argument or use default
+if "%~1"=="" (
+    set "REQ_FILE=%PROJECT_PATH%requirements.txt"
+) else (
+    set "REQ_FILE=%~1"
+)
+
 REM Navigate to the project directory
 cd %PROJECT_PATH%
 
@@ -22,7 +29,7 @@ if exist "besser_venv\Scripts\Activate.ps1" (
         "cd '%PROJECT_PATH%';" ^
         ". .\besser_venv\Scripts\Activate.ps1;" ^
         "$env:PYTHONPATH='%PROJECT_PATH%';" ^
-        "if (Test-Path requirements.txt) { pip install -r requirements.txt }"
+        "if (Test-Path '%REQ_FILE%') { Write-Host 'Installing requirements from: %REQ_FILE%'; pip install -r '%REQ_FILE%' }"
 
 ) else (
     echo Error: Unable to activate the virtual environment.

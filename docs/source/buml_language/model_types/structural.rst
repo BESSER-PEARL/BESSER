@@ -18,6 +18,14 @@ class, a common need in many code generation scenarios.
   This figure contains only the main classes, attributes, and methods of the B-UML language. For a detailed 
   description please refer to the :doc:`API documentation <../../api>`.
 
+
+Available Data Types
+-----------------------
+
+BESSER provides a comprehensive set of primitive data types for modeling. The available types include ``StringType``, 
+``IntegerType``, ``FloatType``, ``BooleanType``, ``DateType``, ``TimeType``, ``DateTimeType``, ``TimeDeltaType`` 
+and ``AnyType``. These types can be used to define properties and attributes in your structural models.
+
 Supported notations
 -------------------
 

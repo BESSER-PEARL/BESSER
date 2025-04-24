@@ -8,7 +8,10 @@ VALID_PRIMITIVE_TYPES = {
     "bool": "bool",
     "boolean": "bool",
     "date": "date",
-    "datetime": "datetime"
+    "datetime": "datetime",
+    "time": "time",
+    "timedelta": "timedelta",
+    "any": "any"
 }
 
 VISIBILITY_MAP = {

@@ -37,7 +37,9 @@ A. Running without containerization (``containerization = False``)
 
 **Recommendation**: Use Python 3.12 or higher for optimal performance.
 
-Enter the project folder and run the following commands:
+In this case, you will get a Django project configured to deploy with a 
+`SQLite database <https://www.sqlite.org/>`_. 
+Go to the project folder and run the following commands to deploy the web app.
 
 .. code-block:: bash
 
@@ -59,7 +61,10 @@ B. Running with containerization (``containerization = True``)
 
 **Requirement**: `Docker Compose <https://docs.docker.com/compose/>`_
 
-Enter the project folder and run this command:
+In this case, you will get a Django project configured to deploy using software containers: 
+one for the Django app server and another for the 
+`PostgreSQL database <https://www.postgresql.org/>`_.
+Go to the project folder and run the following command.
 
 .. code-block:: bash
 

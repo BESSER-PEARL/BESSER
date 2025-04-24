@@ -1,23 +1,25 @@
 {# Template for class parameters #}
-{%- macro init_parameters(class) %}self
-    {%- for attribute in class.all_attributes() %}, {{ attribute.name }}: {{ attribute.type.name }}{% endfor %}
-    {%- for end in class.association_ends() if end.is_navigable == True %}, {{ end.name }}: {% if end.multiplicity.max > 1 %}set["{{ end.type.name }}"]
+{%- macro init_parameters(class, sort_by_timestamp) %}self
+    {%- for attribute in sort_by_timestamp(class.all_attributes()) %}, {{ attribute.name }}: {{ attribute.type.name }}{% endfor %}
+    {%- for end in sort_by_timestamp(class.association_ends()) if end.is_navigable == True %}, {{ end.name }}: {% if end.multiplicity.max > 1 %}set["{{ end.type.name }}"] = None
     {%- else %}"{{ end.type.name }}"{%- endif %}{%- endfor %}
-    {%- for parent in class.all_parents() %}
-    {%- for end in parent.association_ends() if end.is_navigable == True %}, {{ end.name }}: {% if end.multiplicity.max > 1 %}set["{{ end.type.name }}"]
+    {%- for parent in sort_by_timestamp(class.all_parents()) %}
+    {%- for end in parent.association_ends() if end.is_navigable == True %}, {{ end.name }}: {% if end.multiplicity.max > 1 %}set["{{ end.type.name }}"] = None
     {%- else %}"{{ end.type.name }}"{%- endif %}{%- endfor %}
     {%- endfor %}
 {%- endmacro %}
-{%- macro init_parameters_definition(class)%}
+{%- macro init_parameters_definition(class, sort_by_timestamp)%}
         {%- if class.inherited_attributes() %}super().__init__(
-            {%- for attr in class.inherited_attributes() %}{{attr.name}}{{ ", " if not loop.last else "" }}
+            {%- for attr in sort_by_timestamp(class.inherited_attributes()) %}{{attr.name}}{{ ", " if not loop.last else "" }}
             {%- endfor %}
-            {%- for parent in class.all_parents() %}
+            {%- for parent in sort_by_timestamp(class.all_parents()) %}
             {%- for end in parent.association_ends() if end.is_navigable == True %}, {{ end.name }}{% endfor %}
             {%- endfor %})
         {% endif %}
-        {%- for attribute in class.attributes %}self.{{ attribute.name }} = {{ attribute.name }}
+        {%- for attribute in sort_by_timestamp(class.attributes) %}self.{{ attribute.name }} = {{ attribute.name }}
+        {% endfor %}
+        {%- for end in sort_by_timestamp(class.association_ends()) %}
+        {%- if end.is_navigable == True %}self.{{ end.name }} = {{ end.name }} if {{ end.name }} is not None else set()
+        {% endif -%}
         {% endfor -%}
-        {% for end in class.association_ends() %}{% if end.is_navigable == True %}self.{{ end.name }} = {{ end.name }} 
-        {% endif %}{% endfor -%}
 {% endmacro -%}

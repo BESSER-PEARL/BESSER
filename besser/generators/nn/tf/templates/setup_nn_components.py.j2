@@ -1,0 +1,400 @@
+{# Template for nn components #}
+
+{% macro add_to_set(current_set, new_element) %}
+    {{ current_set }}
+    {% if new_element not in current_set %}
+        new_element not in current_set
+        {% set updated_set = current_set + [new_element] %}
+    {% else %}
+        {% set updated_set = current_set %}
+    {% endif %}
+    {{ updated_set }}
+{% endmacro %}
+
+{%- macro initialize_dict(dict_def, key) -%}
+    {%- set _ = dict_def.update({key: []}) -%}
+{%- endmacro -%}
+
+{%- macro print_imports(model, modules_details, generation_type) %}
+{%- set si = namespace(sequential_imported=False) -%}
+{% if generation_type == "sequential"%}from keras.models import Sequential{%- set si.sequential_imported = True -%} {% endif %}
+import tensorflow as tf
+from keras import layers
+{% for module_name, module_details in modules_details.items() -%}
+{% if module_name.endswith("nn") and si.sequential_imported == False %}from keras.models import Sequential{%- set si.sequential_imported = True -%} {% endif %}{% endfor %}
+{% if model.train_data is not none %}
+from datetime import datetime
+{% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report
+{%- else -%}from sklearn.metrics import mean_absolute_error{%- endif %} 
+{% if model.train_data.input_format == "csv" %}import pandas as pd{%- endif %}
+{%- endif %}
+{%- for module_name, module_details in modules_details.items() -%}
+{%- if module_name.endswith("layer") %}{% if module_details[0].split("=")[1].strip().startswith("tfa") %}import tensorflow_addons as tfa{% endif %}{% endif %}{% endfor %}
+{% if model.train_data.input_format == "images" %}from besser.generators.nn.utils_nn import compute_mean_std{%- endif %}
+{% endmacro -%}
+
+
+{%- macro print_sequential(model, modules_details) %}
+    {%- for module_name, module_details in modules_details.items() %}
+        {%- if module_name.endswith("nn") %}
+{{ module_name.split('_')[0] }} = Sequential([
+    {%- for subnn_key, subnn_value in module_details.items() %}
+        {%- if subnn_key != "in_out_variable" %}
+            {%- if "layers.ZeroPadding" in subnn_value[0] %}
+    {{ subnn_value[0].split("#")[0].split('=', 1)[1].strip() }},
+    {{ subnn_value[0].split("#")[1].split('=', 1)[1].strip() }},
+            {%- else %}
+    {{ subnn_value[0].split('=', 1)[1].strip() }},
+            {%- endif -%}
+        {%- endif -%}
+    {%- endfor %}
+])
+        {%- endif -%}
+    {%- endfor %}
+
+{{ model.name }} = Sequential([
+    {%- for module_name, module_details in modules_details.items() %}
+        {%- if module_name.endswith("nn") %}
+    {{ module_name.split('_')[0] }},
+        {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
+        {%- if "layers.ZeroPadding" in module_details[0] %}
+    {{ module_details[0].split("#")[0].strip() }}
+    {{ module_details[0].split("#")[1].strip() }}
+        {%- else %}
+    {{ module_details[0].split('=', 1)[1].strip() }},
+        {%- endif -%}
+        {%- endif -%}
+    {%- endfor %}
+])
+{% endmacro -%}
+
+
+
+{%- macro print_init(modules_details) %}
+        super().__init__()
+        {%- for module_name, module_details in modules_details.items() -%}
+        {%- if module_name.endswith("nn") %}
+
+        self.{{ module_name.split('_')[0] }} = Sequential([
+            {%- for subnn_key, subnn_value in module_details.items() %}
+            {%- if subnn_key != "in_out_variable" %}
+            {%- if "layers.ZeroPadding" in subnn_value[0] %}
+            {{ subnn_value[0].split("#")[0].split('=', 1)[1].strip() }},
+            {{ subnn_value[0].split("#")[1].split('=', 1)[1].strip() }},
+            {%- else %}
+            {{ subnn_value[0].split('=', 1)[1].strip() }},
+            {%- endif -%}
+            {%- endif -%}
+            {%- endfor %}
+        ])
+
+        {%- elif module_name.endswith("layer") %}
+        {%- if "layers.ZeroPadding" in module_details[0] %}
+        {{ module_details[0].split("#")[0].strip() }}
+        {{ module_details[0].split("#")[1].strip() }}
+        {%- else %}
+        {{ module_details[0] }}
+        {%- endif -%}
+        {%- endif -%}
+        {%- endfor %}
+{% endmacro -%}
+
+{%- macro print_forward(modules_details) %}
+    {%- set return_variable =  namespace(value="") %}
+    {%- for module_name, module_details in modules_details.items() -%}
+    {%- if module_name.endswith("op") %}
+        {{ module_details[1] }} = {{ module_details[0] }}
+    {%- elif module_name.endswith("nn") %} 
+        {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
+    {%- else %}
+        {%- if "layers.ZeroPadding" in module_details[0] %}
+        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}_pad({{ module_details[2] }})
+        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {%- elif module_details[-1].__class__.mro()[1].__name__ == "RNN" %}
+            {%- if module_details[-1].return_type == "hidden" %}
+                {%- if module_details[-1].__class__.__name__ == "LSTMLayer" and module_details[-1].bidirectional %}
+        _, forward_h_n, _, backward_h_n, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- elif module_details[-1].__class__.__name__ == "LSTMLayer" %}
+        _, {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- elif module_details[-1].__class__.__name__ != "LSTMLayer" and module_details[-1].bidirectional %}
+        _, forward_h_n, backward_h_n = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- else %}
+        _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- endif -%}
+                {%- if module_details[-1].bidirectional %}
+        {{ module_details[1] }} = tf.concat([forward_h_n, backward_h_n], axis=-1)
+                {%- endif -%}
+            {%- else %}
+        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+            {%- endif -%}
+        {%- else %}
+        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+    {%- endif -%}
+    {%- endif -%}
+    {%- if module_name.endswith("nn") %}
+    {%- set return_variable.value =  module_details["in_out_variable"] %}
+    {%- else %} 
+    {%- set return_variable.value =  module_details[1] %}
+    {%- endif -%}
+    {%- endfor %}
+        {%- if "," in return_variable.value %}
+        return {{ return_variable.value.split(",")[0].strip() if return_variable.value.split(",")[0].strip()!="_" else return_variable.value.split(",")[1].strip()}}
+        {%- else %}
+        return {{ return_variable.value }}
+        {%- endif %}
+{% endmacro -%}
+
+{%- macro from_logits(modules_details) %}
+    {%- set last_module = modules_details.items() | last -%}
+    {%- if last_module[0].endswith("layer") -%}
+        {%- if last_module[1][-1].actv_func is none -%}
+    {%- set from_logits =  namespace(flag=True) -%}
+        {%- else -%}
+    {%- set from_logits =  namespace(flag=False) -%}
+        {%- endif -%}
+    {%- elif last_module[0].endswith("nn") -%}
+    {%- set last_layer_sub_nn = last_module[1].items() | last -%}
+    {%- if last_layer_sub_nn[1][-1].actv_func is none -%}
+    {%- set from_logits =  namespace(flag=True) -%}
+    {%- else -%}
+    {%- set from_logits =  namespace(flag=False) -%}
+    {%- endif %}
+    {%- endif %}
+    {{ from_logits.flag }}
+{% endmacro -%}
+
+
+{%- macro get_loss_function(configuration, from_logits) %}
+    {%- if from_logits -%}
+        {% set fl = "from_logits=True" %}
+    {%- else -%}
+        {% set fl = "" %}
+    {%- endif -%}
+    {%- if configuration.loss_function == "crossentropy" -%}
+        {% set loss_function = "tf.keras.losses.CategoricalCrossentropy(" ~ fl ~ ")" %}
+    {%- elif configuration.loss_function == "binary_crossentropy" -%}
+        {% set loss_function = "tf.keras.losses.BinaryCrossentropy(" ~ fl ~ ")" %}
+    {%- else -%}
+        {% set loss_function = "tf.keras.losses.MeanSquaredError()" %}
+    {%- endif -%}
+    {{ loss_function }}
+{% endmacro -%}
+
+{%- macro get_optimizer(model) %}
+    {%- if model.configuration.optimizer == "sgd" -%}
+    {% set optimizer_name = "tf.keras.optimizers.SGD" %}
+    {%- elif model.configuration.optimizer == "adam" -%}
+    {% set optimizer_name = "tf.keras.optimizers.Adam" %}
+    {%- elif model.configuration.optimizer == "adamW" -%}
+    {% set optimizer_name = "tf.keras.optimizers.AdamW" %}
+    {%- else -%}
+    {% set optimizer_name = "tf.keras.optimizers.Adagrad" %}
+    {%- endif -%}
+    {%- if model.configuration.momentum != 0 and model.configuration.optimizer == "sgd" -%}
+    {%- if model.configuration.weight_decay != 0 -%}
+    {{ optimizer_name }}(learning_rate={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }}, weight_decay={{ model.configuration.weight_decay }})
+    {%- else -%}
+    {{ optimizer_name }}(learning_rate={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }})
+    {%- endif -%}
+    {%- elif model.configuration.optimizer != "sgd" -%}
+    {%- if model.configuration.weight_decay != 0 -%}
+    {{ optimizer_name }}(learning_rate={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }})
+    {%- else -%}
+    {{ optimizer_name }}(learning_rate={{ model.configuration.learning_rate }})
+    {%- endif -%}
+    {%- endif -%}
+{% endmacro -%}
+
+
+{%- macro prepare_data(train_data, test_data, configuration) -%}
+    {%- if train_data.input_format == "images" -%}
+{%- set IMAGE_SIZE = (
+    train_data.image.shape[0] , train_data.image.shape[1]
+) -%}
+IMAGE_SIZE = {{ IMAGE_SIZE }}
+
+# Function to load and preprocess images
+{%- if train_data.image.normalize %}
+scale, mean, std = compute_mean_std("{{ train_data.path_data }}", 
+                                    num_samples=100, target_size=IMAGE_SIZE)
+def preprocess_image(image, label, to_scale, mean, std):
+    if to_scale:
+        image = tf.cast(image, tf.float32) / 255.0
+    image = (image - mean) / std
+    return image, label
+
+{%- else %}
+scale, _, _ = compute_mean_std("{{ train_data.path_data }}", num_samples=100,
+                               target_size=IMAGE_SIZE)
+def preprocess_image(image, label, to_scale):
+    if to_scale:
+        image = tf.cast(image, tf.float32) / 255.0
+    return image, label
+{%- endif %}
+
+
+# Load dataset (resizes by default)
+def load_dataset(directory, mode, image_size):
+    dataset = tf.keras.preprocessing.image_dataset_from_directory(
+        directory=directory,
+        label_mode="int",
+        image_size=image_size,
+        batch_size={{ configuration.batch_size }},
+        shuffle=True if mode == 'train' else False,
+    )
+    # Apply preprocessing
+    {%- if train_data.image.normalize %}
+    dataset = dataset.map(
+        lambda image, label: preprocess_image(image, label, scale, mean, std))
+    {%- else %}
+    dataset = dataset.map(
+        lambda image, label: preprocess_image(image, label, scale))
+    {%- endif %}
+    # Prefetch for performance optimization
+    AUTOTUNE = tf.data.AUTOTUNE
+    dataset = dataset.prefetch(buffer_size=AUTOTUNE)
+    return dataset
+
+# Load datasets
+train_loader = load_dataset("{{ train_data.path_data }}", "train", IMAGE_SIZE)
+test_loader = load_dataset("{{ test_data.path_data }}", "test", IMAGE_SIZE)
+
+   {%- else -%}
+    def load_dataset(csv_file):
+    # Load data from CSV file
+    data = pd.read_csv(csv_file)
+    # Extract features and targets
+    features = data.iloc[:, :-1].values.astype("float32")
+    targets = data.iloc[:, -1].values.astype("float32")
+    # Convert to TensorFlow tensors
+    features_tensor = tf.convert_to_tensor(features)
+    targets_tensor = tf.convert_to_tensor(targets)
+    # Create a TensorFlow dataset
+    dataset = tf.data.Dataset.from_tensor_slices((features_tensor, 
+                                                  targets_tensor))
+    return dataset
+
+# Load training and test data
+train_dataset = load_dataset("{{ train_data.path_data }}")
+test_dataset = load_dataset("{{ test_data.path_data }}")
+
+# Create data loaders
+def create_data_loader(dataset, mode):
+    if mode == "train":
+        dataset = dataset.shuffle(buffer_size=10000)
+    dataset = dataset.batch({{ configuration.batch_size }})
+    dataset = dataset.prefetch(buffer_size=tf.data.AUTOTUNE)
+    return dataset
+
+# Create data loaders
+train_loader = create_data_loader(train_dataset, "train")
+test_loader = create_data_loader(test_dataset, "test")
+{%- endif -%}
+{% endmacro -%}
+
+{%- macro get_output_layer_neurons(model) -%}
+    {%- if  model.modules[-1].__class__.__name__ == "LinearLayer" -%}
+        {{- model.modules[-1].out_features }}
+    {% else %}
+        {{- model.modules[-1].modules[-1].out_features }}
+    {%- endif -%}
+{%- endmacro -%}
+
+{%- macro train_model(model, prediction_task) -%}
+print('##### Training the model')
+for epoch in range({{ model.configuration.epochs }}):
+    # Initialize the running loss for the current epoch
+    running_loss = 0.0
+    total_loss = 0.0
+    # Iterate over mini-batches of training data
+    for i, (inputs, labels) in enumerate(train_loader):
+        with tf.GradientTape() as tape:
+            outputs = {{ model.name }}(inputs, training=True)
+            # Convert labels to one-hot encoding
+            {% if prediction_task == "multi_class" -%}
+            if labels.shape.rank > 1 and labels.shape[-1] == 1:
+                labels = tf.squeeze(labels, axis=-1)
+            labels = tf.cast(labels, dtype=tf.int32)
+            labels = tf.one_hot(labels, depth={{ get_output_layer_neurons(model) }})
+            {% elif prediction_task == "regression" %}
+            labels = tf.expand_dims(labels, axis=1)
+            {% endif -%}
+            loss = criterion(labels, outputs)
+        # Compute gradients and update model parameters
+        gradients = tape.gradient(loss, {{ model.name }}.trainable_variables)
+        optimizer.apply_gradients(
+            zip(gradients, {{ model.name }}.trainable_variables))
+        total_loss += loss.numpy()
+        running_loss += loss.numpy()
+        if i % 200 == 199:  # Print every 200 mini-batches
+            print(
+                f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 200:.3f}"
+            )
+            running_loss = 0.0
+    print(
+        f"[{epoch + 1}] overall loss for epoch: "
+        f"{total_loss / len(train_loader):.3f}"
+    )
+    total_loss = 0.0
+print('Training finished')
+{%- endmacro -%}
+
+
+{% macro evaluate_model(model, prediction_task) -%}
+print('##### Evaluating the model')
+predicted_labels = []
+true_labels = []
+test_loss = 0.0
+
+for inputs, labels in test_loader:
+    outputs = {{ model.name }}(inputs, training=False)
+    true_labels.extend(labels.numpy())
+    {% if prediction_task == "binary" -%}
+    predicted = (outputs.numpy() > 0.5).astype(int)
+    {%- elif prediction_task == "multi_class" -%}
+    predicted = tf.argmax(outputs, axis=-1).numpy()
+    if labels.shape.rank > 1 and labels.shape[-1] == 1:
+        labels = tf.squeeze(labels, axis=-1)
+    labels = tf.cast(labels, dtype=tf.int32)
+    labels = tf.one_hot(labels, depth={{ get_output_layer_neurons(model) }})
+    {%- else -%}
+    predicted = outputs.numpy()
+    labels = tf.expand_dims(labels, axis=1)
+    {%- endif %}
+    predicted_labels.extend(predicted)
+    test_loss += criterion(labels, outputs).numpy()
+
+
+average_loss = test_loss / len(test_loader)
+print(f"Test Loss: {average_loss:.3f}")
+
+# Calculate the metrics
+metrics = {{ model.configuration.metrics }}
+{%- if prediction_task != "regression" %}
+report = classification_report(true_labels, predicted_labels,
+                               output_dict=True)
+for metric in metrics:
+    {%- if prediction_task == "binary" %}
+    print(f"{metric.capitalize()}:", report['1'][metric])
+    {%- elif prediction_task == 'multi_class' %}
+    metric_list = []
+    for class_label in report.keys():
+        if class_label not in ('macro avg', 'weighted avg', 'accuracy'):
+            print(f"{metric.capitalize()} for class {class_label}:",
+                  report[class_label][metric])
+            metric_list.append(report[class_label][metric])
+    metric_value = sum(metric_list) / len(metric_list)
+    print(f"Average {metric.capitalize()}: {metric_value:.2f}")
+    print(f"Accuracy: {report['accuracy']}"){% endif %}
+{% else %}
+mae = mean_absolute_error(true_labels, predicted_labels)
+print("Mean Absolute Error (MAE):", mae)
+{%- endif -%}
+{% endmacro -%}
+
+
+{% macro save_model(model) -%}
+print('##### Saving the model')
+{{ model.name }}.save(f"{{ model.name | lower }}_{datetime.now}")
+print("The model is saved successfully")
+{% endmacro -%}

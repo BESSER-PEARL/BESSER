@@ -61,7 +61,7 @@ BookAuthor_Relation: BinaryAssociation = BinaryAssociation(
 
 # Domain Model
 domain_model = DomainModel(
-    name="Generated Model",
+    name="Generated_Model",
     types={Book, Author, Library, MemberType},
     associations={Has, BookAuthor_Relation},
     generalizations={}

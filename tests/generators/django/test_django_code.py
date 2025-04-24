@@ -333,7 +333,7 @@ def test_Operations_many_to_many():
     end1: Property = Property(name="end1", type=class1, multiplicity=Multiplicity(1, 1))
     end2: Property = Property(name="end2", type=class2, multiplicity=Multiplicity(0, "*"))
     class1_class2_association: BinaryAssociation = BinaryAssociation(
-        name=" class1_class2_assoc", ends={end1, end2}
+        name="class1_class2_assoc", ends={end1, end2}
     )
 
     # class1-class3 association definition
@@ -345,7 +345,7 @@ def test_Operations_many_to_many():
 
     # Domain model definition
     model: DomainModel = DomainModel(
-        name="Library model",
+        name="Library_model",
         types={class1, class2, class3},
         associations={class1_class2_association, class1_class3_association}
     )

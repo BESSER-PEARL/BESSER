@@ -1,0 +1,88 @@
+{%- set data_source_name_lower = source_name[0].lower() + source_name[1:]%}
+{%- set data_source_name_upper = source_name[0].upper() + source_name[1:]%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Django CRUD</title>
+      <script src="https://cdn.tailwindcss.com"></script>
+      <style>
+        body {
+            background-color: #EAEAEA; /* Django Admin background */
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            max-width: 800px;
+            margin: 20px auto;
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        .btn-primary {
+            background-color: #0C4B33; /* Django primary color */
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        .btn-primary:hover {
+            background-color: #0A3A28;
+        }
+        .btn-secondary {
+            background-color: #888;
+            color: white;
+        }
+        .btn-secondary:hover {
+            background-color: #666;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    {% raw %}{% block content %}{% endblock %}{% endraw %}
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+    const add{{data_source_name_upper}}Btn = document.getElementById('add{{data_source_name_upper}}Btn');
+    const add{{data_source_name_upper}}Modal = document.getElementById('add{{data_source_name_upper}}Modal');
+    // Function to reset the form fields
+    function resetForm() {
+            {{data_source_name_lower}}Form.reset();  // Reset all input fields
+        }
+    add{{data_source_name_upper}}Btn.addEventListener('click', function () {
+        resetForm(); 
+        add{{data_source_name_upper}}Modal.classList.remove('hidden');
+    });
+    document.querySelectorAll('.cancelButton').forEach(button => {
+        button.addEventListener('click', function () {
+            add{{data_source_name_upper}}Modal.classList.add('hidden');
+            resetForm();
+        });
+    });
+    const {{data_source_name_lower}}Form = document.getElementById('{{data_source_name_lower}}Form');
+    {{data_source_name_lower}}Form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        const formData = new FormData({{data_source_name_lower}}Form);
+        fetch({{data_source_name_lower}}Form.action, {
+            method: 'POST',
+            body: formData,
+            headers: {
+                'X-CSRFToken': formData.get('csrfmiddlewaretoken')
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                location.reload();
+            } else {
+                console.error('Error:', data.errors);
+            }
+        })
+        .catch(error => console.error('Error:', error));
+    });
+});
+
+</script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+from django.urls import path
+from . import views
+
+
+# URL patterns for the entire app
+urlpatterns = [
+    # Home page
+    path('', views.home, name='home'),
+{%- for module in app.modules%}
+    {%- for screen in module.screens %}
+        {%- for component in screen.view_elements %}
+            {%- if component is is_List%}
+                {%- for source in component.list_sources%}
+                    {%- if source is is_ModelElement%}
+                       {%- set source_name= source.dataSourceClass%}
+
+    # {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}-related routes
+    path(
+        '{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}/create/', views.create_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}},
+        name='create_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}'
+    ),  # Create a new {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}
+    path(
+        '{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}/<int:{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_id>/edit/', views.edit_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}},
+        name='edit_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}'
+    ),  # Edit an existing {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}
+    path(
+        '{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}/<int:{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_id>/delete/', views.delete_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}},
+        name='delete_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}'
+    ),  # Delete an existing {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}
+    path(
+        '{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}/list/', views.{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list,
+        name='{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list'
+    ),  # Display list of all {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}s
+
+                    {%- endif %}
+                {%- endfor%}
+            {%- endif %}
+        {%-endfor%}
+    {%- endfor %}
+{%- endfor %}
+]
+
+     

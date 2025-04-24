@@ -1,0 +1,330 @@
+{# Template for nn components #}
+
+{% macro add_to_set(current_set, new_element) %}
+    {{ current_set }}
+    {% if new_element not in current_set %}
+        new_element not in current_set
+        {% set updated_set = current_set + [new_element] %}
+    {% else %}
+        {% set updated_set = current_set %}
+    {% endif %}
+    {{ updated_set }}
+{% endmacro %}
+
+{%- macro initialize_dict(dict_def, key) -%}
+    {%- set _ = dict_def.update({key: []}) -%}
+{%- endmacro -%}
+
+
+from datetime import datetime
+
+{%- macro print_imports(model, modules_details) %}
+{%- set ti = namespace(torch_imported=False) -%}
+{%- set actv = namespace(actv_imported=False) -%}
+{%- set perm = namespace(imported=False) -%}
+{% if model.train_data is not none %}import torch
+from datetime import datetime {%- set ti.torch_imported = True %}{% endif %}
+{%- for module_name, module_details in modules_details.items() -%}{% if ti.torch_imported == False and ((module_name.endswith("op") and module_details[0].startswith("torch")) or (module_details[-1].__class__.mro()[1].__name__ == "RNN" and module_details[-1].bidirectional and module_details[-1].return_type == "hidden"))%}import torch {%- set ti.torch_imported = True -%}{%- endif %}{%- endfor %}
+{% for module_name, module_details in modules_details.items() -%}{% if actv.actv_imported == False and "get_activation_function" in module_details[0] %}from besser.generators.nn.pytorch.utils_pytorch import get_activation_function {% set actv.actv_imported = True %}
+{% elif perm.imported == False and "Permute" in module_details[0] %}from besser.generators.nn.utils_nn import Permute {% set perm.imported = True %} 
+{% elif perm.imported == False and module_name.endswith("nn") %}{%- for subnn_key, subnn_value in module_details.items() %}{% if perm.imported == False and "Permute" in subnn_value[0] %}from besser.generators.nn.utils_nn import Permute{%- set perm.imported = True -%} {%- endif %}{%- endfor %}
+{%- endif %}{%- endfor %}
+{% if model.train_data.input_format == "csv" %}import pandas as pd {%- endif %}
+from torch import nn
+{% if model.train_data.input_format == "images" %}from torchvision import datasets, transforms
+{% if model.train_data.image.normalize %}from besser.generators.nn.utils_nn import compute_mean_std{%- endif %}{%- endif %}
+{% if model.train_data %}{% if model.train_data.task_type != "regression" %}from sklearn.metrics import classification_report 
+{%- else -%} from sklearn.metrics import mean_absolute_error {%- endif %}{%- endif %} 
+{% endmacro -%}
+
+
+{%- macro print_sequential(model, modules_details) %}
+    {%- for module_name, module_details in modules_details.items() %}
+        {%- if module_name.endswith("nn") %}
+{{ module_name.split('_')[0] }} = nn.Sequential(
+    {%- for subnn_key, subnn_value in module_details.items() %}
+        {%- if subnn_key != "in_out_variable" %}
+            {%- if subnn_key.endswith("activ") or subnn_key.endswith("layer") %}
+    {{ subnn_value[0].split('=', 1)[1].strip() }},
+            {%- else %}
+    {{ subnn_value[0] }},
+            {%- endif -%}
+        {%- endif -%}
+    {%- endfor %}
+)
+        {%- endif -%}
+    {%- endfor %}
+
+
+{{ model.name }} = nn.Sequential(
+{%- for module_name, module_details in modules_details.items() %}
+    {%- if module_name.endswith("nn") %}
+    {{ module_name.split('_')[0] }},
+    {%- elif module_name.endswith("activ") or module_name.endswith("layer") %}
+    {{ module_details[0].split('=', 1)[1].strip() }},
+    {%- else %}
+    {{ module_details[0] }},
+    {%- endif -%}
+{%- endfor %}
+)
+
+{% endmacro -%}
+
+
+{%- macro print_init(modules_details) %}
+        super().__init__()
+    {%- set activ_func_list = [] -%}
+    {%- for module_name, module_details in modules_details.items() %}
+        {%- if module_name.endswith("nn") %}
+        self.{{ module_name.split('_')[0] }} = nn.Sequential(
+            {%- for subnn_key, subnn_value in module_details.items() %}
+                {%- if subnn_key != "in_out_variable" %}
+                    {%- if "op" in subnn_key %}
+            {{ subnn_value[0] }},
+                    {%- else %}
+            {{ subnn_value[0].split('=', 1)[1].strip() }},
+                    {%- endif -%}
+                {%- endif -%}
+            {%- endfor %}
+        )
+        {%- elif module_name.endswith("activ") %}
+                {%- if module_details[0] not in activ_func_list %}
+                {%- set _ = activ_func_list.append(module_details[0])%}
+        {{ module_details[0] }}
+                {%- endif -%}
+        {%- elif module_name.endswith("layer") %}
+        {{ module_details[0] }}
+        {%- endif -%}
+    {%- endfor -%}
+{% endmacro -%}
+
+{%- macro print_forward(modules_details) %}
+    {%- set return_variable =  namespace(value="") %}
+    {%- for module_name, module_details in modules_details.items() -%}
+    {%- if module_name.endswith("op") %}
+        {{ module_details[1] }} = {{ module_details[0] }}
+    {%- elif module_name.endswith("nn") %}
+        {{ module_details["in_out_variable"] }} = self.{{ module_name.rsplit('_', 2)[0] }}({{ module_details["in_out_variable"] }})
+    {%- else %}
+        {%- if module_name.endswith("activ") %}
+        {{ module_details[1] }} = self.{{ module_details[0].split('.', 1)[1].split('=', 1)[0].strip() }}({{ module_details[2] }})
+        {%- elif module_details[-1].__class__.mro()[1].__name__ == "RNN" %}
+            {%- if module_details[-1].return_type == "hidden" %}
+                {%- if module_details[-1].__class__.__name__ == "LSTMLayer" %}
+        _, ({{ module_details[1] }}, _) = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- else %}
+        _, {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+                {%- endif -%}
+                {%- if module_details[-1].bidirectional %}
+        {{ module_details[1] }} = torch.cat(({{ module_details[1] }}[-2], {{ module_details[1] }}[-1]), dim=1)
+                {%- else %}
+        {{ module_details[1] }} = {{ module_details[1] }}[-1]
+                {%- endif -%}
+            {%- elif module_details[-1].return_type == "full" %}
+        {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+            {%- else %}
+        {{ module_details[1] }}, _ = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {{ module_details[1] }} = {{ module_details[1] }}[:, -1, :]
+            {%- endif -%}
+
+        {%- else %}
+        {{ module_details[1] }} = self.{{ module_name.rsplit('_', 1)[0] }}({{ module_details[2] }})
+        {%- endif -%}
+    {%- endif -%}
+    {%- if module_name.endswith("nn") %}
+    {%- set return_variable.value =  module_details["in_out_variable"] %}
+    {%- else %} 
+    {%- set return_variable.value =  module_details[1] %}
+    {%- endif -%}
+    {%- endfor %}
+        return {{ return_variable.value -}}
+{% endmacro -%}
+
+{%- macro get_loss_function(configuration) %}
+    {%- if configuration.loss_function == "crossentropy" -%}
+        nn.CrossEntropyLoss()
+    {%- elif configuration.loss_function == "binary_crossentropy" -%}
+        nn.BCELoss()
+    {%- else -%}
+        nn.MSELoss()
+    {%- endif -%}
+{% endmacro -%}
+
+{%- macro get_optimizer(model) %}
+    {%- if model.configuration.optimizer == "sgd" -%}
+    {% set optimizer_name = "torch.optim.SGD" %}
+    {%- elif model.configuration.optimizer == "adam" -%}
+    {% set optimizer_name = "torch.optim.Adam" %}
+    {%- elif model.configuration.optimizer == "adamW" -%}
+    {% set optimizer_name = "torch.optim.AdamW" %}
+    {%- else -%}
+    {% set optimizer_name = "torch.optim.Adagrad" %}
+    {%- endif -%}
+    {%- if model.configuration.weight_decay != 0 and model.configuration.momentum != 0 -%}
+    {{ optimizer_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }}, momentum={{ model.configuration.momentum }}) 
+    {%- elif model.configuration.weight_decay != 0 -%}
+    {{ optimizer_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, weight_decay={{ model.configuration.weight_decay }}) 
+    {%- elif model.configuration.momentum != 0 -%}
+    {{ optimizer_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }}, momentum={{ model.configuration.momentum }}) 
+    {%- else -%}
+    {{ optimizer_name }}({{ model.name }}.parameters(), lr={{ model.configuration.learning_rate }})
+    {%- endif -%}
+{% endmacro -%}
+
+{% macro prepare_data(train_data, test_data, configuration) -%}
+    {%- if train_data.input_format == "images" -%}
+{%- set transformations = [] -%}
+
+{%- set IMAGE_SIZE = (
+    train_data.image.shape[0] , train_data.image.shape[1]
+) -%}
+IMAGE_SIZE = {{ IMAGE_SIZE }}
+{%- set _ = transformations.append("transforms.Resize(IMAGE_SIZE)")%}
+{%- set _ = transformations.append("transforms.ToTensor()") %}
+
+        {%- if train_data.image.normalize %}
+scale, mean, std = compute_mean_std("{{ train_data.path_data }}", 
+                                    num_samples=100, target_size=IMAGE_SIZE)
+{%- set _ = transformations.append("transforms.Normalize(mean, std)")%}
+        {%- endif %}
+transform = transforms.Compose([
+    {{ transformations | join(',\n\t') }}
+    ])
+
+
+# Load the training dataset
+# Directory structure: root/class1/img1.jpg, root/class1/img2.jpg,
+# root/class2/img1.jpg, ...
+train_dataset = datasets.ImageFolder(
+    root="{{ train_data.path_data }}", transform=transform)
+
+# Load the testing dataset that is in a similar directory structure
+test_dataset = datasets.ImageFolder(
+    root="{{ test_data.path_data }}", transform=transform)
+
+    {%- else -%}
+    def load_dataset(csv_file):
+    # Load data from CSV file
+    data = pd.read_csv(csv_file)
+    # Extract features and targets
+    features = data.iloc[:, :-1].values.astype("float32")
+    targets = data.iloc[:, -1].values.astype("float32")
+    # Convert to PyTorch tensors
+    features_tensor = torch.tensor(features)
+    targets_tensor = torch.tensor(targets)
+    # Create a TensorDataset
+    dataset = torch.utils.data.TensorDataset(features_tensor, targets_tensor)
+    return dataset
+
+# Loading data
+train_dataset = load_dataset("{{ train_data.path_data }}")
+test_dataset = load_dataset("{{ test_data.path_data }}")
+    {%- endif %}
+
+# Create data loaders
+train_loader = torch.utils.data.DataLoader(
+    dataset=train_dataset, batch_size={{ configuration.batch_size }}, shuffle=True)
+test_loader = torch.utils.data.DataLoader(
+    dataset=test_dataset, batch_size={{ configuration.batch_size }}, shuffle=False)
+
+{% endmacro -%}
+
+
+{%- macro train_model(model, prediction_task) -%}
+print('##### Training the model')
+for epoch in range({{ model.configuration.epochs }}):
+    # Initialize the running loss for the current epoch
+    running_loss = 0.0
+    total_loss = 0.0
+    # Iterate over mini-batches of training data
+    for i, data in enumerate(train_loader, 0):
+        inputs, labels = data
+        # Zero the gradients to prepare for backward pass
+        optimizer.zero_grad()
+        outputs = {{ model.name }}(inputs)
+        # Compute the loss 
+        {%- if prediction_task == "regression" %}
+        labels = labels.unsqueeze(1)
+        {% elif prediction_task == "binary" %}
+        outputs = outputs.squeeze()
+        labels = labels.float()
+        {%- endif %}
+        loss = criterion(outputs, labels)
+        loss.backward()
+        # Update model parameters based on computed gradients
+        optimizer.step()
+        running_loss += loss.item()
+        total_loss += loss.item()
+        if i % 200 == 199:    # Print every 200 mini-batches
+            print(
+                f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 200:.3f}"
+            )
+            running_loss = 0.0
+    print(
+        f"[{epoch + 1}] overall loss for epoch: "
+        f"{total_loss / len(train_loader):.3f}"
+    )
+print('Training finished')
+{%- endmacro -%}
+
+{% macro evaluate_model(model, prediction_task) -%}
+print('##### Evaluating the model')
+# Disable gradient calculation during inference
+with torch.no_grad():
+    # Initialize lists to store predicted and true labels
+    predicted_labels = []
+    true_labels = []
+    test_loss = 0.0
+    for data in test_loader:
+        # Extract inputs and labels from the data batch
+        inputs, labels = data
+        true_labels.extend(labels)
+        # Forward pass
+        outputs = {{ model.name }}(inputs)
+        {% if prediction_task == "binary" -%}
+        predicted = (outputs.numpy() > 0.5).astype(int)
+        labels = labels.float()
+        outputs = outputs.squeeze()
+        {%- elif prediction_task == "multi_class" -%}
+        _, predicted = torch.max(outputs.data, 1) 
+        {%- else -%}
+        predicted = outputs.numpy()
+        labels = labels.unsqueeze(1)
+        {%- endif %}
+        predicted_labels.extend(predicted)
+        test_loss += criterion(outputs, labels).item()
+
+average_loss = test_loss / len(test_loader)
+print(f"Test Loss: {average_loss:.3f}")
+
+# Calculate the metrics
+metrics = {{ model.configuration.metrics }}
+{%- if prediction_task != "regression" %}
+report = classification_report(true_labels, predicted_labels, output_dict=True)
+for metric in metrics:
+    {%- if prediction_task == "binary" %}
+    print(f"{metric.capitalize()}: {report['1'][metric]}")
+    {%- elif prediction_task == "multi_class" %}
+    metric_list = []
+    for class_label in report.keys():
+        if class_label not in ('macro avg', 'weighted avg', 'accuracy'):
+            print(f"{metric.capitalize()} for class {class_label}:",
+                  report[class_label][metric])
+            metric_list.append(report[class_label][metric])
+    metric_value = sum(metric_list) / len(metric_list)
+    print(f"Average {metric.capitalize()}: {metric_value:.2f}")
+    print(f"Accuracy: {report['accuracy']}")
+{% endif -%}
+{%- else %}
+mae = mean_absolute_error(true_labels, predicted_labels)
+print(f"Mean Absolute Error (MAE): {mae}")
+{%- endif -%}
+{% endmacro -%}
+
+
+
+{% macro save_model(model) -%}
+print('##### Saving the model')
+torch.save({{ model.name }}, f"{{ model.name | lower }}_{datetime.now}.pth")
+print("The model is saved successfully")
+{% endmacro -%}

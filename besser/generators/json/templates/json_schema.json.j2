@@ -1,0 +1,133 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Generated JSON Schema",
+    "type": "object",
+    "properties": {
+        {%- for class in classes %}
+        "{{ class.name }}": {
+            "allOf": [
+            {%- if class.parents() %}{% for parent in class.parents() %}
+            { "$ref": "#/definitions/{{ parent.name }}" },
+            {% endfor %}
+        {%- endif -%}
+            {
+                "type": "object",
+                "properties": {
+                    {%- set loop_has_items = class.association_ends()|selectattr('is_navigable')|list|length > 0 -%}
+                    {%- for attribute in class.attributes %}
+                    "{{ attribute.name }}": {
+                        {%- if attribute.multiplicity.max > 1 %}
+                        "type": "array",
+                        "items": {
+                        {%- endif %}
+                        {%- if attribute.type.name in enumerations|map(attribute='name') %}
+                        "$ref": "#/definitions/{{ attribute.type.name }}"
+                        {%- else %}
+                        "type": "{% if attribute.type.name == 'str' %}string{% elif attribute.type.name == 'int' %}integer{% elif attribute.type.name == 'float' %}number{% elif attribute.type.name == 'bool' %}boolean{% elif attribute.type.name == 'date' %}string{% elif attribute.type.name == 'datetime' %}string{% else %}{{ attribute.type.name }}{% endif %}"
+                        {%- endif %}
+                        {%- if attribute.multiplicity.max > 1 %}
+                        }
+                        {%- endif %}
+                    }{%- if not loop.last or loop_has_items %}, {%- endif %}
+                    {%- endfor %}
+                    {%- for end in class.association_ends() if end.is_navigable %}
+                    {%- if end.multiplicity.max > 1 %}
+                    "{{ end.name }}": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/{{ end.type.name }}"
+                        }
+                    }{%- else %}
+                    "{{ end.name }}": {
+                        "$ref": "#/definitions/{{ end.type.name }}"
+                    }{%- endif %}
+                    {%- if not loop.last %},{% endif %}
+                    {%- if loop.last and class.specializations()%},{% endif %}
+                    {%- endfor %}
+                    {%- for child in class.specializations() %}
+                    
+                    "{{ child.name }}": {
+                            "$ref": "#/definitions/{{ child.name }}"
+                    }
+                    {%- if not loop.last %},{% endif %}
+                    {%- endfor %}
+                },
+                "required": [
+                    {%- for attribute in class.attributes if attribute.required %}
+                    "{{ attribute.name }}"{%- if not loop.last %},{% endif %}
+                    {%- endfor %}
+                ]
+            }
+        ]}{%- if not loop.last %},{% endif %}
+        {%- endfor %}
+    },
+    "definitions": {
+        {%- for enum in enumerations %}
+        "{{ enum.name }}": {
+            "type": "string",
+            "enum": [
+                {%- for literal in enum.literals %}
+                "{{ literal.name }}"{% if not loop.last %}, {% endif %}
+                {%- endfor %}
+            ]
+        },
+        {%- endfor %}
+        {%- for class in classes %}
+        "{{ class.name }}": {
+            "allOf": [
+            {%- if class.parents() %}{% for parent in class.parents() %}
+            { "$ref": "#/definitions/{{ parent.name }}" },
+            {% endfor %}
+        {%- endif -%}
+            {
+                "type": "object",
+                "properties": {
+                    {%- set loop_has_items = class.association_ends()|selectattr('is_navigable')|list|length > 0 -%}
+                    {%- for attribute in class.attributes %}
+                    "{{ attribute.name }}": {
+                        {%- if attribute.multiplicity.max > 1 %}
+                        "type": "array",
+                        "items": {
+                        {%- endif %}
+                        {%- if attribute.type.name in enumerations|map(attribute='name') %}
+                        "$ref": "#/definitions/{{ attribute.type.name }}"
+                        {%- else %}
+                        "type": "{% if attribute.type.name == 'str' %}string{% elif attribute.type.name == 'int' %}integer{% elif attribute.type.name == 'float' %}number{% elif attribute.type.name == 'bool' %}boolean{% elif attribute.type.name == 'date' %}string{% elif attribute.type.name == 'datetime' %}string{% else %}{{ attribute.type.name }}{% endif %}"
+                        {%- endif %}
+                        {%- if attribute.multiplicity.max > 1 %}
+                        }
+                        {%- endif %}
+                    }{%- if not loop.last or loop_has_items %}, {%- endif %}
+                    {%- endfor %}
+                    {%- for end in class.association_ends() if end.is_navigable %}
+                    {%- if end.multiplicity.max > 1 %}
+                    "{{ end.name }}": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/{{ end.type.name }}"
+                        }
+                    }{%- else %}
+                    "{{ end.name }}": {
+                        "$ref": "#/definitions/{{ end.type.name }}"
+                    }{%- endif %}
+                    {%- if not loop.last %},{% endif %}
+                    {%- endfor %}
+                }
+                {%- if class.specializations() %},{% endif %}
+                    {%- for child in class.specializations() %}
+                    
+                    "{{ child.name }}": {
+                            "$ref": "#/definitions/{{ child.name }}"
+                    }
+                    {%- if not loop.last %},{% endif %}
+                {%- endfor %},
+                "required": [
+                    {%- for attribute in class.attributes if attribute.required %}
+                    "{{ attribute.name }}"{%- if not loop.last %},{% endif %}
+                    {%- endfor %}
+                ]
+            }
+        ]}{%- if not loop.last %},{% endif %}
+        {%- endfor %}
+    }
+}

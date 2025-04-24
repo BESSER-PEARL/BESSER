@@ -35,6 +35,23 @@ class RESTAPIGenerator(GeneratorInterface):
         self.nested_creations = nested_creations
         self.port = port
 
+    def generate_requirements(self):
+        """
+        Generates requirements.txt file with necessary dependencies
+        """
+        requirements = [
+            "fastapi>=0.68.0",
+            "uvicorn>=0.15.0",
+            "pydantic>=1.8.0",
+            "typing-extensions>=4.0.0",
+            "sqlalchemy>=1.4.0",
+            "python-multipart>=0.0.5"
+        ]
+        
+        file_path = self.build_generation_path(file_name="requirements.txt")
+        with open(file_path, "w") as f:
+            f.write("\n".join(requirements))
+
     def generate(self):
         """
         Generates Rest API model code based on the provided B-UML model and saves it to the specified output directory.
@@ -45,6 +62,8 @@ class RESTAPIGenerator(GeneratorInterface):
             None, but store the generated code as a file named rest_api.py and uses the Pydantic_Generator to generate
             the Pydantic classes
         """
+        # Generate requirements.txt first
+        self.generate_requirements()
 
         if self.backend:
             file_path = self.build_generation_path(file_name="main_api.py")

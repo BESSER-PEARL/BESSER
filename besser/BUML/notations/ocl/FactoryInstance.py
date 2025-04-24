@@ -34,7 +34,7 @@ class Factory:
         if prop is not None:
             return prop
         else:
-            raise Exception("Property "+name+ " not found in class "+str(self.context))
+            raise Exception("Property "+name+ " not found in class "+str(self.context.name))
 
     def create_date_literal_expression(self,name,value):
         return DateLiteralExpression(name,value)

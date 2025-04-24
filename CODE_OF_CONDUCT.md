@@ -8,7 +8,8 @@ We pledge to act and interact in ways that contribute to an open, welcoming, div
 ## Need Help?
 If ANY behavior makes you uncomfortable, or you believe it breaches the intent of this code of conduct, please contact a project maintainer:
 
-* [Iván Alfonso](https://github.com/ivan-alfonso) 
+* [Iván Alfonso](https://github.com/ivan-alfonso)
+* [Armen Sulejmani](https://github.com/ArmenSl)
 * [Jordi Cabot](https://github.com/jcabot)
 
 ---
@@ -60,6 +61,7 @@ The Code of Conduct, and the project leaders, can only address behavior in the p
 Instances of abusive, harassing, or otherwise unacceptable behavior may be reported by contacting the project maintainers at:
 
 * [Iván Alfonso](https://github.com/ivan-alfonso) 
+* [Armen Sulejmani](https://github.com/ArmenSl)
 * [Jordi Cabot](https://github.com/jcabot)
 
 Complaints will be reviewed and investigated and will result in a response that is deemed necessary and appropriate to the circumstances. 

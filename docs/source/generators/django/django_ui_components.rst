@@ -1,7 +1,5 @@
 Django App with Admin Panel & UI Components
 ===========================================
-This approach generates a Django application with both database models and
-predefined UI components (forms, templates, views, etc.).
 
 **B-UML Models required**
 
@@ -11,8 +9,9 @@ predefined UI components (forms, templates, views, etc.).
 
 **Getting Started**
 
-To generate a Django web app using this approach, follow these steps. You can use our :doc:`../../examples/library_example`
-and our :doc:`../../examples/mobile_app_example` as input to test the generator.
+To generate a Django web app, including templates and UI components, you need to use the BESSER Python API.
+Follow the steps below to get started. You can use our :doc:`../../examples/library_example`
+and :doc:`../../examples/mobile_app_example` as input examples to test the generator.
 
 .. code-block:: python
 

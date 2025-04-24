@@ -6,7 +6,7 @@ There are several ways in which you can contribute, beyond writing code. The goa
 
 ## Asking Questions 
 
-Do you have a question? Feel free to [open an issue](https://github.com/YOUR-ORGANIZATION/YOUR-PROJECT/issues/new?assignees=&labels=question&template=question.md).
+Do you have a question? Feel free to [open an issue](https://github.com/BESSER-PEARL/BESSER/issues/new/choose).
 
 Project maintainers will be eager to listen from you and help you out. Please, try to compose a clear and concise question. The more information you provide, the better we will be able to help you.
 
@@ -20,7 +20,7 @@ Sometimes the issue you want to report is being already addressed, or is planned
 
 If you find your issue already exists, do not hesitate to make relevant comments and add your [reaction](https://github.com/blog/2119-add-reactions-to-pull-requests-issues-and-comments). Please, use a reaction in place of a "+1" comment, we believe it's easy: 👍 for upvoting and 👎 for downvoting.
 
-If you cannot find an existing issue that describes your bug or feature, [create a new issue](https://github.com/BESSER-PEARL/BESSER/issues/new?assignees=&labels=&template=proposal.md). The template will guide you on the issue reporting.
+If you cannot find an existing issue that describes your bug or feature, [create a new issue](https://github.com/BESSER-PEARL/BESSER/issues/new/choose). The template will guide you on the issue reporting.
 
 ### Writing Good Bug Reports and Feature Requests
 

@@ -9,3 +9,4 @@ Creating your B-UML model
   model_building/image_to_buml
   model_building/drawio_structural
   Web Modeling Editor (Graphical notation) <../web_editor>
+  model_building/mockup_to_buml

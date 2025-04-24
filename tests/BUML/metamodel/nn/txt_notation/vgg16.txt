@@ -1,0 +1,181 @@
+vgg16:
+
+    layers:
+        - p1:
+            type=Pooling
+            pooling_type=adaptive_average
+            dimension=2D
+            output_dim=[7, 7]
+        - f1:
+            type=Flatten
+
+    sub_nn:
+        - features:
+          layers:
+            - f1:
+                type=Conv2D
+                actv_func=relu
+                in_channels=3
+                out_channels=64
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f2:
+                type=Conv2D
+                actv_func=relu
+                in_channels=64
+                out_channels=64
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f3:
+                type=Pooling
+                pooling_type=max
+                dimension=2D
+                kernel_dim=[2, 2]
+                stride_dim=[2, 2]
+            - f4:
+                type=Conv2D
+                actv_func=relu
+                in_channels=64
+                out_channels=128
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f5:
+                type=Conv2D
+                actv_func=relu
+                in_channels=128
+                out_channels=128
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f6:
+                type=Pooling
+                pooling_type=max
+                dimension=2D
+                kernel_dim=[2, 2]
+                stride_dim=[2, 2]
+            - f7:
+                type=Conv2D
+                actv_func=relu
+                in_channels=128
+                out_channels=256
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f8:
+                type=Conv2D
+                actv_func=relu
+                in_channels=256
+                out_channels=256
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f9:
+                type=Conv2D
+                actv_func=relu
+                in_channels=256
+                out_channels=256
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f10:
+                type=Pooling
+                pooling_type=max
+                dimension=2D
+                kernel_dim=[2, 2]
+                stride_dim=[2, 2]
+            - f11:
+                type=Conv2D
+                actv_func=relu
+                in_channels=256
+                out_channels=512
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f12:
+                type=Conv2D
+                actv_func=relu
+                in_channels=512
+                out_channels=512
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f13:
+                type=Conv2D
+                actv_func=relu
+                in_channels=512
+                out_channels=512
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f14:
+                type=Pooling
+                pooling_type=max
+                dimension=2D
+                kernel_dim=[2, 2]
+                stride_dim=[2, 2]
+            - f15:
+                type=Conv2D
+                actv_func=relu
+                in_channels=512
+                out_channels=512
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f16:
+                type=Conv2D
+                actv_func=relu
+                in_channels=512
+                out_channels=512
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f17:
+                type=Conv2D
+                actv_func=relu
+                in_channels=512
+                out_channels=512
+                kernel_dim=[3, 3]
+                stride_dim=[1, 1]
+                padding_amount=1
+            - f18:
+                type=Pooling
+                pooling_type=max
+                dimension=2D
+                kernel_dim=[2, 2]
+                stride_dim=[2, 2]
+            
+
+        - classifier:
+          layers:
+            - c1:
+                type=Linear
+                actv_func=relu
+                in_features=25088
+                out_features=4096
+            - c2:
+                type=Dropout
+                rate=0.5
+            - c3:
+                type=Linear
+                actv_func=relu
+                in_features=4096
+                out_features=4096
+            - c4:
+                type=Dropout
+                rate=0.5
+            - c5:
+                type=Linear
+                actv_func=relu
+                in_features=4096
+                out_features=1000
+
+        
+
+    modules:
+        - features
+        - p1
+        - f1
+        - classifier

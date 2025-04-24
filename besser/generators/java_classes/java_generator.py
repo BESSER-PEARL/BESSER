@@ -20,9 +20,12 @@ class JavaGenerator(GeneratorInterface):
             template = env.get_template('java_template.py.j2')
             package_name = ""
             if self.output_dir is not None:
-                package_name = self.output_dir
+                if 'tmp' or 'AppData' in self.output_dir:
+                    package_name = None
+                else:
+                    package_name = self.output_dir
             else:
-                package_name = "output"
+                package_name = None
             with open(file_path, mode="w") as f:
                 generated_code = template.render(class_obj=class_obj,
                                                  processed_associations=processed_associations,

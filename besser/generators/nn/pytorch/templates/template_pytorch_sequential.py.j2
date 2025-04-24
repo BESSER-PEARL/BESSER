@@ -1,0 +1,27 @@
+"""PyTorch code generated based on BUML."""
+
+{% import "setup_nn_components.py.j2" as nn_components -%}
+{{- nn_components.print_imports(model, modules_details) }}
+
+# Define the network architecture
+{{ nn_components.print_sequential(model, modules_details) }}
+
+
+{% if model.train_data is not none %}
+# Dataset preparation
+{{ nn_components.prepare_data(model.train_data, model.test_data, model.configuration) -}}
+
+# Define the loss function, and optimizer
+
+criterion = {{ nn_components.get_loss_function(model.configuration) }}
+optimizer = {{ nn_components.get_optimizer(model) }}
+
+# Train the neural network
+{{ nn_components.train_model(model, model.train_data.task_type) }}
+
+# Evaluate the neural network
+{{ nn_components.evaluate_model(model, model.train_data.task_type) }}
+
+# Save the neural network
+{{ nn_components.save_model(model) }}
+{%- endif -%}

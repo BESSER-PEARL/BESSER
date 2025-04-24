@@ -1,0 +1,101 @@
+alexnet:
+
+    layers:
+        - p1:
+            type=Pooling
+            pooling_type=adaptive_average
+            dimension=2D
+            output_dim=[6, 6]
+        - p2:
+            type=Flatten
+            start_dim=1
+
+    sub_nn:
+        - features:
+          layers:
+            - f1:
+                type=Conv2D
+                actv_func=relu
+                in_channels=3
+                out_channels=64
+                kernel_dim=[11, 11]
+                stride_dim=[4, 4]
+                padding_amount=2
+            - f2:
+                type=Pooling
+                pooling_type=max
+                dimension=2D
+                kernel_dim=[3, 3]
+                stride_dim=[2, 2]
+            - f3:
+                type=Conv2D
+                actv_func=relu
+                in_channels=64
+                out_channels=192
+                kernel_dim=[5, 5]
+                padding_amount=2
+            - f4:
+                type=Pooling
+                pooling_type=max
+                dimension=2D
+                kernel_dim=[3, 3]
+                stride_dim=[2, 2]
+            - f5:
+                type=Conv2D
+                actv_func=relu
+                in_channels=192
+                out_channels=384
+                kernel_dim=[3, 3]
+                padding_amount=1
+            - f6:
+                type=Conv2D
+                actv_func=relu
+                in_channels=384
+                out_channels=256
+                kernel_dim=[3, 3]
+                padding_amount=1
+            - f7:
+                type=Conv2D
+                actv_func=relu
+                in_channels=256
+                out_channels=256
+                kernel_dim=[3, 3]
+                padding_amount=1
+            - f8:
+                type=Pooling
+                pooling_type=max
+                dimension=2D
+                kernel_dim=[3, 3]
+                stride_dim=[2, 2]
+
+        - classifier:
+          layers:
+            - c1:
+                type=Dropout
+                rate=0.5
+            - c2:
+                type=Linear
+                actv_func=relu
+                in_features=9216
+                out_features=4096
+            - c3:
+                type=Dropout
+                rate=0.5
+            - c4:
+                type=Linear
+                actv_func=relu
+                in_features=4096
+                out_features=4096
+            - c5:
+                type=Linear
+                actv_func=relu
+                in_features=4096
+                out_features=1000
+
+        
+
+    modules:
+        - features
+        - p1
+        - p2
+        - classifier

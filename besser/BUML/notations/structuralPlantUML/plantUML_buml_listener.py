@@ -20,7 +20,7 @@ class BUMLGenerationListener(PlantUMLListener):
         return self.__buml_model
 
     def enterDomainModel(self, ctx: PlantUMLParser.DomainModelContext):
-        self.__buml_model = DomainModel(name="Domain Model")
+        self.__buml_model = DomainModel(name="DomainModel")
         classes = self.find_descendant_nodes_by_type(node=ctx,
                                                 target_type=PlantUMLParser.ClassContext)
         for cl in classes:

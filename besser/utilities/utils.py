@@ -1,7 +1,7 @@
 import pickle, os
 from besser.BUML.metamodel.structural import DomainModel, NamedElement
 
-def sort_by_timestamp(obj_set: set[NamedElement]) -> list:
+def sort_by_timestamp(obj_set: set) -> list:
     """
     Sorts a set of objects by their `timestamp` attribute.
 

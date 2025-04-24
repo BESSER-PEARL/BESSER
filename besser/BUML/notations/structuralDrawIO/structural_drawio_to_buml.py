@@ -1031,7 +1031,7 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
 
     # Create domain model with associations
     domain_model = DomainModel(
-        name="Generated Model",
+        name="Generated_Model",
         types=set(buml_classes.values()) | set(buml_enumerations.values()),
         associations=buml_associations,
         generalizations=set(buml_generalizations)

@@ -7,6 +7,7 @@ The development and community management of the project will follow the governan
 Project maintainers have admin access to the GitHub repository. The team of project maintainer is the following:
 
 * [Iván Alfonso](https://github.com/ivan-alfonso)
+* [Armen Sulejmani](https://github.com/ArmenSl)
 * [Jordi Cabot](https://github.com/jcabot)
 
 ## 1. Roles

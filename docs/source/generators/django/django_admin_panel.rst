@@ -1,7 +1,5 @@
 Django App with Admin Panel
 ==============================
-This approach creates a Django application with database models and basic CRUD functionality. It does not generate custom UI
-components beyond Django’s built-in admin panel.
 
 **B-UML Model required**
 
@@ -9,9 +7,11 @@ components beyond Django’s built-in admin panel.
 
 **Getting started**
 
-Let's generate a Django web app taking as input our :doc:`../../examples/library_example`.
-Below is an example of how to implement the code generator with Python (alternatively,
-you can use the :doc:`../../web_editor` to generate the code):
+To generate a Django App, you can either use the :doc:`../../web_editor` to create the 
+structural model and generate the code directly, or use the BESSER Python API as shown below.
+
+In this example, we’ll generate a Django web app using the :doc:`../../examples/library_example`
+as input. Here's how to implement the code generator with Python:
 
 .. code-block:: python
 

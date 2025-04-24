@@ -2,14 +2,14 @@ import pytest
 import os
 from besser.generators.pydantic_classes import PydanticGenerator
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
-    PrimitiveDataType, Multiplicity, BinaryAssociation
+    IntegerType, StringType, Multiplicity, BinaryAssociation
 
 # Test that a file is created with the correct content
 def test_file_generation():
     # Define the model to be generated
     class1 = Class(name="name1", attributes={
-        Property(name="attr1", type=PrimitiveDataType("int")),
-        Property(name="attr2", type=PrimitiveDataType("str"))
+        Property(name="attr1", type=IntegerType),
+        Property(name="attr2", type=StringType)
     })
 
     domain_model: DomainModel = DomainModel(name="mymodel", types={class1})
@@ -37,12 +37,12 @@ def test_file_generation():
 def test_multiple_class_generation():
     # Define multiple classes in the model
     class1 = Class(name="name1", attributes={
-        Property(name="attr1", type=PrimitiveDataType("int")),
-        Property(name="attr2", type=PrimitiveDataType("str"))
+        Property(name="attr1", type=IntegerType),
+        Property(name="attr2", type=StringType)
     })
     class2 = Class(name="name2", attributes={
-        Property(name="attr1", type=PrimitiveDataType("str")),
-        Property(name="attr2", type=PrimitiveDataType("str"))
+        Property(name="attr1", type=StringType),
+        Property(name="attr2", type=StringType)
     })
 
     domain_model = DomainModel(name="CompanyModel", types={class1, class2}, associations=None, packages=None, constraints=None)
@@ -63,14 +63,14 @@ def test_multiple_class_generation():
 
 def test_association_handling():
     class1 = Class(name="name1", attributes={
-        Property(name="attr1", type=PrimitiveDataType("int")),
+        Property(name="attr1", type=IntegerType),
     })
     class2 = Class(name="name2", attributes={
-        Property(name="attr2", type=PrimitiveDataType("int"))
+        Property(name="attr2", type=IntegerType)
     })
     association = BinaryAssociation(name="name_assoc", ends={
-        Property(name="attr_assoc1", owner=class2, type=class1, multiplicity=Multiplicity(1, "*")),
-        Property(name="attr_assoc2", owner=class1, type=class2, multiplicity=Multiplicity(1, "*"))
+        Property(name="assocs1", type=class1, multiplicity=Multiplicity(1, "*")),
+        Property(name="assocs2", type=class2, multiplicity=Multiplicity(1, "*"))
     })
 
     domain_model = DomainModel(name="AssociationModel", types={class1, class2}, associations={association})
@@ -83,7 +83,7 @@ def test_association_handling():
     with open(output_file, 'r') as file:
         content = file.read()
 
-    assert 'name2s: Optional[List[Union["name2Create", int]]] = None' in content or 'name1s: Optional[List[Union["name1Create", int]]] = None' in content, "Associations are not handled correctly."
+    assert 'assocs2: Optional[List[Union["name2Create", int]]] = None' in content or 'assocs1: Optional[List[Union["name1Create", int]]] = None' in content, "Associations are not handled correctly."
 
     os.remove(output_file)
 

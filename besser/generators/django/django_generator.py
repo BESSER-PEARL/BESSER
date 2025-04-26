@@ -43,6 +43,10 @@ class DjangoGenerator(GeneratorInterface):
         self.containerization: bool = containerization
         self.gui_model: GUIModel = gui_model
         self.module: Module = module
+        self.asso_dict = {}
+        self.one_to_one = {}
+        self.fkeys = {}
+        self.many_to_many = {}
         # Jinja environment configuration
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
@@ -107,12 +111,6 @@ class DjangoGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as a file named models.py.
         """
-
-        self.asso_dict = dict()
-        self.one_to_one = dict()
-        self.fkeys = dict()
-        self.many_to_many = dict()
-
         for association in self.model.associations:
             ends = list(association.ends)  # Convert set to list
 
@@ -135,9 +133,14 @@ class DjangoGenerator(GeneratorInterface):
 
             # Many to many
             elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max > 1:
-                self.many_to_many[association.name] = ends[0].type.name
-                if ends[0].multiplicity.min >= 1:
+                if ends[1].is_navigable and not ends[0].is_navigable:
+                    self.many_to_many[association.name] = ends[0].type.name
+                elif not ends[1].is_navigable and ends[0].is_navigable:
                     self.many_to_many[association.name] = ends[1].type.name
+                elif ends[0].multiplicity.min >= 1:
+                    self.many_to_many[association.name] = ends[1].type.name
+                else:
+                    self.many_to_many[association.name] = ends[0].type.name
 
         file_path = os.path.join(self.project_name, self.app_name, "models.py")
         templates_path = os.path.join(os.path.dirname(

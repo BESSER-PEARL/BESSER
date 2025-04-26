@@ -114,9 +114,14 @@ class DjangoGenerator(GeneratorInterface):
 
             # One-to-one
             if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
-                self.one_to_one[association.name] = ends[0].type.name
-                if ends[1].multiplicity.min == 0:
+                if ends[1].is_navigable and not ends[0].is_navigable:
+                    self.one_to_one[association.name] = ends[0].type.name
+                elif not ends[1].is_navigable and ends[0].is_navigable:
                     self.one_to_one[association.name] = ends[1].type.name
+                elif ends[1].multiplicity.min == 0:
+                    self.one_to_one[association.name] = ends[1].type.name
+                else:
+                    self.one_to_one[association.name] = ends[0].type.name
 
             # Foreign Keys
             elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max <= 1:

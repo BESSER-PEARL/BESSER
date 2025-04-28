@@ -33,8 +33,8 @@ For each phase of the process, we have implemented task-specaific prompts. You c
 
 
 .. note::
-   As displayed in the image above, after generating the B-UML model (both Structural and GUI models),
-   you can use these models to generate a web application using the :doc:`Django Web App Generator<../../generators/django>`.
+   Once the B-UML model has been generated (including both Structural and GUI models),
+   you can leverage these models to automatically create a web application using the :doc:`Django Web App Generator<../../generators/django>`.
 
 
 Getting Started
@@ -62,6 +62,14 @@ Follow these steps to transform your UI mock-ups into B-UML model using BESSER:
         )
 
 
+**Parameter Descriptions:**
+
+        - ``api_key``: Your OpenAI API key used for calling LLM during the transformation process.
+        - ``input_folder``: Path to the folder containing your single UI mock-up image.
+        - ``output_folder``: Path to the folder where the generated model files will be saved.
+
+
+
 + Multiple UI Images:
     1. Prepare your UI images and additional files:
 
@@ -84,9 +92,22 @@ Follow these steps to transform your UI mock-ups into B-UML model using BESSER:
         input_folder="path to mockup images folder",
         navigation_image_path="path to navigation image file",
         pages_order_file_path="path to page order file",
-        additional_text_file_path="path to additional text file",
+        additional_info_path="path to additional text file",
         output_folder="path to your output folder"
     )
+
+
+
+
+**Parameter Descriptions:**
+
+        - ``api_key``: Your OpenAI API key used for calling LLM during the transformation process.
+        - ``input_folder``: Path to the folder containing all UI mock-up images for your multi-page application.
+        - ``navigation_image_path``: Path to an image that visualizes how navigation occurs between the different UI pages (This is used to detect navigation targets for buttons with navigation-related actions.)
+        - ``pages_order_file_path``: Path to a ``.txt`` file listing the sequence of UI pages.
+        - ``additional_info_path``: Path to a ``.txt`` file that describes the relationships (and cardinalities) between key concepts of the application.
+        - ``output_folder``: Path where the generated B-UML structural and GUI model files will be saved.
+
 
 
 

@@ -36,17 +36,19 @@ class DjangoGenerator(GeneratorInterface):
                  gui_model: GUIModel = None, containerization: bool = False,
                  module: Module = None, output_dir: str = None):
         super().__init__(model, output_dir)
-
-
         self.project_name: str = project_name
         self.app_name: str = app_name
         self.containerization: bool = containerization
         self.gui_model: GUIModel = gui_model
         self.module: Module = module
+        self.one_to_one = {}
+        self.fkeys = {}
+        self.many_to_many = {}
         # Jinja environment configuration
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
                                lstrip_blocks=True, extensions=['jinja2.ext.do'])
+
     @property
     def gui_model(self) -> GUIModel:
         """GUIModel: Get the instance of the GUIModel class representing the GUI model."""
@@ -107,37 +109,37 @@ class DjangoGenerator(GeneratorInterface):
         Returns:
             None, but stores the generated code as a file named models.py.
         """
-
-        self.asso_dict = dict()
-        self.one_to_one = dict()
-        self.fkeys = dict()
-        self.many_to_many = dict()
-
         for association in self.model.associations:
             ends = list(association.ends)  # Convert set to list
 
             # One-to-one
             if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
-                self.asso_dict[association.name] = ends[0].type.name
-                self.one_to_one[association.name] = ends[0].type.name
-                if ends[1].multiplicity.min == 0:
-                    self.asso_dict[association.name] = ends[1].type.name
+                if ends[1].is_navigable and not ends[0].is_navigable:
+                    self.one_to_one[association.name] = ends[0].type.name
+                elif not ends[1].is_navigable and ends[0].is_navigable:
                     self.one_to_one[association.name] = ends[1].type.name
+                elif ends[1].multiplicity.min == 0:
+                    self.one_to_one[association.name] = ends[1].type.name
+                else:
+                    self.one_to_one[association.name] = ends[0].type.name
 
             # Foreign Keys
             elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max <= 1:
-                self.asso_dict[association.name] = ends[0].type.name
                 self.fkeys[association.name] = ends[0].type.name
 
             elif ends[0].multiplicity.max <= 1 and ends[1].multiplicity.max > 1:
-                self.asso_dict[association.name] = ends[1].type.name
                 self.fkeys[association.name] = ends[1].type.name
 
             # Many to many
             elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max > 1:
-                self.many_to_many[association.name] = ends[0].type.name
-                if ends[0].multiplicity.min >= 1:
+                if ends[1].is_navigable and not ends[0].is_navigable:
+                    self.many_to_many[association.name] = ends[0].type.name
+                elif not ends[1].is_navigable and ends[0].is_navigable:
                     self.many_to_many[association.name] = ends[1].type.name
+                elif ends[0].multiplicity.min >= 1:
+                    self.many_to_many[association.name] = ends[1].type.name
+                else:
+                    self.many_to_many[association.name] = ends[0].type.name
 
         file_path = os.path.join(self.project_name, self.app_name, "models.py")
         templates_path = os.path.join(os.path.dirname(
@@ -149,14 +151,10 @@ class DjangoGenerator(GeneratorInterface):
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(model=self.model,
                                             sort_by_timestamp=sort_by_timestamp,
-                                            asso_dict=self.asso_dict,
                                             one_to_one = self.one_to_one,
                                             many_to_many = self.many_to_many,
                                             fkeys = self.fkeys)
             f.write(generated_code)
-
-        return self.asso_dict
-
 
     ## DjangoGeneratorURLsFile:
     def generate_urls(self):
@@ -209,7 +207,7 @@ class DjangoGenerator(GeneratorInterface):
 
 
     ## DjangoGeneratorFormsFile:
-    def generate_forms(self, asso_dict, one_to_one, many_to_many, fkeys):
+    def generate_forms(self, one_to_one, many_to_many, fkeys):
 
         """
         Generates the Django Forms file for a web application based on
@@ -258,7 +256,6 @@ class DjangoGenerator(GeneratorInterface):
                 screen=main_page,
                 model=self.model,
                 associations=self.model.associations,
-                asso_dict=asso_dict,
                 one_to_one = one_to_one,
                 many_to_many = many_to_many,
                 fkeys = fkeys
@@ -418,7 +415,7 @@ class DjangoGenerator(GeneratorInterface):
 
 
     # List Pages Template Generator
-    def generate_list_html_pages(self, asso_dict, one_to_one, many_to_many, fkeys):
+    def generate_list_html_pages(self, one_to_one, many_to_many, fkeys):
         """
         Generate List HTML files for each screen in the module, using a Jinja template.
         Each HTML file is saved in the output directory, named based on the screen's name_list.
@@ -463,7 +460,6 @@ class DjangoGenerator(GeneratorInterface):
                                     screens=screens,
                                     screen=screen,
                                     source_name=source_name,
-                                    asso_dict=asso_dict,
                                     one_to_one= one_to_one,
                                     many_to_many = many_to_many,
                                     fkeys = fkeys
@@ -475,7 +471,7 @@ class DjangoGenerator(GeneratorInterface):
 
 
     ## Form Pages Template Generator:
-    def generate_form_html_pages(self, asso_dict, one_to_one, many_to_many, fkeys):
+    def generate_form_html_pages(self, one_to_one, many_to_many, fkeys):
 
 
         """
@@ -521,7 +517,6 @@ class DjangoGenerator(GeneratorInterface):
                                     screens=screens,
                                     screen=screen,
                                     source_name=source_name,
-                                    asso_dict=asso_dict,
                                     one_to_one = one_to_one,
                                     many_to_many = many_to_many,
                                     fkeys = fkeys
@@ -708,19 +703,16 @@ JAZZMIN_SETTINGS = {{
             # Step 6: Generate either admin panel or GUI-based components
             if self.gui_model:
                 self.generate_urls()
-                self.generate_forms(asso_dict=self.asso_dict,
-                                    one_to_one=self.one_to_one,
+                self.generate_forms(one_to_one=self.one_to_one,
                                     many_to_many=self.many_to_many,
                                     fkeys=self.fkeys)
                 self.generate_views()
                 self.generate_home_page()
                 self.generate_base_pages()
-                self.generate_list_html_pages(asso_dict=self.asso_dict,
-                                              one_to_one=self.one_to_one,
+                self.generate_list_html_pages(one_to_one=self.one_to_one,
                                               many_to_many=self.many_to_many,
                                               fkeys=self.fkeys)
-                self.generate_form_html_pages(asso_dict=self.asso_dict,
-                                              one_to_one=self.one_to_one,
+                self.generate_form_html_pages(one_to_one=self.one_to_one,
                                               many_to_many=self.many_to_many,
                                               fkeys=self.fkeys)
                 self.generate_project_urls()

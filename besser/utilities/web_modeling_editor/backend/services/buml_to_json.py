@@ -15,7 +15,7 @@ from besser.BUML.metamodel.state_machine import (
 def parse_buml_content(content: str) -> DomainModel:
     """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
-        # Create a safe environment for eval
+        # Create a safe environment for eval without any generators
         safe_globals = {
             'Class': Class,
             'Property': Property,
@@ -32,19 +32,18 @@ def parse_buml_content(content: str) -> DomainModel:
             'StringType': PrimitiveDataType("str"),
             'IntegerType': PrimitiveDataType("int"),
             'DateType': PrimitiveDataType("date"),
-            # Add mock generators that do nothing
-            'PythonGenerator': lambda model: type('MockGenerator', (), {'generate': lambda: None}),
-            'DjangoGenerator': lambda model: type('MockGenerator', (), {'generate': lambda: None}),
-            'SQLAlchemyGenerator': lambda model: type('MockGenerator', (), {'generate': lambda: None}),
-            'SQLGenerator': lambda model: type('MockGenerator', (), {'generate': lambda: None}),
-            'RESTAPIGenerator': lambda model: type('MockGenerator', (), {'generate': lambda: None}),
-            'BackendGenerator': lambda model, **kwargs: type('MockGenerator', (), {'generate': lambda: None}),
-            'RDFGenerator': lambda model: type('MockGenerator', (), {'generate': lambda: None})
         }
         
-        # Execute the B-UML content in a safe environment
+        # Pre-process the content to remove generator-related lines
+        cleaned_lines = []
+        for line in content.splitlines():
+            if not any(gen in line for gen in ['Generator(', '.generate(']):
+                cleaned_lines.append(line)
+        cleaned_content = '\n'.join(cleaned_lines)
+        
+        # Execute the cleaned B-UML content
         local_vars = {}
-        exec(content, safe_globals, local_vars)
+        exec(cleaned_content, safe_globals, local_vars)
         
         domain_name = "Imported_Domain_Model"
         for var_name, var_value in local_vars.items():
@@ -239,17 +238,22 @@ def domain_model_to_json(domain_model):
             if len(ends) == 2:
                 source_prop, target_prop = ends
                 
-                # Check navigability and swap if needed
-                if not source_prop.is_navigable and target_prop.is_navigable:
-                    # If source is not navigable but target is, keep current order
-                    pass
-                elif source_prop.is_navigable and not target_prop.is_navigable:
-                    # If target is not navigable but source is, swap them
+                # Check navigability and composition, swap if needed
+                if source_prop.is_composite and not target_prop.is_composite:
+                    # If source is composite, swap them to make target composite
                     source_prop, target_prop = target_prop, source_prop
-                elif not source_prop.is_navigable and not target_prop.is_navigable:
-                    # If both are not navigable, raise error but continue
-                    print(f"Warning: Both ends of association {name} are not navigable. Skipping this association.")
-                    continue
+                elif not source_prop.is_composite and not target_prop.is_composite:
+                    # Check navigability only if neither end is composite
+                    if not source_prop.is_navigable and target_prop.is_navigable:
+                        # If source is not navigable but target is, keep current order
+                        pass
+                    elif source_prop.is_navigable and not target_prop.is_navigable:
+                        # If target is not navigable but source is, swap them
+                        source_prop, target_prop = target_prop, source_prop
+                    elif not source_prop.is_navigable and not target_prop.is_navigable:
+                        # If both are not navigable, raise error but continue
+                        print(f"Warning: Both ends of association {name} are not navigable. Skipping this association.")
+                        continue
                 
                 source_class = source_prop.type
                 target_class = target_prop.type
@@ -275,7 +279,7 @@ def domain_model_to_json(domain_model):
                     rel_bounds = calculate_relationship_bounds(path_points)
                     
                     # Determine relationship type
-                    rel_type = RELATIONSHIP_TYPES["composition"] if source_prop.is_composite else (
+                    rel_type = RELATIONSHIP_TYPES["composition"] if target_prop.is_composite else (
                         RELATIONSHIP_TYPES["bidirectional"] if source_prop.is_navigable and target_prop.is_navigable
                         else RELATIONSHIP_TYPES["unidirectional"]
                     )
@@ -424,7 +428,7 @@ def state_machine_to_json(content: str):
     # Track states and functions
     states = {}  # name -> state_id mapping
     functions = {}  # name -> function_node mapping
-    state_machine_name = "Generated State Machine"
+    state_machine_name = "Generated_State_Machine"
     
     # First pass: collect all functions and state machine name
     for node in ast.walk(tree):
@@ -572,13 +576,8 @@ def state_machine_to_json(content: str):
                         "width": 580,
                         "height": 200
                     },
-                    "text": cleaned_source,
+                    "code": cleaned_source,
                     "language": "python",
-                    "code": {
-                        "content": cleaned_source,
-                        "language": "python",
-                        "version": "1.0"
-                    }
                 }
                 created_code_blocks[function_name] = {
                     "id": code_block_id,

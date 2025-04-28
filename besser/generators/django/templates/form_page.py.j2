@@ -1,0 +1,122 @@
+{%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                    {%- set source_name= source.dataSourceClass%}
+                    {% set data_source_name_lower = source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]%}
+                    {% set data_source_name_upper = source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]%}
+{% raw %}{% extends '{% endraw %}{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.html' %}
+
+{% raw %}{% block content %}{% endraw %}
+<div class="container mx-auto mt-10 bg-white p-6 rounded-lg shadow-lg border">
+    <h1 class="text-4xl font-extrabold mb-8 text-gray-800">{% raw %}{{{% endraw %} is_edit|yesno{% raw %}:{% endraw %}"Edit {{data_source_name_upper}},Add {{data_source_name_upper}}" }}</h1>
+
+    <div class="max-w-lg mx-auto shadow-lg rounded-lg overflow-hidden border bg-gray-100">
+        <div class="px-6 py-4">
+            <form id="{{data_source_name_lower}}Form" action="{% raw %}{%{% endraw %} if is_edit %}{% raw %}{% url 'edit_{% endraw %}{{data_source_name_lower}}' form.instance.id %}{% raw %}{%{% endraw %} else %}{% raw %}{% url 'create_{% endraw %}{{data_source_name_lower}}' %}{% raw %}{%{% endraw %} endif %}" method="POST" class="space-y-6">
+                {% raw %}{% csrf_token %}{% endraw %}
+                {%- for class_obj in model.classes_sorted_by_inheritance() %}
+    {%- if class_obj.name == source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:] %}
+        {%- set generals = namespace(names=[]) %}
+            {%- for parent in class_obj.parents() %}
+              {%- set _ = generals.names.append(parent.name) %}
+            {%- endfor %}
+                {%- set inheritance = generals.names | join(', ') %}
+                {#- for inheritance #}
+                    {%- if inheritance %}
+                        {%- for class_obj in model.classes_sorted_by_inheritance() %}
+                            {%- if class_obj.name == inheritance%}
+                                {%- for attr in sort_by_timestamp(class_obj.attributes) %}
+                <div class="form-group">
+                    <label for="{% raw %}{{{% endraw %} form.{{ attr.name }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{ attr.name[0].upper() + attr.name[1:] }}</label>
+                    {% raw %}{{{% endraw %} form.{{ attr.name }} }}
+                </div>
+                                {%- endfor %}
+                            {%- endif %}
+                        {%- endfor %}
+                    {%- endif %}
+                {#- End for inheritance #}
+        {#- for fields #}
+        {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                   {%- set source_name= source.dataSourceClass%}
+                   {%- set fieldsList = source.fields|list %}
+                       {%- for field in fieldsList%}
+
+                <div class="form-group">
+                    <label for="{% raw %}{{{% endraw %} form.{{ field.name }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{ field.name[0].upper() + field.name[1:] }}</label>
+                    {% raw %}{{{% endraw %} form.{{ field.name }} }}
+                </div>
+                       {%- endfor %}
+                {%- endif %}
+            {%- endfor %}
+        {%- endif %}
+    {%- endfor %}
+    {#- End for fields #}
+                {%- for association in class_obj.associations %}
+                    {%- if association.ends|length == 2 and association.name not in processed_associations %}
+                      {%- set ns = namespace(end1=None, end2=None) %}
+                        {%- for end in association.ends %}
+                           {%- set ns.end1=end if end.type.name == class_obj.name else ns.end1 %}
+                           {%- set ns.end2=end if end.type.name != class_obj.name else ns.end2 %}
+                        {%- endfor %}
+                          {%- set class1_name = ns.end1.type.name %}
+                          {%- set class2_name = ns.end2.type.name %}
+                          {#- ManyToManyField in Django #}
+                            {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
+                            {%- if class_obj.name == many_to_many.get(ns.end1.owner.name) %}
+
+                <div class="form-group">
+                    <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
+                    {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                </div>
+                           {%- endif %}
+
+                            {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+                               {%- if class_obj.name == fkeys.get(ns.end1.owner.name) %}
+                <div class="form-group">
+                    <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
+                    {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                </div>
+                                {%- endif %}
+                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
+                               {%- if class_obj.name == fkeys.get(ns.end2.owner.name) %}
+                <div class="form-group">
+                    <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
+                    {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                </div>
+                             {% else%}
+                             {% endif %}
+                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+                               {%- if class_obj.name == one_to_one.get(ns.end1.owner.name) %}
+                <div class="form-group">
+                    <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
+                    {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                </div>
+                               {%- endif %}
+                            {%- endif %}
+                    {%- endif %}
+                {%- endfor %}
+    {%- endif %}
+{%- endfor %}
+
+                <div class="flex justify-between mt-6">
+                    <a type="button" href="http://127.0.0.1:8000/{{data_source_name_lower}}s/" class="font-bold py-2 px-4 rounded-lg bg-gray-400 text-white hover:bg-gray-500 transition">
+                        Cancel
+                    </a>
+                    <button type="submit" class="font-bold py-2 px-4 rounded-lg bg-[#0C4B33] text-white hover:bg-[#0A3A28] transition">
+                        Save
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% raw %}{% endblock %}{% endraw %}
+                {%-  endif %}
+            {%-  endfor %}
+        {%-  endif %}
+    {%-  endfor %}
+

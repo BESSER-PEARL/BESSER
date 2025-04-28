@@ -9,6 +9,7 @@ services:
       - "9000:9000"
     volumes:
       - ./:/app
+      - /var/run/docker.sock:/var/run/docker.sock  # Mount Docker socket for Docker communication
     working_dir: /app/besser
     environment:
       - PYTHONPATH=/app

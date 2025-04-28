@@ -14,10 +14,18 @@ method as follows:
     
     from besser.generators.nn.tf.tf_code_generator import TFGenerator
     
-    pytorch_model = TFGenerator(
+    tf_model = TFGenerator(
         model=nn_model, output_dir="output_folder", generation_type="subclassing"
     )
-    pytorch_model.generate()
+    tf_model.generate()
+
+
+
+The configuration parameters for the `TFGenerator` are as follows:
+
+- **model**: The neural network model.
+- **output_dir**: The name of the output directory where the ``tf_nn_subclassing.py`` file will be generated.
+- **generation_type**: The type of NN architecture. Either ``subclassing`` or ``sequential``.
 
 
 The ``tf_nn_subclassing.py`` file will be generated inside ``output_folder`` and it will look as follows:

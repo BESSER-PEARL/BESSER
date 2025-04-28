@@ -21,6 +21,13 @@ method as follows:
     pytorch_model.generate()
 
 
+The configuration parameters for the `PytorchGenerator` are as follows:
+
+- **model**: The neural network model.
+- **output_dir**: The name of the output directory where the ``pytorch_nn_subclassing.py`` file will be generated.
+- **generation_type**: The type of NN architecture. Either ``subclassing`` or ``sequential``.
+
+
 The ``pytorch_nn_subclassing.py`` file will be generated inside ``output_folder`` and it will look as follows:
 
 

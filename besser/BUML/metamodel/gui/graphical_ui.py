@@ -603,6 +603,7 @@ class InputField(ViewComponent):
         self.validationRules: str = validationRules
 
 
+
     @property
     def type(self) -> InputFieldType:
         """InputFieldType: Get the type of the input field."""

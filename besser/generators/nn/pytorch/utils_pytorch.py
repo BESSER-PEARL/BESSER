@@ -11,7 +11,7 @@ from besser.BUML.metamodel.nn import TensorOp, Layer
 from besser.generators.nn import utils_nn as utils
 
 
-class SetupLayerSyntax:
+class SetupLayerTorch:
     """
     This class is used to get PyTorch layer syntax from BUML layer object.
     It processes the layers based on their type.

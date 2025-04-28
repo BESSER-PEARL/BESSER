@@ -5,10 +5,8 @@ The task is to predict house prices using the BostonHousing dataset.
 
 from besser.BUML.metamodel.nn import NN, LinearLayer, DropoutLayer, \
     Configuration, Dataset
-from besser.generators.nn.pytorch.pytorch_code_generator import (
-    PytorchGenerator
-)
-from besser.generators.nn.tf.tf_code_generator import TFGenerator
+from besser.generators.nn.pytorch import PytorchGenerator
+from besser.generators.nn.tf import TFGenerator
 
 nn_model: NN = NN(name="my_model")
 nn_model.add_layer(LinearLayer(name="l1", actv_func="relu", in_features=13,

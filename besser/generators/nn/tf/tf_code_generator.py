@@ -5,8 +5,7 @@ TF code for neural networks based on the B-UML model.
 
 from typing import Callable
 from besser.BUML.metamodel.nn import NN
-from besser.generators.nn.tf.utils_tf import SetupLayerSyntax, \
-    get_tensorop_syntax
+from besser.generators.nn.tf.utils_tf import SetupLayerTF, get_tensorop_syntax
 from besser.generators.nn.nn_code_generator import NNCodeGenerator
 
 
@@ -33,7 +32,7 @@ class TFGenerator(NNCodeGenerator):
     def __init__(self, model: NN, output_dir: str | None = None,
                  generation_type: str = "subclassing"):
 
-        setup_layer: SetupLayerSyntax = SetupLayerSyntax
+        setup_layer: SetupLayerTF = SetupLayerTF
         setup_tensorop: Callable = get_tensorop_syntax
 
         template_dir: str = "tf"

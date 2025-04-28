@@ -5,7 +5,7 @@ PyTorch code for neural networks based on the B-UML model.
 
 from typing import Callable
 from besser.BUML.metamodel.nn import NN
-from besser.generators.nn.pytorch.utils_pytorch import SetupLayerSyntax, \
+from besser.generators.nn.pytorch.utils_pytorch import SetupLayerTorch, \
     get_tensorop_syntax
 from besser.generators.nn.nn_code_generator import NNCodeGenerator
 
@@ -36,7 +36,7 @@ class PytorchGenerator(NNCodeGenerator):
                  generation_type: str = "subclassing",
                  channel_last: bool = False):
 
-        setup_layer: SetupLayerSyntax = SetupLayerSyntax
+        setup_layer: SetupLayerTorch = SetupLayerTorch
         setup_tensorop: Callable = get_tensorop_syntax
 
         template_dir: str = "pytorch"

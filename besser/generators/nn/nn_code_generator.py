@@ -6,19 +6,17 @@ networks based on the B-UML model.
 
 import os
 from typing import Callable
+from typing import TYPE_CHECKING
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.nn import NN
 from besser.generators import GeneratorInterface
-from besser.generators.nn.tf.utils_tf import (
-    SetupLayerSyntax as SetupLayerTF
-)
-from besser.generators.nn.pytorch.utils_pytorch import (
-    SetupLayerSyntax as SetupLayerTorch
-)
 from besser.generators.nn.pytorch.utils_pytorch import adjust_actv_func_name
 from besser.generators.nn.utils_nn import handle_layer, handle_tensorop, \
     add_in_out_var_to_subnn
 
+if TYPE_CHECKING:
+    from besser.generators.nn.tf.utils_tf import  SetupLayerTF
+    from besser.generators.nn.pytorch.utils_pytorch import SetupLayerTorch
 
 class NNCodeGenerator(GeneratorInterface):
     """
@@ -48,13 +46,13 @@ class NNCodeGenerator(GeneratorInterface):
         
     """
     def __init__(self, model: NN,
-                 setup_layer: SetupLayerTF | SetupLayerTorch,
+                 setup_layer: 'SetupLayerTF | SetupLayerTorch',
                  get_tensorop_syntax: Callable, generation_type: str,
                  template_dir: str, channel_last: bool | None = None,
                  file_name: str = "nn.py", output_dir: str = None):
 
         super().__init__(model, output_dir)
-        self.setup_layer: SetupLayerTF | SetupLayerTorch = setup_layer
+        self.setup_layer: (SetupLayerTF | SetupLayerTorch) = setup_layer
         self.get_tensorop_syntax: Callable = get_tensorop_syntax
         self.generation_type: str = generation_type
         self.channel_last: bool = channel_last

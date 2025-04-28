@@ -3,10 +3,8 @@ BUML code for VGG16 from the literature.
 """
 from besser.BUML.metamodel.nn import NN, Conv2D, PoolingLayer, \
     LinearLayer, DropoutLayer, FlattenLayer
-from besser.generators.nn.pytorch.pytorch_code_generator import (
-    PytorchGenerator
-)
-from besser.generators.nn.tf.tf_code_generator import TFGenerator
+from besser.generators.nn.pytorch import PytorchGenerator
+from besser.generators.nn.tf import TFGenerator
 
 
 

@@ -1,0 +1,25 @@
+Version 2.5.2
+=============
+
+
+Improvements
+------------
+
+**NN Metamodel**
+
+* Set default value of return_type attribute of RNN layers to "full". 
+* Make modules attribute of NN settable.
+
+**PyTorch and TensorFlow code generators**
+
+* Use TYPE_CHECKING for type hinting.
+* Simplify shape atribute setting in LayerNormLayer.
+* Set default value of channel_last parameter to False for PyTorch code generator.
+
+
+
+
+Documentation
+-------------
+
+* Add documentation for NN metamodel, Pytorch, and TensorFlow code generators (API section)

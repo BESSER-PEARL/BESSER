@@ -6,20 +6,35 @@ of layers in TensorFlow, while `get_tensorop_syntax` defines the
 tensorOps.
 """
 
+from besser.BUML.metamodel.nn import TensorOp, Layer
 from besser.generators.nn import utils_nn as utils
 
 
 class SetupLayerSyntax:
     """
-    This class is used to map the BUML synatx for layers to TensorFlow
-    syntax.
+    This class is used to get TensorFlow layer syntax from BUML layer object.
     It processes the layers based on their type.
+
+    Attributes:
+        layer (Layer): the BUML layer object.
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+        permute_out (bool | None): Whether to add a permute tensorop after 
+            the layer. It is only relevant for PyTorch and used here just to
+            facilitate shared processing logic.
+        permute_in (bool | None): Whether to add a permute tensorop before 
+            the layer. It is only relevant for PyTorch and used here just to
+            facilitate shared processing logic.
+
+    Returns: 
+        None, but stores the layers and their attributes in the 
+        modules_details dictionary.
     """
-    def __init__(self, layer, modules_details):
-        self.layer = layer
+    def __init__(self, layer: Layer, modules_details: dict):
+        self.layer: Layer = layer
         self.modules_details: dict = modules_details
-        self.permute_out: bool = None
-        self.permute_in: bool = None
+        self.permute_out: bool | None = None
+        self.permute_in: bool | None = None
 
     def setup_general_layer(self):
         """It defines the syntax of general layers."""
@@ -52,15 +67,7 @@ class SetupLayerSyntax:
                 lyr = f"{lyr}.BatchNormalization()"
             else: #cls_name == "LayerNormLayer"
                 norm_shape = self.layer.normalized_shape
-                if norm_shape[1] is not None:
-                    if norm_shape[2] is not None:
-                        shape = [norm_shape[0], norm_shape[1], norm_shape[2]]
-                    else:
-                        shape = [norm_shape[0], norm_shape[1]]
-                else:
-                    shape = [norm_shape[0]]
-
-                lyr = f"{lyr}.LayerNormalization(axis={shape})"
+                lyr = f"{lyr}.LayerNormalization(axis={norm_shape})"
         else: #cls_name == "DropoutLayer"
             lyr = f"{lyr}.Dropout(rate={self.layer.rate})"
         return lyr
@@ -88,9 +95,7 @@ class SetupLayerSyntax:
         else:
             lyr = f"self.{lyr_name} = {lyr}"
 
-        #self.modules_details is returned to have the same structure
-        #of setup_rnn from torch
-        return lyr, self.modules_details
+        return lyr
 
     def setup_actv_func(self):
         """
@@ -107,8 +112,17 @@ class SetupLayerSyntax:
             else:
                 return None
 
-    def setup_conv(self, lyr_name, cls_name):
-        """It defines the syntax of convolutional layers."""
+    def setup_conv(self, lyr_name: str, cls_name: str):
+        """
+        It defines the syntax of convolutional layers.
+        
+        Args:
+            lyr_name (str): The name of the layer.
+            cls_name (str): The name of its class.
+        
+        Returns:
+            lyr (str): The syntax of the layer in TensorFlow.
+        """
         actv_func = self.setup_actv_func()
         dim = cls_name[-2:-1]
         filters = self.layer.out_channels
@@ -129,8 +143,16 @@ class SetupLayerSyntax:
         )
         return lyr
 
-    def setup_pooling(self, lyr_name):
-        """It defines the syntax of pooling layers."""
+    def setup_pooling(self, lyr_name: str):
+        """
+        It defines the syntax of pooling layers.
+
+        Args:
+            lyr_name (str): The name of the layer.
+
+        Returns:
+            lyr (str): The syntax of the layer in TensorFlow.
+        """
         pl_type = self.layer.pooling_type
         dim = self.layer.dimension[-2:-1]
         if pl_type == "max" or pl_type == "average":
@@ -170,13 +192,25 @@ class SetupLayerSyntax:
         else:
             lyr = self.setup_conv(lyr_name, cls_name)
 
-        #self.modules_details is returned to have the same structure
-        #of setup_rnn from torch
-        return lyr, self.modules_details
+        return lyr
 
 
-def get_tensorop_syntax(tensorop, modules_details, in_var=None):
-    """It defines the syntax of tensorops."""
+def get_tensorop_syntax(tensorop: TensorOp, modules_details: dict,
+                        in_var: str | None = None):
+    """
+    It defines the syntax of tensorops.
+
+    Parameters:
+        tensorop (TensorOp): The TensorOp BUML object.
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+        in_var (str | None): the input variable notation of the tensorop
+            (e.g., 'x', 'x_1', ...).
+    
+    Returns:
+        ts_op_synt (str): the syntax of the tensorop in PyTorch.
+
+    """
     prev_out_var, params = utils.get_tensorop_params(tensorop,
                                                      modules_details)
     if in_var is not None:

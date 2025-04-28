@@ -1,13 +1,13 @@
 Pytorch Generator
 =================
 
-A code generator for `Pytorch <https://pytorch.org/>`_ is also provided by BESSER. Pytorch
+A code generator for `PyTorch <https://pytorch.org/>`_ is also provided by BESSER. PyTorch
 is an open-source machine learning framework developed by Meta (Facebook) that is widely used for
-deep learning and artificial intelligence (AI) applications. Our Generator transform
-:doc:`B-UML Neural Network models <../buml_language/model_types/nn>` into Pytorch code,
+deep learning. Our Generator transforms
+:doc:`B-UML Neural Network models <../buml_language/model_types/nn>` into PyTorch code,
 allowing you to create neural networks based on your B-UML specifications.
 
-To use the Pytorch generator, you need to create a ``TFGenerator`` object, provide the
+To use the PyTorch generator, you need to create a ``PytorchGenerator`` object, provide the
 :doc:`B-UML Neural Network model <../buml_language/model_types/nn>`, and use the ``generate`` 
 method as follows:
 
@@ -21,4 +21,10 @@ method as follows:
     pytorch_model.generate()
 
 
-To complete...
+The ``pytorch_nn_subclassing.py`` file will be generated inside ``output_folder`` and it will look as follows:
+
+
+
+.. literalinclude:: ../../../tests/BUML/metamodel/nn/output/tutorial_example/pytorch_nn_subclassing.py
+   :language: python
+   :linenos:

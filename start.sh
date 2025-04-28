@@ -3,6 +3,9 @@
 # Get the current directory path (where the script is executed)
 PROJECT_PATH="$(cd "$(dirname "$0")" && pwd)"
 
+# Get requirements file path from command line argument or use default
+REQ_FILE="${1:-$PROJECT_PATH/requirements.txt}"
+
 # Navigate to the project directory
 cd "$PROJECT_PATH"
 
@@ -17,10 +20,11 @@ if [ -f "besser_venv/bin/activate" ]; then
     # Activate the virtual environment
     source "besser_venv/bin/activate"
     
-    # Set PYTHONPATH and install requirements if requirements.txt exists
+    # Set PYTHONPATH and install requirements if requirements file exists
     export PYTHONPATH="$PROJECT_PATH"
-    if [ -f "requirements.txt" ]; then
-        pip install -r requirements.txt
+    if [ -f "$REQ_FILE" ]; then
+        echo "Installing requirements from: $REQ_FILE"
+        pip install -r "$REQ_FILE"
     fi
     
     # Keep the shell session open after running the script

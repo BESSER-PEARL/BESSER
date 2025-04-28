@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Home Page</title>
+</head>
+<body>
+{%- if screen %}
+    <h1>{{screen.name}}</h1>
+    {%- if screen.view_elements|length >= 1 %}
+        {%- for component in screen.view_elements %}
+
+            {%- if component is is_Button %}
+                {%- if component.buttonType.value == 'Raised Button' and component.actionType.value == 'Navigate'%}
+                {%- set button_label = component.label %}
+                {%- for module in app.modules%}
+                    {%- for screen in module.screens %}
+                       {%- if screen.name ==  component.targetScreen.name %}
+                           {%- set target_screen = component.targetScreen%}
+                               {%- for component in target_screen.view_elements %}
+                                    {%- if component is is_List%}
+                                        {%- for source in component.list_sources%}
+                                            {%- if source is is_ModelElement%}
+                                               {%- set source_name= source.dataSourceClass%} 
+
+    <a href="{% raw %}{% url '{% endraw %}{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list' %}">
+        <button>{{ button_label }}</button>
+    </a>
+                                             {%- endif %}
+                                        {%- endfor %}
+                                    {%- endif %}
+                                {%- endfor %}
+                        {%- endif %}
+                    {%- endfor %}
+                    {%- endfor %}
+                {%- endif %}
+            {%- endif %}
+        {%- endfor %}
+    {%- endif %}
+{%- else %}
+  {%- for module in app.modules%}
+    {%- for screen in module.screens %}
+        {%- for component in screen.view_elements %}
+            {%- if component is is_List%}
+                {%- for source in component.list_sources%}
+                    {%- if source is is_ModelElement%}
+                       {%- set source_name= source.dataSourceClass%}
+    <a href="{% raw %}{% url '{% endraw %}{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list' %}">
+        <button>{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}</button>
+    </a> 
+                    {%- endif %}
+                {%- endfor%}
+            {%- endif %}
+        {%-endfor%}
+    {%- endfor %}
+{%- endfor %}           
+{%- endif %}
+</body>
+</html>

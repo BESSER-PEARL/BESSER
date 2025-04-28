@@ -1,0 +1,136 @@
+Class ButtonActionType(Enum):
+Represents a button action type, including the following types:
+- Add
+- ShowList
+- OpenForm
+- SubmitForm
+- Cancel
+- Save
+- Delete
+- Confirm
+- Navigate
+- Search
+- Filter
+- Sort
+- Send
+- Share
+- Settings
+- Back
+- Next
+- View
+- Select
+- Login
+- Logout
+- Help
+- About
+- Exit
+
+Class ButtonType(Enum):
+Represents a button type, including the following types:
+- Raised Button
+- Text Button
+- Outlined Button
+- Icon Button
+- FloatingActionButton
+- Dropdown Button
+- Toggle Buttons
+- iOS-style Button
+- Customizable Button
+
+Class DataSource(NamedElement):
+Represents a data source, providing the following attributes and associations:
+- name (str): The name of the data source.
+
+Class DataSourceElement(DataSource):
+Represents a data source associated with a model element, providing the following attributes and associations:
+- name (str): The name of the model element data source.
+- dataSourceClass (Class): The class representing the data source.
+- fields (set[Property]): The fields representing the attributes of the model element.
+
+Class File(DataSource):
+Represents a data source that is a file, providing the following attributes and associations:
+- name (str): The name of the file data source.
+- type (FileSourceType): The type of the file data source.
+
+Class Collection(DataSource):
+Represents a data source that is a collection, providing the following attributes and associations:
+- name (str): The name of the collection data source.
+- type (CollectionSourceType): The type of the collection data source.
+
+Class ViewElement(NamedElement):
+Represents a view element, providing the following attributes and associations:
+- name (str): The name of the view element.
+- description (str): The description of the view element.
+
+Class ViewComponent(ViewElement):
+Represents a view component, providing the following attributes and associations:
+- name (str): The name of the view component.
+- description (str): The description of the view component.
+
+Class ViewContainer(ViewElement):
+Represents a view container, providing the following attributes and associations:
+- name (str): The name of the view container.
+- description (str): The description of the view container.
+
+Class Screen(ViewContainer):
+Represents a screen, providing the following attributes and associations:
+- name (str): The name of the screen.
+- view_elements (set[ViewElement]): The set of view elements on the screen.
+- x_dpi (str): The X DPI (dots per inch) of the screen.
+- y_dpi (str): The Y DPI (dots per inch) of the screen.
+- screen_size (str): The size of the screen (can be this options: 'Small','Medium', 'Large', 'xLarge')
+- is_main_page (bool): wether this screen serves as the main page of the model.
+
+Class Module(NamedElement):
+Represents a module, providing the following attributes and associations:
+- name (str): The name of the module.
+- screens (set[Screen]): The set of screens contained in the module.
+
+Class DataList(ViewComponent):
+Represents a list component that encapsulates properties unique to lists, such as list sources, providing the following attributes and associations:
+- name (str): The name of the list.
+- list_sources (set[DataSource]): The set of data sources associated with the list.
+
+Class Button(ViewComponent):
+Represents a button component and encapsulates specific properties of a button, such as its name and label, providing the following attributes and associations:
+- name (str): The name of the button.
+- description (str): The description of the button.
+- label (str): The label of the button.
+- buttonType (ButtonType): The type of the button.
+- actionType (ButtonActionType): The action type of the button.
+- targetScreen (Screen, optional): The target Screen associated with the button when the actionType is "Navigate".
+
+Class Image(ViewComponent):
+Represents an image component and encapsulates the specific properties of an image, such as its name, providing the following attributes and associations:
+- name (str): The name of the image.
+
+Class InputField(ViewComponent):
+Represents an input field component and encapsulates specific properties of an input field, such as its type and validation rules, providing the following attributes and associations:
+- name (str): The name of the input field.
+- description (str): The description of the input field.
+- fieldType (str): The type of the input field. fieldType is in these types: ['Text','Number', 'Email', 'Password', 'Date', 'Time', 'File', 'Color', 'Range', 'URL', 'Tel', 'Search']
+- validationRules (str): The validation rules for the input field.
+
+Class Form(ViewComponent):
+Represents a form component and encapsulates the specific properties of a form, such as its name, providing the following attributes and associations:
+- name (str): The name of the form.
+- description (str): The description of the form.
+- inputFields (set[InputField]): The set of input fields contained in the form.
+Class MenuItem:
+Represents an item of a menu, providing the following attributes and associations:
+- label (str): The label of the menu item.
+
+Class Menu(ViewComponent):
+Represents a menu component and encapsulates the specific properties of a menu, such as its name, providing the following attributes and associations:
+- name (str): The name of the menu.
+- description (str): The description of the menu.
+- menuItems (set[MenuItem]): The set of menu items contained in the menu.
+
+The GUIModel metaclass is a subclass of the NamedElement class and serves as a blueprint for creating GUI model objects. It encapsulates the properties and behavior of an application, providing the following attributes and associations:
+- name (str): The name of the application.
+- package (str): The package of the application.
+- versionCode (str): The version code of the application.
+- versionName (str): The version name of the application.
+- modules (set[Module]): The set of modules contained in the application.
+- description (str): The description of the application.
+- screenCompatibility (bool): Indicates whether the application has screen compatibility.

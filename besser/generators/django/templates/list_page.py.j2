@@ -1,0 +1,185 @@
+{%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                    {%- set source_name= source.dataSourceClass%}
+                    {% set data_source_name_lower = source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]%}
+                    {% set data_source_name_upper = source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]%}
+{% raw %}{% extends '{% endraw %}{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.html' %}
+
+{% raw %}{% block content %}{% endraw %}
+<div class="container mx-auto mt-10 bg-white p-6 rounded-lg shadow-lg border">
+
+    <!-- Back to Home Button -->
+    <div class="mb-6">
+        <a href="{% raw %}{% url '{% endraw %}home' %}" class="font-bold py-2 px-4 rounded-lg bg-gray-300 hover:bg-gray-400 transition">
+            Back to Home Page
+        </a>
+    </div>
+    <h1 class="text-4xl font-extrabold mb-8 text-gray-800">List of {{data_source_name_upper}}s</h1>
+
+    <button id="add{{data_source_name_upper}}Btn" class="font-bold py-2 px-4 rounded-lg bg-[#0C4B33] text-white hover:bg-[#0A3A28] transition mb-6">
+        Add {{data_source_name_upper}}
+    </button>
+
+    <div id="add{{data_source_name_upper}}Modal" class="hidden fixed inset-0 flex justify-center items-center bg-gray-900 bg-opacity-50">
+        <div class="bg-white rounded-lg overflow-hidden shadow-xl w-full max-w-lg border p-6">
+                <h2 class="text-xl font-bold mb-4 text-gray-800">Add {{data_source_name_upper}}</h2>
+                <form id="{{data_source_name_lower}}Form" action="{% raw %}{% url '{% endraw %}create_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}' %}" method="POST">
+                    {% raw %}{% csrf_token %}{% endraw %}
+    {%- for class_obj in model.classes_sorted_by_inheritance() %}
+    {%- if class_obj.name == source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:] %}
+        {%- set generals = namespace(names=[]) %}
+            {%- for parent in class_obj.parents() %}
+              {%- set _ = generals.names.append(parent.name) %}
+            {%- endfor %}
+                {%- set inheritance = generals.names | join(', ') %}
+                {#- for inheritance #}
+                {%- if inheritance %}
+                    {%- for class_obj in model.classes_sorted_by_inheritance() %}
+                            {%- if class_obj.name == inheritance%}
+                                {%- for attr in sort_by_timestamp(class_obj.attributes) %}
+                    <div class="form-group">
+                        <label for="{% raw %}{{{% endraw %} form.{{ attr.name }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{ attr.name[0].upper() + attr.name[1:] }}</label>
+                        {% raw %}{{{% endraw %} form.{{ attr.name }} }}
+                    </div>
+                                {%- endfor %}
+                            {%- endif %}
+                        {%- endfor %}
+                    {%- endif %}
+                {#- End for inheritance #}
+{#- for fields #}
+{%- for component in screen.view_elements %}
+    {%- if component is is_List%}
+        {%- for source in component.list_sources%}
+            {%- if source is is_ModelElement%}
+                {%- set source_name= source.dataSourceClass%}
+                {%- set fieldsList = source.fields|list %}
+                    {%- for field in fieldsList%}
+
+                    <div class="form-group">
+                        <label for="{% raw %}{{{% endraw %} form.{{ field.name }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{ field.name[0].upper() + field.name[1:] }}</label>
+                        {% raw %}{{{% endraw %} form.{{ field.name }} }}
+                    </div>
+                    {%- endfor %}
+            {%- endif %}
+        {%- endfor %}
+    {%- endif %}
+{%- endfor %}
+{#- End for fields #}
+                {%- for association in class_obj.associations %}
+                    {%- if association.ends|length == 2 and association.name not in processed_associations %}
+                      {%- set ns = namespace(end1=None, end2=None) %}
+                        {%- for end in association.ends %}
+                           {%- set ns.end1=end if end.type.name == class_obj.name else ns.end1 %}
+                           {%- set ns.end2=end if end.type.name != class_obj.name else ns.end2 %}
+                        {%- endfor %}
+                          {%- set class1_name = ns.end1.type.name %}
+                          {%- set class2_name = ns.end2.type.name %}
+                            {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
+                              {%- if class_obj.name == many_to_many.get(ns.end1.owner.name) %}
+
+                    <div class="form-group">
+                        <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block text-gray-700 font-semibold mb-2">{{class2_name}}</label>
+                        {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                    </div>
+                             {%- endif %}
+
+                               {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+                                 {%- if class_obj.name == fkeys.get(ns.end1.owner.name) %}
+                    <div class="form-group">
+                        <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block text-gray-700 font-semibold mb-2">{{class2_name}}</label>
+                        {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                    </div>
+                                  {%- endif %}
+                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
+
+                   {%- if class_obj.name == fkeys.get(ns.end2.owner.name) %}
+                    <div class="form-group">
+                        <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block text-gray-700 font-semibold mb-2">{{class2_name}}</label>
+                        {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                    </div>
+
+                    {% else%}
+                    {% endif%}
+
+                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+                                    {%- if class_obj.name == one_to_one.get(ns.end1.owner.name) %}
+                    <div class="form-group">
+                        <label for="{% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }}.id_for_label }}" class="block font-semibold mb-2 text-gray-700">{{class2_name}}</label>
+                        {% raw %}{{{% endraw %} form.{{ ns.end2.name.replace(' ', '_') }} }}
+                    </div>
+                               {%- endif %}
+                            {%- endif %}
+                    {%- endif %}
+                {%- endfor %}
+    {%- endif %}
+{%- endfor %}
+
+                    <div class="flex justify-between mt-6">
+                        <button type="button" class="cancelButton font-bold py-2 px-4 rounded-lg bg-gray-400 text-white hover:bg-gray-500 transition">
+                            Cancel
+                        </button>
+                        <button type="submit" class="font-bold py-2 px-4 rounded-lg bg-[#0C4B33] text-white hover:bg-[#0A3A28] transition">
+                            Save
+                        </button>
+                    </div>
+                </form>
+        </div>
+    </div>
+
+    <table class="min-w-full shadow-md rounded-lg overflow-hidden border bg-white">
+        <thead class="bg-[#0C4B33] text-white">
+            <tr>
+    {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                   {%- set source_name= source.dataSourceClass%}
+                   {%- set fieldsList = source.fields|list %}
+                       {%- for field in fieldsList%}
+                <th class="w-1/3 text-left py-3 px-4 uppercase font-semibold text-sm">{{ field.name[0].upper() + field.name[1:] }}</th>
+                       {%- endfor %}
+                {%- endif %}
+            {%- endfor %}
+        {%- endif %}
+    {%- endfor %}
+                <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% raw %}{% for{% endraw %} {{data_source_name_lower}} in {{data_source_name_lower}}s %}
+            <tr class="border-b hover:bg-gray-100 transition">
+    {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                   {%- set source_name= source.dataSourceClass%}
+                   {%- set fieldsList = source.fields|list %}
+                       {%- for field in fieldsList%}
+                <td class="w-1/3 text-left py-3 px-4">{% raw %}{{{% endraw %} {{data_source_name_lower}}.{{field.name}} }}</td>
+                       {%- endfor %}
+                {%- endif %}
+            {%- endfor %}
+        {%- endif %}
+    {%- endfor %}
+                <td class="flex gap-5 py-3 px-4">
+                    <a href="{% raw %}{% url '{% endraw %}edit_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}' {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.id %}" class="font-bold py-2 px-4 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition">
+                        Edit
+                    </a>
+                    <a href="{% raw %}{% url '{% endraw %}delete_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}' {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.id %}" class="font-bold py-2 px-4 rounded-lg bg-red-500 text-white hover:bg-red-600 transition">
+                        Delete
+                    </a>
+                </td>
+            </tr>
+            {% raw %}{% endfor %}{% endraw %}
+        </tbody>
+    </table>
+</div>
+{% raw %}{% endblock %}{% endraw %}
+            {%-  endif %}
+        {%-  endfor %}
+    {%-  endif %}
+{%-  endfor %}
+
+

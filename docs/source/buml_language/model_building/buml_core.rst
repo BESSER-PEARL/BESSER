@@ -35,11 +35,11 @@ of the *Book* class including its attributes.
     # Book class definition
     book: Class = Class (name="Book", attributes={title, pages, release})
 
-In this example, we are importing and using ``StringTypeng``, ``IntegerType``, and ``DateType`` as primitive data types. But BESSER
-also provides additional data types including ``FloatType``, ``BooleanType``, ``TimeType``, ``DateTimeType``, and ``TimeDeltaType``
+In this example, we are importing and using ``StringType``, ``IntegerType``, and ``DateType`` as primitive data types. But BESSER
+also provides additional data types including ``FloatType``, ``BooleanType``, ``TimeType``, ``DateTimeType``, ``TimeDeltaType`` and ``AnyType``.
 
 Different types of relationships can be specified with B-UML such as associations (including binary associations), generalizations, 
-generalization sets, and class associations. Using the ``BynaryAssociation`` class, we can specify the relationship between *Library* 
+generalization sets, and class associations. Using the ``BinaryAssociation`` class, we can specify the relationship between *Library* 
 and *Book* as follows. 
 
 .. code-block:: python

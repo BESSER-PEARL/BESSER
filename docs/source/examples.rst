@@ -12,3 +12,4 @@ See the following examples where we define B-UML models and implement some code 
    examples/ocl
    examples/backend_example
    examples/terraform_example
+   examples/mockup_to_buml_example

@@ -2,7 +2,7 @@ import uuid
 from besser.BUML.metamodel.structural import (
     Class, Property, Method, DomainModel, PrimitiveDataType,
     Enumeration, EnumerationLiteral, BinaryAssociation, Generalization, 
-    Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint
+    Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint, AssociationClass
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, RELATIONSHIP_TYPES
 from besser.utilities.web_modeling_editor.backend.services.layout_calculator import calculate_center_point, determine_connection_direction, calculate_connection_points, calculate_path_points, calculate_relationship_bounds
@@ -79,7 +79,6 @@ def domain_model_to_json(domain_model):
     """Convert a B-UML DomainModel object to JSON format matching the frontend structure."""
     elements = {}
     relationships = {}
-    
     # Default diagram size
     default_size = {
         "width": 1200,
@@ -352,6 +351,48 @@ def domain_model_to_json(domain_model):
                     {"x": 100, "y": 50}
                 ]
             }
+
+    # Handle association classes
+    for type_obj in domain_model.types:
+        if isinstance(type_obj, AssociationClass) and type_obj in class_id_map:
+            # Track associations by name for easier lookup
+            association_by_name = {}
+            for rel_id, rel in relationships.items():
+                if rel.get('type') in ["ClassBidirectional", "ClassUnidirectional", "ClassComposition"]:
+                    association_by_name[rel.get('name', '')] = rel_id
+            
+            # Find the association relationship ID by name
+            association_rel_id = association_by_name.get(type_obj.association.name)
+            if association_rel_id:
+                # Create a ClassLinkRel relationship
+                rel_id = str(uuid.uuid4())
+                    
+                # Create a relationship from association path center to class
+                relationships[rel_id] = {
+                    "id": rel_id,
+                    "name": "",
+                    "type": "ClassLinkRel",
+                    "owner": None,
+                    "source": {
+                        "element": association_rel_id,
+                        "direction": "Center"
+                    },
+                    "target": {
+                        "element": class_id_map[type_obj],
+                        "direction": "Up"
+                    },
+                    "bounds": {
+                        "x": 0,
+                        "y": 0,
+                        "width": 0,
+                        "height": 0
+                    },
+                    "path": [
+                        {"x": 0, "y": 0},
+                        {"x": 0, "y": 0}
+                    ],
+                    "isManuallyLayouted": False
+                        }
 
     # Handle OCL constraint links
     for type_obj in domain_model.constraints:

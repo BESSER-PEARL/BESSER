@@ -1,0 +1,333 @@
+{%- import "django_fields.py.j2" as django_fields %}
+from django import forms
+{%- for class_obj in model.classes_sorted_by_inheritance() %}
+from .models import {{ class_obj.name[0].upper() + class_obj.name[1:] }}
+{%- endfor%}
+{# Enumeration definition -#}
+{%- for enum in model.get_enumerations() %}
+from .models import {{ enum.name }}
+{%- endfor -%}
+
+
+{%- for module in app.modules%}
+    {%- for screen in module.screens %}
+    {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                    {%- set source_name= source.dataSourceClass%}
+
+
+class {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}Form(forms.ModelForm):
+
+    """
+    Form for creating and editing {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}} instances.
+    """
+
+
+    {#- for create foreignKey and ManyToMany #}
+    {%- for class_obj in model.classes_sorted_by_inheritance() %}
+        {%- if class_obj.name == source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:] %}
+            {%- set generals = namespace(names=[]) %}
+                {%- for parent in class_obj.parents() %}
+                 {%- set _ = generals.names.append(parent.name) %}
+                {%- endfor %}
+             {%- set inheritance = generals.names | join(', ') %}
+                {%- for association in class_obj.associations %}
+                    {%- if association.ends|length == 2 and association.name not in processed_associations %}
+                       {%- set ns = namespace(end1=None, end2=None) %}
+                            {%- for end in association.ends %}
+                               {%- set ns.end1=end if end.type.name == class_obj.name else ns.end1 %}
+                               {%- set ns.end2=end if end.type.name != class_obj.name else ns.end2 %}
+                            {%- endfor %}
+                            {%- set class1_name = ns.end1.type.name %}
+                            {%- set class2_name = ns.end2.type.name %}
+
+                                {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+                                   {%- if class_obj.name == fkeys.get(ns.end1.owner.name) %}
+    {{ ns.end2.name.replace(' ', '_') }} = forms.ModelChoiceField(
+        queryset={{ class2_name }}.objects.all(),
+        {%- for end in association.ends%}
+            {%- if end.type.name[0].lower() + end.type.name[1:] == class2_name[0].lower() + class2_name[1:]%}
+                    {%- if end.multiplicity.min == 1%}
+                    {%- else%}
+        required=False,
+                    {%- endif%}
+            {%- endif%}
+        {%- endfor%}
+        widget=forms.Select(attrs={
+            'class': (
+                'form-select mt-1 block w-full rounded-md '
+                'border-2 p-2 border-gray-300 shadow-sm'
+            )
+        })
+    )
+                                 {%- endif %}
+                               {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
+                               {%- if class_obj.name == many_to_many.get(ns.end1.owner.name) %}
+
+
+    {{ ns.end2.name.replace(' ', '_') }} = forms.ModelMultipleChoiceField(
+        queryset={{ class2_name }}.objects.all(),
+        {%- for end in association.ends%}
+            {%- if end.type.name[0].lower() + end.type.name[1:] == class2_name[0].lower() + class2_name[1:]%}
+                    {%- if end.multiplicity.min == 1%}
+                    {%- else%}
+        required=False,
+                    {%- endif%}
+            {%- endif%}
+        {%- endfor%}
+        widget=forms.SelectMultiple(attrs={
+            'class': (
+                'form-select mt-1 block w-full rounded-md '
+                'border-2 p-2 border-gray-300 shadow-sm'
+            )
+        })
+    )
+                                {%- endif %}
+
+                                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
+                                {%- if class_obj.name == fkeys.get(ns.end2.owner.name) %}
+    {{ ns.end2.name.replace(' ', '_') }} = forms.ModelMultipleChoiceField(
+        queryset={{ class2_name }}.objects.all(),
+        {%- for end in association.ends%}
+            {%- if end.type.name[0].lower() + end.type.name[1:] == class2_name[0].lower() + class2_name[1:]%}
+                    {%- if end.multiplicity.min == 1%}
+                    {%- else%}
+        required=False,
+                    {%- endif%}
+            {%- endif%}
+        {%- endfor%}
+        widget=forms.SelectMultiple(attrs={
+            'class': (
+                'form-select mt-1 block w-full rounded-md '
+                'border-2 p-2 border-gray-300 shadow-sm'
+            )
+        })
+    )
+                            {%- else %}
+                            {%- endif%}
+
+
+                                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+                                    {%- if class_obj.name == one_to_one.get(ns.end1.owner.name) %}
+    {{ ns.end2.name.replace(' ', '_') }} = forms.ModelChoiceField (
+        queryset={{ class2_name }}.objects.all(),
+        {%- for end in association.ends%}
+            {%- if end.type.name[0].lower() + end.type.name[1:] == class2_name[0].lower() + class2_name[1:]%}
+                    {%- if end.multiplicity.min == 1%}
+                    {%- else%}
+        required=False,
+                    {%- endif%}
+            {%- endif%}
+        {%- endfor%}
+        widget=forms.Select(attrs={
+            'class': (
+                'form-select mt-1 block w-full rounded-md '
+                'border-2 p-2 border-gray-300 shadow-sm'
+            )
+        })
+    )
+
+
+                                    {%- endif %}
+                                {%- endif %}
+
+                    {%- endif %}
+                {%- endfor %}
+        {%- endif %}
+    {%- endfor%}
+
+    class Meta:
+        """
+        Meta options for {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}Form to specify model and fields.
+        """
+        model = {{source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:]}}
+
+    {#- for create foreignKey and ManyToMany #}
+
+        fields = [{%- for class_obj in model.classes_sorted_by_inheritance() %}
+    {%- if class_obj.name == source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:] %}
+        {%- set generals = namespace(names=[]) %}
+            {%- for parent in class_obj.parents() %}
+              {%- set _ = generals.names.append(parent.name) %}
+            {%- endfor %}
+                {%- set inheritance = generals.names | join(', ') %}
+                {#- for inheritance #}
+                   {%- if inheritance %}
+                       {%- for class_obj in model.classes_sorted_by_inheritance() %}
+                          {%- if class_obj.name == inheritance%}
+                              {%- for attr in sort_by_timestamp(class_obj.attributes) %}'{{ attr.name }}',
+                              {%- endfor %}
+                           {%- endif %}
+                       {%- endfor%}
+                   {%- endif %}
+                {%- for association in class_obj.associations %}
+                    {%- if association.ends|length == 2 and association.name not in processed_associations %}
+                      {%- set ns = namespace(end1=None, end2=None) %}
+                        {%- for end in association.ends %}
+                           {%- set ns.end1=end if end.type.name == class_obj.name else ns.end1 %}
+                           {%- set ns.end2=end if end.type.name != class_obj.name else ns.end2 %}
+                        {%- endfor %}
+                          {%- set class1_name = ns.end1.type.name %}
+                          {%- set class2_name = ns.end2.type.name %}
+                            {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}{%- if class_obj.name == many_to_many.get(ns.end1.owner.name) %}'{{ ns.end2.name.replace(' ', '_') }}',{%- else%}{%- endif %}
+                               {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %} {%- if class_obj.name == fkeys.get(ns.end1.owner.name) %}'{{ ns.end2.name.replace(' ', '_') }}',{%- else%}{%- endif %}
+                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %} {%- if class_obj.name == fkeys.get(ns.end2.owner.name) %}'{{ ns.end2.name.replace(' ', '_') }}',{%- else%}{%- endif %}
+                               {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+                               {%- if class_obj.name == one_to_one.get(ns.end1.owner.name) %}'{{ ns.end2.name.replace(' ', '_') }}',{%- endif %}
+
+                            {%- endif %}
+                    {%- endif %}
+                {%- endfor %}
+    {%- endif %}
+{%- endfor %}
+    {%- for component in screen.view_elements %}
+    {%- if component is is_List %}
+        {%- for source in component.list_sources %}
+            {%- if source is is_ModelElement %}
+                {%- set source_name = source.dataSourceClass %}
+                {%- set fieldsList = source.fields|list %}
+                {%- for field in fieldsList %}'{{ field.name }}'
+                    {%- if not loop.last %}, {%- endif %}
+                {%- endfor %}
+            {%- endif %}
+        {%- endfor %}
+    {%- endif %}
+{%- endfor %}]
+        widgets = {
+    {%- for class_obj in model.classes_sorted_by_inheritance() %}
+    {%- if class_obj.name == source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:] %}
+        {%- set generals = namespace(names=[]) %}
+            {%- for parent in class_obj.parents() %}
+              {%- set _ = generals.names.append(parent.name) %}
+            {%- endfor %}
+                {%- set inheritance = generals.names | join(', ') %}
+                {#- for inheritance #}
+                   {%- if inheritance %}
+                       {%- for class_obj in model.classes_sorted_by_inheritance() %}
+                          {%- if class_obj.name == inheritance%}
+                              {%- for attr in sort_by_timestamp(class_obj.attributes) %}
+            '{{ attr.name }}': forms.
+                               {%- if attr.type.name == "str" %}TextInput(attrs={
+                'class': (
+                    'form-input mt-1 block w-full rounded-md '
+                    'border-2 p-2 border-gray-300 shadow-sm'
+                ),
+                'placeholder': 'Enter the {{ attr.name }}'
+            }),
+                                  {%- elif attr.type.name == "int" or attr.type.name == "float"%}NumberInput(attrs={
+                'class': (
+                    'form-input mt-1 block w-full rounded-md '
+                    'border-2 p-2 border-gray-300 shadow-sm'
+                ),
+                'placeholder': 'Enter the {{ attr.name }}'
+            }),
+                                  {%- elif attr.type.name == "date"%}DateInput(attrs={
+                'class': (
+                    'form-input mt-1 block w-full rounded-md '
+                    'border-2 p-2 border-gray-300 shadow-sm'
+                ),
+                'placeholder': 'Select the release date',
+                'type': 'date'
+            }),
+                                {%- elif attr.type is is_enumeration %}Select(
+                {%- for enum in model.get_enumerations() %}
+                    {%- if attr.type == enum.name %}
+                    {%- set enum = enum %}
+                    {%- endif %}
+                choices={{enum.name}}.choices,
+                attrs={
+                    'class': (
+                        'form-select mt-1 block w-full rounded-md '
+                        'border-2 p-2 border-gray-300 shadow-sm'
+                    )
+                }
+            ),
+                {%- endfor -%}
+                                {%- endif %}
+                              {%- endfor %}
+                           {%- endif %}
+                       {%- endfor%}
+                   {%- endif %}
+    {%- endif %}
+    {%- endfor %}
+    {#- End for inheritance #}
+    {%- for component in screen.view_elements %}
+        {%- if component is is_List%}
+            {%- for source in component.list_sources%}
+                {%- if source is is_ModelElement%}
+                   {%- set source_name= source.dataSourceClass%}
+                   {%- set fieldsList = source.fields|list %}
+                      {%- for field in fieldsList%}
+            '{{ field.name }}': forms.
+                {%- for class_obj in model.classes_sorted_by_inheritance() %}
+                   {%- if class_obj.name == source.dataSourceClass.name[0].upper() + source.dataSourceClass.name[1:] %}
+                        {%- for attr in sort_by_timestamp(class_obj.attributes) %}
+                            {%- if attr.name ==  field.name %}
+                                {%- if attr.type.name == "str" %}TextInput(attrs={
+                'class': (
+                    'form-input mt-1 block w-full rounded-md '
+                    'border-2 p-2 border-gray-300 shadow-sm'
+                ),
+                'placeholder': 'Enter the {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} {{ field.name }}'
+            }),
+                                  {%- elif attr.type.name == "int" or attr.type.name == "float"%}NumberInput(attrs={
+                'class': (
+                    'form-input mt-1 block w-full rounded-md '
+                    'border-2 p-2 border-gray-300 shadow-sm'
+                ),
+                'placeholder': 'Enter the {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} {{ field.name }}'
+            }),
+                                  {%- elif attr.type.name == "date"%}DateInput(attrs={
+                'class': (
+                    'form-input mt-1 block w-full rounded-md '
+                    'border-2 p-2 border-gray-300 shadow-sm'
+                ),
+                'placeholder': 'Select the release date',
+                'type': 'date'
+            }),
+                                {%- elif attr.type is is_enumeration %}Select(
+                {%- for enum in model.get_enumerations() %}
+                    {%- if attr.type == enum.name %}
+                    {%- set enum = enum %}
+                    {%- endif %}
+                choices={{enum.name}}.choices,
+                attrs={
+                    'class': (
+                        'form-select mt-1 block w-full rounded-md '
+                        'border-2 p-2 border-gray-300 shadow-sm'
+                    )
+                }
+            ),
+                {%- endfor -%}
+
+                                {%- endif %}
+                            {%- endif%}
+                        {%- endfor %}
+                {%- for attr in sort_by_timestamp(class_obj.attributes) %}
+                    {%- if attr.name ==  field.name %}
+                        {%- if attr.type.name == "bool" %}CheckboxInput(attrs={
+                'class': 'form-checkbox mt-1',
+            }),
+                        {%- endif %}
+                    {%- endif%}
+                {%- endfor %}
+                    {%- endif %}
+                {%- endfor %}
+                {%- endfor %}
+                {%- endif %}
+            {%- endfor %}
+        {%- endif %}
+    {%- endfor %}
+        }
+
+
+
+{%- endif %}
+{%-endfor %}
+{%- endif%}
+{%- endfor %}
+{%- endfor%}
+{%- endfor %}
+

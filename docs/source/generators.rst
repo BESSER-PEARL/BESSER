@@ -24,6 +24,8 @@ own generator).
    generators/rdf
    generators/json_schema
    generators/build_generator
+   generators/pytorch
+   generators/tensorflow
 
 
 .. warning::

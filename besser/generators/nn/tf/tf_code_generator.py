@@ -19,17 +19,18 @@ class TFGenerator(NNCodeGenerator):
     Args:
         model (NN): An instance of the NN Model class representing 
             the B-UML model.
-        setup_layer (SetupLayerSyntax): The class 
-            that defines the syntax of layers.
+        setup_layer (SetupLayerSyntax): The class that defines the 
+            syntax of layers.
         setup_tensorop (Callable): The function that defines the
             syntax of tensorops.
         output_dir (str, optional): The output directory where the 
             generated code will be saved. Defaults to None.
         file_name (str): The name of the file where the generated
             code is stored.
-        template (str): The name of the jinja template.
+        template_dir (str): The name of the jinja template directory.
+        generation_type (str): 'subclassing' or 'sequential'.
     """
-    def __init__(self, model: NN, output_dir: str,
+    def __init__(self, model: NN, output_dir: str | None = None,
                  generation_type: str = "subclassing"):
 
         setup_layer: SetupLayerSyntax = SetupLayerSyntax
@@ -37,7 +38,7 @@ class TFGenerator(NNCodeGenerator):
 
         template_dir: str = "tf"
         file_name: str = "tf_nn.py"
-        channel_last: bool = None
 
         super().__init__(model, setup_layer, setup_tensorop, generation_type,
-                         channel_last, template_dir, file_name, output_dir)
+                         template_dir, file_name=file_name,
+                         output_dir=output_dir)

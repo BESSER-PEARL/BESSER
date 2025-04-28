@@ -1,6 +1,7 @@
 import re
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
-    Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint, AnyType
+    Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint, AnyType, \
+    AssociationClass
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
 from fastapi import HTTPException
 
@@ -373,9 +374,11 @@ def process_class_diagram(json_data):
                     cls.methods.add(method_obj)
 
     # Processing relationships (Associations, Generalizations, and Compositions)
-    for rel_id, relationship in relationships.items():
-        #print(f"Processing relationship ID: {rel_id} with data: {relationship}")
+    # Store association classes candidates and their links for third pass processing
+    association_class_candidates = {}  # {class_id: {association_id}}
+    association_by_id = {}  # {association_id: association_object}
 
+    for rel_id, relationship in relationships.items():
         rel_type = relationship.get("type")
         source = relationship.get("source")
         target = relationship.get("target")
@@ -386,6 +389,27 @@ def process_class_diagram(json_data):
 
         # Skip OCL links
         if rel_type == "ClassOCLLink":
+            continue
+
+        # Handle ClassLinkRel (association class links) later
+        if rel_type == "ClassLinkRel":
+            source_element_id = source.get("element")
+            target_element_id = target.get("element")
+            
+            # Check if source is a class and target is a relationship
+            if source_element_id in elements and target_element_id in relationships:
+                # Source is a class, target is an association
+                if source_element_id not in association_class_candidates:
+                    association_class_candidates[source_element_id] = set()
+                association_class_candidates[source_element_id].add(target_element_id)
+            
+            # Check if target is a class and source is a relationship
+            elif target_element_id in elements and source_element_id in relationships:
+                # Target is a class, source is an association
+                if target_element_id not in association_class_candidates:
+                    association_class_candidates[target_element_id] = set()
+                association_class_candidates[target_element_id].add(source_element_id)
+                
             continue
 
         # Retrieve source and target elements
@@ -423,7 +447,6 @@ def process_class_diagram(json_data):
                         counter += 1
                     source_role = f"{source_role}_{counter}"
 
-
             source_property = Property(
                 name=source_role,
                 type=source_class,
@@ -441,7 +464,6 @@ def process_class_diagram(json_data):
                     while f"{target_role}_{counter}" in existing_roles:
                         counter += 1
                     target_role = f"{target_role}_{counter}"
-
 
             target_property = Property(
                 name=target_role,
@@ -465,10 +487,55 @@ def process_class_diagram(json_data):
                 ends={source_property, target_property}
             )
             domain_model.associations.add(association)
+            
+            # Store the association for association class processing
+            association_by_id[rel_id] = association
 
         elif rel_type == "ClassInheritance":
             generalization = Generalization(general=target_class, specific=source_class)
             domain_model.generalizations.add(generalization)
+
+    # THIRD PASS: Process association classes
+    for class_id, association_ids in association_class_candidates.items():
+        class_element = elements.get(class_id)
+        if not class_element:
+            continue
+            
+        class_name = class_element.get("name", "")
+        class_obj = domain_model.get_class_by_name(class_name)
+        
+        if not class_obj:
+            continue
+            
+        # An association class should only be linked to one association
+        if len(association_ids) > 1:
+            print(f"Warning: Class '{class_name}' is linked to multiple associations. Only using the first one.")
+            
+        # Get the first association
+        association_id = next(iter(association_ids))
+        association = association_by_id.get(association_id)
+        
+        if not association:
+            continue
+            
+        # Get attributes and methods from the original class
+        attributes = class_obj.attributes
+        methods = class_obj.methods
+        
+        # Create the association class with attributes and methods
+        association_class = AssociationClass(
+            name=class_name,
+            attributes=attributes,
+            association=association
+        )
+        
+        # Add methods to the association class if they exist
+        if methods:
+            association_class.methods = methods
+            
+        # Update the domain model - remove the regular class and add the association class
+        domain_model.types.discard(class_obj)
+        domain_model.types.add(association_class)
 
     # Process OCL constraints
     all_constraints = set()

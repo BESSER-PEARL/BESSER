@@ -127,6 +127,23 @@ class Object(Instance):
                         ends.discard(end)
         return ends
 
+    def get_value(self, attribute_name: str):
+        """Get the value of an attribute by its name.
+        
+        Args:
+            attribute_name (str): The name of the attribute to retrieve.
+            
+        Returns:
+            The value of the attribute if found, None otherwise.
+            
+        Example:
+            address_value = library_obj.get_value("address")
+        """
+        for attr in self.__slots:
+            if attr.attribute.name == attribute_name:
+                return attr.value.value
+        return None
+
     def __repr__(self):
         return f'Object({self.name}, {self.classifier}, {self.slots})'
 

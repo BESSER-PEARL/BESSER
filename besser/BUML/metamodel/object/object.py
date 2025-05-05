@@ -16,8 +16,8 @@ class AttributeLink():
     """
 
     def __init__(self, value: "DataValue", attribute: Property):
-        self.value: DataValue = value
         self.__attribute: Property = attribute
+        self.value: DataValue = value
 
     @property
     def value(self) -> "DataValue":
@@ -26,7 +26,15 @@ class AttributeLink():
 
     @value.setter
     def value(self, value: "DataValue"):
-        """DataValue: Set the value of the attribute."""
+        """DataValue: Set the value of the attribute.
+        
+        Raises:
+            TypeError: If the value's classifier type does not match the attribute's type.
+        """
+        # Validate that the value's type matches the attribute's type
+        if value.classifier != self.__attribute.type:
+            raise TypeError(f"Type mismatch: attribute '{self.__attribute.name}' expects {self.__attribute.type.name}, "
+                           f"but got {value.classifier.name}")
         self.__value = value
 
     @property

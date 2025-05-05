@@ -86,7 +86,12 @@ class {{ class.name }}(
 class {{ asso_class.name }}(Base):
     __tablename__ = "{{asso_class.name.lower()}}"
     {%- for end in asso_class.association.ends %}
-    {{ end.name }}_id: Mapped[str] = mapped_column(ForeignKey("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True)
+    {%- set ns = namespace(other_end_max = 0) %}
+    {%- for other_end in asso_class.association.ends if other_end != end %}
+        {%- set ns.other_end_max = other_end.multiplicity.max %}
+    {%- endfor %}
+    {{ end.name }}_id: Mapped[str] = mapped_column(ForeignKey("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True
+    {%- if end.multiplicity.max == 1 and ns.other_end_max == 1 %}, unique=True{% endif %})
     {%- endfor %}
     {%- for attribute in sort(asso_class.attributes) %}
     {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}

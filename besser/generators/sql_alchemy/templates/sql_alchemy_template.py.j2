@@ -100,7 +100,7 @@ class {{ asso_class.name }}(Base):
 {% endfor %}
 
 {%- for class in classes %}
-    {%- set ns = namespace(has_association_class = false) %}
+    {%- set ns = namespace(has_association_class = false, has_relationships = false) %}
     {%- set ns.class_name = class.name %}
     {%- for asso_class in asso_classes %}
         {%- for end in asso_class.association.ends %}
@@ -109,11 +109,8 @@ class {{ asso_class.name }}(Base):
             {%- endif %}
         {%- endfor %}
     {%- endfor %}
+    
     {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
-        {%- if loop.index == 1 %}
-
-#--- Foreign keys and relationships of the {{ class.name.lower() }} table
-        {%- endif %}
         {%- set ns.assoc_has_class = false %}
         {%- for asso_class in asso_classes %}
             {%- if asso_class.association.name == end.owner.name %}
@@ -121,6 +118,10 @@ class {{ asso_class.name }}(Base):
             {%- endif %}
         {%- endfor %}
         {%- if not ns.assoc_has_class %}
+            {%- set ns.has_relationships = true %}
+            {%- if loop.index == 1 %}
+#--- Foreign keys and relationships of the {{ class.name.lower() }} table
+            {%- endif %}
             {%- set ns.end_own = end %}
             {%- for a_end in end.owner.ends if a_end != end %}
                 {%- set ns.end_own = a_end %}

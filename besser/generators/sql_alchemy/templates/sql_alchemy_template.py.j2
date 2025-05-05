@@ -130,7 +130,8 @@ class {{ asso_class.name }}(Base):
             {#- Foreign Key #}
             {%- if class.name == fkeys.get(end.owner.name) %}
 {{class.name}}.{{end.name}}_id: Mapped["{{end.type.name}}"] = mapped_column(ForeignKey("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
-            {%- if end.multiplicity.min > 0 %}, nullable=False{% endif %}){% endif %}
+            {%- if end.multiplicity.min > 0 %}, nullable=False{% endif %}
+            {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
             {%- if end.owner.name in fkeys and end.multiplicity.max <= 1 %}
             {#- relationship for any-to-one #}
 {{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{ns.end_own.name}}")

@@ -8,6 +8,7 @@ from besser.generators.sql_alchemy.sql_alchemy_generator import SQLAlchemyGenera
 # Create two regular classes
 student = Class(name="Student")
 course = Class(name="Course")
+test = Class(name="Test")
 
 # Create attributes for the Student class
 student_id = Property(name="studentId", type=StringType, is_id=True)
@@ -19,22 +20,44 @@ course_id = Property(name="courseId", type=StringType, is_id=True)
 course_title = Property(name="title", type=StringType)
 course.attributes = {course_id, course_title}
 
+# Create attributes for the test class
+test_id = Property(name="testId", type=StringType, is_id=True)
+test_name = Property(name="name", type=StringType)
+
 # Create association ends
 students_end = Property(
-    name="students", 
+    name="students",
     type=student,
     multiplicity=Multiplicity(0, "*")  # Many students can enroll in a course
 )
 courses_end = Property(
-    name="courses", 
+    name="courses",
     type=course,
     multiplicity=Multiplicity(0, "*")  # A student can enroll in many courses
 )
 
 # Create the binary association between Student and Course
 enrollment_association = BinaryAssociation(
-    name="Enrollment", 
+    name="EnrollmentAsso",
     ends={students_end, courses_end}
+)
+
+#Create the ends fpr the test class
+test_students_end = Property(
+    name="students",
+    type=student,
+    multiplicity=Multiplicity(0, "*")  # Many students can enroll in a course
+)
+test__end = Property(
+    name="test",
+    type=test,
+    multiplicity=Multiplicity(0, "*")  # A student can enroll in many courses
+)
+
+# Create the binary association between Student and test
+enrollment_association_test = BinaryAssociation(
+    name="EnrollmentAssoTest",
+    ends={test_students_end, test__end}
 )
 
 # Create attributes for the association class
@@ -51,8 +74,8 @@ enrollment_class = AssociationClass(
 # Add all elements to a domain model
 domain_model = DomainModel(
     name="UniversityModel",
-    types={student, course, enrollment_class},  # Note: association class is a type
-    associations={enrollment_association}
+    types={student, course, enrollment_class, test},  # Note: association class is a type
+    associations={enrollment_association, enrollment_association_test},  # Add the association to the model
 )
 
 x = SQLAlchemyGenerator(domain_model, output_dir="examples")

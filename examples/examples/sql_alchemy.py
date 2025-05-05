@@ -15,14 +15,18 @@ class Base(DeclarativeBase):
 
 
 # Tables definition for many-to-many relationships
-enrollment = Table(
-    "enrollment",
+enrollmentassotest = Table(
+    "enrollmentassotest",
     Base.metadata,
-    Column("courses", ForeignKey("course.courseId"), primary_key=True),
     Column("students", ForeignKey("student.studentId"), primary_key=True),
+    Column("test", ForeignKey("test.id"), primary_key=True),
 )
 
 # Tables definition
+class Test(Base):
+    __tablename__ = "test"
+    id: Mapped[int] = mapped_column(primary_key=True)
+
 class Course(Base):
     __tablename__ = "course"
     courseId: Mapped[str] = mapped_column(String(100), primary_key=True)
@@ -41,11 +45,13 @@ class Enrollment(Base):
     semester: Mapped[str] = mapped_column(String(100))
 
 
+#--- Foreign keys and relationships of the test table
+Test.students: Mapped[List["Student"]] = relationship("Student", secondary=enrollmentassotest, back_populates="test")
+
 #--- Foreign keys and relationships of the course table
-Course.students: Mapped[List["Student"]] = relationship("Student", secondary=enrollment, back_populates="courses")
 
 #--- Foreign keys and relationships of the student table
-Student.courses: Mapped[List["Course"]] = relationship("Course", secondary=enrollment, back_populates="students")
+Student.test: Mapped[List["Test"]] = relationship("Test", secondary=enrollmentassotest, back_populates="students")
 #--- Relationships for association class Enrollment
 Enrollment.courses: Mapped["Course"] = relationship("Course", back_populates="enrollments")
 Course.enrollments: Mapped[List["Enrollment"]] = relationship("Enrollment", back_populates="courses")

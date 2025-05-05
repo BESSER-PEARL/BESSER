@@ -23,13 +23,18 @@ class {{ enum.name }}(enum.Enum):
 # Tables definition for many-to-many relationships
 
 {%- for association in associations if association.ends|length == 2 %}
-{%- set ns = namespace(many_to_many = True) %}
+{%- set ns = namespace(many_to_many = True, has_association_class = False) %}
 {%- for end in association.ends %}
 {%- if end.multiplicity.max < 2 %} 
 {%- set ns.many_to_many = False %} 
 {%- endif %}
 {%- endfor %}
-{%- if ns.many_to_many == True %}
+{%- for asso_class in asso_classes %}
+{%- if asso_class.association.name == association.name %}
+{%- set ns.has_association_class = True %}
+{%- endif %}
+{%- endfor %}
+{%- if ns.many_to_many == True and not ns.has_association_class %}
 {{ association.name.lower() }} = Table(
     "{{ association.name.lower() }}",
     Base.metadata,
@@ -37,7 +42,7 @@ class {{ enum.name }}(enum.Enum):
     Column("{{ end.name }}", ForeignKey("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True),
     {%- endfor %}
 )
-    {%- endif %}
+{%- endif %}
 {%- endfor %}
 
 # Tables definition
@@ -76,31 +81,70 @@ class {{ class.name }}(
     {%- endfor %}
 {% endfor %}
 
+{#- Association Classes #}
+{%- for asso_class in asso_classes %}
+class {{ asso_class.name }}(Base):
+    __tablename__ = "{{asso_class.name.lower()}}"
+    {%- for end in asso_class.association.ends %}
+    {{ end.name }}_id: Mapped[str] = mapped_column(ForeignKey("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True)
+    {%- endfor %}
+    {%- for attribute in sort(asso_class.attributes) %}
+    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {%- if attribute.is_id or (attribute.name == ids.get(asso_class.name)) %}, primary_key=True{% endif %})
+    {%- endfor %}
+{% endfor %}
+
 {%- for class in classes %}
+    {%- set ns = namespace(has_association_class = false) %}
+    {%- set ns.class_name = class.name %}
+    {%- for asso_class in asso_classes %}
+        {%- for end in asso_class.association.ends %}
+            {%- if end.type.name == ns.class_name %}
+                {%- set ns.has_association_class = true %}
+            {%- endif %}
+        {%- endfor %}
+    {%- endfor %}
     {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
         {%- if loop.index == 1 %}
 
 #--- Foreign keys and relationships of the {{ class.name.lower() }} table
         {%- endif %}
-        {%- set ns = namespace(end_own=end) %}
-        {%- for a_end in end.owner.ends if a_end != end %}
-            {%- set ns.end_own = a_end %}
+        {%- set ns.assoc_has_class = false %}
+        {%- for asso_class in asso_classes %}
+            {%- if asso_class.association.name == end.owner.name %}
+                {%- set ns.assoc_has_class = true %}
+            {%- endif %}
         {%- endfor %}
-        {%- if end.multiplicity.max > 1 %}
-        {#- relationship for any-to-many #}
+        {%- if not ns.assoc_has_class %}
+            {%- set ns.end_own = end %}
+            {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+            {%- endfor %}
+            {%- if end.multiplicity.max > 1 %}
+            {#- relationship for any-to-many #}
 {{class.name}}.{{end.name}}: Mapped[List["{{end.type.name}}"]] = relationship("{{end.type.name}}"
-            {%- if ns.end_own.multiplicity.max > 1 -%}
-                , secondary={{ end.owner.name.lower() }}
-            {%- endif %}, back_populates="{{ns.end_own.name}}")
-        {%- endif %}
-        {#- Foreign Key #}
-        {%- if class.name == fkeys.get(end.owner.name) %}
+                {%- if ns.end_own.multiplicity.max > 1 -%}
+                    , secondary={{ end.owner.name.lower() }}
+                {%- endif %}, back_populates="{{ns.end_own.name}}")
+            {%- endif %}
+            {#- Foreign Key #}
+            {%- if class.name == fkeys.get(end.owner.name) %}
 {{class.name}}.{{end.name}}_id: Mapped["{{end.type.name}}"] = mapped_column(ForeignKey("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
-        {%- if end.multiplicity.min > 0 %}, nullable=False{% endif %}){% endif %}
-        {%- if end.owner.name in fkeys and end.multiplicity.max <= 1 %}
-        {#- relationship for any-to-one #}
+            {%- if end.multiplicity.min > 0 %}, nullable=False{% endif %}){% endif %}
+            {%- if end.owner.name in fkeys and end.multiplicity.max <= 1 %}
+            {#- relationship for any-to-one #}
 {{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{ns.end_own.name}}")
+            {%- endif %}
         {%- endif %}
+    {%- endfor %}
+{%- endfor %}
+
+{#- Association Class Relationships #}
+{%- for asso_class in asso_classes %}
+#--- Relationships for association class {{ asso_class.name }}
+    {%- for end in asso_class.association.ends %}
+{{ asso_class.name }}.{{ end.name }}: Mapped["{{ end.type.name }}"] = relationship("{{ end.type.name }}", back_populates="{{ asso_class.name.lower() }}s")
+{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped[List["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}")
     {%- endfor %}
 {%- endfor %}
 

@@ -1067,6 +1067,10 @@ class Class(Type):
                 return attribute
         return None
 
+    def __call__(self, instance_name: str):
+        from besser.BUML.metamodel.object.builder import ObjectBuilder
+        return ObjectBuilder(self).name(instance_name)
+
     def __repr__(self):
         return (
                 f'Class({self.name}, {self.attributes}, {self.methods}, {self.timestamp}, {self.synonyms}, '

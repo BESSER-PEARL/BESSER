@@ -138,12 +138,12 @@ class Object(Instance):
     def __getattr__(self, item):
         """
         Gets the value of an attribute using its name..
-        
+
         """
         for attr in self.__slots:
             if attr.attribute.name == item:
                 return attr.value.value
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{item}'")
+        raise AttributeError(f"'{self.name}' object has no attribute '{item}'")
 
     def __repr__(self):
         return f'Object({self.name}, {self.classifier}, {self.slots})'

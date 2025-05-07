@@ -16,8 +16,8 @@ class AttributeLink():
     """
 
     def __init__(self, value: "DataValue", attribute: Property):
-        self.value: DataValue = value
         self.__attribute: Property = attribute
+        self.value: DataValue = value
 
     @property
     def value(self) -> "DataValue":
@@ -26,7 +26,15 @@ class AttributeLink():
 
     @value.setter
     def value(self, value: "DataValue"):
-        """DataValue: Set the value of the attribute."""
+        """DataValue: Set the value of the attribute.
+        
+        Raises:
+            TypeError: If the value's classifier type does not match the attribute's type.
+        """
+        # Validate that the value's type matches the attribute's type
+        if value.classifier != self.__attribute.type:
+            raise TypeError(f"Type mismatch: attribute '{self.__attribute.name}' expects {self.__attribute.type.name}, "
+                           f"but got {value.classifier.name}")
         self.__value = value
 
     @property
@@ -126,6 +134,23 @@ class Object(Instance):
                     if end.object == self:
                         ends.discard(end)
         return ends
+
+    def get_value(self, attribute_name: str):
+        """Get the value of an attribute by its name.
+        
+        Args:
+            attribute_name (str): The name of the attribute to retrieve.
+            
+        Returns:
+            The value of the attribute if found, None otherwise.
+            
+        Example:
+            address_value = library_obj.get_value("address")
+        """
+        for attr in self.__slots:
+            if attr.attribute.name == attribute_name:
+                return attr.value.value
+        return None
 
     def __repr__(self):
         return f'Object({self.name}, {self.classifier}, {self.slots})'

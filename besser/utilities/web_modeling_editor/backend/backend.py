@@ -57,7 +57,7 @@ GENERATOR_CONFIG = {
 
 @api.get("/")
 def read_api_root():
-    return {"message": "BESSER API is running"}
+    return {"message": "BESSER API is running."}
 
 @api.post("/generate-output")
 async def generate_output(input_data: ClassDiagramInput):

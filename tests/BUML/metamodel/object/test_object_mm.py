@@ -5,8 +5,8 @@ from besser.BUML.metamodel.structural import *
 #   Structural model   #
 ########################
 
-attribute1: Property = Property(name="A1", type=PrimitiveDataType("int"))
-attribute2: Property = Property(name="A2", type=PrimitiveDataType("str"))
+attribute1: Property = Property(name="A1", type=IntegerType)
+attribute2: Property = Property(name="A2", type=StringType)
 class1: Class = Class(name="class1", attributes={attribute1, attribute2})
 class2: Class = Class(name="class2", attributes=set())
 aend1: Property = Property(name="end1", type=class1, multiplicity=Multiplicity(0, 1))
@@ -28,15 +28,15 @@ def test_model_initialization():
 
 # Testing object initialization
 def test_object_initialization():
-    attr1: AttributeLink = AttributeLink(value=DataValue(classifier=PrimitiveDataType("int"), value=100), attribute=attribute1)
+    attr1: AttributeLink = AttributeLink(value=DataValue(classifier=IntegerType, value=100), attribute=attribute1)
     obj1: Object = Object(name="object1", classifier=class1, slots=[attr1])
     assert len(obj1.slots) == 1
     assert obj1.classifier.name == "class1"
 
 # Testing attribute link
 def test_attributeLink_initialization():
-    attr1: AttributeLink = AttributeLink(value=DataValue(classifier=PrimitiveDataType("int"), value=100), attribute=attribute1)
-    attr2: AttributeLink = AttributeLink(value=DataValue(classifier=PrimitiveDataType("str"), value="test value"), attribute=attribute2)
+    attr1: AttributeLink = AttributeLink(value=DataValue(classifier=IntegerType, value=100), attribute=attribute1)
+    attr2: AttributeLink = AttributeLink(value=DataValue(classifier=StringType, value="test value"), attribute=attribute2)
     assert attr1.value.value == 100
     assert attr2.value.value == "test value"
 

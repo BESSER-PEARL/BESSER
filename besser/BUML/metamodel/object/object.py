@@ -16,8 +16,8 @@ class AttributeLink():
     """
 
     def __init__(self, value: "DataValue", attribute: Property):
-        self.value: DataValue = value
         self.__attribute: Property = attribute
+        self.value: DataValue = value
 
     @property
     def value(self) -> "DataValue":
@@ -26,7 +26,15 @@ class AttributeLink():
 
     @value.setter
     def value(self, value: "DataValue"):
-        """DataValue: Set the value of the attribute."""
+        """DataValue: Set the value of the attribute.
+        
+        Raises:
+            TypeError: If the value's classifier type does not match the attribute's type.
+        """
+        # Validate that the value's type matches the attribute's type
+        if value.classifier != self.__attribute.type:
+            raise TypeError(f"Type mismatch: attribute '{self.__attribute.name}' expects {self.__attribute.type.name}, "
+                           f"but got {value.classifier.name}")
         self.__value = value
 
     @property
@@ -105,11 +113,11 @@ class Object(Instance):
     def links(self) -> set:
         """set[Link]: Get the set of links involving the object."""
         return self.__links
-    
+
     def _add_link(self, link):
         """Link: Add an link to the set of object links."""
         self.__links.add(link)
-    
+
     def _delete_link(self, link):
         """Link: Remove a link to the set of object links."""
         self.__links.discard(link)
@@ -126,6 +134,16 @@ class Object(Instance):
                     if end.object == self:
                         ends.discard(end)
         return ends
+
+    def __getattr__(self, item):
+        """
+        Gets the value of an attribute using its name..
+
+        """
+        for attr in self.__slots:
+            if attr.attribute.name == item:
+                return attr.value.value
+        raise AttributeError(f"'{self.name}' object has no attribute '{item}'")
 
     def __repr__(self):
         return f'Object({self.name}, {self.classifier}, {self.slots})'

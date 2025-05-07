@@ -113,11 +113,11 @@ class Object(Instance):
     def links(self) -> set:
         """set[Link]: Get the set of links involving the object."""
         return self.__links
-    
+
     def _add_link(self, link):
         """Link: Add an link to the set of object links."""
         self.__links.add(link)
-    
+
     def _delete_link(self, link):
         """Link: Remove a link to the set of object links."""
         self.__links.discard(link)
@@ -135,22 +135,15 @@ class Object(Instance):
                         ends.discard(end)
         return ends
 
-    def get_value(self, attribute_name: str):
-        """Get the value of an attribute by its name.
+    def __getattr__(self, item):
+        """
+        Gets the value of an attribute using its name..
         
-        Args:
-            attribute_name (str): The name of the attribute to retrieve.
-            
-        Returns:
-            The value of the attribute if found, None otherwise.
-            
-        Example:
-            address_value = library_obj.get_value("address")
         """
         for attr in self.__slots:
-            if attr.attribute.name == attribute_name:
+            if attr.attribute.name == item:
                 return attr.value.value
-        return None
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{item}'")
 
     def __repr__(self):
         return f'Object({self.name}, {self.classifier}, {self.slots})'

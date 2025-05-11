@@ -30,30 +30,35 @@ class ObjectBuilder:
             if not prop:
                 raise ValueError(f"Attribute '{attr_name}' not found in class '{self.classifier.name}'")
             data_value = DataValue(classifier=prop.type, value=value)
-            ############# TO COMPLETE.... Check if the value actually has the same classifier type
-            attr_link = AttributeLink(attribute=prop, value=data_value)
-            slots.append(attr_link)
+            slots.append(AttributeLink(attribute=prop, value=data_value))
 
         obj = Object(name=self._name, classifier=self.classifier, slots=slots)
 
-        # Build Links from associations
+        # Build Links
         for target, assoc in self._links:
-            # Encuentra los ends correctos automáticamente
-            src_end = next(end for end in assoc.ends if end.type == self.classifier)
-            tgt_end = next(end for end in assoc.ends if end.type == target.classifier)
+            # Find an association end whose type matches the source or one of its parents
+            src_types = [self.classifier] + list(self.classifier.all_parents())
+            src_end = next((end for end in assoc.ends if end.type in src_types), None)
+            if not src_end:
+                raise ValueError(
+                    f"The class '{self.classifier.name}' is not part of the association '{assoc.name}'"
+                    )
+            # Find an association end whose type matches the target or one of its parents
+            tgt_types = [target.classifier] + list(target.classifier.all_parents())
+            tgt_end = next((end for end in assoc.ends if end.type in tgt_types), None)
+            if not tgt_end:
+                raise ValueError(
+                    f"The class '{target.classifier.name}' is not part of the association '{assoc.name}'"
+                    )
 
-            obj_end = LinkEnd(name=src_end.name, association_end=src_end, object=obj)
-            target_end = LinkEnd(name=tgt_end.name, association_end=tgt_end, object=target)
-
+            # Create the link
             link = Link(
                 name=f"{self._name}_to_{target.name}",
                 association=assoc,
-                connections=[obj_end, target_end]
+                connections=[
+                    LinkEnd(name=src_end.name, association_end=src_end, object=obj),
+                    LinkEnd(name=tgt_end.name, association_end=tgt_end, object=target)
+                ]
             )
-
-            # Save Link
-            if not hasattr(obj, "_outgoing_links"):
-                obj._outgoing_links = []
-            obj._outgoing_links.append(link)
 
         return obj

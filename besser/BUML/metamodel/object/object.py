@@ -1,4 +1,5 @@
 import string
+from typing import Union
 from besser.BUML.metamodel.structural import NamedElement, Property, Type, Association
 
 class AttributeLink():
@@ -137,13 +138,16 @@ class Object(Instance):
 
     def __getattr__(self, item):
         """
-        Gets the value of an attribute using its name..
+        Gets the value of an attribute using its name.
 
         """
         for attr in self.__slots:
             if attr.attribute.name == item:
                 return attr.value.value
-        raise AttributeError(f"'{self.name}' object has no attribute '{item}'")
+        for link_end in self.link_ends():
+            if link_end.name == item:
+                return link_end.object.name
+        raise AttributeError(f"'{self.name}' object has no attribute or link '{item}'")
 
     def __repr__(self):
         return f'Object({self.name}, {self.classifier}, {self.slots})'
@@ -214,6 +218,9 @@ class LinkEnd(NamedElement):
         """Object: Method to set the object"""
         self.__object = object
 
+    def __repr__(self):
+        return f'LinkEnd({self.name}, end_name={self.association_end.name}, object_linked={self.object.name})'
+
 class Link(NamedElement):
     """ A link represent a relationship between objects.
 
@@ -262,40 +269,53 @@ class Link(NamedElement):
         """Method to add linkend"""
         self.connections.append(linkEnd)
 
+    def __repr__(self):
+        return f'Link({self.name}, {self.association.name}, {self.connections})'
+
 class ObjectModel(NamedElement):
-    """ An object model is the root element that comprises a number of instances and links.
+    """ An object model is the root element that comprises a number of objects.
 
     Args:
         name (str): the name of the object model
-        
+        objects (set[Object]): set of objects in the model
     
     Attributes:
         name (str): inherited from NamedElement, represents the name of the model
-        association (Association): the Association that represents the Link
-        connections: list of link ends.
+        objects (set[Object]): set of objects in the model
     """
 
-    def __init__(self, name: str, instances: set[Instance], links: set[Link]):
+    def __init__(self, name: str, objects: set[Object] = None):
         super().__init__(name)
-        self.instances: set[Instance] = instances
-        self.links: set[Link] = links
+        self.objects: set[Object] = objects
 
     @property
-    def instances(self):
-        """Association: Method to retrieve the instances"""
-        return self.__instances
-
-    @instances.setter
-    def instances(self, instances: set[Instance]):
-        """Association: Method to set the instances"""
-        self.__instances = instances
+    def instances(self) -> set[Union[Object, DataValue]]:
+        """set[Union[Object, DataValue]: Method to retrieve the intances (Objects + DataValues)."""
+        all_instances = set(self.__objects)
+        for obj in self.__objects:
+            for slot in obj.slots:  # Recorre los AttributeLinks
+                if isinstance(slot.value, DataValue):
+                    all_instances.add(slot.value)
+        return all_instances
 
     @property
-    def links(self):
-        """Association: Method to retrieve the links"""
-        return self.__links
+    def links(self) -> set[Link]:
+        """set[Link]: Method to retrieve the links."""
+        all_links = set()
+        for obj in self.__objects:
+            all_links.update(obj.links)
+        return all_links
 
-    @links.setter
-    def links(self, links: set[Instance]):
-        """Association: Method to set the links"""
-        self.__links = links
+    @property
+    def objects(self) -> set[Object]:
+        """set[Object]: Method to retrieve the objects."""
+        return self.__objects
+
+    @objects.setter
+    def objects(self, objects: set[Object]):
+        """set[Object]: Method to set the objects"""
+        self.__objects = objects
+
+    def add_object(self, obj: Object):
+        """Object: Method to add an object to the set of objects."""
+        self.__objects.add(obj)

@@ -642,6 +642,7 @@ class FileTypeMatcher(Condition):
         super().__init__('file_matches_types', None)
         self.allowed_types: list[str] or str = allowed_types
 
+
 # should this not be an event?
 class Auto(Condition):
     """This condition always returns True.
@@ -710,7 +711,7 @@ class AgentState(State):
         Args:
             dest (AgentState): the destination state
         """
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=None)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=Auto())
         transition_builder.go_to(dest)
 
     def when_intent_matched(self, intent: Intent) -> TransitionBuilder:
@@ -772,9 +773,7 @@ class AgentState(State):
             TransitionBuilder: the transition builder
         """
         event = ReceiveFileEvent()
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event)
-        condition = FileTypeMatcher(allowed_types)
-        transition_builder.with_condition(condition=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=FileTypeMatcher(allowed_types))
         return transition_builder
 
 

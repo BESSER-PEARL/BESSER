@@ -52,7 +52,7 @@ class BAFGenerator(GeneratorInterface):
         env.globals['is_class'] = is_class
         env.globals['is_type'] = is_type
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
-        agent_template = env.get_template('baf_bot_template.py.j2')
+        agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
         with open(agent_path, mode="w") as f:
             generated_code = agent_template.render(agent=self.model)

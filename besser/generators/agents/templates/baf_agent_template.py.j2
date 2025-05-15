@@ -3,6 +3,7 @@
 # sys.path.append("/Path/to/directory/bot-framework") # Replace with your directory path
 
 import logging
+import operator
 
 from besser.agent.core.agent import Agent
 from besser.agent.core.session import Session
@@ -126,21 +127,21 @@ from besser.agent.library.entity.base_entities import {{ entity.name }}
 {{ state.name }}.set_fallback_body({{ state.fallback_body.name}})
 {% endif %}
 {% for transition in state.transitions -%}
-{% if is_class(transition.event, 'IntentMatched') -%}
-{% if transition.event.intent.name == 'fallback_intent' -%}
-{{ state.name }}.when_no_intent_matched_go_to({{ transition.dest.name }})
+{% if is_class(transition.conditions, 'IntentMatcher') -%}
+{% if transition.conditions.intent.name == 'fallback_intent' -%}
+{{ state.name }}.when_no_intent_matched().go_to({{ transition.dest.name }})
 {% else -%}
-{{ state.name }}.when_intent_matched_go_to({{ transition.event.intent.name }}, {{ transition.dest.name }})
+{{ state.name }}.when_intent_matched({{ transition.conditions.intent.name }}).go_to({{ transition.dest.name }})
 {% endif -%}
-{% elif is_class(transition.event, 'VariableMatchesOperation') -%}
-{{ state.name }}.when_variable_matches_operation_go_to('{{ transition.event.var_name }}', {{ transition.event.operation.__name__ }}, {{ transition.event.target }}, {{ transition.dest.name }})
-{% elif is_class(transition.event, 'FileReceived') -%}
-{{ state.name }}.when_file_received_go_to({{ transition.dest.name }}, {% if transition.event.allowed_types -%}{% if is_type(transition.event.allowed_types, 'str') -%}'{{ transition.event.allowed_types }}'{% else -%}{{ transition.event.allowed_types }}{% endif -%}{% endif -%})
-{% elif is_class(transition.event, 'Auto')%}
+{% elif is_class(transition.conditions, 'VariableOperationMatcher') -%}
+{{ state.name }}.when_variable_matches_operation('{{ transition.conditions.var_name }}', operator.{{ transition.conditions.operation.__name__ }}, {{ transition.conditions.target }}).go_to({{ transition.dest.name }})
+{% elif is_class(transition.conditions, 'FileTypeMatcher') -%}
+{{ state.name }}.when_file_received({% if transition.conditions.allowed_types -%}{% if is_type(transition.conditions.allowed_types, 'str') -%}'{{ transition.conditions.allowed_types }}'{% else -%}{{ transition.conditions.allowed_types }}{% endif -%}{% endif -%}).go_to({{ transition.dest.name }})
+{% elif is_class(transition.conditions, 'Auto')%}
 {{ state.name }}.go_to({{ transition.dest.name }})
 {% else %}
 {% if transition.event.name not in ns.custom_events -%}
-{{ replace_bot_session_with_session_in_signature(transition.event) }}
+
 {% set ns.custom_events = ns.custom_events + [transition.event.name] %}
 {% endif -%}
 {{ state.name }}.when_event_go_to({{ transition.event.name }}, {{ transition.dest.name }}, event_params={{ transition.event_params }})

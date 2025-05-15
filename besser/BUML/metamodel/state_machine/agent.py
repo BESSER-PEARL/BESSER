@@ -1,8 +1,9 @@
 from abc import ABC
 from enum import Enum
+import json
 from typing import Any, Callable
 
-from besser.BUML.metamodel.state_machine.state_machine import Transition, Event, StateMachine, State, Session
+from besser.BUML.metamodel.state_machine.state_machine import Transition, Event, Condition, StateMachine, State, Session, TransitionBuilder
 from besser.BUML.metamodel.structural import NamedElement
 
 
@@ -473,7 +474,101 @@ class Intent(NamedElement):
         return self
 
 
-class IntentMatched(Event):
+class DummyEvent(Event):
+    """Represents a placeholder event."""
+
+    def __init__(self):
+        super().__init__(name='dummy_event')
+
+
+class WildcardEvent(Event):
+    """Wildcard event. Can be used to match any event in a transition."""
+
+    def __init__(self):
+        super().__init__(name='any_event')
+
+
+class ReceiveMessageEvent(Event):
+    """This event checks if a message is received from the user.
+
+    Args:
+        message (str): The message to be checked
+
+    Attributes:
+        name (str): Inherited from Event, represents the name of the event.
+        visibility (str): Inherited from Event, represents the visibility of the event.
+        type (Type): Inherited from Event, represents the type of the event.
+        is_abstract (bool): Inherited from Event, indicates if the event is abstract.
+        parameters (set[Parameter]): Inherited from Event, the set of parameters for the event.
+        owner (Type): Inherited from Event, the type that owns the property.
+        code (str): Inherited from Event, code of the event.
+    """
+
+    def __init__(self, message: str):
+        super().__init__('receive_message')
+        self.message: Any = message
+
+
+class ReceiveTextEvent(ReceiveMessageEvent):
+    """Event for receiving text messages. Supports intent prediction.
+
+    Args:
+        text (str): the received message content
+        session_id (str): the id of the session the event was sent to (can be none)
+        human (bool): indicates if the sender is human. Defaults to True
+
+    Attributes:
+        _name (str): the name of the event
+        predicted_intent (IntentClassifierPrediction): the predicted intent for the event message
+    """
+
+    def __init__(self, text: str = None):
+        super().__init__(message=text)
+        self._name = 'receive_message_text'
+        self.predicted_intent: IntentClassifierPrediction = None
+
+    def log(self):
+        return f'{self._name} ({self.message})'
+
+
+class ReceiveJSONEvent(ReceiveMessageEvent):
+    """Event for receiving JSON messages.
+
+    Args:
+        payload (dict): the received message content
+        session_id (str): the id of the session the event was sent to (can be none)
+        human (bool): indicates if the sender is human. Defaults to False
+
+    Attributes:
+        _name (str): the name of the event
+    """
+
+    def __init__(self, payload: dict = None):
+        if payload is None:
+            payload = {}
+        super().__init__(message=json.dumps(payload))
+        self._name = 'receive_message_json'
+
+
+class ReceiveFileEvent(Event):
+    """Event for receiving files.
+
+    Args:
+        file (File): the received file
+        session_id (str): the id of the session the event was sent to (can be none)
+        human (bool): indicates if the sender is human. Defaults to True
+
+    Attributes:
+        file (File): the received file
+        human (bool): indicates if the sender is human. Defaults to True
+    """
+
+    def __init__(self, file: File = None):
+        super().__init__(name='receive_file')
+        self.file: File = file
+
+
+class IntentMatcher(Condition):
     """This event checks if 2 intents are the same (returning True, and False otherwise), used for intent matching
     checking.
 
@@ -496,7 +591,7 @@ class IntentMatched(Event):
         self.intent: Intent = intent
 
 
-class VariableMatchesOperation(Event):
+class VariableOperationMatcher(Condition):
     """This event checks if for a specific comparison operation, using a stored session value
     and a given target value, returns true (e.g., 'temperature' > 30, where var_name = 'temperature',
     operation = `op.greater` and target = 30)
@@ -526,7 +621,7 @@ class VariableMatchesOperation(Event):
         self.target: Any = target
 
 
-class FileReceived(Event):
+class FileTypeMatcher(Condition):
     """This event only returns True if a user just sent a file.
 
     Args:
@@ -544,12 +639,12 @@ class FileReceived(Event):
     """
 
     def __init__(self, allowed_types: list[str] or str = None):
-        super().__init__('file_received', None)
+        super().__init__('file_matches_types', None)
         self.allowed_types: list[str] or str = allowed_types
 
-
-class Auto(Event):
-    """This event always returns True.
+# should this not be an event?
+class Auto(Condition):
+    """This condition always returns True.
 
     Attributes:
         name (str): Inherited from Event, represents the name of the event.
@@ -615,93 +710,72 @@ class AgentState(State):
         Args:
             dest (AgentState): the destination state
         """
-        if self.transitions:
-            raise ValueError(f"Auto transition conflicting")
-        self.transitions.append(Transition(name=self._t_name(), source=self, dest=dest, event=Auto()))
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=None)
+        transition_builder.go_to(dest)
 
-    def when_intent_matched_go_to(self, intent: Intent, dest: 'AgentState') -> None:
-        """Create a new `intent matching` transition on this state.
-
-        When the agent is in a state and an intent is received (the intent is predicted from a user message),
-        if the transition event is to receive this particular intent, the agent will move to the transition's destination
-        state.
+    def when_intent_matched(self, intent: Intent) -> TransitionBuilder:
+        """Start the definition of an "intent matching" transition on this state.
 
         Args:
-            intent (Intent): the transition intent
-            dest (AgentState): the destination state
+            intent (Intent): the target intent for the transition to be triggered
+
+        Returns:
+            TransitionBuilder: the transition builder
         """
         if intent in self.intents:
             raise ValueError(f"Duplicated intent matching transition in a state ({intent.name}).")
         if intent not in self.agent.intents:
             raise ValueError(f"Intent {intent.name} not found")
-        if dest not in self.agent.states:
-            raise ValueError(f"State {dest.name} not found")
-        for transition in self.transitions:
-            if isinstance(transition.event, Auto):
-                raise ValueError(f"Auto transition conflicting")
         self.intents.append(intent)
-        self.transitions.append(Transition(name=self._t_name(), source=self, dest=dest, event=IntentMatched(intent)))
+        event: ReceiveTextEvent = ReceiveTextEvent()
+        condition: Condition = IntentMatcher(intent)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=condition)
+        return transition_builder
 
-    def when_no_intent_matched_go_to(self, dest: 'AgentState') -> None:
-        """Create a new `no intent matching` transition on this state.
+    def when_no_intent_matched(self) -> TransitionBuilder:
+        event: ReceiveTextEvent = ReceiveTextEvent()
+        condition: Condition = IntentMatcher(Intent("fallback_intent"))
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=condition)
+        return transition_builder
 
-        When the agent is in a state and no fitting intent is received (the intent is predicted from a user message), 
-        the agent will move to the transition's destination
-        state. If no other transition is specified, the agent will wait for a user message regardless.
-
-        Args:
-            dest (AgentState): the destination state
-        """
-        # self.intents.append(fallback_intent)
-        if dest not in self.agent.states:
-            raise ValueError(f"State {dest.name} not found")
-        for transition in self.transitions:
-            if isinstance(transition.event, Auto):
-                raise ValueError(f"Auto transition conflicting")
-        self.transitions.append(Transition(name=self._t_name(), source=self, dest=dest, event=IntentMatched(Intent('fallback_intent'))))
-
-    def when_variable_matches_operation_go_to(
+    def when_variable_matches_operation(
             self,
             var_name: str,
             operation: Callable[[Any, Any], bool],
             target: Any,
-            dest: 'AgentState'
-    ) -> None:
-        """Create a new `variable_matches_operation` transition on this state.
+    ) -> TransitionBuilder:
+        """Start the definition of a "variable matching operator" transition on this state.
 
-        When the agent is in a state and the operation on the specified session variable and target value returns true,
-        then the agent moves to the specified destination state.
+        This transition evaluates if (variable operator target_value) is satisfied. For instance, "age > 18".
 
         Args:
-            var_name (str): the name of the stored variable in the session storage
-            operation (Callable[[Any, Any], bool]): the comparison operation to be done on the stored and target value
-            target (Any): the target value to which will be used in the operation with the stored value
-            dest (AgentState): the destination state
+            var_name (str): the name of the variable to evaluate. The variable must exist in the user session
+            operation (Callable[[Any, Any], bool]): the operation to apply to the variable and the target value. It
+                gets as arguments the variable and the target value, and returns a boolean value
+            target (Any): the target value to compare with the variable
+
+        Returns:
+            TransitionBuilder: the transition builder
         """
-        if dest not in self.agent.states:
-            raise ValueError(f"State {dest.name} not found")
-        for transition in self.transitions:
-            if isinstance(transition.event, Auto):
-                raise ValueError(f"Auto transition conflicting")
-        self.transitions.append(Transition(name=self._t_name(), source=self, dest=dest, event=VariableMatchesOperation(var_name, operation, target)))
+        condition: Condition = VariableOperationMatcher(var_name, operation, target)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, conditions=condition)
+        return transition_builder
 
-    def when_file_received_go_to(self, dest: 'AgentState', allowed_types: list[str] or str = None) -> None:
-        """Create a new `file received` transition on this state.
-
-        When the agent is in a state and a file is received the agent will move to the transition's destination
-        state. If no other transition is specified, trigger the fallback state.
+    def when_file_received(self, allowed_types: list[str] or str = None) -> TransitionBuilder:
+        """Start the definition of a "file received" transition on this state.
 
         Args:
-            dest (AgentState): the destination state
-            allowed_types (list[str] or str, optional): the allowed file types, non-conforming types will cause a
-            fallback message
+            allowed_types (list[str] or str): the file types to consider for this transition. List of strings or just 1
+                string are valid values
+
+        Returns:
+            TransitionBuilder: the transition builder
         """
-        if dest not in self.agent.states:
-            raise ValueError(f"State {dest.name} not found")
-        for transition in self.transitions:
-            if isinstance(transition.event, Auto):
-                raise ValueError(f"Auto transition conflicting")
-        self.transitions.append(Transition(name=self._t_name(), source=self, dest=dest, event=FileReceived(allowed_types)))
+        event = ReceiveFileEvent()
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event)
+        condition = FileTypeMatcher(allowed_types)
+        transition_builder.with_condition(condition=condition)
+        return transition_builder
 
 
 class Agent(StateMachine):

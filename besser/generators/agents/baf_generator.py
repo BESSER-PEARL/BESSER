@@ -55,6 +55,7 @@ class BAFGenerator(GeneratorInterface):
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
         with open(agent_path, mode="w") as f:
+            # todo: how to handle llm variable names that are used in bodies?
             generated_code = agent_template.render(agent=self.model)
             f.write(generated_code)
             print("Agent script generated in the location: " + agent_path)

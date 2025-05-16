@@ -66,7 +66,7 @@ GENERATOR_CONFIG = {
     "sql": SQLGenerator,
     "backend": BackendGenerator,
     "jsonschema": JSONSchemaGenerator,
-    "agent": BAFGenerator,  # Placeholder for agent generator
+    "agent": BAFGenerator
 }
 
 

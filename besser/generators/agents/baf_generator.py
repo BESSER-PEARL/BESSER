@@ -59,7 +59,7 @@ class BAFGenerator(GeneratorInterface):
             generated_code = agent_template.render(agent=self.model)
             f.write(generated_code)
             print("Agent script generated in the location: " + agent_path)
-        config_template = env.get_template('bbf_config_template.py.j2')
+        config_template = env.get_template('baf_config_template.py.j2')
         config_path = self.build_generation_path(file_name="config.ini")
         with open(config_path, mode="w") as f:
             properties = sorted(self.model.properties, key=lambda prop: prop.section)

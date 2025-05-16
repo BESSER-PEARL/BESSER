@@ -126,8 +126,7 @@ async def generate_output(input_data: ClassDiagramInput):
                 print(e.stderr)
 
             finally:
-                print("fainlly")
-                # os.remove(tmp_file_path)  # Clean up the temp file
+                os.remove(tmp_file_path)  # Clean up the temp file
         else:
             buml_model = process_class_diagram(json_data)
 

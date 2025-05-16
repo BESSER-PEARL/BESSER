@@ -8,7 +8,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import VIS
 from besser.utilities.web_modeling_editor.backend.services.layout_calculator import calculate_center_point, determine_connection_direction, calculate_connection_points, calculate_path_points, calculate_relationship_bounds
 import inspect
 from besser.BUML.metamodel.state_machine import (
-    StateMachine, Session, Body, Event
+    StateMachine, Session, Body, Condition
 )
 
 

@@ -6,6 +6,10 @@ import logging
 import operator
 
 from besser.agent.core.agent import Agent
+from besser.agent.nlp.llm.llm_huggingface import LLMHuggingFace
+from besser.agent.nlp.llm.llm_huggingface_api import LLMHuggingFaceAPI
+from besser.agent.nlp.llm.llm_openai_api import LLMOpenAI
+from besser.agent.nlp.llm.llm_replicate_api import LLMReplicate
 from besser.agent.core.session import Session
 from besser.agent.nlp.intent_classifier.intent_classifier_configuration import LLMIntentClassifierConfiguration, SimpleIntentClassifierConfiguration
 
@@ -48,6 +52,23 @@ websocket_platform = agent.use_websocket_platform(use_ui=True)
         use_entity_synonyms={{ ic_config.use_entity_synonyms }}
 ){% endif -%}
 {% endmacro -%}
+
+{% if agent.llms != [] %}
+{% for llm in agent.llms -%}
+llm = {{ llm.__class__.__name__}}(
+    name='{{ llm.name }}',
+    agent=agent,
+    {% if llm.parameters -%}
+    parameters={{ llm.parameters }},
+    {% else %}
+    parameters={},
+    {% endif -%}
+    {% if llm.num_previous_messages -%}
+    num_previous_messages={{ llm.num_previous_messages }},
+    {% endif -%}
+)
+{% endfor %}
+{% endif %}
 
 {% if agent.default_ic_config != None -%}
 agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})

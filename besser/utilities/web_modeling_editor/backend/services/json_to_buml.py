@@ -610,15 +610,26 @@ def process_state_machine(json_data):
                     code_lines.append(")")
 
     return "\n".join(code_lines)
+import unicodedata
 
+def sanitize_text(text):
+    if not isinstance(text, str):
+        return text
+    # Normalize and strip accents or special symbols
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    #text = text.replace("'", "\\'")
+    text = text.replace("'", " ")
+    # Escape single quotes for code safety
+    return text
 
 def process_agent_diagram(json_data):
     """Process Agent Diagram specific elements and return Python code as string."""
     code_lines = []
     code_lines.append("import datetime")
-    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event")
-    code_lines.append("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession")
-    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import Body, ConfigProperty")
+    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty")
+    code_lines.append("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate")
+
     # code_lines.append("from besser.agent.nlp.llm.llm_openai_api import LLMOpenAI\n") wrong library, i should import from besser not baf
     sm_name = json_data.get("name", "Generated_State_Machine")
     code_lines.append(f"agent = Agent('{sm_name}')\n")
@@ -631,7 +642,10 @@ def process_agent_diagram(json_data):
     code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.timezone', 'Europe/Madrid'))\n")
     code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.pre_processing', True))\n")
     code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.intent_threshold', 0.4))\n")
-
+    code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.openai.api_key', 'YOUR-API-KEY'))\n")
+    code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.hf.api_key', 'YOUR-API-KEY'))\n")
+    code_lines.append("agent.add_property(ConfigProperty('nlp', 'nlp.replicate.api_key', 'YOUR-API-KEY'))\n")
+    
     code_lines.append("# INTENTS\n")
     elements = json_data.get("elements", {})
     relationships = json_data.get("relationships", {})
@@ -661,15 +675,14 @@ def process_agent_diagram(json_data):
         intent_values = intents[intent]
         code_lines.append(f"{intent_name} = agent.new_intent('{intent_name}', [")
         for value in intent_values:
+            value = sanitize_text(value)
             code_lines.append(f"    '{value}',")
         code_lines.append("])\n")
     # Write function definitions first
     
-    print("oueoueoueu")
     try:
         if '"replyType": "llm"' in json.dumps(json_data):
-            print("ww")
-            # code_lines.append("llm = LLMOpenAI(agent=agent, name='gpt-4o-mini', parameters={})\n")
+            code_lines.append("llm = LLMOpenAI(agent=agent, name='gpt-4o-mini', parameters={})\n")
     except Exception as e:
         print(f"Error: {e}")
     
@@ -677,17 +690,22 @@ def process_agent_diagram(json_data):
         if element.get("type") == "AgentState":
             name = element.get("name")  # throw error if no name
             if element.get("bodies") != []:
+                print("i am here")
                 bodyCode = [f"def {name}_body(session: AgentSession):"]
                 for body in element.get("bodies"):
                     if elements.get(body).get("replyType") == "text":
-                        bodyCode.append(f"    session.reply('{elements.get(body).get('name')}')")
+                        value = sanitize_text(elements.get(body).get('name'))
+                        bodyCode.append(f"    session.reply('{value}')")
                     elif elements.get(body).get("replyType") == "llm":
-                        print("not supported yet")
-                        # bodyCode.append(f"    session.reply(llm.predict(session.event.message))") not supported by besser yet
+                        bodyCode.append("    session.reply(llm.predict(session.event.message))")
                     elif elements.get(body).get("replyType") == "code":
                         code_lines.append(elements.get(body).get('name').strip())
                         # Extract the function name from the code
-                        function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', elements.get(body).get('name'))
+                        body_code = elements.get(body).get('name')
+                        function_match = re.search(
+                            r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+                            body_code
+                        )
                         if function_match:
                             function_name = function_match.group(1)
                             elements.get(body)["name"] = function_name
@@ -701,7 +719,18 @@ def process_agent_diagram(json_data):
                     if elements.get(fallbackBody).get("replyType") == "text":
                         fallbackBodyCode.append(f"    session.reply('{elements.get(fallbackBody).get('name')}')")
                     elif elements.get(fallbackBody).get("replyType") == "code":
-                        print("todo")
+                        code_lines.append(elements.get(fallbackBody).get('name').strip())
+                        # Extract the function name from the code
+                        fallback_body_code = elements.get(fallbackBody).get('name')
+                        function_match = re.search(
+                            r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(',
+                            fallback_body_code
+                        )
+                        if function_match:
+                            function_name = function_match.group(1)
+                            elements.get(fallbackBody)["name"] = function_name
+                        code_lines.append("")  # Add single blank line after function
+                        fallbackBodyCode = ""
                 code_lines.append("\n".join(fallbackBodyCode))
                 code_lines.append("")  # Add single blank line after function   
     """
@@ -730,7 +759,6 @@ def process_agent_diagram(json_data):
             code_lines.append("")  # Add blank line after Body/Event creation
             """
     # Create states
-    print("keke")
     for element_id, element in elements.items():
         if element.get("type") == "AgentState":
             is_initial = False
@@ -768,7 +796,6 @@ def process_agent_diagram(json_data):
         code_lines.append("")
     except Exception as e:
         print(f"Error: {e}")
-    print("lee")
     # Write transitions
     for relationship in relationships.values():
         if relationship.get("type") == "StateTransition":
@@ -786,10 +813,11 @@ def process_agent_diagram(json_data):
                 params = relationship.get("params")
 
                 if event_name:
-                    code_lines.append(f"{source_name}_state.when_intent_matched_go_to(")
+                    code_lines.append(f"{source_name}_state.when_intent_matched(")
                     code_lines.append(f"    {event_name},")
-                    code_lines.append(f"    {target_name}_state")
+                    code_lines.append(").go_to(")
+                    code_lines.append(f"{target_name}_state")
                     code_lines.append(")")
                 else:
-                    code_lines.append(f"{source_name}_state.when_no_intent_matched_go_to({target_name}_state)")
+                    code_lines.append(f"{source_name}_state.when_no_intent_matched().go_to({target_name}_state)")
     return "\n".join(code_lines)

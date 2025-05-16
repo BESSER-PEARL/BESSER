@@ -697,7 +697,6 @@ def process_agent_diagram(json_data):
     code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty")
     code_lines.append("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate")
 
-    # code_lines.append("from besser.agent.nlp.llm.llm_openai_api import LLMOpenAI\n") wrong library, i should import from besser not baf
     sm_name = json_data.get("name", "Generated_State_Machine")
     code_lines.append(f"agent = Agent('{sm_name}')\n")
     code_lines.append("agent.add_property(ConfigProperty('websocket_platform', 'websocket.host', 'localhost'))\n")
@@ -800,31 +799,7 @@ def process_agent_diagram(json_data):
                         fallbackBodyCode = ""
                 code_lines.append("\n".join(fallbackBodyCode))
                 code_lines.append("")  # Add single blank line after function   
-    """
-    for element in elements.values():
-        if element.get("type") == "StateCodeBlock":
-            name = element.get("name", "")
-            code_content = element.get("code", {})
-            
-            # If name is empty, try to extract function name from code content
-            if not name:
-                # Look for "def function_name(" pattern in the code
-                function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
-                if function_match:
-                    name = function_match.group(1)
-                    
-            # Clean up the code content by removing extra newlines
-            cleaned_code = "\n".join(line for line in code_content.splitlines() if line.strip())
-            # Write the function definition with its code content
-            code_lines.append(cleaned_code)  # Write the actual function code
-            code_lines.append("")  # Add single blank line after function
 
-            if name in body_names:
-                code_lines.append(f"{name} = Body(name='{name}', callable={name})")
-            if name in event_names:
-                code_lines.append(f"{name} = Event(name='{name}', callable={name})")
-            code_lines.append("")  # Add blank line after Body/Event creation
-            """
     # Create states
     for element_id, element in elements.items():
         if element.get("type") == "AgentState":

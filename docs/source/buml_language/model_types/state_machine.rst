@@ -1,5 +1,5 @@
-State Machine
-=============
+State Machine model
+====================
 
 .. _state-machine-metamodel:
 

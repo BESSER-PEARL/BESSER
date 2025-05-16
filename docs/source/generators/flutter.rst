@@ -1,8 +1,8 @@
 Flutter Generator
 =====================
 
-BESSER introduces a code generator for `Flutter <https://flutter.dev/>`_ applications. By supplying 
-a :doc:`structural model <../buml_language/model_types/structural>` and a :doc:`GUI model <../buml_language/model_types/gui>`, 
+BESSER introduces a code generator for `Flutter <https://flutter.dev/>`_ applications. By supplying
+a :doc:`structural model <../buml_language/model_types/structural>` and a :doc:`GUI model <../buml_language/model_types/gui>`,
 the generator will produce code for the Flutter mobile application. This inlcudes generating the user interface
 (screens, buttons, lists, etc.) according to the GUI input model, and the management of CRUD operations with a relational database
 according to the structural input model. The generated code adheres to established Flutter best practices.
@@ -22,14 +22,14 @@ To start using the Flutter Code Generator, follow these steps:
 3. To generate the complete Flutter code for a structural model and a GUI model, simply follow this step:
 
 .. code-block:: python
-    
+
     from besser.generators.flutter import FlutterGenerator
 
     # Create an instance of the FlutterGenerator class, providing the necessary parameters:
     # - model: An object representing the structural model.
-    # - application: An object representing the GUI model.
+    # - gui_model: An object representing the GUI model.
     # - main_page: An object representing the main page of the Flutter application.
-    code_gen = FlutterGenerator(model=library_model, application=MyApp, main_page=MyHomeScreen)
+    code_gen = FlutterGenerator(model=library_model, gui_model=library_gui_model, main_page=MyHomeScreen)
 
     # Generate the code files for your Flutter application by calling the 'generate' method:
     code_gen.generate()

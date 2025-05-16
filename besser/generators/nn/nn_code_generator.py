@@ -5,7 +5,7 @@ networks based on the B-UML model.
 """
 
 import os
-from typing import Dict, Callable, Union
+from typing import Callable
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.nn import NN
 from besser.generators import GeneratorInterface
@@ -40,15 +40,21 @@ class NNCodeGenerator(GeneratorInterface):
         template_name (str): The name of the jinja template.
         template_dir (str): The name of the directory where the jinja 
             template `template_name` is stored. Either `tf` or `pytorch`.
+        generation_type (str): 'subclassing' or 'sequential'
+        channel_last (bool, optional): If true, PyTorch conv layers will 
+            have their input and output permuted to match TF convention.
+        modules_details (dict): A dict storing the NN modules syntax and 
+            attributes.
+        
     """
     def __init__(self, model: NN,
-                 setup_layer: Union[SetupLayerTF, SetupLayerTorch],
+                 setup_layer: SetupLayerTF | SetupLayerTorch,
                  get_tensorop_syntax: Callable, generation_type: str,
-                 channel_last: bool, template_dir: str,
+                 template_dir: str, channel_last: bool | None = None,
                  file_name: str = "nn.py", output_dir: str = None):
 
         super().__init__(model, output_dir)
-        self.setup_layer: Union[SetupLayerTF, SetupLayerTorch] = setup_layer
+        self.setup_layer: SetupLayerTF | SetupLayerTorch = setup_layer
         self.get_tensorop_syntax: Callable = get_tensorop_syntax
         self.generation_type: str = generation_type
         self.channel_last: bool = channel_last
@@ -60,7 +66,7 @@ class NNCodeGenerator(GeneratorInterface):
         else:
             self.template_name = f"template_{template_dir}_sequential.py.j2"
 
-        self.modules_details: Dict = self.get_modules_details()
+        self.modules_details: dict = self.get_modules_details()
 
 
     def get_modules_details(self) -> str:
@@ -83,8 +89,8 @@ class NNCodeGenerator(GeneratorInterface):
         For the case of layers, an additional element is added to 
         the list, representing the layer object.
         """
-        counter_subnn = 0
-        modules_details = {}
+        counter_subnn: int = 0
+        modules_details: dict = {}
         if "torch" in self.template_name:
             actv_func = True
         else:
@@ -98,24 +104,26 @@ class NNCodeGenerator(GeneratorInterface):
             if module_type == "NN":
                 subnn_details = {}
                 for sub_nn_layer in module.layers:
-                    subnn_details = handle_layer(
+                    handle_layer(
                         sub_nn_layer, self.setup_layer, subnn_details,
-                        actv_func, is_seq, self.channel_last, is_subnn=True
+                        self.channel_last, actv_func, is_seq, is_subnn=True
                     )
                 name_sub_nn = f"{module.name}_{counter_subnn}_nn"
                 modules_details[name_sub_nn] = subnn_details
                 counter_subnn += 1
-                modules_details = add_in_out_var_to_subnn(modules_details)
+                add_in_out_var_to_subnn(modules_details)
             elif module_type != "TensorOp":
-                modules_details = handle_layer(
+                handle_layer(
                     module, self.setup_layer, modules_details,
-                    actv_func, is_seq, self.channel_last, is_subnn=False
+                    self.channel_last, actv_func, is_seq, is_subnn=False
                 )
             else:
-                modules_details = handle_tensorop(
-                    module, modules_details, self.get_tensorop_syntax)
+                handle_tensorop(
+                    module, modules_details, self.get_tensorop_syntax
+                )
         if actv_func:
-            modules_details = adjust_actv_func_name(modules_details)
+            adjust_actv_func_name(modules_details)
+
         return modules_details
 
     def generate(self, *args):

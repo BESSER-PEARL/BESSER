@@ -1,6 +1,6 @@
 import os
 from jinja2 import Environment, FileSystemLoader
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
 
@@ -72,6 +72,26 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
         return fkeys
 
+    def separate_classes(self):
+        """
+        Separates regular classes from association classes in the model.
+        
+        Returns:
+            tuple: A tuple containing two lists (regular_classes, association_classes)
+        """
+        classes_list = self.model.classes_sorted_by_inheritance()
+        classes = []
+        asso_classes = []
+
+        # Separate regular classes and association classes
+        for class_item in classes_list:
+            if isinstance(class_item, AssociationClass):
+                asso_classes.append(class_item)
+            else:
+                classes.append(class_item)
+                
+        return classes, asso_classes
+
     def generate(self, dbms: str = "sqlite"):
         """
         Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified output directory.
@@ -88,6 +108,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
         if dbms not in self.VALID_DBMS:
             raise ValueError(f"Invalid DBMS. Valid options are {', '.join(self.VALID_DBMS)}.")
 
+        classes, asso_classes = self.separate_classes()
+
         file_path = self.build_generation_path(file_name="sql_alchemy.py")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
@@ -95,7 +117,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
         template = env.get_template('sql_alchemy_template.py.j2')
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(
-                classes=self.model.classes_sorted_by_inheritance(),
+                classes=classes,
+                asso_classes=asso_classes,
                 types=self.TYPES,
                 associations=self.model.associations,
                 enumerations=self.model.get_enumerations(),

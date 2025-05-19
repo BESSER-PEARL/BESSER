@@ -894,6 +894,8 @@ def process_agent_diagram(json_data):
                         }
                         file_type = mime_types.get(condition_value)
                         code_lines.append(f"{source_name}_state.when_file_received('{file_type}').go_to({target_name}_state)")
+                    elif condition_name == "auto":
+                        code_lines.append(f"{source_name}_state.go_to({target_name}_state)")
                 else:
                     code_lines.append(f"{source_name}_state.when_no_intent_matched().go_to({target_name}_state)")
     return "\n".join(code_lines)

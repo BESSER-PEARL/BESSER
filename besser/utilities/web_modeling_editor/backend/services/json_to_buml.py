@@ -696,6 +696,7 @@ def process_agent_diagram(json_data):
     code_lines.append("import datetime")
     code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty")
     code_lines.append("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate")
+    code_lines.append("import operator\n")
 
     sm_name = json_data.get("name", "Generated_State_Machine")
     code_lines.append(f"agent = Agent('{sm_name}')\n")
@@ -733,7 +734,7 @@ def process_agent_diagram(json_data):
                 intents[element.get("name")].append(elements.get(intent_body).get("name"))
     # Collect event names from transitions
     for rel in relationships.values():
-        if rel.get("type") == "StateTransition" and rel.get("name"):
+        if rel.get("type") == "AgentStateTransition" and rel.get("name"):
             event_names.add(rel.get("name"))
     # Write intents first
     for intent in intents.keys():
@@ -756,7 +757,6 @@ def process_agent_diagram(json_data):
         if element.get("type") == "AgentState":
             name = element.get("name")  # throw error if no name
             if element.get("bodies") != []:
-                print("i am here")
                 bodyCode = [f"def {name}_body(session: AgentSession):"]
                 for body in element.get("bodies"):
                     if elements.get(body).get("replyType") == "text":
@@ -805,7 +805,7 @@ def process_agent_diagram(json_data):
         if element.get("type") == "AgentState":
             is_initial = False
             for rel in relationships.values():
-                if (rel.get("type") == "StateTransition" and
+                if (rel.get("type") == "AgentStateTransition" and
                     rel.get("target", {}).get("element") == element_id and
                     elements.get(rel.get("source", {}).get("element", ""), {}).get("type") == "StateInitialNode"):
                     is_initial = True
@@ -840,7 +840,7 @@ def process_agent_diagram(json_data):
         print(f"Error: {e}")
     # Write transitions
     for relationship in relationships.values():
-        if relationship.get("type") == "StateTransition":
+        if relationship.get("type") == "AgentStateTransition":
             source_id = relationship.get("source", {}).get("element")
             target_id = relationship.get("target", {}).get("element")
 
@@ -852,14 +852,40 @@ def process_agent_diagram(json_data):
 
             if source_name and target_name:
                 event_name = relationship.get("name", "")
-                params = relationship.get("params")
-
-                if event_name:
-                    code_lines.append(f"{source_name}_state.when_intent_matched(")
-                    code_lines.append(f"    {event_name},")
-                    code_lines.append(").go_to(")
-                    code_lines.append(f"{target_name}_state")
-                    code_lines.append(")")
+                condition_name = relationship.get("condition", "")
+                condition_value = relationship.get("conditionValue", "")
+                if condition_name:
+                    if condition_name == "when_intent_matched":
+                        code_lines.append(f"{source_name}_state.when_intent_matched(")
+                        code_lines.append(condition_value)
+                        code_lines.append(").go_to(")
+                        code_lines.append(f"{target_name}_state")
+                        code_lines.append(")")                        
+                    elif condition_name == "when_no_intent_matched":
+                        code_lines.append(f"{source_name}_state.when_no_intent_matched().go_to({target_name}_state)")
+                    elif condition_name == "when_variable_operation_matched":
+                        
+                        variable_name = condition_value.get("variable")
+                        operator_value = condition_value.get("operator")
+                        target_value = condition_value.get("targetValue")
+                        
+                        operator_map = {
+                            "<": "operator.lt",
+                            "<=": "operator.le",
+                            "==": "operator.eq",
+                            ">=": "operator.ge",
+                            ">": "operator.gt",
+                            "!=": "operator.ne"
+                        }
+                        op_func = operator_map.get(operator_value)
+                        
+                        code_lines.append(f"{source_name}_state.when_variable_matches_operation(")
+                        code_lines.append(f"operation={op_func},")
+                        code_lines.append(f"var_name='{variable_name}',")
+                        code_lines.append(f"target='{target_value}',")
+                        code_lines.append(").go_to(")
+                        code_lines.append(f"{target_name}_state")
+                        code_lines.append(")")        
                 else:
                     code_lines.append(f"{source_name}_state.when_no_intent_matched().go_to({target_name}_state)")
     return "\n".join(code_lines)

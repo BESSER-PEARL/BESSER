@@ -155,7 +155,7 @@ from besser.agent.library.entity.base_entities import {{ entity.name }}
 {{ state.name }}.when_intent_matched({{ transition.conditions.intent.name }}).go_to({{ transition.dest.name }})
 {% endif -%}
 {% elif is_class(transition.conditions, 'VariableOperationMatcher') -%}
-{{ state.name }}.when_variable_matches_operation('{{ transition.conditions.var_name }}', operator.{{ transition.conditions.operation.__name__ }}, {{ transition.conditions.target }}).go_to({{ transition.dest.name }})
+{{ state.name }}.when_variable_matches_operation('{{ transition.conditions.var_name }}', operator.{{ transition.conditions.operation.__name__ }}, '{{ transition.conditions.target }}').go_to({{ transition.dest.name }})
 {% elif is_class(transition.conditions, 'FileTypeMatcher') -%}
 {{ state.name }}.when_file_received({% if transition.conditions.allowed_types -%}{% if is_type(transition.conditions.allowed_types, 'str') -%}'{{ transition.conditions.allowed_types }}'{% else -%}{{ transition.conditions.allowed_types }}{% endif -%}{% endif -%}).go_to({{ transition.dest.name }})
 {% elif is_class(transition.conditions, 'Auto')%}

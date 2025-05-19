@@ -885,7 +885,15 @@ def process_agent_diagram(json_data):
                         code_lines.append(f"target='{target_value}',")
                         code_lines.append(").go_to(")
                         code_lines.append(f"{target_name}_state")
-                        code_lines.append(")")        
+                        code_lines.append(")")
+                    elif condition_name == "when_file_received":
+                        mime_types = {
+                            "PDF": "application/pdf",
+                            "TXT": "text/plain",
+                            "JSON": "application/json"
+                        }
+                        file_type = mime_types.get(condition_value)
+                        code_lines.append(f"{source_name}_state.when_file_received('{file_type}').go_to({target_name}_state)")
                 else:
                     code_lines.append(f"{source_name}_state.when_no_intent_matched().go_to({target_name}_state)")
     return "\n".join(code_lines)

@@ -60,19 +60,19 @@ llm = {{ llm.__class__.__name__}}(
     agent=agent,
     {% if llm.parameters -%}
     parameters={{ llm.parameters }},
-    {% else %}
+    {% else -%}
     parameters={},
     {% endif -%}
     {% if llm.num_previous_messages -%}
     num_previous_messages={{ llm.num_previous_messages }},
     {% endif -%}
 )
-{% endfor %}
-{% endif %}
+{% endfor -%}
+{% endif -%}
 
 {% if agent.default_ic_config != None -%}
 agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
-{% endif %}
+{% endif -%}
 {% if agent.entities -%}
 ##############################
 # ENTITIES
@@ -100,7 +100,7 @@ from besser.agent.library.entity.base_entities import {{ entity.name }}
     }
 )
 {% endif -%}
-{% endfor %}
+{% endfor -%}
 {% endif -%}
 ##############################
 # INTENTS

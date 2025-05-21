@@ -388,7 +388,7 @@ async def export_buml(input_data: ClassDiagramInput):
             )
         elif elements_data.get("type") == "AgentDiagram":
             agent_code = process_agent_diagram(elements_data)
-            output_file_path = os.path.join(temp_dir, "agent.py")
+            output_file_path = os.path.join(temp_dir, "agent_buml.py")
             with open(output_file_path, "w") as f:
                 f.write(agent_code)
             with open(output_file_path, "rb") as f:
@@ -398,7 +398,7 @@ async def export_buml(input_data: ClassDiagramInput):
                 content=file_content,
                 media_type="text/plain",
                 headers={
-                    "Content-Disposition": "attachment; filename=state_machine.py"
+                    "Content-Disposition": "attachment; filename=agent_buml.py"
                 },
             )
 
@@ -428,9 +428,16 @@ async def get_json_model(buml_file: UploadFile = File(...)):
         # Try to determine if it's a state machine or domain model
         is_state_machine = "StateMachine" in buml_content and "Session" in buml_content
 
+        is_agent = "Agent" in buml_content and "Session" in buml_content
+
         if is_state_machine:
             # Convert the state machine Python code directly to JSON
             json_model = state_machine_to_json(buml_content)
+            model_name = buml_file.filename
+        
+        elif is_agent:
+            # Convert the agent Python code directly to JSON
+            json_model = agent_buml_to_json(buml_content)
             model_name = buml_file.filename
         else:
             # Parse the BUML content into a domain model and get OCL constraints

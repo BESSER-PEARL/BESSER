@@ -784,6 +784,8 @@ def process_agent_diagram(json_data):
                 for fallbackBody in element.get("fallbackBodies"):
                     if elements.get(fallbackBody).get("replyType") == "text":
                         fallbackBodyCode.append(f"    session.reply('{elements.get(fallbackBody).get('name')}')")
+                    elif elements.get(fallbackBody).get("replyType") == "llm":
+                        fallbackBodyCode.append("    session.reply(llm.predict(session.event.message))")
                     elif elements.get(fallbackBody).get("replyType") == "code":
                         code_lines.append(elements.get(fallbackBody).get('name').strip())
                         # Extract the function name from the code
@@ -821,12 +823,15 @@ def process_agent_diagram(json_data):
             if element.get("type") == "AgentState":
                 state_name = element.get("name", "")
                 if element.get("bodies") != []:
+                    visited_already = []
                     for body in element.get("bodies"):
                         if elements.get(body).get("replyType") == "code":
                             # Extract the function name from the code
                             code_lines.append(f"{state_name}_state.set_body(Body('{elements.get(body).get('name')}', {elements.get(body).get('name')}))")
                         else:
-                            code_lines.append(f"{state_name}_state.set_body(Body('{state_name}_body', {state_name}_body))")
+                            if state_name not in visited_already:
+                                code_lines.append(f"{state_name}_state.set_body(Body('{state_name}_body', {state_name}_body))")
+                                visited_already.append(f"{state_name}")
                 if element.get("fallbackBodies") != []:
                     for body in element.get("fallbackBodies"):
                         if elements.get(body).get("replyType") == "code":

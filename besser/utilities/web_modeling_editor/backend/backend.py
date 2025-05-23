@@ -33,6 +33,7 @@ from besser.utilities.web_modeling_editor.backend.services.buml_to_json import (
     domain_model_to_json,
     parse_buml_content,
     state_machine_to_json,
+    agent_buml_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.ocl_checker import (
     check_ocl_constraint,

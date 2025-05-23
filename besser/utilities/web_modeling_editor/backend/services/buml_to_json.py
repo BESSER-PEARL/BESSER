@@ -493,8 +493,6 @@ def state_machine_to_json(content: str):
 
     # Parse the Python code
     tree = ast.parse(content)
-    with open("tree2.txt", "w", encoding="utf-8") as f:
-        f.write(ast.dump(tree, indent=4))
     # Track states and functions
     states = {}  # name -> state_id mapping
     functions = {}  # name -> function_node mapping
@@ -808,9 +806,6 @@ def agent_buml_to_json(content: str):
 
     # Parse the Python code
     tree = ast.parse(content)
-    # Write the AST tree to tree.txt for debugging/inspection
-    with open("tree.txt", "w", encoding="utf-8") as f:
-        f.write(ast.dump(tree, indent=4))
     # Track states and functions
     states = {}  # name -> state_id mapping
     functions = {}  # name -> function_node mapping

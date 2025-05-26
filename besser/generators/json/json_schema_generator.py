@@ -1,6 +1,9 @@
 import os
 from jinja2 import Environment, FileSystemLoader
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import (
+    DomainModel, IntegerType, StringType, Class, 
+    BooleanType, FloatType, Enumeration
+)
 from besser.generators import GeneratorInterface
 
 class JSONSchemaGenerator(GeneratorInterface):
@@ -11,11 +14,137 @@ class JSONSchemaGenerator(GeneratorInterface):
     Args:
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
+        mode (str, optional): The generation mode, either 'regular' or 'smart_data'. Defaults to 'regular'.
     """
         
-    def __init__(self, model: DomainModel, output_dir: str = None):
+    def __init__(self, model: DomainModel, output_dir: str = None, mode: str = 'regular'):
         super().__init__(model, output_dir)
+        self.mode = mode
         # Add enums to TYPES dictionary
+
+    def _get_property_type(self, property_type):
+        """
+        Maps B-UML types to JSON schema types.
+        
+        Args:
+            property_type: The B-UML type to map.
+            
+        Returns:
+            str: The corresponding JSON schema type.
+        """
+        type_mapping = {
+            IntegerType: "integer",
+            StringType: "string",
+            BooleanType: "boolean",
+            FloatType: "number",
+            list: "array"
+        }
+        
+        # Check if property_type is a datatype with a name attribute
+        if hasattr(property_type, 'name'):
+            if property_type.name == 'str':
+                return "string"
+            elif property_type.name == 'int':
+                return "integer"
+            elif property_type.name == 'float':
+                return "number"
+            elif property_type.name == 'bool':
+                return "boolean"
+            return property_type.name
+        
+        if isinstance(property_type, Enumeration):
+            return "string"
+        return type_mapping.get(type(property_type), "string")
+
+    def _prepare_smart_data_schema_for_class(self, class_def):
+        """
+        Prepares schema data for Smart Data format for a specific class.
+        
+        Args:
+            class_def: The class to prepare the schema for.
+            
+        Returns:
+            dict: A dictionary containing the schema data.
+        """
+        schema_data = {
+            "type": "object",
+            "properties": {},
+            "required": ["id", "type"],
+            "class_name": class_def.name
+        }
+
+        # Add class description if available
+        if hasattr(class_def, 'synonyms') and class_def.synonyms:
+            description = ". ".join(class_def.synonyms) if isinstance(class_def.synonyms, list) else class_def.synonyms
+            schema_data["model_description"] = description
+        
+        # Process class attributes
+        for attr in class_def.attributes:
+            prop_type = self._get_property_type(attr.type)
+            prop_def = {
+                "type": prop_type,
+                "description": "Property"
+            }
+
+            if hasattr(attr, 'synonyms') and attr.synonyms:
+                prop_def["description"] = (
+                    ". ".join(attr.synonyms) if isinstance(attr.synonyms, list)
+                    else attr.synonyms
+                )
+
+            if isinstance(attr.type, Enumeration):
+                prop_def["enum"] = [lit.name for lit in attr.type.literals]
+                # Fix for enumeration type
+                prop_def["type"] = "string"
+
+            if hasattr(attr, 'multiplicity') and attr.multiplicity.max > 1:
+                prop_def = {
+                    "type": "array",
+                    "items": prop_def
+                }
+
+            schema_data["properties"][attr.name] = prop_def
+            
+            if hasattr(attr, 'required') and attr.required:
+                schema_data["required"].append(attr.name)
+        
+        # Process association ends for this class - only include direct associations
+        for association in self.model.associations:
+            # Find ends that reference this class
+            class_ends = [end for end in association.ends if end.type == class_def]
+            
+            # Skip if this class is not directly involved in the association
+            if not class_ends:
+                continue
+            
+            # Find the other end of the association
+            for class_end in class_ends:
+                other_ends = [end for end in association.ends if end != class_end]
+                if not other_ends:
+                    continue
+                
+                other_end = other_ends[0]
+                prop_name = other_end.name
+                
+                # Skip if the property name is not defined
+                if not prop_name:
+                    continue
+                
+                prop_def = {
+                    "type": "string",
+                    "format": "uri",
+                    "description": f"Relationship to {other_end.type.name}"
+                }
+                
+                if hasattr(other_end, 'multiplicity') and other_end.multiplicity.max > 1:
+                    prop_def = {
+                        "type": "array",
+                        "items": prop_def
+                    }
+                
+                schema_data["properties"][prop_name] = prop_def
+                
+        return schema_data
 
     def generate(self):
         """
@@ -24,17 +153,44 @@ class JSONSchemaGenerator(GeneratorInterface):
         folder.
 
         Returns:
-            None, but store the generated code as a file named json_schema.json
+            None, but store the generated code as a file
         """
-        file_path = self.build_generation_path(file_name="json_schema.json")
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('json_schema.json.j2')
-        with open(file_path, mode="w") as f:
-            generated_code = template.render(
-                classes=self.model.classes_sorted_by_inheritance(),
-                enumerations = self.model.get_enumerations(),
-            )
-            f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+        
+        if self.mode == 'smart_data':
+            # Smart Data mode - generate a schema for each class
+            template = env.get_template('smart_data_schema.json.j2')
+            
+            # Get all classes from the model
+            classes = [c for c in self.model.types if isinstance(c, Class)]
+            
+            for class_def in classes:
+                # Create a directory for each class
+                class_dir = os.path.join(self.output_dir, class_def.name)
+                os.makedirs(class_dir, exist_ok=True)
+                
+                # Prepare schema data for this class
+                schema_data = self._prepare_smart_data_schema_for_class(class_def)
+                print(schema_data)
+                # Generate schema file in the class directory
+                file_path = os.path.join(class_dir, "schema.json")
+                
+                with open(file_path, mode="w", encoding='utf-8') as f:
+                    generated_code = template.render(schema=schema_data)
+                    f.write(generated_code)
+                    
+                print(f"Smart Data schema for {class_def.name} generated in: {file_path}")
+        else:
+            # Regular JSON Schema mode
+            template = env.get_template('json_schema.json.j2')
+            file_path = self.build_generation_path(file_name="json_schema.json")
+            
+            with open(file_path, mode="w") as f:
+                generated_code = template.render(
+                    classes=self.model.classes_sorted_by_inheritance(),
+                    enumerations = self.model.get_enumerations(),
+                )
+                f.write(generated_code)
+                print("Code generated in the location: " + file_path)

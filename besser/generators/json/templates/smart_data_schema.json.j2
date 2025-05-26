@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/schema",
+  "$schemaVersion": "0.0.1",
+  "$id": "https://smart-data-models.github.io/dataModel.{{schema.class_name}}/{{schema.class_name}}/schema.json",
+  "title": "Smart Data models - {{schema.class_name}} schema",
+  "modelTags": "",
+  "description": "{% if schema.model_description %}{{ schema.model_description }}{% else %}This class represents {{schema.class_name}}{% endif %}",
+  "required": [
+    "id",
+    "type"
+  ],
+  "allOf": [
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/GSMA-Commons"
+    },
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/Location-Commons"
+    },
+    {
+      "properties": {{ schema.properties | tojson(indent=8) }}
+    }
+  ],
+  "derivedFrom": "3GPP TS 28.541",
+  "license": ""
+} 

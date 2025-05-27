@@ -728,7 +728,7 @@ def process_agent_diagram(json_data):
             body_names.add(element.get("name"))
         elif element.get("type") == "AgentStateFallbackBody":
             body_names.add(element.get("name"))
-        elif element.get("type") == "Intent":
+        elif element.get("type") == "AgentIntent":
             intents[element.get("name")] = []
             for intent_body in element.get("bodies"):
                 intents[element.get("name")].append(elements.get(intent_body).get("name"))

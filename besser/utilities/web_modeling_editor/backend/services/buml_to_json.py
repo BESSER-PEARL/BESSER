@@ -837,7 +837,7 @@ def agent_buml_to_json(content: str):
                                     elements[sentence_id] = {
                                         "id": sentence_id,
                                         "name": elt.value,
-                                        "type": "IntentBody",
+                                        "type": "AgentIntentBody",
                                         "owner": intent_id,
                                         "bounds": {
                                             "x": states_x,
@@ -857,7 +857,7 @@ def agent_buml_to_json(content: str):
                             elements[intent_id] = {
                                 "id": intent_id,
                                 "name": intent_name,
-                                "type": "Intent",
+                                "type": "AgentIntent",
                                 "owner": None,
                                 "bounds": {
                                     "x": states_x,
@@ -952,7 +952,7 @@ def agent_buml_to_json(content: str):
                 relationships[initial_rel_id] = {
                     "id": initial_rel_id,
                     "name": "",
-                    "type": "StateTransition",
+                    "type": "AgentStateTransition",
                     "owner": None,
                     "source": {
                         "direction": "Right",

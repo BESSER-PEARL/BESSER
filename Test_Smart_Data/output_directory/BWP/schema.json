@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/schema",
+  "$schemaVersion": "0.0.1",
+  "$id": "https://smart-data-models.github.io/dataModel.BWP/BWP/schema.json",
+  "title": "Smart Data models - BWP schema",
+  "modelTags": "",
+  "description": "This class represents BWP",
+  "required": [
+    "id",
+    "type"
+  ],
+  "allOf": [
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/GSMA-Commons"
+    },
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/Location-Commons"
+    },
+    {
+      "properties": {
+        "nrcelldu": {
+                "description": "Relationship to NRCellDU",
+                "format": "uri",
+                "type": "string"
+        },
+        "numberofRBs": {
+                "description": "Property",
+                "type": "integer"
+        },
+        "subCarrierSpacing": {
+                "description": "Property",
+                "type": "integer"
+        }
+}
+    }
+  ],
+  "derivedFrom": "3GPP TS 28.541",
+  "license": ""
+} 

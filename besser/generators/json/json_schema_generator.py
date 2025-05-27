@@ -169,6 +169,7 @@ class JSONSchemaGenerator(GeneratorInterface):
             for class_def in classes:
                 # Create a directory for each class
                 class_dir = os.path.join(self.output_dir, class_def.name)
+
                 os.makedirs(class_dir, exist_ok=True)
                 
                 # Prepare schema data for this class

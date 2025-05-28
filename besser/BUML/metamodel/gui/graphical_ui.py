@@ -16,8 +16,8 @@ class FileSourceType:
     """
     
     def __init__(self, name: str, type: str):
-        self.type: str = type
-        self.name: str = name
+        self.__name: str = name
+        self.type = type  # Use setter for validation
 
     @property
     def name(self) -> str:
@@ -45,7 +45,7 @@ class FileSourceType:
         """
         if type not in ['FileSystem', 'LocalStorage', 'DatabaseFileSystem']:
             raise ValueError("Invalid value of type")
-            self.__type = type
+        self.__type = type # Corrected placement
 
     def __repr__(self):
         return f'FileSourceType({self.name}, type={self.type})'
@@ -64,8 +64,8 @@ class CollectionSourceType:
     """
     
     def __init__(self, name: str, type: str):
-        self.type: str = type
-        self.name: str = name
+        self.__name: str = name
+        self.type = type  # Use setter for validation
 
     @property
     def name(self) -> str:
@@ -92,7 +92,7 @@ class CollectionSourceType:
         """
         if type not in ['List', 'Table', 'Tree', 'Grid', 'Array', 'Stack']:
             raise ValueError("Invalid value of type")
-            self.__type = type
+        self.__type = type # Corrected placement
 
     def __repr__(self):
         return f'CollectionSourceType({self.name}, type={self.type})'
@@ -153,7 +153,7 @@ class DataSource:
     """
 
     def __init__(self, name: str):
-        self.name: str = name
+        self.__name: str = name
 
     @property
     def name(self) -> str:
@@ -185,8 +185,8 @@ class ModelElement(DataSource):
     
     def __init__(self, name: str, dataSourceClass: Class, fields: set[Property]):
         super().__init__(name)
-        self.dataSourceClass: Class = dataSourceClass
-        self.fields: set[Property]= fields
+        self.__dataSourceClass: Class = dataSourceClass
+        self.fields = fields # Use setter for validation
 
     @property
     def dataSourceClass(self) -> Class:
@@ -230,7 +230,7 @@ class File(DataSource):
     
     def __init__(self, name: str, type:FileSourceType):
         super().__init__(name)
-        self.type: FileSourceType = type
+        self.__type: FileSourceType = type
 
     @property
     def type(self) -> FileSourceType:
@@ -260,7 +260,7 @@ class Collection(DataSource):
     """
     def __init__(self, name: str, type:CollectionSourceType):
         super().__init__(name)
-        self.type: CollectionSourceType = type
+        self.__type: CollectionSourceType = type
 
     @property
     def type(self) -> CollectionSourceType:
@@ -289,8 +289,8 @@ class ViewElement(NamedElement):
     """
     
     def __init__(self, name: str, description: str, visibility: str = "public"):
-        super().__init__(name, visibility)
-        self.description: str = description
+        super().__init__(name, visibility=visibility) # Pass NamedElement's timestamp as None by default
+        self.__description: str = description
 
     @property
     def description(self) -> str:
@@ -339,7 +339,7 @@ class ViewContainer(ViewElement):
     
     def __init__(self, name: str, description: str, view_elements: set[ViewElement]):
         super().__init__(name, description)
-        self.view_elements: set[ViewElement] = view_elements
+        self.view_elements = view_elements # Use setter for validation
 
     @property
     def view_elements(self) -> set[ViewElement]:
@@ -379,29 +379,29 @@ class Screen(ViewContainer):
     
     def __init__(self, name: str, description: str, view_elements: set[ViewElement], x_dpi: str, y_dpi: str, size: str):
         super().__init__(name, description, view_elements)
-        self.x_dpi: str = x_dpi
-        self.y_dpi: str = y_dpi
-        self.size: str = size
+        self.__x_dpi: str = x_dpi
+        self.__y_dpi: str = y_dpi
+        self.size = size # Use setter for validation
     
     @property
     def x_dpi(self) -> str:
       """str: Get the X DPI (dots per inch) of the screen."""
-      return self.__x_pdi
+      return self.__x_dpi # Corrected typo
 
     @x_dpi.setter
     def x_dpi(self, x_dpi: str):
       """str: Set the X DPI (dots per inch) of the screen."""
-      self.__x_pdi = x_dpi
+      self.__x_dpi = x_dpi # Corrected typo
 
     @property
     def y_dpi(self) -> str:
       """str: Get the Y DPI (dots per inch) of the screen."""
-      return self.__y_pdi
+      return self.__y_dpi # Corrected typo
 
     @y_dpi.setter
     def y_dpi(self, y_dpi: str):
      """str: Set the Y DPI (dots per inch) of the screen."""
-     self.__y_pdi = y_dpi
+     self.__y_dpi = y_dpi # Corrected typo
 
     @property
     def size(self) -> str:
@@ -418,7 +418,7 @@ class Screen(ViewContainer):
 
         if size not in ['SmallScreen', 'MediumScreen', 'LargScreen', 'xLargeScreen']:
            raise ValueError("Invalid value of size")
-           self.__size = size
+        self.__size = size # Corrected placement
 
     def __repr__(self):
       return f'Screen({self.name}, {self.x_dpi}, {self.y_dpi}, {self.size}, {self.view_elements})'
@@ -437,8 +437,8 @@ class Module(NamedElement):
     """
     
     def __init__(self, name: str, screens: set[Screen], visibility: str = "public"):
-        super().__init__(name, visibility)
-        self.screens: set[Screen] = screens
+        super().__init__(name, visibility=visibility) # Pass NamedElement's timestamp as None by default
+        self.screens = screens # Use setter for validation
 
     @property
     def screens(self) -> set[Screen]:
@@ -472,7 +472,7 @@ class DataList(ViewComponent):
     
     def __init__(self, name: str, description: str, list_sources: set[DataSource]):
         super().__init__(name, description)
-        self.list_sources: set[DataSource] = list_sources
+        self.list_sources = list_sources # Use setter for validation
     
     @property
     def list_sources(self) -> set[DataSource]:
@@ -514,10 +514,10 @@ class Button(ViewComponent):
     
     def __init__(self, name: str, description: str, label: str, buttonType: ButtonType, actionType: ButtonActionType, targetScreen: Screen = None):
         super().__init__(name, description)
-        self.label=label
-        self.buttonType: ButtonType = buttonType
-        self.actionType: ButtonActionType=actionType
-        self.targetScreen: Screen = targetScreen
+        self.__label=label
+        self.__buttonType: ButtonType = buttonType
+        self.__actionType: ButtonActionType=actionType
+        self.targetScreen = targetScreen # Use setter for validation
 
     @property
     def label(self) -> str:
@@ -616,8 +616,8 @@ class InputField(ViewComponent):
     
     def __init__(self, name: str, description: str, fieldType: str, validationRules: str):
         super().__init__(name, description)
-        self.fieldType: str= fieldType
-        self.validationRules: str = validationRules
+        self.fieldType = fieldType # Use setter for validation
+        self.__validationRules: str = validationRules
 
     @property
     def fieldType(self) -> str:
@@ -635,7 +635,7 @@ class InputField(ViewComponent):
 
         if fieldType not in ['Text','Number', 'Email', 'Password', 'Date', 'Time', 'File', 'Color', 'Range', 'URL', 'Tel', 'Search']:
            raise ValueError("Invalid value of fieldType")
-           self.__fieldType = fieldType
+        self.__fieldType = fieldType # Corrected placement
 
     @property
     def validationRules(self) -> str:
@@ -644,9 +644,9 @@ class InputField(ViewComponent):
 
     
     @validationRules.setter
-    def validationRules(self, str):
+    def validationRules(self, rules: str): # Renamed parameter from str to rules
         """str: Set the validation rules of the input field."""
-        self.__validationRules = validationRules
+        self.__validationRules = rules
 
     def __repr__(self):
      return f'InputField({self.name},{self.description}, {self.fieldType}, {self.validationRules})'
@@ -668,7 +668,7 @@ class Form(ViewComponent):
     
     def __init__(self, name: str, description: str, inputFields: set[InputField]):
         super().__init__(name, description)
-        self.inputFields: set[InputField] = inputFields
+        self.__inputFields: set[InputField] = inputFields # Setter has no validation
      
     @property
     def inputFields(self) -> set[InputField]:
@@ -717,7 +717,7 @@ class Menu(ViewComponent):
     
     def __init__(self, name: str, description: str, menuItems: set[MenuItem]):
         super().__init__(name, description)
-        self.menuItems: set[MenuItem] = menuItems
+        self.__menuItems: set[MenuItem] = menuItems
 
     @property
     def menuItems(self) -> set[MenuItem]:
@@ -756,13 +756,13 @@ class Application(Model):
         screenCompatibility (bool): Indicates whether the application has screen compatibility.
     """
     def __init__(self, name: str, package: str, versionCode: str, versionName: str, modules: set[Module], description: str, screenCompatibility: bool = False):
-        super().__init__(name)
-        self.package: str = package
-        self.versionCode: str = versionCode
-        self.versionName: str = versionName
-        self.description: str = description
-        self.modules: set[Module] = modules
-        self.screenCompatibility: str = screenCompatibility
+        super().__init__(name) # Model's init
+        self.__package: str = package
+        self.__versionCode: str = versionCode
+        self.__versionName: str = versionName
+        self.__description: str = description
+        self.modules = modules # Use setter for validation
+        self.__screenCompatibility: bool = screenCompatibility # Property type is bool
 
     @property
     def package(self) -> str:

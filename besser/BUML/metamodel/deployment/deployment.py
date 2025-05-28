@@ -122,8 +122,8 @@ class Resources:
     """
 
     def __init__(self, cpu: int, memory: int):
-        self.cpu: int = cpu
-        self.memory: int = memory
+        self.__cpu: int = cpu
+        self.__memory: int = memory
 
     @property
     def cpu(self) -> int:
@@ -169,10 +169,10 @@ class Application(NamedElement):
     def __init__(self, name: str, image_repo: str, port: int, required_resources: Resources,
             domain_model: DomainModel):
         super().__init__(name)
-        self.image_repo: str = image_repo
-        self.port: str = port
-        self.required_resources: Resources = required_resources
-        self.domain_model: DomainModel = domain_model
+        self.__image_repo: str = image_repo
+        self.__port: int = port  # Property type is int
+        self.__required_resources: Resources = required_resources
+        self.__domain_model: DomainModel = domain_model
 
     @property
     def image_repo(self) -> str:
@@ -236,8 +236,8 @@ class Volume(NamedElement):
 
     def __init__(self, name: str, mount_path: str, sub_path: str):
         super().__init__(name)
-        self.mount_path: str = mount_path
-        self.sub_path: str = sub_path
+        self.__mount_path: str = mount_path
+        self.__sub_path: str = sub_path
 
     @property
     def mount_path(self) -> str:
@@ -281,9 +281,9 @@ class Container(NamedElement):
     def __init__(self, name: str, application: Application, resources_limit: Resources = None,
             volumes: set[Volume] = None):
         super().__init__(name)
-        self.application: Application = application
-        self.resources_limit: Resources = resources_limit
-        self.volumes: set[Volume] = volumes if volumes is not None else set()
+        self.__application: Application = application
+        self.__resources_limit: Resources = resources_limit
+        self.__volumes: set[Volume] = volumes if volumes is not None else set()
 
     @property
     def application(self) -> Application:
@@ -334,8 +334,8 @@ class Deployment(NamedElement):
 
     def __init__(self, name: str, replicas: int, containers: set[Container]):
         super().__init__(name)
-        self.replicas: int = replicas
-        self.containers: set[Container] = containers
+        self.__replicas: int = replicas
+        self.__containers: set[Container] = containers
 
     @property
     def replicas(self) -> int:
@@ -383,11 +383,11 @@ class Service(NamedElement):
     def __init__(self, name: str, port: int, target_port: int, type: ServiceType,
                  protocol: Protocol, application: Application = None):
         super().__init__(name)
-        self.port: int = port
-        self.target_port: int = target_port
-        self.type: ServiceType = type
-        self.protocol: Protocol = protocol
-        self.application: Application = application
+        self.__port: int = port
+        self.__target_port: int = target_port
+        self.__type: ServiceType = type
+        self.__protocol: Protocol = protocol
+        self.__application: Application = application
 
     @property
     def port(self) -> int:
@@ -462,9 +462,9 @@ class IPRange(NamedElement):
 
     def __init__(self, name: str, cidr_range: str, type: IPRangeType, public: bool):
         super().__init__(name)
-        self.cidr_range: str = cidr_range
-        self.type: IPRangeType = type
-        self.public: bool = public
+        self.__cidr_range: str = cidr_range
+        self.__type: IPRangeType = type
+        self.__public: bool = public
 
     @property
     def cidr_range(self) -> str:
@@ -513,7 +513,7 @@ class SecurityGroup(NamedElement):
 
     def __init__(self, name: str, rules: set[Service]):
         super().__init__(name)
-        self.rules: set[Service] = rules
+        self.__rules: set[Service] = rules
 
     @property
     def rules(self) -> set[Service]:
@@ -544,7 +544,7 @@ class Network(NamedElement):
 
     def __init__(self, name: str, security_groups: set[SecurityGroup] = None):
         super().__init__(name)
-        self.security_groups: set[SecurityGroup] = security_groups if security_groups is not None else set()
+        self.__security_groups: set[SecurityGroup] = security_groups if security_groups is not None else set()
 
     @property
     def security_groups(self) -> set[SecurityGroup]:
@@ -575,8 +575,8 @@ class Subnetwork(NamedElement):
 
     def __init__(self, name: str, ip_ranges: set[IPRange], network: Network):
         super().__init__(name)
-        self.ip_ranges : set[IPRange] = ip_ranges
-        self.network: Network = network
+        self.__ip_ranges : set[IPRange] = ip_ranges
+        self.__network: Network = network
 
     @property
     def ip_ranges(self) -> set[IPRange]:
@@ -631,7 +631,7 @@ class Region(NamedElement):
 
     def __init__(self, name: str, zones: set[Zone]):
         super().__init__(name)
-        self.zones : set[Zone] = zones
+        self.__zones : set[Zone] = zones
 
     @property
     def zones(self) -> set[Zone]:
@@ -671,12 +671,12 @@ class Node(NamedElement):
     def __init__(self, name: str, public_ip: str, private_ip, os: str, resources: Resources,
                  storage: int, processor: Processor):
         super().__init__(name)
-        self.public_ip: str = public_ip
-        self.private_ip: str = private_ip
-        self.os: str = os
-        self.resources: Resources = resources
-        self.storage: int = storage
-        self.processor: Processor = processor
+        self.__public_ip: str = public_ip
+        self.__private_ip: str = private_ip
+        self.__os: str = os
+        self.__resources: Resources = resources
+        self.__storage: int = storage
+        self.__processor: Processor = processor
 
     @property
     def public_ip(self) -> str:
@@ -784,13 +784,13 @@ class Cluster(NamedElement):
                  regions: set[Region], net_config: bool = True, nodes: set[Node] = None,
                  networks: set[Network] = None, subnets: set[Subnetwork] = None):
         super().__init__(name)
-        self.services: set[Service] = services
-        self.deployments: set[Deployment] = deployments
-        self.regions: set[Region] = regions
-        self.net_config: bool = net_config
-        self.nodes: set[Node] = nodes
-        self.networks: set[Network] = networks
-        self.subnets: set[Subnetwork] = subnets
+        self.__services: set[Service] = services
+        self.__deployments: set[Deployment] = deployments
+        self.__regions: set[Region] = regions
+        self.__net_config: bool = net_config
+        self.__nodes: set[Node] = nodes
+        self.__networks: set[Network] = networks
+        self.__subnets: set[Subnetwork] = subnets
 
     @property
     def services(self) -> set[Service]:
@@ -894,10 +894,10 @@ class PublicCluster(Cluster):
                  regions: Region, num_nodes: int, provider: Provider, config_file: str,
                  networks: set[Network] = None, subnets: set[Subnetwork] = None,
                  net_config: bool = True):
-        super().__init__(name, services, deployments, regions, net_config, networks, subnets)
-        self.config_file: str = config_file
-        self.num_nodes: int = num_nodes
-        self.provider: Provider = provider
+        super().__init__(name, services, deployments, regions, net_config, None, networks, subnets) # Pass None for nodes if PublicCluster manages num_nodes instead
+        self.__config_file: str = config_file
+        self.__num_nodes: int = num_nodes
+        self.__provider: Provider = provider
 
     @property
     def config_file(self) -> str:
@@ -956,8 +956,8 @@ class OnPremises(Cluster):
     def __init__(self, name: str, services: set[Service], deployments: set[Deployment],
                  regions: Region, nodes: set[Node], hypervisor: Hypervisor,
                  networks: set[Network], subnets: set[Subnetwork]):
-        super().__init__(name, services, deployments, regions, nodes, networks, subnets)
-        self.hypervisor: str = hypervisor
+        super().__init__(name, services, deployments, regions, True, nodes, networks, subnets) # Assuming net_config=True default for OnPremises
+        self.__hypervisor: Hypervisor = hypervisor # Property type is Hypervisor
 
     @property
     def hypervisor(self) -> Hypervisor:
@@ -989,7 +989,7 @@ class DeploymentModel(Model):
 
     def __init__(self, name: str, clusters: set[Cluster]):
         super().__init__(name)
-        self.clusters: set[Cluster] = clusters
+        self.__clusters: set[Cluster] = clusters
 
     @property
     def clusters(self) -> set[Cluster]:

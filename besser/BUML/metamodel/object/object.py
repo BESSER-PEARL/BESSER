@@ -16,7 +16,7 @@ class AttributeLink():
     """
 
     def __init__(self, value: "DataValue", attribute: Property):
-        self.value: DataValue = value
+        self.__value: DataValue = value
         self.__attribute: Property = attribute
 
     @property
@@ -56,7 +56,7 @@ class Instance(NamedElement):
 
     def __init__(self, name: str, classifier: Type):
         super().__init__(name)
-        self.classifier: Type = classifier
+        self.__classifier: Type = classifier
 
     @property
     def classifier(self) -> Type:
@@ -84,7 +84,7 @@ class Object(Instance):
     def __init__(self, name: str, classifier: Type, slots: list[AttributeLink] = []):
         super().__init__(name, classifier)
 
-        self.slots: list[AttributeLink] = slots
+        self.__slots: list[AttributeLink] = slots
         self.__links: set[Link] = set()
 
     @property
@@ -173,8 +173,8 @@ class LinkEnd(NamedElement):
 
     def __init__(self, name:str, association_end: Property, object: Object):
         super().__init__(name)
-        self.association_end: Property = association_end
-        self.object: Object = object
+        self.__association_end: Property = association_end
+        self.__object: Object = object
 
     @property
     def association_end(self):
@@ -212,8 +212,8 @@ class Link(NamedElement):
 
     def __init__(self, name: str, association: Association, connections: list[LinkEnd]):
         super().__init__(name)
-        self.association: Association = association
-        self.connections: list[LinkEnd] = connections
+        self.__association: Association = association
+        self.connections = connections  # Use setter
     
     @property
     def association(self):
@@ -259,8 +259,8 @@ class ObjectModel(NamedElement):
 
     def __init__(self, name: str, instances: set[Instance], links: set[Link]):
         super().__init__(name)
-        self.instances: set[Instance] = instances
-        self.links: set[Link] = links
+        self.__instances: set[Instance] = instances
+        self.__links: set[Link] = links
 
     @property
     def instances(self):

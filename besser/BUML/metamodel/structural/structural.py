@@ -9,7 +9,7 @@ UNLIMITED_MAX_MULTIPLICITY = 9999
 class Element(ABC):
 
     def __init__(self, timestamp: datetime = None):
-        self.timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
+        self.__timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
                          timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
 
     @property
@@ -41,9 +41,9 @@ class Metadata(Element):
     def __init__(self, description: str = None, uri: str = None, synonyms: List[str] = None, 
                  timestamp: datetime = None):
         super().__init__(timestamp)
-        self.description: str = description
-        self.uri: str = uri
-        self.synonyms: List[str] = synonyms
+        self.__description: str = description
+        self.__uri: str = uri
+        self.__synonyms: List[str] = synonyms
 
     @property
     def description(self) -> str:
@@ -99,10 +99,10 @@ class NamedElement(Element):
     def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None, 
                  visibility: str = "public", is_derived: bool = False):
         super().__init__(timestamp)
-        self.name: str = name
-        self.metadata: Metadata = metadata
-        self.visibility: str = visibility
-        self.is_derived: bool = is_derived
+        self.name = name  # Use setter due to validation
+        self.__metadata: Metadata = metadata
+        self.visibility = visibility  # Use setter due to validation
+        self.__is_derived: bool = is_derived
 
     @property
     def name(self) -> str:
@@ -266,7 +266,7 @@ class EnumerationLiteral(NamedElement):
 
     def __init__(self, name: str, owner: DataType=None, timestamp: int = None, metadata: Metadata = None):
         super().__init__(name, timestamp, metadata)
-        self.owner: DataType = owner
+        self.owner = owner  # Use setter due to validation
 
     @property
     def owner(self) -> DataType:
@@ -313,7 +313,7 @@ class Enumeration(DataType):
     def __init__(self, name: str, literals: set[EnumerationLiteral] = None, timestamp: int = None,
                  metadata: Metadata = None):
         super().__init__(name, timestamp, metadata)
-        self.literals: set[EnumerationLiteral] = literals if literals is not None else set()
+        self.literals = literals if literals is not None else set()  # Use setter
 
     @property
     def literals(self) -> set[EnumerationLiteral]:
@@ -388,7 +388,10 @@ class TypedElement(NamedElement):
     def __init__(self, name: str, type: Union[Type, str], timestamp: int = None, metadata: Metadata = None,
                  visibility: str="public"):
         super().__init__(name, timestamp, metadata, visibility)
-        self.type = self.type_mapping.get(type, type)
+        # The type_mapping is to resolve string representations to actual Type objects.
+        # The setter for `type` simply assigns to `self.__type`.
+        # self.type_mapping.get(type, type) will return `type` itself if it's not a string key.
+        self.__type = self.type_mapping.get(type, type)
 
     @property
     def type(self) -> Type:
@@ -415,8 +418,10 @@ class Multiplicity(Element):
     """
 
     def __init__(self, min_multiplicity: int, max_multiplicity: int):
-        self.min: int = min_multiplicity
-        self.max: int = max_multiplicity
+        # Multiplicity does not inherit timestamp initialization from Element in original code.
+        # Reverting the addition of super().__init__() to stick to the task's scope.
+        self.min = min_multiplicity  # Use setter due to validation
+        self.max = max_multiplicity  # Use setter due to validation and logic
 
     @property
     def min(self) -> int:
@@ -498,12 +503,12 @@ class Property(TypedElement):
                  visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True,
                  is_id: bool = False, is_read_only: bool = False, timestamp: int = None, metadata: Metadata = None):
         super().__init__(name, type, timestamp, metadata, visibility)
-        self.owner: Type = owner
-        self.multiplicity: Multiplicity = multiplicity
-        self.is_composite: bool = is_composite
-        self.is_navigable: bool = is_navigable
-        self.is_id: bool = is_id
-        self.is_read_only: bool = is_read_only
+        self.owner = owner  # Use setter due to validation
+        self.__multiplicity: Multiplicity = multiplicity
+        self.__is_composite: bool = is_composite
+        self.__is_navigable: bool = is_navigable
+        self.__is_id: bool = is_id
+        self.__is_read_only: bool = is_read_only
 
     @property
     def owner(self) -> Type:
@@ -601,7 +606,7 @@ class Parameter(TypedElement):
     def __init__(self, name: str, type: Type, default_value: Any = None, timestamp: int = None,
                  metadata: Metadata = None):
         super().__init__(name, type, timestamp, metadata)
-        self.default_value: Any = default_value
+        self.__default_value: Any = default_value
 
     @property
     def default_value(self) -> Any:
@@ -647,10 +652,10 @@ class Method(TypedElement):
                  parameters: set[Parameter] = None, type: Type = None, owner: Type = None,
                  code: str = "", timestamp: int = None, metadata: Metadata = None):
         super().__init__(name, type, timestamp, metadata, visibility)
-        self.is_abstract: bool = is_abstract
-        self.parameters: set[Parameter] = parameters if parameters is not None else set()
-        self.owner: Type = owner
-        self.code: str = code
+        self.__is_abstract: bool = is_abstract
+        self.parameters = parameters if parameters is not None else set()  # Use setter
+        self.owner = owner  # Use setter due to validation
+        self.__code: str = code
 
     @property
     def is_abstract(self) -> bool:
@@ -768,10 +773,10 @@ class Class(Type):
                  is_abstract: bool= False, is_read_only: bool= False, timestamp: int = None,
                 metadata: Metadata = None):
         super().__init__(name, timestamp, metadata)
-        self.is_abstract: bool = is_abstract
-        self.is_read_only: bool = is_read_only
-        self.attributes: set[Property] = attributes if attributes is not None else set()
-        self.methods: set[Method] = methods if methods is not None else set()
+        self.__is_abstract: bool = is_abstract
+        self.__is_read_only: bool = is_read_only
+        self.attributes = attributes if attributes is not None else set()  # Use setter
+        self.methods = methods if methods is not None else set()  # Use setter
         self.__associations: set[Association] = set()
         self.__generalizations: set[Generalization] = set()
 
@@ -1017,7 +1022,7 @@ class Association(NamedElement):
 
     def __init__(self, name: str, ends: set[Property], timestamp: int = None, metadata: Metadata = None):
         super().__init__(name, timestamp, metadata)
-        self.ends: set[Property] = ends
+        self.ends = ends  # Use setter
 
     @property
     def ends(self) -> set[Property]:
@@ -1104,8 +1109,8 @@ class AssociationClass(Class):
 
     def __init__(self, name: str, attributes: set[Property], association: Association, timestamp: int = None,
                  metadata: Metadata = None):
-        super().__init__(name, attributes, timestamp, metadata)
-        self.association: Association = association
+        super().__init__(name, attributes, timestamp, metadata) # attributes will call Class setter
+        self.__association: Association = association
 
     @property
     def association(self) -> Association:
@@ -1139,8 +1144,10 @@ class Generalization(Element):
 
     def __init__(self, general: Class, specific: Class, timestamp: int = None):
         super().__init__(timestamp)
-        self.general: Class = general
-        self.specific: Class = specific
+        # Setters have logic (updating class generalization lists and validation).
+        # Direct sequential calls to setters are fine here.
+        self.general = general # Use setter
+        self.specific = specific # Use setter
 
     @property
     def general(self) -> Class:
@@ -1205,9 +1212,9 @@ class GeneralizationSet(NamedElement):
     def __init__(self, name: str, generalizations: set[Generalization], is_disjoint: bool,
                  is_complete: bool, timestamp: int = None, metadata: Metadata = None):
         super().__init__(name, timestamp, metadata)
-        self.generalizations: set[Generalization] = generalizations
-        self.is_disjoint: bool = is_disjoint
-        self.is_complete: bool = is_complete
+        self.__generalizations: set[Generalization] = generalizations
+        self.__is_disjoint: bool = is_disjoint
+        self.__is_complete: bool = is_complete
 
     @property
     def generalizations(self) -> set[Generalization]:
@@ -1263,7 +1270,7 @@ class Package(NamedElement):
 
     def __init__(self, name: str, classes: set[Class], timestamp: int = None, metadata: Metadata = None):
         super().__init__(name, timestamp, metadata)
-        self.classes: set[Class] = classes
+        self.__classes: set[Class] = classes
 
     @property
     def classes(self) -> set[Class]:
@@ -1302,9 +1309,9 @@ class Constraint(NamedElement):
     def __init__(self, name: str, context: Class, expression: Any, language: str, timestamp: int = None,
                  metadata: Metadata = None):
         super().__init__(name, timestamp, metadata)
-        self.context: Class = context
-        self.expression: str = expression
-        self.language: str = language
+        self.__context: Class = context
+        self.__expression: str = expression
+        self.__language: str = language
 
     @property
     def context(self) -> Class:
@@ -1385,11 +1392,11 @@ class DomainModel(Model):
                  generalizations: set[Generalization] = None, packages: set[Package] = None,
                  constraints: set[Constraint] = None, timestamp: int = None, metadata: Metadata = None):
         super().__init__(name, timestamp, metadata)
-        self.types: set[Type] = types if types is not None else set()
-        self.packages: set[Package] = packages if packages is not None else set()
-        self.constraints: set[Constraint] = constraints if constraints is not None else set()
-        self.associations: set[Association] = associations if associations is not None else set()
-        self.generalizations: set[Generalization] = generalizations if generalizations is not None else set()
+        self.types = types if types is not None else set()  # Use setter
+        self.packages = packages if packages is not None else set()  # Use setter
+        self.constraints = constraints if constraints is not None else set()  # Use setter
+        self.associations = associations if associations is not None else set()  # Use setter
+        self.generalizations = generalizations if generalizations is not None else set()  # Use setter
 
     @property
     def types(self) -> set[Type]:

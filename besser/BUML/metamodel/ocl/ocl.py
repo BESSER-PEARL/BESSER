@@ -56,7 +56,7 @@ class LiteralExpression(OCLExpression):
 
     def __init__(self, name: str, type: Type, value: Any):
         super().__init__(name, type)
-        self.value: Any = value
+        self.__value: Any = value
 
     @property
     def value(self) -> Any:
@@ -97,8 +97,8 @@ class PropertyCallExpression(OCLExpression):
     """
 
     def __init__(self, name: str, property: Property):
-        super().__init__(name, Type(property.type))
-        self.property: Property = property
+        super().__init__(name, Type(property.type)) # Assuming property.type is a Type object. If it's a string, it might need resolution.
+        self.__property: Property = property
 
     def __repr__(self):
         return f'PropertyCallExpression({self.property.name})'
@@ -136,8 +136,8 @@ class OperationCallExpression(OCLExpression):
 
     def __init__(self, name: str, operation: str, arguments: list[OCLExpression]):
         super().__init__(name, Type(PrimitiveDataType("bool")))  # Type for now is always boolean, it should be the return type of the operation
-        self.operation: str = operation
-        self.arguments: list[OCLExpression] = arguments
+        self.__operation: str = operation
+        self.__arguments: list[OCLExpression] = arguments
 
     def __repr__(self):
         return f'OperationCallExpression({self.operation},{self.arguments})'
@@ -679,18 +679,18 @@ class CollectionItem(CollectionLiteralPart):
 
     def __init__(self, name,item):
         super().__init__(name)
-        self.value = item
+        self.__value = item
 
     def set(self,  value):
         """set the value of item"""
-        self.value = value
+        self.__value = value
 
     def __str__(self):
-        return str(self.value)+","
+        return str(self.__value)+","
 
     def get(self):
         """Get the value of item"""
-        return self.value
+        return self.__value
 
 class CollectionRange(CollectionLiteralPart):
     """A class to define collection range

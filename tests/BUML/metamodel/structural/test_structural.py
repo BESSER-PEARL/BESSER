@@ -2,10 +2,31 @@ import pytest
 from besser.BUML.metamodel.structural import *
 from besser.utilities import sort_by_timestamp
 
+def test_metadata():
+    # Test basic metadata creation
+    metadata = Metadata(
+        description="Test description",
+        uri="http://example.com/test",
+        synonyms=["synonym1", "synonym2"]
+    )
+    assert metadata.description == "Test description"
+    assert metadata.uri == "http://example.com/test"
+    assert len(metadata.synonyms) == 2
+    assert metadata.synonyms[0] == "synonym1"
+    assert metadata.synonyms[1] == "synonym2"
+
+    # Test metadata with None values
+    metadata_empty = Metadata()
+    assert metadata_empty.description is None
+    assert metadata_empty.uri is None
+    assert metadata_empty.synonyms is None
+
 def test_named_element():
+    # Test without metadata
     named_element: NamedElement = NamedElement(name="element1")
     assert named_element.name == "element1"
     assert named_element.is_derived == False  # Default value should be False
+    assert named_element.metadata is None
     
     # Test setting is_derived
     named_element.is_derived = True
@@ -15,6 +36,11 @@ def test_named_element():
     derived_element: NamedElement = NamedElement(name="element2", is_derived=True)
     assert derived_element.is_derived == True
 
+    # Test with metadata
+    metadata = Metadata(description="Test element", synonyms=["alias1", "alias2"])
+    element_with_metadata: NamedElement = NamedElement(name="element3", metadata=metadata)
+    assert element_with_metadata.metadata.description == "Test element"
+    assert len(element_with_metadata.metadata.synonyms) == 2
 
 def test_model_initialization():
     class1: Type = Type(name="element1")
@@ -250,13 +276,14 @@ def test_classes_sorted_by_inheritance():
     assert classes[4] == cl3
     assert classes[6] == cl1
 
-# Testing synonyms of a Named Element
-def test_synonyms():
-    class_a: Class = Class(name="Library", synonyms=["synonym1", "synonym2", "synonym3"])
-    assert len(class_a.synonyms) == 3
-    assert class_a.synonyms[0] == "synonym1"
-    assert class_a.synonyms[1] == "synonym2"
-    assert class_a.synonyms[2] == "synonym3"
+# Testing synonyms via metadata
+def test_synonyms_via_metadata():
+    metadata = Metadata(synonyms=["synonym1", "synonym2", "synonym3"])
+    class_a: Class = Class(name="Library", metadata=metadata)
+    assert len(class_a.metadata.synonyms) == 3
+    assert class_a.metadata.synonyms[0] == "synonym1"
+    assert class_a.metadata.synonyms[1] == "synonym2"
+    assert class_a.metadata.synonyms[2] == "synonym3"
 
 # Testing all_parents and inherited_attributes methods
 # GrandParent (attr1)
@@ -328,3 +355,41 @@ def test_attribute_reassignment():
     assert attribute1 in class2.attributes
     assert attribute1 not in class1.attributes
     assert attribute1.owner == class2
+
+# Test complete metadata functionality
+def test_metadata_complete():
+    # Test setting and getting metadata properties
+    metadata = Metadata()
+    metadata.description = "Updated description"
+    metadata.uri = "http://example.com/updated"
+    metadata.synonyms = ["new_synonym"]
+    
+    assert metadata.description == "Updated description"
+    assert metadata.uri == "http://example.com/updated"
+    assert metadata.synonyms == ["new_synonym"]
+    
+    # Test metadata in a named element
+    element = NamedElement(name="test")
+    element.metadata = metadata
+    
+    assert element.metadata.description == "Updated description"
+    assert element.metadata.uri == "http://example.com/updated"
+    assert element.metadata.synonyms == ["new_synonym"]
+
+# Test metadata with different elements
+def test_metadata_with_different_elements():
+    # Test with Class
+    class_metadata = Metadata(description="Class description", uri="http://example.com/class")
+    test_class = Class(name="TestClass", metadata=class_metadata)
+    assert test_class.metadata.description == "Class description"
+    
+    # Test with Property
+    property_metadata = Metadata(description="Property description", synonyms=["prop_alias"])
+    test_property = Property(name="testProperty", type=StringType, metadata=property_metadata)
+    assert test_property.metadata.description == "Property description"
+    assert test_property.metadata.synonyms[0] == "prop_alias"
+    
+    # Test with Enumeration
+    enum_metadata = Metadata(description="Enum description")
+    test_enum = Enumeration(name="TestEnum", metadata=enum_metadata)
+    assert test_enum.metadata.description == "Enum description"

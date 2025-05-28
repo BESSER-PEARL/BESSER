@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 
-from besser.utilities.buml_code_builder import domain_model_to_code
+from besser.utilities.buml_code_builder import domain_model_to_code, agent_model_to_code
 from besser.utilities.web_modeling_editor.backend.services import run_docker_compose
 from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
@@ -76,6 +76,78 @@ def read_api_root():
     return {"message": "BESSER API is running."}
 
 
+def generate_agent_files(agent_model):
+    """
+    Generate agent files from an agent model.
+    
+    Args:
+        agent_model: The agent model to generate files from
+        
+    Returns:
+        tuple: (zip_buffer, file_name) containing the zip file buffer and filename
+    """
+    try:
+        # Create a temporary directory
+        temp_dir = tempfile.mkdtemp(prefix=f"besser_agent_{uuid.uuid4().hex}_")
+        
+        # Generate the agent model to a file
+        agent_file = os.path.join(temp_dir, "agent_model.py")
+        agent_model_to_code(agent_model, agent_file)
+        
+        # Execute the generated agent model file
+        import sys
+        import importlib.util
+        
+        # Add the temp directory to sys.path so we can import the module
+        sys.path.insert(0, temp_dir)
+        
+        # Import the generated module
+        spec = importlib.util.spec_from_file_location("agent_model", agent_file)
+        agent_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(agent_module)
+        
+        # Now use the BAFGenerator with the agent model from the module
+        if hasattr(agent_module, 'agent'):
+            # Use the agent from the module
+            x = BAFGenerator(agent_module.agent)
+        else:
+            # Fall back to the original agent model
+            x = BAFGenerator(agent_model)
+        
+        x.generate()
+        
+        # Create a zip file with all the generated files
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            # Add the agent model file
+            zip_file.write(agent_file, os.path.basename(agent_file))
+            
+            # Add all files from the output directory
+            output_dir = "output"
+            if os.path.exists(output_dir):
+                for file_name in os.listdir(output_dir):
+                    file_path = os.path.join(output_dir, file_name)
+                    if os.path.isfile(file_path):
+                        zip_file.write(file_path, file_name)
+        
+        zip_buffer.seek(0)
+        file_name = "agent_output.zip"
+        
+        # Clean up
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir, ignore_errors=True)
+        
+        # Remove the temp directory from sys.path
+        if temp_dir in sys.path:
+            sys.path.remove(temp_dir)
+        
+        return zip_buffer, file_name
+    except Exception as e:
+        print(f"Error generating agent files: {str(e)}")
+        raise e
+
+
 @api.post("/generate-output")
 async def generate_output(input_data: ClassDiagramInput):
     temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
@@ -89,46 +161,27 @@ async def generate_output(input_data: ClassDiagramInput):
             )
 
         buml_model = None
+
         if generator == "agent":
-            buml_model = process_agent_diagram(input_data.elements)
-
-            import subprocess
-
-            prefix = (
-                "import sys, os\n"
-                "from besser.generators.agents.baf_generator import BAFGenerator\n\n"
-            )
-
-            project_root = os.path.abspath(".")
-            prefix = (
-                "from besser.generators.agents.baf_generator import BAFGenerator\n\n"
-            )
-            suffix = "\ngenerator = BAFGenerator(agent)\ngenerator.generate()\n"
-
-            full_code = prefix + buml_model + suffix
-            with tempfile.NamedTemporaryFile(
-                delete=False, suffix=".py", mode="w"
-            ) as tmp_file:
-                tmp_file.write(full_code)
-                tmp_file_path = tmp_file.name
-
             try:
-                result = subprocess.run(
-                    ["python", tmp_file_path],
-                    check=True,
-                    text=True,
-                    capture_output=True,
+                # Create the agent model from the elements
+                agent_model = process_agent_diagram(input_data.elements)
+                zip_buffer, file_name = generate_agent_files(agent_model)
+                
+                return StreamingResponse(
+                    zip_buffer,
+                    media_type="application/zip",
+                    headers={"Content-Disposition": f"attachment; filename={file_name}"},
                 )
-                if result.stderr:
-                    print("Execution errors:\n", result.stderr)
-
-            except subprocess.CalledProcessError as e:
-                print("Script failed with error:")
-                print(e.stderr)
-
-            finally:
-                os.remove(tmp_file_path)  # Clean up the temp file
+            except Exception as e:
+                print(f"Error processing agent diagram: {str(e)}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Error processing agent diagram: {str(e)}"
+                )
+            
         else:
+            # Process the class diagram JSON data
             buml_model = process_class_diagram(json_data)
 
         generator_class = GENERATOR_CONFIG[generator]
@@ -198,8 +251,6 @@ async def generate_output(input_data: ClassDiagramInput):
 
             generator_instance = generator_class(buml_model, output_dir=temp_dir)
             generator_instance.generate(dbms=dbms)
-        elif generator == "agent":
-            print("nothing to see here for now")
         else:
             # Save buml_model to a file for inspection
             generator_instance = generator_class(buml_model)
@@ -357,7 +408,7 @@ async def export_buml(input_data: ClassDiagramInput):
     # Create unique temporary directory for this request
     temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
     try:
-        json_data = input_data.dict()
+        json_data = input_data.model_dump()
         elements_data = input_data.elements
         if elements_data.get("type") == "StateMachineDiagram":
             state_machine_code = process_state_machine(elements_data)
@@ -388,10 +439,9 @@ async def export_buml(input_data: ClassDiagramInput):
                 headers={"Content-Disposition": "attachment; filename=domain_model.py"},
             )
         elif elements_data.get("type") == "AgentDiagram":
-            agent_code = process_agent_diagram(elements_data)
+            agent_model = process_agent_diagram(elements_data)
             output_file_path = os.path.join(temp_dir, "agent_buml.py")
-            with open(output_file_path, "w") as f:
-                f.write(agent_code)
+            agent_model_to_code(agent_model, output_file_path)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
             shutil.rmtree(temp_dir, ignore_errors=True)

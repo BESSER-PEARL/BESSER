@@ -789,6 +789,7 @@ def state_machine_to_json(content: str):
     }
 
 
+
 def agent_buml_to_json(content: str):
     """Convert an agent Python file content to JSON format matching the frontend structure."""
 
@@ -801,8 +802,6 @@ def agent_buml_to_json(content: str):
     # Track positions for layout
     states_x = -550
     states_y = -300
-    code_blocks_x = -970
-    code_blocks_y = 80
 
     # Parse the Python code
     tree = ast.parse(content)
@@ -876,12 +875,16 @@ def agent_buml_to_json(content: str):
         # Second pass: collect all functions
         states_x = -280
         states_y += 220
+        print("DEBUG: Collecting functions...")
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
-                functions[node.name] = {
+                function_name = node.name
+                function_source = ast.get_source_segment(content, node)
+                functions[function_name] = {
                     "node": node,
-                    "source": ast.get_source_segment(content, node),
+                    "source": function_source,
                 }
+        
         # Create initial node
         initial_node_id = str(uuid.uuid4())
         elements[initial_node_id] = {
@@ -896,106 +899,124 @@ def agent_buml_to_json(content: str):
                 "height": 45,
             },
         }
+        
+        # Store the initial node ID for later use with transitions
 
         # Second pass: collect states and their configurations
         for node in ast.walk(tree):
-            if isinstance(node, ast.Assign):
-                if isinstance(node.value, ast.Call):
-                    if (
-                        isinstance(node.value.func, ast.Attribute)
-                        and node.value.func.attr == "new_state"
-                    ):
-                        state_id = str(uuid.uuid4())
-                        state_name = None
-                        is_initial = False
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+                var_name = node.targets[0].id
+                if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) and node.value.func.attr == "new_state":
+                    state_id = str(uuid.uuid4())
+                    state_name = var_name  # Default to variable name
+                    is_initial = False
+                    
+                    # Try to extract state name and initial flag from keywords
+                    for kw in node.value.keywords:
+                        if kw.arg == "name" and isinstance(kw.value, ast.Constant):
+                            state_name = kw.value.value
+                        elif kw.arg == "initial" and isinstance(kw.value, ast.Constant):
+                            is_initial = kw.value.value
+                    
+                    # Create the state object
+                    state_obj = {
+                        "id": state_id,
+                        "name": state_name,
+                        "is_initial": is_initial,
+                        "bodies": [],
+                        "fallback_bodies": [],
+                    }
+                    
+                    # Store by variable name for transitions
+                    states[var_name] = state_obj
+                    
+                    # Also store by state name for body lookup
+                    if state_name != var_name:
+                        states[state_name] = state_obj
 
-                        for kw in node.value.keywords:
-                            if kw.arg == "name":
-                                state_name = ast.literal_eval(kw.value)
-                            elif kw.arg == "initial":
-                                is_initial = ast.literal_eval(kw.value)
-
-                        if state_name:
-                            states[node.targets[0].id] = {
-                                "id": state_id,
-                                "name": state_name,
-                                "is_initial": is_initial,
-                                "bodies": [],
-                                "fallback_bodies": [],
-                            }
-
-                            elements[state_id] = {
-                                "id": state_id,
-                                "name": state_name,
-                                "type": "AgentState",
-                                "owner": None,
-                                "bounds": {
-                                    "x": states_x,
-                                    "y": states_y,
-                                    "width": 160,
-                                    "height": 100,
-                                },
-                                "bodies": [],
-                                "fallbackBodies": [],
-                            }
-
-                            if states_x < 200:
-                                states_x += 490
-                            else:
-                                states_x = -280
-                                states_y += 220
-
-        # After creating all states, add initial node transition
-        for state_info in states.values():
+                    # Create element for visualization
+                    elements[state_id] = {
+                        "id": state_id,
+                        "name": state_name,
+                        "type": "AgentState",
+                        "owner": None,
+                        "bounds": {
+                            "x": states_x,
+                            "y": states_y,
+                            "width": 160,
+                            "height": 100,
+                        },
+                        "bodies": [],
+                        "fallbackBodies": [],
+                    }
+                    
+                    # Update position for next element
+                    if states_x < 200:
+                        states_x += 490
+                    else:
+                        states_x = -280
+                        states_y += 220
+        
+        # Find initial state and create initial transition
+        initial_state = None
+        for state_key, state_info in states.items():
             if state_info["is_initial"]:
-                initial_rel_id = str(uuid.uuid4())
-                relationships[initial_rel_id] = {
-                    "id": initial_rel_id,
-                    "name": "",
-                    "type": "AgentStateTransition",
-                    "owner": None,
-                    "source": {
-                        "direction": "Right",
-                        "element": initial_node_id,
-                        "bounds": {
-                            "x": elements[initial_node_id]["bounds"]["x"] + 45,
-                            "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
-                            "width": 0,
-                            "height": 0,
-                        },
-                    },
-                    "target": {
-                        "direction": "Left",
-                        "element": state_info["id"],
-                        "bounds": {
-                            "x": elements[state_info["id"]]["bounds"]["x"],
-                            "y": elements[state_info["id"]]["bounds"]["y"] + 35,
-                            "width": 0,
-                            "height": 0,
-                        },
-                    },
+                initial_state = state_info
+                break
+        
+        # If no initial state is marked, use the first state as fallback
+        if not initial_state and states:
+            # Get the first state
+            first_state_key = next(iter(states))
+            initial_state = states[first_state_key]
+            
+        if initial_state:
+            initial_rel_id = str(uuid.uuid4())
+            relationships[initial_rel_id] = {
+                "id": initial_rel_id,
+                "name": "",
+                "type": "AgentStateTransitionInit",
+                "owner": None,
+                "source": {
+                    "direction": "Right",
+                    "element": initial_node_id,
                     "bounds": {
                         "x": elements[initial_node_id]["bounds"]["x"] + 45,
                         "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
-                        "width": elements[state_info["id"]]["bounds"]["x"]
-                        - (elements[initial_node_id]["bounds"]["x"] + 45),
-                        "height": 1,
+                        "width": 0,
+                        "height": 0,
                     },
-                    "path": [
-                        {
-                            "x": elements[initial_node_id]["bounds"]["x"] + 45,
-                            "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
-                        },
-                        {
-                            "x": elements[state_info["id"]]["bounds"]["x"],
-                            "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
-                        },
-                    ],
-                    "isManuallyLayouted": False,
-                }
-                break  # Only one initial state should exist
-
-
+                },
+                "target": {
+                    "direction": "Left",
+                    "element": initial_state["id"],
+                    "bounds": {
+                        "x": elements[initial_state["id"]]["bounds"]["x"],
+                        "y": elements[initial_state["id"]]["bounds"]["y"] + 35,
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "bounds": {
+                    "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                    "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    "width": elements[initial_state["id"]]["bounds"]["x"]
+                    - (elements[initial_node_id]["bounds"]["x"] + 45),
+                    "height": 1,
+                },
+                "path": [
+                    {
+                        "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    },
+                    {
+                        "x": elements[initial_state["id"]]["bounds"]["x"],
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    },
+                ],
+                "isManuallyLayouted": False,
+            }
+                                
         # Third pass: process state bodies and transitions
         for node in ast.walk(tree):
             if (
@@ -1172,19 +1193,85 @@ def agent_buml_to_json(content: str):
 
                         if event_params:
                             relationships[rel_id]["params"] = str(event_params)
-                    
+                
                 # Handle set_body
                 elif node.value.func.attr == "set_body":
-                    function_name = node.value.args[0].args[1].id
-                    state_name = node.value.func.value.id
-                    state = states[state_name]
-                    result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
-                    if result["replyType"] == "text":
-                        for reply in result["replies"]:
+                    try:
+                        # Extract function name from Body('function_name', function_name) pattern
+                        body_args = node.value.args[0].args
+                        function_name = None
+                        if len(body_args) >= 2:
+                            if isinstance(body_args[1], ast.Name):
+                                function_name = body_args[1].id
+                            elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
+                                function_name = body_args[0].value
+                                
+                        if not function_name:
+                            continue
+
+                        state_name = node.value.func.value.id
+                        if state_name not in states:
+                            continue
+                            
+                        state = states[state_name]
+                        
+                        if function_name in functions:
+                            result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
+                            if result["replyType"] == "text":
+                                for reply in result["replies"]:
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": reply,
+                                        "type": "AgentStateBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "replyType": "text"
+                                    }
+                                    elements[state["id"]]["bodies"].append(body_id)
+                            elif result["replyType"] == "llm":
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
+                                    "name": "AI response 🪄",
+                                    "type": "AgentStateBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                    "replyType": "llm"
+                                }
+                                elements[state["id"]]["bodies"].append(body_id)
+                            elif result["replyType"] == "code":
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
+                                    "name": result["code"],
+                                    "type": "AgentStateBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                    "replyType": "code"
+                                }
+                                elements[state["id"]]["bodies"].append(body_id)
+                        else:
+                            # Fallback if function not found
                             body_id = str(uuid.uuid4())
                             elements[body_id] = {
                                 "id": body_id,
-                                "name": reply,
+                                "name": function_name,
                                 "type": "AgentStateBody",
                                 "owner": state["id"],
                                 "bounds": {
@@ -1193,54 +1280,89 @@ def agent_buml_to_json(content: str):
                                     "width": 159,
                                     "height": 30,
                                 },
-                                "replyType": "text"
                             }
                             elements[state["id"]]["bodies"].append(body_id)
-                    elif result["replyType"] == "llm":
-                        body_id = str(uuid.uuid4())
-                        elements[body_id] = {
-                            "id": body_id,
-                            "name": "AI response 🪄",
-                            "type": "AgentStateBody",
-                            "owner": state["id"],
-                            "bounds": {
-                                "x": elements[state["id"]]["bounds"]["x"],
-                                "y": elements[state["id"]]["bounds"]["y"],
-                                "width": 159,
-                                "height": 30,
-                            },
-                            "replyType": "llm"
-                        }
-                        elements[state["id"]]["bodies"].append(body_id)
-                    elif result["replyType"] == "code":
-                        body_id = str(uuid.uuid4())
-                        elements[body_id] = {
-                            "id": body_id,
-                            "name": result["code"],
-                            "type": "AgentStateBody",
-                            "owner": state["id"],
-                            "bounds": {
-                                "x": elements[state["id"]]["bounds"]["x"],
-                                "y": elements[state["id"]]["bounds"]["y"],
-                                "width": 159,
-                                "height": 30,
-                            },
-                            "replyType": "code"
-                        }
-                        elements[state["id"]]["bodies"].append(body_id)
+                    except Exception as e:
+                        continue
 
-            # Add handling for fallback bodies
+                # Add handling for fallback bodies
                 elif node.value.func.attr == "set_fallback_body":
-                    function_name = node.value.args[0].args[1].id
-                    state_name = node.value.func.value.id
-                    state = states[state_name]
-                    result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
-                    if result["replyType"] == "text":
-                        for reply in result["replies"]:
+                    try:
+                        # Extract function name from Body('function_name', function_name) pattern
+                        body_args = node.value.args[0].args
+                        function_name = None
+                        if len(body_args) >= 2:
+                            if isinstance(body_args[1], ast.Name):
+                                function_name = body_args[1].id
+                            elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
+                                function_name = body_args[0].value
+                                
+                        if not function_name:
+                            continue
+
+                        state_name = node.value.func.value.id
+                        if state_name not in states:
+                            continue
+                            
+                        state = states[state_name]
+                        
+                        if function_name in functions:
+                            result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
+                            if result["replyType"] == "text":
+                                for reply in result["replies"]:
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": reply,
+                                        "type": "AgentStateFallbackBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "replyType": "text"
+                                    }
+                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                            elif result["replyType"] == "llm":
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
+                                    "name": "AI response 🪄",
+                                    "type": "AgentStateFallbackBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                    "replyType": "llm"
+                                }
+                                elements[state["id"]]["fallbackBodies"].append(body_id)
+                            elif result["replyType"] == "code":
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
+                                    "name": result["code"],
+                                    "type": "AgentStateFallbackBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                    "replyType": "code"
+                                }
+                                elements[state["id"]]["fallbackBodies"].append(body_id)
+                        else:
+                            # Fallback if function not found
                             body_id = str(uuid.uuid4())
                             elements[body_id] = {
                                 "id": body_id,
-                                "name": reply,
+                                "name": function_name,
                                 "type": "AgentStateFallbackBody",
                                 "owner": state["id"],
                                 "bounds": {
@@ -1249,41 +1371,71 @@ def agent_buml_to_json(content: str):
                                     "width": 159,
                                     "height": 30,
                                 },
-                                "replyType": "text"
                             }
                             elements[state["id"]]["fallbackBodies"].append(body_id)
-                    elif result["replyType"] == "llm":
-                        body_id = str(uuid.uuid4())
-                        elements[body_id] = {
-                            "id": body_id,
-                            "name": "AI response 🪄",
-                            "type": "AgentStateFallbackBody",
-                            "owner": state["id"],
-                            "bounds": {
-                                "x": elements[state["id"]]["bounds"]["x"],
-                                "y": elements[state["id"]]["bounds"]["y"],
-                                "width": 159,
-                                "height": 30,
-                            },
-                            "replyType": "llm"
-                        }
-                        elements[state["id"]]["fallbackBodies"].append(body_id)
-                    elif result["replyType"] == "code":
-                        body_id = str(uuid.uuid4())
-                        elements[body_id] = {
-                            "id": body_id,
-                            "name": result["code"],
-                            "type": "AgentStateFallbackBody",
-                            "owner": state["id"],
-                            "bounds": {
-                                "x": elements[state["id"]]["bounds"]["x"],
-                                "y": elements[state["id"]]["bounds"]["y"],
-                                "width": 159,
-                                "height": 30,
-                            },
-                            "replyType": "code"
-                        }
-                        elements[state["id"]]["fallbackBodies"].append(body_id)
+                    except Exception as e:
+                        continue
+
+        # Find initial state and create initial transition
+        initial_state = None
+        for state_key, state_info in states.items():
+            if state_info["is_initial"]:
+                initial_state = state_info
+                break
+        
+        # If no initial state is marked, use the first state as fallback
+        if not initial_state and states:
+            # Get the first state
+            first_state_key = next(iter(states))
+            initial_state = states[first_state_key]
+            
+        if initial_state:
+            initial_rel_id = str(uuid.uuid4())
+            relationships[initial_rel_id] = {
+                "id": initial_rel_id,
+                "name": "",
+                "type": "AgentStateTransitionInit",
+                "owner": None,
+                "source": {
+                    "direction": "Right",
+                    "element": initial_node_id,
+                    "bounds": {
+                        "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "target": {
+                    "direction": "Left",
+                    "element": initial_state["id"],
+                    "bounds": {
+                        "x": elements[initial_state["id"]]["bounds"]["x"],
+                        "y": elements[initial_state["id"]]["bounds"]["y"] + 35,
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "bounds": {
+                    "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                    "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    "width": elements[initial_state["id"]]["bounds"]["x"]
+                    - (elements[initial_node_id]["bounds"]["x"] + 45),
+                    "height": 1,
+                },
+                "path": [
+                    {
+                        "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    },
+                    {
+                        "x": elements[initial_state["id"]]["bounds"]["x"],
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    },
+                ],
+                "isManuallyLayouted": False,
+            }
+                                
         return {
             "version": "3.0.0",
             "type": "AgentDiagram",
@@ -1295,17 +1447,16 @@ def agent_buml_to_json(content: str):
         }
 
     except Exception as e:
-        print(f"Error processing AST: {e}")
-        traceback.print_exc()
-    return {
-        "version": "3.0.0",
-        "type": "AgentDiagram",
-        "size": default_size,
-        "interactive": {"elements": {}, "relationships": {}},
-        "elements": elements,
-        "relationships": relationships,
-        "assessments": {},
-    }
+        # Return an empty diagram on error
+        return {
+            "version": "3.0.0",
+            "type": "AgentDiagram",
+            "size": default_size,
+            "interactive": {"elements": {}, "relationships": {}},
+            "elements": elements,
+            "relationships": relationships,
+            "assessments": {},
+        }
 
 def analyze_function_node(node: ast.FunctionDef, source_code: str) -> dict:
     body = node.body

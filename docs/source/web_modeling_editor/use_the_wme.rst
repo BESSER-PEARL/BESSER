@@ -29,17 +29,17 @@ The *File* menu contains the following options:
   :alt: File Menu
   :align: center
 
-- *New*: Creates a new model. Currently, :doc:`Structural models <./../buml_language/model_types/structural>` (via class diagrams) and :doc:`State Machine models <./../buml_language/model_types/state_machine>` (via state machine diagrams) are supported. Additional model types will be added in the future.
+- *New*: Creates a new model. Currently, :doc:`Structural models <./../buml_language/model_types/structural>` (via class diagrams), :doc:`State Machine models <./../buml_language/model_types/state_machine>` (via state machine diagrams), and :doc:`Agent models <./agent_diagram>` (via agent diagrams) are supported. Additional model types will be added in the future.
 - *Start from template*: Provides ready-made examples that you can modify according to your needs.
 - *Load*: Periodically, models in the WME are saved in your browser's cache memory. The *Load* option allows you to restore one of these models.
 - *Import*: Imports a model in JSON or B-UML format (`.json` or `.py` file, respectively).
 - *Export*: Exports your model in various formats, including B-UML, JSON, SVG, PNG, and PDF.
 
-2. Class Diagram / State Machine Diagram
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+2. Class Diagram / State Machine Diagram / Agent Diagram
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-As mentioned earlier, the WME supports :doc:`Structural models <./../buml_language/model_types/structural>` (via class diagrams) and :doc:`State Machine models <./../buml_language/model_types/state_machine>` (via state machine diagrams).
-This menu allows you to switch between the two models **alternately**, while ensuring that both are saved, preventing any data loss when switching.
+As mentioned earlier, the WME supports :doc:`Structural models <./../buml_language/model_types/structural>` (via class diagrams), :doc:`State Machine models <./../buml_language/model_types/state_machine>` (via state machine diagrams), and :doc:`Agent models <./agent_diagram>` (via agent diagrams).
+This menu allows you to switch between these models **alternately**, while ensuring that all are saved, preventing any data loss when switching.
 
 3. Generate Code Menu
 ~~~~~~~~~~~~~~~~~~~~~

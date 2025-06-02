@@ -59,7 +59,7 @@ class Metadata(Element):
         timestamp (datetime): Object creation datetime (default is current time).
     """
 
-    def __init__(self, description: str = None, uri: str = None, synonyms: List[str] = None, 
+    def __init__(self, description: str = None, uri: str = None, synonyms: List[str] = None,
                  timestamp: datetime = None):
         super().__init__(timestamp)
         self.description: str = description
@@ -244,7 +244,7 @@ class PrimitiveDataType(DataType):
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
     def __repr__(self):
-        return f"PrimitiveDataType({self.name}, {self.timestamp}, {self.synonyms})"
+        return f"PrimitiveDataType({self.name}, {self.timestamp}, {self.metadata})"
 
 # Define instances of PrimitiveDataType
 StringType = PrimitiveDataType("str")

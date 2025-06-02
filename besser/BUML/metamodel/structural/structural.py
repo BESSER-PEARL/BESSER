@@ -538,6 +538,16 @@ class Property(TypedElement):
         """bool: Set whether the property is read only."""
         self.__is_read_only = is_read_only
 
+    def opposite_end(self) -> "Property":
+        """Property: Get the opposite end of the property if it is an association end."""
+        # Delayed import to avoid circular dependency
+        from besser.BUML.metamodel.structural import BinaryAssociation
+        if self.owner and isinstance(self.owner, BinaryAssociation):
+            for end in self.owner.ends:
+                if end != self:
+                    return end
+        return None
+
     def __repr__(self):
         return (
             f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, '

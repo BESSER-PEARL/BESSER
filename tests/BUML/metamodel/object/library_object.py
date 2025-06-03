@@ -154,4 +154,4 @@ library_book_link3: Link = Link(name="library_book_link3", association=book_auth
 
 
 # Object model definition
-object_model: ObjectModel = ObjectModel(name="Object_model", instances={library_obj, author_obj, book_obj,book_obj_2}, links={author_book_link, library_book_link,author_book_link2,library_book_link3})
+object_model: ObjectModel = ObjectModel(name="Object_model", objects={library_obj, author_obj, book_obj,book_obj_2})

@@ -144,10 +144,15 @@ class Object(Instance):
         for attr in self.__slots:
             if attr.attribute.name == item:
                 return attr.value.value
-        for link_end in self.link_ends():
-            if link_end.name == item:
-                return link_end.object
-        raise AttributeError(f"'{self.name}' object has no attribute or link '{item}'")
+        
+        matches = [le.object for le in self.link_ends() if le.name == item]
+        if not matches:
+            raise AttributeError(f"'{self.name}' object has no attribute or link '{item}'")
+        
+        if len(matches) == 1:
+            return matches[0]
+
+        return set(matches)
 
     def __repr__(self):
         return f'Object({self.name}, {self.classifier}, {self.slots})'

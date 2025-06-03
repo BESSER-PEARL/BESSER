@@ -983,6 +983,25 @@ class Class(Type):
         """Association: Add an association to the set of class associations."""
         self.__associations.add(association)
 
+    def _validate_unique_end_names(self, ends):
+        """Ensure that no association end has a duplicate name in this class or its specializations."""
+        # Check against current class's ends
+        existing_end_names = {e.name for e in self.all_association_ends()}
+        for end in ends:
+            if end.name in existing_end_names:
+                raise ValueError(
+                    f"The class '{self.name}' cannot have two association ends with the same name: '{end.name}'"
+                )
+
+        # Check against children/specialized classes' ends
+        for child in self.all_specializations():
+            child_end_names = {e.name for e in child.association_ends()}
+            for end in ends:
+                if end.name in child_end_names:
+                    raise ValueError(
+                        f"The class '{child.name}' cannot have two association ends with the same name: '{end.name}'"
+                    )
+
     def _delete_association(self, association):
         """Association: Remove an association to the set of class associations."""
         self.__associations.discard(association)
@@ -1124,6 +1143,7 @@ class Association(NamedElement):
                 end.type._delete_association(association=self)
         for end in ends:
             end.owner = self
+            end.type._validate_unique_end_names(ends={e for e in ends if e != end})
             end.type._add_association(association=self)
         self.__ends = ends
 
@@ -1246,6 +1266,9 @@ class Generalization(Element):
         """Class: Set the general (parent) class."""
         if hasattr(self, "general"):
             self.general._delete_generalization(generalization=self)
+        # Check unique end names before adding the generalization
+        if hasattr(self, "specific"):
+            self.specific._validate_unique_end_names(ends=general.all_association_ends())
         general._add_generalization(generalization=self)
         self.__general = general
 
@@ -1264,6 +1287,9 @@ class Generalization(Element):
         """
         if specific == self.general:
             raise ValueError("A class cannot be a generalization of itself")
+        # Check unique end names before adding the generalization
+        specific._validate_unique_end_names(ends=self.general.all_association_ends())
+
         if hasattr(self, "specific"):
             self.specific._delete_generalization(generalization=self)
         specific._add_generalization(generalization=self)

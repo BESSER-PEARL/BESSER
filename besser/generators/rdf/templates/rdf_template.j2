@@ -1,62 +1,41 @@
+{% import "rdf_helpers.j2" as vocab %}
+{% if model.metadata and model.metadata.uri -%}
+@prefix ex: {{ vocab.uri_or_prefixed(model) }} .
+{% else -%}
 @prefix ex: <http://example.org/vocab#> .
+{% endif -%}
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-{# Iterate over classes and generate the clases #}
+{# Iterate over classes and generate the classes #}
 # Class definition
 {% for class_obj in model.classes_sorted_by_inheritance() %}
     {# Handling generalizations (inheritance) #}
     {% if class_obj.parents() %}
         {% for parent in class_obj.parents() %}
-{% if class_obj.metadata and class_obj.metadata.uri %}
-<{{class_obj.metadata.uri}}> rdf:type rdfs:Class ;
-          rdfs:subClassOf {% if parent.metadata and parent.metadata.uri %}<{{parent.metadata.uri}}>{% else %}ex:{{parent.name}}{% endif %}{% if class_obj.metadata and class_obj.metadata.description %} ;
+{{ vocab.uri_or_prefixed(class_obj) }} rdf:type rdfs:Class ;
+          rdfs:subClassOf {{ vocab.uri_or_prefixed(parent) }}{% if class_obj.metadata and class_obj.metadata.description %} ;
           rdfs:comment "{{class_obj.metadata.description}}"{% endif %} .
-{% else %}
-ex:{{class_obj.name}} rdf:type rdfs:Class ;
-          rdfs:subClassOf {% if parent.metadata and parent.metadata.uri %}<{{parent.metadata.uri}}>{% else %}ex:{{parent.name}}{% endif %}{% if class_obj.metadata and class_obj.metadata.description %} ;
-          rdfs:comment "{{class_obj.metadata.description}}"{% endif %} .
-{% endif %}
-
         {% endfor %}
     {% else %}
-{% if class_obj.metadata and class_obj.metadata.uri %}
-<{{class_obj.metadata.uri}}> rdf:type rdfs:Class{% if class_obj.metadata and class_obj.metadata.description %} ;
+{{ vocab.uri_or_prefixed(class_obj) }} rdf:type rdfs:Class{% if class_obj.metadata and class_obj.metadata.description %} ;
           rdfs:comment "{{class_obj.metadata.description}}"{% endif %} .
-{% else %}
-ex:{{class_obj.name}} rdf:type rdfs:Class{% if class_obj.metadata and class_obj.metadata.description %} ;
-          rdfs:comment "{{class_obj.metadata.description}}"{% endif %} .
-{% endif %}
-
     {% endif %}
 {% endfor %}
 
 # Property definition
 {% for class_obj in model.classes_sorted_by_inheritance() %}
     {% for property in class_obj.attributes %}
-{% if property.metadata and property.metadata.uri %}
-<{{property.metadata.uri}}> rdf:type rdf:Property ;
-        rdfs:domain {% if class_obj.metadata and class_obj.metadata.uri %}<{{class_obj.metadata.uri}}>{% else %}ex:{{class_obj.name}}{% endif %} ;
-        {% if types[property.type.name ]%}
-        rdfs:range xsd:{{types[property.type.name]}}{% if property.metadata and property.metadata.description %} ;
-        rdfs:comment "{{property.metadata.description}}"{% endif %} .
+{{ vocab.uri_or_prefixed(property) }} rdf:type rdf:Property ;
+        rdfs:domain {{ vocab.uri_or_prefixed(class_obj) }} ;
+        {% if types[property.type.name ] %}
+        rdfs:range xsd:{{ types[property.type.name] }}{% if property.metadata and property.metadata.description %} ;
+        rdfs:comment "{{ property.metadata.description }}"{% endif %} .
         {% else %}
-        rdfs:range xsd:{{property.type.name}}{% if property.metadata and property.metadata.description %} ;
-        rdfs:comment "{{property.metadata.description}}"{% endif %} .
+        rdfs:range xsd:{{ property.type.name }}{% if property.metadata and property.metadata.description %} ;
+        rdfs:comment "{{ property.metadata.description }}"{% endif %} .
         {% endif %}
-{% else %}
-ex:{{property.name}} rdf:type rdf:Property ;
-        rdfs:domain {% if class_obj.metadata and class_obj.metadata.uri %}<{{class_obj.metadata.uri}}>{% else %}ex:{{class_obj.name}}{% endif %} ;
-        {% if types[property.type.name ]%}
-        rdfs:range xsd:{{types[property.type.name]}}{% if property.metadata and property.metadata.description %} ;
-        rdfs:comment "{{property.metadata.description}}"{% endif %} .
-        {% else %}
-        rdfs:range xsd:{{property.type.name}}{% if property.metadata and property.metadata.description %} ;
-        rdfs:comment "{{property.metadata.description}}"{% endif %} .
-        {% endif %}
-{% endif %}
-
     {% endfor %}
 {% endfor %}
 
@@ -71,59 +50,31 @@ ex:{{property.name}} rdf:type rdf:Property ;
         {% endfor %}
         {% set class1_name = ns.end1.type.name %}
         {% set class2_name = ns.end2.type.name %}
-        {# Check multiplicity and generate appropriate SQL statement #}
+        {# Check multiplicity #}
         {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
         {# N:M #}     
-{% if association.metadata and association.metadata.uri %}
-<{{association.metadata.uri}}> rdf:type rdf:Property ;
-    rdfs:domain {% if ns.end1.type.metadata and ns.end1.type.metadata.uri %}<{{ns.end1.type.metadata.uri}}>{% else %}ex:{{class1_name}}{% endif %} ;
-    rdfs:range {% if ns.end2.type.metadata and ns.end2.type.metadata.uri %}<{{ns.end2.type.metadata.uri}}>{% else %}ex:{{class2_name}}{% endif %}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{association.metadata.description}}"{% endif %} .
-{% else %}
-ex:{{association.name}} rdf:type rdf:Property ;
-    rdfs:domain {% if ns.end1.type.metadata and ns.end1.type.metadata.uri %}<{{ns.end1.type.metadata.uri}}>{% else %}ex:{{class1_name}}{% endif %} ;
-    rdfs:range {% if ns.end2.type.metadata and ns.end2.type.metadata.uri %}<{{ns.end2.type.metadata.uri}}>{% else %}ex:{{class2_name}}{% endif %}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{association.metadata.description}}"{% endif %} .
-{% endif %}
+{{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
+    rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
+    rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
+    rdfs:comment "{{ association.metadata.description }}"{% endif %} .
         {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
         {# N:1 #}
-{% if association.metadata and association.metadata.uri %}
-<{{association.metadata.uri}}> rdf:type rdf:Property ;
-    rdfs:domain {% if ns.end1.type.metadata and ns.end1.type.metadata.uri %}<{{ns.end1.type.metadata.uri}}>{% else %}ex:{{class1_name}}{% endif %} ;
-    rdfs:range {% if ns.end2.type.metadata and ns.end2.type.metadata.uri %}<{{ns.end2.type.metadata.uri}}>{% else %}ex:{{class2_name}}{% endif %}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{association.metadata.description}}"{% endif %} .
-{% else %}
-ex:{{association.name}} rdf:type rdf:Property ;
-    rdfs:domain {% if ns.end1.type.metadata and ns.end1.type.metadata.uri %}<{{ns.end1.type.metadata.uri}}>{% else %}ex:{{class1_name}}{% endif %} ;
-    rdfs:range {% if ns.end2.type.metadata and ns.end2.type.metadata.uri %}<{{ns.end2.type.metadata.uri}}>{% else %}ex:{{class2_name}}{% endif %}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{association.metadata.description}}"{% endif %} .
-{% endif %}
+{{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
+    rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
+    rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
+    rdfs:comment "{{ association.metadata.description }}"{% endif %} .
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
         {# 1:N #}
-{% if association.metadata and association.metadata.uri %}
-<{{association.metadata.uri}}> rdf:type rdf:Property ;
-    rdfs:domain {% if ns.end2.type.metadata and ns.end2.type.metadata.uri %}<{{ns.end2.type.metadata.uri}}>{% else %}ex:{{class2_name}}{% endif %} ;
-    rdfs:range {% if ns.end1.type.metadata and ns.end1.type.metadata.uri %}<{{ns.end1.type.metadata.uri}}>{% else %}ex:{{class1_name}}{% endif %}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{association.metadata.description}}"{% endif %} .
-{% else %}
-ex:{{association.name}} rdf:type rdf:Property ;
-    rdfs:domain {% if ns.end2.type.metadata and ns.end2.type.metadata.uri %}<{{ns.end2.type.metadata.uri}}>{% else %}ex:{{class2_name}}{% endif %} ;
-    rdfs:range {% if ns.end1.type.metadata and ns.end1.type.metadata.uri %}<{{ns.end1.type.metadata.uri}}>{% else %}ex:{{class1_name}}{% endif %}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{association.metadata.description}}"{% endif %} .
-{% endif %}
+{{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
+    rdfs:domain {{ vocab.uri_or_prefixed(ns.end2.type) }} ;
+    rdfs:range {{ vocab.uri_or_prefixed(ns.end1.type) }}{% if association.metadata and association.metadata.description %} ;
+    rdfs:comment "{{ association.metadata.description }}"{% endif %} .
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
         {# 1:1 Relationship: Add unique reference to one of the ends #}
-{% if association.metadata and association.metadata.uri %}
-<{{association.metadata.uri}}> rdf:type rdf:Property ;
-    rdfs:domain {% if ns.end1.type.metadata and ns.end1.type.metadata.uri %}<{{ns.end1.type.metadata.uri}}>{% else %}ex:{{class1_name}}{% endif %} ;
-    rdfs:range {% if ns.end2.type.metadata and ns.end2.type.metadata.uri %}<{{ns.end2.type.metadata.uri}}>{% else %}ex:{{class2_name}}{% endif %}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{association.metadata.description}}"{% endif %} .
-{% else %}
-ex:{{association.name}} rdf:type rdf:Property ;
-    rdfs:domain {% if ns.end1.type.metadata and ns.end1.type.metadata.uri %}<{{ns.end1.type.metadata.uri}}>{% else %}ex:{{class1_name}}{% endif %} ;
-    rdfs:range {% if ns.end2.type.metadata and ns.end2.type.metadata.uri %}<{{ns.end2.type.metadata.uri}}>{% else %}ex:{{class2_name}}{% endif %}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{association.metadata.description}}"{% endif %} .
-{% endif %}
+{{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
+    rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
+    rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
+    rdfs:comment "{{ association.metadata.description }}"{% endif %} .
         {% endif %}
     {% endif %}
 {%- endfor %}
@@ -131,18 +82,9 @@ ex:{{association.name}} rdf:type rdf:Property ;
 {# Iterate over enumerations #}
 # Enumeration definition
 {% for enum in model.get_enumerations() %}
-{% if enum.metadata and enum.metadata.uri %}
-<{{enum.metadata.uri}}> rdf:type rdfs:Class{% if enum.metadata and enum.metadata.description %} ;
-          rdfs:comment "{{enum.metadata.description}}"{% endif %} .
-{% else %}
-ex:{{enum.name}} rdf:type rdfs:Class{% if enum.metadata and enum.metadata.description %} ;
-          rdfs:comment "{{enum.metadata.description}}"{% endif %} .
-{% endif %}
-    {% for literal in enum.litelars %}
-{% if enum.metadata and enum.metadata.uri %}
-ex:{{literal.name}} rdf:type <{{enum.metadata.uri}}> .
-{% else %}
-ex:{{literal.name}} rdf:type ex:{{enum.name}} .
-{% endif %}
+{{ vocab.uri_or_prefixed(enum) }} rdf:type rdfs:Class{% if enum.metadata and enum.metadata.description %} ;
+          rdfs:comment "{{ enum.metadata.description }}"{% endif %} .
+    {% for literal in enum.literals %}
+{{ vocab.uri_or_prefixed(literal) }} rdf:type {{ vocab.uri_or_prefixed(enum) }} .
     {% endfor %}
 {% endfor %}

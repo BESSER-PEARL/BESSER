@@ -1,0 +1,7 @@
+{% macro uri_or_prefixed(element, default_prefix='ex') -%}
+    {%- if element.metadata and element.metadata.uri -%}
+        <{{ element.metadata.uri }}>
+    {%- else -%}
+        {{ default_prefix }}:{{ element.name }}
+    {%- endif -%}
+{%- endmacro %}

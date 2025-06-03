@@ -146,7 +146,7 @@ class Object(Instance):
                 return attr.value.value
         for link_end in self.link_ends():
             if link_end.name == item:
-                return link_end.object.name
+                return link_end.object
         raise AttributeError(f"'{self.name}' object has no attribute or link '{item}'")
 
     def __repr__(self):

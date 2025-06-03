@@ -43,29 +43,85 @@ class Element(ABC):
         """bool: Set whether the element is derived."""
         self.__is_derived = is_derived
 
+class Metadata(Element):
+    """The Metadata class stores additional information about named elements.
+
+    Args:
+        description (str): Description of the element (None as default).
+        uri (str): Uniform resource identifier for the element (None as default).
+        synonyms (List[str]): List of synonyms of the element (None as default).
+        timestamp (datetime): Object creation datetime (default is current time).
+
+    Attributes:
+        description (str): Description of the element (None as default).
+        uri (str): Uniform resource identifier for the element (None as default).
+        synonyms (List[str]): List of synonyms of the element (None as default).
+        timestamp (datetime): Object creation datetime (default is current time).
+    """
+
+    def __init__(self, description: str = None, uri: str = None, synonyms: List[str] = None,
+                 timestamp: datetime = None):
+        super().__init__(timestamp)
+        self.description: str = description
+        self.uri: str = uri
+        self.synonyms: List[str] = synonyms
+
+    @property
+    def description(self) -> str:
+        """str: Get the description of the metadata."""
+        return self.__description
+
+    @description.setter
+    def description(self, description: str):
+        """str: Set the description of the metadata."""
+        self.__description = description
+
+    @property
+    def uri(self) -> str:
+        """str: Get the URI of the metadata."""
+        return self.__uri
+
+    @uri.setter
+    def uri(self, uri: str):
+        """str: Set the URI of the metadata."""
+        self.__uri = uri
+
+    @property
+    def synonyms(self) -> List[str]:
+        """List[str]: Get the list of synonyms of the metadata."""
+        return self.__synonyms
+
+    @synonyms.setter
+    def synonyms(self, synonyms: List[str]):
+        """List[str]: Set the list of synonyms of the metadata."""
+        self.__synonyms = synonyms
+
+    def __repr__(self):
+        return f"Metadata({self.description}, {self.uri}, {self.synonyms}, {self.timestamp})"
+
 class NamedElement(Element):
     """NamedElement represent a structural element with a name.
 
     Args:
         name (str): The name of the named element
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the named element (None as default).
+        metadata (Metadata): Metadata information for the named element (None as default).
         visibility (str): Determines the kind of visibility of the named element (public as default).
         is_derived (bool): Indicates whether the element is derived (False as default).
 
     Attributes:
         name (str): The name of the named element
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the named element (None as default).
+        metadata (Metadata): Metadata information for the named element (None as default).
         visibility: Determines the kind of visibility of the named element (public as default).
         is_derived (bool): Indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, timestamp: datetime = None, synonyms: List[str] = None,
+    def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None, 
                  visibility: str = "public", is_derived: bool = False):
         super().__init__(timestamp, is_derived)
         self.name: str = name
-        self.synonyms: List[str] = synonyms
+        self.metadata: Metadata = metadata
         self.visibility: str = visibility
 
 
@@ -105,14 +161,14 @@ class NamedElement(Element):
         self.__visibility = visibility
 
     @property
-    def synonyms(self) -> List[str]:
-        """List[str]: Get the list of synonyms of the named element."""
-        return self.__synonyms
+    def metadata(self) -> Metadata:
+        """Metadata: Get the metadata of the named element."""
+        return self.__metadata
 
-    @synonyms.setter
-    def synonyms(self, synonyms: List[str]):
-        """List[str]: Set the list of synonyms of the named element."""
-        self.__synonyms = synonyms
+    @metadata.setter
+    def metadata(self, metadata: Metadata):
+        """Metadata: Set the metadata of the named element."""
+        self.__metadata = metadata
 
 class Type(NamedElement):
     """Type is the Superclass of classes and data types in the model.
@@ -120,22 +176,22 @@ class Type(NamedElement):
     Args:
         name (str): The name of the Type.
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the type (None as default).
+        metadata (Metadata): Metadata information for the type (None as default).
         is_derived (bool): Indicates whether the element is derived (False as default).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the Type.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the type (None as default).
+        metadata (Metadata): Metadata information for the type (None as default).
         is_derived (bool): Indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, timestamp: int = None, synonyms: List[str] = None,
+    def __init__(self, name: str, timestamp: int = None, metadata: Metadata = None,
                 is_derived: bool = False):
-        super().__init__(name, timestamp, synonyms, is_derived=is_derived)
+        super().__init__(name, timestamp, metadata,  is_derived=is_derived)
 
     def __repr__(self):
-        return f"Type({self.name}, {self.timestamp}, {self.synonyms})"
+        return f"Type({self.name}, {self.timestamp}, {self.metadata})"
 
 class DataType(Type):
     """Represents a data type.
@@ -145,12 +201,12 @@ class DataType(Type):
     Args:
         name (str): The name of the data type.
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the data type (None as default).
+        metadata (Metadata): Metadata information for the data type (None as default).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the data type.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the data type (None as default).
+        metadata (Metadata): Metadata information for the data type (None as default).
     """
 
     def __repr__(self):
@@ -165,12 +221,12 @@ class PrimitiveDataType(DataType):
     Args:
         name (str): The name of the primitive data type.
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the primitive data type (None as default).
+        metadata (Metadata): Metadata information for the primitive data type (None as default).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the primitive data type.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the primitive data type (None as default).
+        metadata (Metadata): Metadata information for the primitive data type (None as default).
     """
 
     @NamedElement.name.setter
@@ -188,7 +244,7 @@ class PrimitiveDataType(DataType):
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 
     def __repr__(self):
-        return f"PrimitiveDataType({self.name}, {self.timestamp}, {self.synonyms})"
+        return f"PrimitiveDataType({self.name}, {self.timestamp}, {self.metadata})"
 
 # Define instances of PrimitiveDataType
 StringType = PrimitiveDataType("str")
@@ -213,17 +269,17 @@ class EnumerationLiteral(NamedElement):
         name (str): The name of the enumeration literal.
         owner (DataType): The owner data type of the enumeration literal (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the literal (None as default).
+        metadata (Metadata): Metadata information for the literal (None as default).
 
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the enumeration literal.
         owner (DataType): Represents the owner data type of the enumeration literal (None as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the literal (None as default).
+        metadata (Metadata): Metadata information for the literal (None as default).
     """
 
-    def __init__(self, name: str, owner: DataType=None, timestamp: int = None, synonyms: List[str] = None):
-        super().__init__(name, timestamp, synonyms)
+    def __init__(self, name: str, owner: DataType=None, timestamp: int = None, metadata: Metadata = None):
+        super().__init__(name, timestamp, metadata)
         self.owner: DataType = owner
 
     @property
@@ -244,7 +300,7 @@ class EnumerationLiteral(NamedElement):
         self.__owner = owner
 
     def __repr__(self):
-        return f"EnumerationLiteral({self.name}, {self.owner}, {self.timestamp}, {self.synonyms})"
+        return f"EnumerationLiteral({self.name}, {self.owner}, {self.timestamp}, {self.metadata})"
 
 class Enumeration(DataType):
     """Class representing an enumeration.
@@ -257,7 +313,7 @@ class Enumeration(DataType):
         literals (set[EnumerationLiteral]): Set of enumeration literals associated with the 
                 enumeration (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the enumeration (None as default).
+        metadata (Metadata): Metadata information for the enumeration (None as default).
 
     Attributes:
         name (str): Inherited from DataType, represents the name of the enumeration.
@@ -265,12 +321,12 @@ class Enumeration(DataType):
                 with the enumeration (None as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is 
                 current time).
-        synonyms (List[str]): List of synonyms of the enumeration (None as default).
+        metadata (Metadata): Metadata information for the enumeration (None as default).
     """
 
     def __init__(self, name: str, literals: set[EnumerationLiteral] = None, timestamp: int = None,
-                 synonyms: List[str] = None):
-        super().__init__(name, timestamp, synonyms)
+                 metadata: Metadata = None):
+        super().__init__(name, timestamp, metadata)
         self.literals: set[EnumerationLiteral] = literals if literals is not None else set()
 
     @property
@@ -309,7 +365,7 @@ class Enumeration(DataType):
         self.literals.add(literal)
 
     def __repr__(self):
-        return f"Enumeration({self.name}, {self.literals}, {self.timestamp}, {self.synonyms})"
+        return f"Enumeration({self.name}, {self.literals}, {self.timestamp}, {self.metadata})"
 
 class TypedElement(NamedElement):
     """TypedElement is a subclass of NamedElement and is used to represent elements
@@ -319,7 +375,7 @@ class TypedElement(NamedElement):
         name (str): The name of the typed element.
         type (Type, str): The data type of the typed element.
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the typed element (None as default).
+        metadata (Metadata): Metadata information for the typed element (None as default).
         visibility (str): Determines the kind of visibility of the typed element (public as default).
         is_derived (bool): Indicates whether the element is derived (False as default).
 
@@ -328,7 +384,7 @@ class TypedElement(NamedElement):
         type (Type): The data type of the typed element.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         type (Type, str): The data type of the typed element.
-        synonyms (List[str]): List of synonyms of the typed element (None as default).
+        metadata (Metadata): Metadata information for the typed element (None as default).
         visibility (str): Inherited from NamedElement, represents the visibility of the typed element (public as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
@@ -345,9 +401,9 @@ class TypedElement(NamedElement):
         "timedelta": TimeDeltaType
     }
 
-    def __init__(self, name: str, type: Union[Type, str], timestamp: int = None, synonyms: List[str] = None,
+    def __init__(self, name: str, type: Union[Type, str], timestamp: int = None, metadata: Metadata = None,
                  visibility: str="public", is_derived: bool = False):
-        super().__init__(name, timestamp, synonyms, visibility, is_derived)
+        super().__init__(name, timestamp, metadata, visibility, is_derived)
         self.type = self.type_mapping.get(type, type)
 
     @property
@@ -368,12 +424,12 @@ class Multiplicity(Element):
     Args:
         min_multiplicity (int): The minimum multiplicity.
         max_multiplicity (int): The maximum multiplicity. Use "*" for unlimited.
-        is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
 
     Attributes:
         min (int): The minimum multiplicity.
         max (int): The maximum multiplicity. Use "*" for unlimited.
-        is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
     def __init__(self, min_multiplicity: int, max_multiplicity: int, is_derived: bool = False):
@@ -441,8 +497,8 @@ class Property(TypedElement):
         is_id (bool): Indicates whether the property is an id (False as default).
         is_read_only (bool): Indicates whether the property is read only (False as default).
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the property (None as default).
-        is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        metadata (Metadata): Metadata information for the property (None as default).
+         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
 
     Attributes:
         name (str): Inherited from TypedElement, represents the name of the property.
@@ -455,15 +511,15 @@ class Property(TypedElement):
         is_id (bool): Indicates whether the property is an id (False as default).
         is_read_only (bool): Indicates whether the property is read only (False as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the property (None as default).
+        metadata (Metadata): Metadata information for the property (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
     def __init__(self, name: str, type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1),
                  visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True,
                  is_id: bool = False, is_read_only: bool = False, timestamp: int = None,
-                 synonyms: List[str] = None, is_derived: bool = False):
-        super().__init__(name, type, timestamp, synonyms, visibility, is_derived)
+                 metadata: Metadata = None, is_derived: bool = False):
+        super().__init__(name, type, timestamp, metadata, visibility, is_derived)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
@@ -552,7 +608,7 @@ class Property(TypedElement):
         return (
             f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, '
             f'is_composite={self.is_composite}, is_id={self.is_id}, '
-            f'is_read_only={self.is_read_only}, {self.timestamp}, {self.synonyms}, '
+            f'is_read_only={self.is_read_only}, {self.timestamp}, {self.metadata}, '
             f'is_derived={self.is_derived})'
         )
 
@@ -565,7 +621,7 @@ class Parameter(TypedElement):
         type (Type): The data type of the parameter.
         default_value (Any): The default value of the parameter (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the parameter (None as default).
+        metadata (Metadata): Metadata information for the parameter (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
 
     Attributes:
@@ -573,13 +629,12 @@ class Parameter(TypedElement):
         type (Type): Inherited from TypedElement, represents the type of the parameter.
         default_value (Any): The default value of the parameter (None as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the parameter (None as default).
-        is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        metadata (Metadata): Metadata information for the parameter (None as default).
     """
 
     def __init__(self, name: str, type: Type, default_value: Any = None, timestamp: int = None,
-                 synonyms: List[str] = None, is_derived: bool = False):
-        super().__init__(name, type, timestamp, synonyms, is_derived=is_derived)
+                 metadata: Metadata = None, is_derived: bool = False):
+        super().__init__(name, type, timestamp, metadata, is_derived=is_derived)
         self.default_value: Any = default_value
 
     @property
@@ -595,9 +650,8 @@ class Parameter(TypedElement):
     def __repr__(self):
         return (
             f'Parameter({self.name}, {self.type}, {self.default_value}, {self.timestamp}, '
-            f'{self.synonyms}, is_derived={self.is_derived})'
+            f'{self.metadata}, is_derived={self.is_derived})'
         )
-
 class Method(TypedElement):
     """
     Method is used to represent a method of a class.
@@ -611,7 +665,7 @@ class Method(TypedElement):
         owner (Type): The type that owns the method (None as default).
         code (str): code of the method ("" as default).
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the method (None as default).
+        metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
 
     Attributes:
@@ -623,14 +677,14 @@ class Method(TypedElement):
         owner (Type): The type that owns the property (None as default).
         code (str): code of the method ("" as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the method (None as default).
+        metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
     def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False,
                  parameters: set[Parameter] = None, type: Type = None, owner: Type = None,
-                 code: str = "", timestamp: int = None, synonyms: List[str] = None, is_derived: bool = False):
-        super().__init__(name, type, timestamp, synonyms, visibility, is_derived)
+                 code: str = "", timestamp: int = None, metadata: Metadata = None, is_derived: bool = False):
+        super().__init__(name, type, timestamp, metadata, visibility, is_derived)
         self.is_abstract: bool = is_abstract
         self.parameters: set[Parameter] = parameters if parameters is not None else set()
         self.owner: Type = owner
@@ -718,7 +772,7 @@ class Method(TypedElement):
     def __repr__(self):
         return (
             f'Method({self.name}, {self.visibility}, is_abstract={self.is_abstract}, {self.parameters}, '
-            f'{self.type}, {self.owner}, {self.code}, {self.timestamp}, {self.synonyms}, '
+            f'{self.type}, {self.owner}, {self.code}, {self.timestamp}, {self.metadata}, '
             f'is_derived={self.is_derived})'
         )
 
@@ -792,10 +846,14 @@ class Class(Type):
 
     Args:
         name (str): The name of the class.
-        attributes (set[Property]): The set of attributes associated with the class.
+        attributes (set[Property]): The set of attributes associated with the class (None as default).
+        methods (set[Method]): The set of methods of the class (None as default).
+        is_abstract (bool): Indicates whether the class is abstract (False as default).
+        is_read_only (bool): Indicates whether the class is read only (False as default).
         behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class (None as default).
-        is_abstract (bool): Indicates whether the class is abstract.
-        is_read_only (bool): Indicates whether the class is read only.
+        timestamp (datetime): Object creation datetime (default is current time).
+        metadata (Metadata): Metadata information for the class (None as default).
+        is_derived (bool): Indicates whether the element is derived (False as default).
 
     Attributes:
         name (str): Inherited from Type, represents the name of the class.
@@ -809,27 +867,15 @@ class Class(Type):
         is_read_only (bool): Indicates whether the class is read only (False as default).
         behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the class (None as default).
+        metadata (Metadata): Metadata information for the class (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
 
-    Attributes:
-        name (str): Inherited from Type, represents the name of the class.
-        attributes (set[Property]): The set of attributes associated with the class (set() as default).
-        methods (set[Method]): The set of methods of the class (set() as default).
-        is_abstract (bool): Indicates whether the class is abstract (False as default).
-        is_read_only (bool): Indicates whether the class is read only (False as default).
-        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class (None as default).
-        __associations (set[Association]): Set of associations involving the class.
-        __generalizations (set[Generalization]): Set of generalizations involving the class.
-        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the class (None as default).
-        is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
     def __init__(self, name: str, attributes: set[Property] = None, methods: set[Method] = None,
                  is_abstract: bool= False, is_read_only: bool= False, behaviors: set[BehaviorDeclaration] = None,
-                 timestamp: int = None, synonyms: List[str] = None, is_derived: bool = False):
-        super().__init__(name, timestamp, synonyms, is_derived=is_derived)
+                 timestamp: int = None, metadata: Metadata = None, is_derived: bool = False):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
         self.behaviors: set[BehaviorDeclaration] = behaviors if behaviors is not None else set()
@@ -1079,8 +1125,8 @@ class Class(Type):
 
     def __repr__(self):
         return (
-                f'Class({self.name}, {self.attributes}, {self.methods}, {self.timestamp}, {self.synonyms}, '
-                f'is_abstract={self.is_abstract}, is_derived={self.is_derived})'
+            f'Class({self.name}, {self.attributes}, {self.methods}, {self.timestamp}, {self.metadata}, '
+            f'is_abstract={self.is_abstract}, is_derived={self.is_derived})'
         )
 
 
@@ -1094,20 +1140,20 @@ class Association(NamedElement):
         name (str): The name of the association.
         ends (set[Property]): The set of ends related to the association.
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the association (None as default).
+        metadata (Metadata): Metadata information for the association (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
         
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the association.
         ends (set[Property]): The set of ends related to the association.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the association (None as default).
+        metadata (Metadata): Metadata information for the association (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, ends: set[Property], timestamp: int = None, synonyms: List[str] = None,
+    def __init__(self, name: str, ends: set[Property], timestamp: int = None, metadata: Metadata = None,
                 is_derived: bool = False):
-        super().__init__(name, timestamp, synonyms, is_derived=is_derived)
+        super().__init__(name, timestamp, metadata, is_derived=is_derived)
         self.ends: set[Property] = ends
 
     @property
@@ -1134,7 +1180,7 @@ class Association(NamedElement):
         self.__ends = ends
 
     def __repr__(self):
-        return f'Association({self.name}, {self.ends}, {self.timestamp}, {self.synonyms}, is_derived={self.is_derived})'
+        return f'Association({self.name}, {self.ends}, {self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
 
 class BinaryAssociation(Association):
     """Represents a binary association between two classes.
@@ -1147,14 +1193,14 @@ class BinaryAssociation(Association):
         name (str): The name of the binary association.
         ends (set[Property]): The set of ends related to the binary association.
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the binary association (None as default).
+        metadata (Metadata): Metadata information for the binary association (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
 
     Attributes:
         name (str): Inherited from Association, represents the name of the binary association.
         ends (set[Property]): Inherited from NamedElement, represents the set of ends related to the binary association.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the binary association (None as default).
+        metadata (Metadata): Metadata information for the binary association (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
@@ -1173,7 +1219,7 @@ class BinaryAssociation(Association):
         super(BinaryAssociation, BinaryAssociation).ends.fset(self, ends)
 
     def __repr__(self):
-        return f'BinaryAssociation({self.name}, {self.ends}, {self.timestamp}, {self.synonyms}, is_derived={self.is_derived})'
+        return f'BinaryAssociation({self.name}, {self.ends}, {self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
 
 class AssociationClass(Class):
     # Class that has an association nature
@@ -1185,7 +1231,7 @@ class AssociationClass(Class):
         attributes (set[Property]): The set of attributes associated with the association class.
         association (Association): The underlying association linked to the association class.
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the association class (None as default).
+        metadata (Metadata): Metadata information for the association class (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
 
     Attributes:
@@ -1193,13 +1239,13 @@ class AssociationClass(Class):
         attributes (set[Property]): Inherited from Class, represents the set of attributes associated with the association class.
         association (Association): The underlying association linked to the association class.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the association class (None as default).
+        metadata (Metadata): Metadata information for the association class (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
     def __init__(self, name: str, attributes: set[Property], association: Association, timestamp: int = None,
-                 synonyms: List[str] = None, is_derived: bool = False):
-        super().__init__(name, attributes, timestamp, synonyms, is_derived=is_derived)
+                 metadata: Metadata = None, is_derived: bool = False):
+        super().__init__(name, attributes, timestamp, metadata, is_derived=is_derived)
         self.association: Association = association
 
     @property
@@ -1213,10 +1259,7 @@ class AssociationClass(Class):
         self.__association = association
 
     def __repr__(self):
-        return (
-            f'AssociationClass({self.name}, {self.attributes}, {self.association}, {self.timestamp}, '
-            f'{self.synonyms}, is_derived={self.is_derived})'
-        )
+        return f'AssociationClass({self.name}, {self.attributes}, {self.association}, {self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
 
 class Generalization(Element):
     """Represents a generalization relationship between two classes.
@@ -1289,7 +1332,7 @@ class GeneralizationSet(NamedElement):
         is_complete (bool): Indicates whether the set is complete (every instance of the superclass must belong to
             a subclass).
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the generalization set (None as default).
+        metadata (Metadata): Metadata information for the generalization set (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
 
     Attributes:
@@ -1300,13 +1343,13 @@ class GeneralizationSet(NamedElement):
         is_complete (bool): Indicates whether the set is complete (every instance of the superclass must belong to
             a subclass).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the generalization set (None as default).
+        metadata (Metadata): Metadata information for the generalization set (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
     def __init__(self, name: str, generalizations: set[Generalization], is_disjoint: bool, is_complete: bool,
-                timestamp: int = None, synonyms: List[str] = None, is_derived: bool = False):
-        super().__init__(name, timestamp, synonyms, is_derived=is_derived)
+                timestamp: int = None, metadata: Metadata = None, is_derived: bool = False):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived)
         self.generalizations: set[Generalization] = generalizations
         self.is_disjoint: bool = is_disjoint
         self.is_complete: bool = is_complete
@@ -1344,8 +1387,8 @@ class GeneralizationSet(NamedElement):
     def __repr__(self):
         return (
             f'GeneralizationSet({self.name}, {self.generalizations}, '
-            f'is_disjoint={self.is_disjoint}, is_complete={self.is_complete}, {self.timestamp}, '
-            f'{self.synonyms}, is_derived={self.is_derived})'
+            f'is_disjoint={self.is_disjoint}, is_complete={self.is_complete}, {self.timestamp}, {self.metadata},'
+            f'is_derived={self.is_derived})'
         )
 
 class Package(NamedElement):
@@ -1355,20 +1398,20 @@ class Package(NamedElement):
         name (str): The name of the package.
         elements (set[NamedElement]): The set of elements contained in the package.
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the package (None as default).
+        metadata (Metadata): Metadata information for the package (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the package.
         elements (set[NamedElement]): The set of elements contained in the package.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the package (None as default).
+        metadata (Metadata): Metadata information for the package (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, elements: set[NamedElement], timestamp: int = None, synonyms: List[str] = None,
+    def __init__(self, name: str, elements: set[NamedElement], timestamp: int = None, metadata: Metadata = None,
                 is_derived: bool = False):
-        super().__init__(name, timestamp, synonyms, is_derived=is_derived)
+        super().__init__(name, timestamp, metadata, is_derived=is_derived)
         self.elements: set[NamedElement] = elements
 
     @property
@@ -1398,7 +1441,7 @@ class Package(NamedElement):
         return {element for element in self.elements if isinstance(element, Enumeration)}
 
     def __repr__(self):
-        return f'Package({self.name}, {self.elements}), {self.timestamp}, {self.synonyms}, is_derived={self.is_derived}'
+        return f'Package({self.name}, {self.elements}), {self.timestamp}, {self.metadata}, is_derived={self.is_derived}'
 
 class Constraint(NamedElement):
     """A Constraint is a statement that restricts or defines conditions on the behavior,
@@ -1410,7 +1453,7 @@ class Constraint(NamedElement):
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the constraint (None as default).
+        metadata (Metadata): Metadata information for the constraint (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
 
     Attributes:
@@ -1419,13 +1462,13 @@ class Constraint(NamedElement):
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the constraint (None as default).
+        metadata (Metadata): Metadata information for the constraint (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
     def __init__(self, name: str, context: Class, expression: Any, language: str, timestamp: int = None,
-                 synonyms: List[str] = None, is_derived: bool = False):
-        super().__init__(name, timestamp, synonyms, is_derived=is_derived)
+                 metadata: Metadata = None, is_derived: bool = False):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived)
         self.context: Class = context
         self.expression: str = expression
         self.language: str = language
@@ -1463,9 +1506,8 @@ class Constraint(NamedElement):
     def __repr__(self):
         return (
             f'Constraint({self.name}, {self.context.name}, {self.language}, {self.expression}, '
-            f'{self.timestamp}, is_derived={self.is_derived})'
+            f'{self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
         )
-
 class Model(NamedElement):
     """A model is the root element. A model is the root element. There are different types of models
     that inherit from this class. For example, DomainModel, ObjectModel, or GUIModel.
@@ -1473,20 +1515,20 @@ class Model(NamedElement):
     Args:
         name (str): The name of the model.
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the model (None as default).
+        metadata (Metadata): Metadata information for the model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
         elements (set[Element]): Set of model Elements in the Model.
         
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the model.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the model (None as default).
+        metadata (Metadata): Metadata information for the model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
         elements (set[Element]): Set of model Elements in the Model.
     """
-    def __init__(self, name: str, timestamp: int = None, synonyms: List[str] = None, is_derived: bool = False,
+    def __init__(self, name: str, timestamp: int = None, metadata: Metadata = None, is_derived: bool = False,
                 elements: set[Element] = None):
-        super().__init__(name, timestamp, synonyms, is_derived=is_derived)
+        super().__init__(name, timestamp, metadata, is_derived=is_derived)
         self.elements: set[Element] = elements if elements is not None else set()
 
     @property
@@ -1514,7 +1556,7 @@ class DomainModel(Model):
         packages (set[Package]): The set of packages in the domain model (set() as default).
         constraints (set[Constraint]): The set of constraints in the domain model (set() as default).
         timestamp (datetime): Object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the domain model (None as default).
+        metadata (Metadata): Metadata information for the domain model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
         elements (set[Element]): Set of model Elements in the Model. This property is derived (auto-calculated).
 
@@ -1526,16 +1568,16 @@ class DomainModel(Model):
         packages (set[Package]): The set of packages in the domain model (set() as default).
         constraints (set[Constraint]): The set of constraints in the domain model (set() as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        synonyms (List[str]): List of synonyms of the domain model (None as default).
+        metadata (Metadata): Metadata information for the domain model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
         elements (set[Element]): Set of model Elements in the Model. This property is derived (auto-calculated).
     """
 
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None,
                 generalizations: set[Generalization] = None, packages: set[Package] = None,
-                constraints: set[Constraint] = None, timestamp: int = None, synonyms: List[str] = None,
+                constraints: set[Constraint] = None, timestamp: int = None, metadata: Metadata = None,
                 is_derived: bool = False, elements: set[Element] = None):
-        super().__init__(name, timestamp, synonyms, is_derived=is_derived, elements=elements)
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, elements=elements)
         # A flag to prevent premature `_update_elements` calls during initialization
         self.__initializing = True
         self.types: set[Type] = types if types is not None else set()
@@ -1742,6 +1784,6 @@ class DomainModel(Model):
     def __repr__(self):
         return (
             f'DomainModel({self.name}, {self.types}, {self.associations}, {self.generalizations}, '
-            f'{self.packages}, {self.constraints}, {self.timestamp}, {self.synonyms})'
-            f'is_derived={self.is_derived}'
+            f'{self.packages}, {self.constraints}, {self.timestamp}, {self.metadata},'
+            f'is_derived={self.is_derived})'
         )

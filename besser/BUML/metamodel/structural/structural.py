@@ -598,7 +598,7 @@ class Property(TypedElement):
         return (
             f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, '
             f'is_composite={self.is_composite}, is_id={self.is_id}, '
-            f'is_read_only={self.is_read_only}, {self.timestamp}, {self.metadata}'
+            f'is_read_only={self.is_read_only}, {self.timestamp}, {self.metadata}, '
             f'is_derived={self.is_derived})'
         )
 

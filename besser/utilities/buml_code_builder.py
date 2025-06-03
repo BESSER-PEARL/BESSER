@@ -1,5 +1,5 @@
 import os
-from besser.BUML.metamodel.structural.structural import DomainModel, AssociationClass
+from besser.BUML.metamodel.structural.structural import DomainModel, AssociationClass, Metadata
 from besser.utilities import sort_by_timestamp as sort
 
 PRIMITIVE_TYPE_MAPPING = {
@@ -72,7 +72,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         f.write("    Enumeration, EnumerationLiteral, Multiplicity,\n")
         f.write("    StringType, IntegerType, FloatType, BooleanType,\n")
         f.write("    TimeType, DateType, DateTimeType, TimeDeltaType,\n")
-        f.write("    AnyType, Constraint, AssociationClass\n")
+        f.write("    AnyType, Constraint, AssociationClass, Metadata\n")
         f.write(")\n\n")
 
         # Write enumerations only if they exist
@@ -103,7 +103,26 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         f.write("# Classes\n")
         for cls in regular_classes:
             cls_var_name = safe_class_name(cls.name)
-            f.write(f"{cls_var_name} = Class(name=\"{cls.name}\"{', is_abstract=True' if cls.is_abstract else ''})\n")
+            
+            # Build class creation parameters
+            class_params = [f'name="{cls.name}"']
+            
+            if cls.is_abstract:
+                class_params.append('is_abstract=True')
+            
+            # Add metadata if it exists
+            if hasattr(cls, 'metadata') and cls.metadata:
+                metadata_params = []
+                if cls.metadata.description:
+                    metadata_params.append(f'description="{cls.metadata.description}"')
+                if cls.metadata.uri:
+                    metadata_params.append(f'uri="{cls.metadata.uri}"')
+                
+                if metadata_params:
+                    metadata_str = f"Metadata({', '.join(metadata_params)})"
+                    class_params.append(f'metadata={metadata_str}')
+            
+            f.write(f"{cls_var_name} = Class({', '.join(class_params)})\n")
         f.write("\n")
 
         # Write class members for regular classes

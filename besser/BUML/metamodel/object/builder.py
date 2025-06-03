@@ -15,8 +15,17 @@ class ObjectBuilder:
         self._attributes.update(kwargs)
         return self
 
-    def link_to(self, target_obj, association):
-        self._links.append((target_obj, association))
+    def link_to(self, target_obj, end_name:str):
+        # Find the end and association by end_name
+        end_ = None
+        for end in self.classifier.all_association_ends():
+            if end.name == end_name:
+                end_ = end
+                break
+        if not end_:
+            raise ValueError(f"Association end '{end_name}' not found in class '{self.classifier.name}'")
+
+        self._links.append((target_obj, end_))
         return self
 
     def build(self):
@@ -28,6 +37,9 @@ class ObjectBuilder:
         for attr_name, value in self._attributes.items():
             prop = next((a for a in self.classifier.attributes if a.name == attr_name), None)
             if not prop:
+                parents = self.classifier.all_parents()
+                prop = next((a for p in parents for a in p.attributes if a.name == attr_name), None)
+            if not prop:
                 raise ValueError(f"Attribute '{attr_name}' not found in class '{self.classifier.name}'")
             data_value = DataValue(classifier=prop.type, value=value)
             slots.append(AttributeLink(attribute=prop, value=data_value))
@@ -35,26 +47,15 @@ class ObjectBuilder:
         obj = Object(name=self._name, classifier=self.classifier, slots=slots)
 
         # Build Links
-        for target, assoc in self._links:
-            # Find an association end whose type matches the source or one of its parents
-            src_types = [self.classifier] + list(self.classifier.all_parents())
-            src_end = next((end for end in assoc.ends if end.type in src_types), None)
-            if not src_end:
-                raise ValueError(
-                    f"The class '{self.classifier.name}' is not part of the association '{assoc.name}'"
-                    )
-            # Find an association end whose type matches the target or one of its parents
-            tgt_types = [target.classifier] + list(target.classifier.all_parents())
-            tgt_end = next((end for end in assoc.ends if end.type in tgt_types), None)
-            if not tgt_end:
-                raise ValueError(
-                    f"The class '{target.classifier.name}' is not part of the association '{assoc.name}'"
-                    )
+        for target, tgt_end in self._links:
+            # Find the source end
+            association = tgt_end.owner
+            src_end = next((end for end in association.ends if end != tgt_end), None)
 
             # Create the link
             link = Link(
                 name=f"{self._name}_to_{target.name}",
-                association=assoc,
+                association=association,
                 connections=[
                     LinkEnd(name=src_end.name, association_end=src_end, object=obj),
                     LinkEnd(name=tgt_end.name, association_end=tgt_end, object=target)

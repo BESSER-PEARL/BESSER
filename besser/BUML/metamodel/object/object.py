@@ -293,7 +293,7 @@ class ObjectModel(NamedElement):
         """set[Union[Object, DataValue]: Method to retrieve the intances (Objects + DataValues)."""
         all_instances = set(self.__objects)
         for obj in self.__objects:
-            for slot in obj.slots:  # Recorre los AttributeLinks
+            for slot in obj.slots:
                 if isinstance(slot.value, DataValue):
                     all_instances.add(slot.value)
         return all_instances

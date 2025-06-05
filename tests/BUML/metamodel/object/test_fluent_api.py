@@ -99,7 +99,7 @@ def test_coach_creation():
 def test_player_plays_for_team():
     team = Team("team2").attributes(name="Warriors", city="SF", division="West").build()
     player = Player("player2").attributes(name="Curry", age=34, position="Guard", jerseyNumber=30, country="USA") \
-        .link_to(team, "plays_for").build()
+        .link(team, "plays_for").build()
     assert player.plays_for == team
     assert player.plays_for.division == "West"
 
@@ -107,14 +107,14 @@ def test_player_plays_for_team():
 def test_player_follows_team():
     team = Team("team3").attributes(name="Bulls", city="Chicago", division="East").build()
     player = Player("player3").attributes(name="Jordan", age=59, position="Guard", jerseyNumber=23, country="USA") \
-        .link_to(team, "follows").build()
+        .link(team, "follows").build()
     assert player.follows == team
     assert player.follows.city == "Chicago"
 
 def test_coach_leads_team():
     team = Team("team4").attributes(name="Celtics", city="Boston", division="East").build()
     coach = Coach("coach2").attributes(name="Stevens", salary=120, country="USA") \
-        .link_to(team, "leads").build()
+        .link(team, "leads").build()
     assert coach.leads == team
     assert coach.leads.city == "Boston"
 
@@ -122,8 +122,7 @@ def test_coach_follows_team():
     team = Team("team5").attributes(name="Heat", city="Miami", division="East").build()
     team2 = Team("team2").attributes(name="Test", city="Lux", division="East").build()
     coach = Coach("coach3").attributes(name="Spoelstra", salary=110, country="USA") \
-        .link_to(team, "follows") \
-        .link_to(team2, "follows").build()
+        .link({team,team2}, "follows").build()
     assert team in coach.follows
     assert any(t.city == "Miami" for t in coach.follows)
 
@@ -140,12 +139,21 @@ def test_multiple_links():
     team1 = Team("team8").attributes(name="Nets", city="Brooklyn", division="East").build()
     team2 = Team("team9").attributes(name="Raptors", city="Toronto", division="East").build()
     player = Player("player6").attributes(name="Durant", age=33, position="Forward", jerseyNumber=7, country="USA") \
-        .link_to(team1, "plays_for") \
-        .link_to(team2, "follows").build()
+        .link(team1, "plays_for") \
+        .link({team1, team2}, "follows").build()
     assert player.plays_for == team1
-    assert player.follows == team2
+    assert team2 in player.follows
+    assert team1 in player.follows
 
 def test_update_attributes_after_build():
     team = Team("team10").attributes(name="Spurs", city="San Antonio", division="West").build()
     team.city = "Austin"
     assert team.city == "Austin"
+
+def test_object_internal_name():
+    team = Team("team11").attributes(name="Kings", city="Sacramento", division="West").build()
+    assert team.name == "Kings"
+    assert team.name_ == "team11"
+    team.name_ = "new_team_internal_name"
+    assert team.name_ == "new_team_internal_name"
+    assert team.name == "Kings"

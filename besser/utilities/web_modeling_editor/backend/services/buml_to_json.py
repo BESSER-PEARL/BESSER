@@ -240,10 +240,8 @@ def domain_model_to_json(domain_model):
                         },
                     }
                     attribute_ids.append(literal_id)
-                    y_offset += 30
-
-            # Create the element
-            elements[element_id] = {
+                    y_offset += 30            # Create the element
+            element_data = {
                 "id": element_id,
                 "name": type_obj.name,
                 "type": (
@@ -274,6 +272,15 @@ def domain_model_to_json(domain_model):
                     else {"constraint": type_obj.expression}
                 ),
             }
+            
+            # Add metadata fields for classes if they exist
+            if isinstance(type_obj, Class) and hasattr(type_obj, 'metadata') and type_obj.metadata:
+                if type_obj.metadata.description:
+                    element_data["description"] = type_obj.metadata.description
+                if type_obj.metadata.uri:
+                    element_data["uri"] = type_obj.metadata.uri
+            
+            elements[element_id] = element_data
 
     # Second pass: Create relationships
     for association in domain_model.associations:

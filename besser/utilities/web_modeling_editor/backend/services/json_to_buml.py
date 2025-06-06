@@ -3,7 +3,7 @@ import json
 
 from besser.BUML.metamodel.structural import DomainModel, Class, Enumeration, Property, Method, BinaryAssociation, \
     Generalization, PrimitiveDataType, EnumerationLiteral, Multiplicity, UNLIMITED_MAX_MULTIPLICITY, Constraint, AnyType, \
-    AssociationClass
+    AssociationClass, Metadata
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
 from fastapi import HTTPException
 
@@ -282,9 +282,17 @@ def process_class_diagram(json_data):
                     status_code=400, 
                     detail=f"Invalid class name: '{class_name}'. Names cannot contain whitespace or be empty."
                 )
+            
             is_abstract = element.get("type") == "AbstractClass"
+              # Handle metadata with description and URI
+            metadata = None
+            description = element.get("description")
+            uri = element.get("uri")
+            
+            if description or uri:
+                metadata = Metadata(description=description, uri=uri)
             try:
-                cls = Class(name=class_name, is_abstract=is_abstract)
+                cls = Class(name=class_name, is_abstract=is_abstract, metadata=metadata)
                 domain_model.types.add(cls)
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))

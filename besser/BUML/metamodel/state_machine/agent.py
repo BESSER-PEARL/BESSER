@@ -759,7 +759,7 @@ class ReceiveMessageEvent(Event):
         visibility (str): Inherited from Event, represents the visibility of the event.
         type (Type): Inherited from Event, represents the type of the event.
         is_abstract (bool): Inherited from Event, indicates if the event is abstract.
-        parameters (set[Parameter]): Inherited from Event, the set of parameters for the event.
+        parameters (set[structural.Parameter]): Inherited from Event, the set of parameters for the event.
         owner (Type): Inherited from Event, the type that owns the property.
         code (str): Inherited from Event, code of the event.
     """
@@ -840,7 +840,7 @@ class IntentMatcher(Condition):
         visibility (str): Inherited from Event, represents the visibility of the event.
         type (Type): Inherited from Event, represents the type of the event.
         is_abstract (bool): Inherited from Event, indicates if the event is abstract.
-        parameters (set[Parameter]): Inherited from Event, the set of parameters for the event.
+        parameters (set[structural.Parameter]): Inherited from Event, the set of parameters for the event.
         owner (Type): Inherited from Event, the type that owns the property.
         code (str): Inherited from Event, code of the event.
         intent (Intent): The reference intent to compare with the target intent
@@ -866,7 +866,7 @@ class VariableOperationMatcher(Condition):
         visibility (str): Inherited from Event, represents the visibility of the event.
         type (Type): Inherited from Event, represents the type of the event.
         is_abstract (bool): Inherited from Event, indicates if the event is abstract.
-        parameters (set[Parameter]): Inherited from Event, the set of parameters for the event.
+        parameters (set[structural.Parameter]): Inherited from Event, the set of parameters for the event.
         owner (Type): Inherited from Event, the type that owns the property.
         code (str): Inherited from Event, code of the event.
         var_name (str): The variable name (stored in the user session)
@@ -892,7 +892,7 @@ class FileTypeMatcher(Condition):
         visibility (str): Inherited from Event, represents the visibility of the event.
         type (Type): Inherited from Event, represents the type of the event.
         is_abstract (bool): Inherited from Event, indicates if the event is abstract.
-        parameters (set[Parameter]): Inherited from Event, the set of parameters for the event.
+        parameters (set[structural.Parameter]): Inherited from Event, the set of parameters for the event.
         owner (Type): Inherited from Event, the type that owns the property.
         code (str): Inherited from Event, code of the event.
         allowed_types (list[str]): The file types that will be considered in the event
@@ -912,7 +912,7 @@ class Auto(Condition):
         visibility (str): Inherited from Event, represents the visibility of the event.
         type (Type): Inherited from Event, represents the type of the event.
         is_abstract (bool): Inherited from Event, indicates if the event is abstract.
-        parameters (set[Parameter]): Inherited from Event, the set of parameters for the event.
+        parameters (set[structural.Parameter]): Inherited from Event, the set of parameters for the event.
         owner (Type): Inherited from Event, the type that owns the property.
         code (str): Inherited from Event, code of the event.
     """
@@ -1046,14 +1046,14 @@ class Agent(StateMachine):
     Attributes:
         name (str): Inherited from StateMachine, represents the name of the agent.
         visibility (str): Inherited from StateMachine, determines the kind of visibility of the agent (public as default).
-        states (list[State]): Inherited from StateMachine, the states of the agent
+        states (list[state_machine.State]): Inherited from StateMachine, the states of the agent
         properties (list[ConfigProperty]): Inherited from StateMachine, the configuration properties of the agent.
         platforms (list[Platform]): The agent platforms.
         default_ic_config (IntentClassifierConfiguration): the intent classifier configuration used by default for the
             agent states.
         intents (list[Intent]): The agent intents.
         entities (list[Entity]): The agent entities.
-        global_initial_states (list[State, Intent]): List of tuples of initial global states and their triggering intent
+        global_initial_states (list[state_machine.State, Intent]): List of tuples of initial global states and their triggering intent
     """
 
     def __init__(self, name: str):

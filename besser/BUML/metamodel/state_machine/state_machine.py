@@ -52,7 +52,7 @@ class Body(Method):
         visibility (str): Inherited from Method, represents the visibility of the body.
         type (Type): Inherited from Method, represents the type of the body.
         is_abstract (bool): Inherited from Method, indicates if the body is abstract.
-        parameters (set[Parameter]): Inherited from Method, the set of parameters for the body.
+        parameters (set[structural.Parameter]): Inherited from Method, the set of parameters for the body.
         owner (Type): Inherited from Method, the type that owns the property.
         code (str): Inherited from Method, code of the body.
     """
@@ -96,7 +96,7 @@ class Condition(Method):
         visibility (str): Inherited from Method, represents the visibility of the condition.
         type (Type): Inherited from Method, represents the type of the condition.
         is_abstract (bool): Inherited from Method, indicates if the condition is abstract.
-        parameters (set[Parameter]): Inherited from Method, the set of parameters for the condition.
+        parameters (set[structural.Parameter]): Inherited from Method, the set of parameters for the condition.
         owner (Type): Inherited from Method, the type that owns the property.
         code (str): Inherited from Method, code of the condition.
     """

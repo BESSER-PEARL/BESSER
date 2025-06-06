@@ -26,32 +26,32 @@ folder and it will look as follows.
 When you run the code generated, the OpenAPI specifications will be generated:
 
 .. code-block:: json
-    
-    {
-    "openapi": "3.1.0",
-    "info": {
-        "title": "FastAPI",
-        "version": "0.1.0"
-    },
-    "paths": {
-        "/author/": {
-            "get": {
-                "tags": [
-                    "author"
-                ],
-                "summary": "Get Author",
-                "operationId": "get_author_author__get",
-                "responses": {
-                    "200": {
-                        "description": "Successful Response",
-                        "content": {
-                            "application/json": {
-                                "schema": {
-                                    "items": {
-                                        "$ref": "#/components/schemas/Author"
-                                    },
-                                    "type": "array",
-                                    "title": "Response Get Author Author  Get"
-                                }
-        ................
+
+   {
+   "openapi": "3.1.0",
+   "info": {
+       "title": "FastAPI",
+       "version": "0.1.0"
+   },
+   "paths": {
+       "/author/": {
+           "get": {
+               "tags": [
+                   "author"
+               ],
+               "summary": "Get Author",
+               "operationId": "get_author_author__get",
+               "responses": {
+                   "200": {
+                       "description": "Successful Response",
+                       "content": {
+                           "application/json": {
+                               "schema": {
+                                   "items": {
+                                       "$ref": "#/components/schemas/Author"
+                                   },
+                                   "type": "array",
+                                   "title": "Response Get Author Author Get"
+                               }}}}}}}}}
+
         

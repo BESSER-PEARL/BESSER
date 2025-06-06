@@ -52,12 +52,12 @@ def domain_model_to_code(model: DomainModel, file_path: str):
     Generates Python code for a B-UML model and writes it to a specified file.
 
     Parameters:
-    model (DomainModel): The B-UML model object containing classes, enumerations, 
-        associations, and generalizations.
-    file_path (str): The path where the generated code will be saved.
+        model (DomainModel): The B-UML model object containing classes, enumerations, 
+            associations, and generalizations.
+        file_path (str): The path where the generated code will be saved.
 
     Outputs:
-    - A Python file containing the base code representation of the B-UML domain model.
+        - A Python file containing the base code representation of the B-UML domain model.
     """
     output_dir = os.path.dirname(file_path)
     if output_dir and not os.path.exists(output_dir):

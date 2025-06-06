@@ -1,5 +1,5 @@
 Agent Models
-===========
+==============
 
 The WME supports the definition of :doc:`agent models <./../buml_language/model_types/agent>` via agent diagrams, which are used to represent agents and their behaviors.
 

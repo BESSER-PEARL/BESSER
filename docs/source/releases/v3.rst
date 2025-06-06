@@ -1,0 +1,7 @@
+Version 2
+=============
+
+.. toctree::
+   :maxdepth: 1
+
+   v3/v3.0.0

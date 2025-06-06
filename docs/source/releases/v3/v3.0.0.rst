@@ -1,0 +1,18 @@
+Version 3.0.0
+=============
+
+Improvements
+------------
+**Web Modeling Editor**:
+
+* Added support for Agent model creation and visualization
+* Agent code generation: Generate fully functional conversational bots directly from agent models using the BESSER Agent Framework (BAF)
+* Enhanced structural models with metadata support - you can now add descriptions and URIs to classes
+
+
+**BESSER Low-code Platform**:
+
+
+* Agent metamodel extension: In B-UML you can now define agent models to represent intelligent entities with state machine-like behavior, including states, transitions, events, conditions, actions, and sessions for building conversational and autonomous agents.
+* Agent code generation: Generate fully functional conversational bots directly from agent models using the BESSER Agent Framework (BAF), with complete Python code including intents, entities, states, transitions, and platform integrations ready for deployment.
+* Structural metamodel enhancement: Added MetadataClass support allowing you to enrich your models with descriptions, URIs, and synonyms for better documentation and semantic information.

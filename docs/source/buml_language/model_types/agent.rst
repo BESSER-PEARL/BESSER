@@ -1,6 +1,11 @@
 Agent model
 ===========
 
+.. warning::
+
+   While you can define agents using the B-UML agent metamodel, the BAF generator still has limitations in terms of supported features. If your goal is to develop an agent in a textual notation, we'd recommend to get accustomed to the BAF.
+   The B-UML agent notation is fitting if you plan to re-use agent components in different agents or if you plan to develop/use model-based techniques on the agents. 
+   If you aim to develop agents graphically, then the BESSER framework provides a graphical editor for that purpose.
 
 Agent metamodel
 -----------------------
@@ -36,4 +41,77 @@ To read about their meaning and usage, please refer to the `documentation <https
 
 .. note::
 
-  The classes highlighted in green originate from the :doc:`structural metamodel <structural>` and :doc:`state machine <state_machine>` .
+The classes highlighted in green originate from the :doc:`structural metamodel <structural>` and :doc:`state machine <state_machine>` .
+
+
+Example agent model
+-------------------
+
+As a simple example, we modeled the `Greetings Agent <https://besser-agentic-framework.readthedocs.io/latest/your_first_agent.html#the-greetings-agent>`_ from the BAF documentation.
+
+.. code-block:: python
+
+    import datetime
+    from besser.BUML.metamodel.state_machine.state_machine import Body, ConfigProperty
+    from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession
+    import operator
+
+    agent = Agent('Generated_Agent')
+
+    agent.add_property(ConfigProperty('websocket_platform', 'websocket.host', 'localhost'))
+    agent.add_property(ConfigProperty('websocket_platform', 'websocket.port', 8765))
+    agent.add_property(ConfigProperty('websocket_platform', 'streamlit.host', 'localhost'))
+    agent.add_property(ConfigProperty('websocket_platform', 'streamlit.port', 5000))
+    agent.add_property(ConfigProperty('nlp', 'nlp.language', 'en'))
+    agent.add_property(ConfigProperty('nlp', 'nlp.region', 'US'))
+    agent.add_property(ConfigProperty('nlp', 'nlp.timezone', 'Europe/Madrid'))
+    agent.add_property(ConfigProperty('nlp', 'nlp.pre_processing', True))
+    agent.add_property(ConfigProperty('nlp', 'nlp.intent_threshold', 0.4))
+
+    # INTENTS
+    Greeting = agent.new_intent('Greeting', [
+        'Hi',
+        'Hello',
+        'Howdy',
+    ])
+    Good = agent.new_intent('Good', [
+        'Good',
+        'Fine',
+        'I m alright',
+    ])
+    Bad = agent.new_intent('Bad', [
+        'Bad',
+        'Not so good',
+        'Could be better',
+    ])
+
+
+    # STATES
+    initial = agent.new_state('initial', initial=True)
+    greeting = agent.new_state('greeting')
+    bad = agent.new_state('bad')
+    good = agent.new_state('good')
+
+    # initial state
+    # greeting state
+    def greeting_body(session: AgentSession):
+        session.reply('Hi!')
+        session.reply('How are you?')
+
+    greeting.set_body(Body('greeting_body', greeting_body))
+    greeting.when_intent_matched(Good).go_to(good)
+    greeting.when_intent_matched(Bad).go_to(bad)
+
+    # bad state
+    def bad_body(session: AgentSession):
+        session.reply('I m sorry to hear that...')
+
+    bad.set_body(Body('bad_body', bad_body))
+    bad.go_to(initial)
+
+    # good state
+    def good_body(session: AgentSession):
+        session.reply('I am glad to hear that!')
+
+    good.set_body(Body('good_body', good_body))
+    good.go_to(initial)

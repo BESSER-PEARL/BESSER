@@ -2,7 +2,7 @@ BESSER Agentic Framework (BAF) Generator
 ========================================
 
 The BAF generator produces a BAF Agent based on a given B-UML agent model.
-Let's generate the agent for Greetings Agent defined in :doc:`../model_types/agent`. You should create a ``BAFGenerator`` object, provide the agent model, and use the ``generate`` method as follows:
+Let's generate the agent for Greetings Agent defined in :doc:`../buml_language/model_types/agent`. You should create a ``BAFGenerator`` object, provide the agent model, and use the ``generate`` method as follows:
 
 .. code-block:: python
     

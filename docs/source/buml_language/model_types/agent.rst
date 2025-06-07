@@ -41,7 +41,7 @@ To read about their meaning and usage, please refer to the `documentation <https
 
 .. note::
 
-The classes highlighted in green originate from the :doc:`structural metamodel <structural>` and :doc:`state machine <state_machine>` .
+    The classes highlighted in green originate from the :doc:`structural metamodel <structural>` and :doc:`state machine <state_machine>` .
 
 
 Example agent model

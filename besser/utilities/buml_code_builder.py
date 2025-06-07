@@ -379,9 +379,25 @@ def agent_model_to_code(model: Agent, file_path: str):
             f.write("])\n")
         f.write("\n")
         
-        # Create an LLM instance for use in state bodies
-        f.write("# Create LLM instance for use in state bodies\n")
-        f.write("llm = LLMOpenAI(agent=agent, name='gpt-4o-mini', parameters={})\n\n")
+        # Check if an LLM is necessary
+        llm_required = False
+        for state in model.states:
+            if state.body:
+                if hasattr(state.body, 'messages') and isinstance(state.body.messages, list) and state.body.messages:
+                    # Check if any of the messages are LLM messages
+                    if any(message.startswith("LLM:") for message in state.body.messages):
+                        llm_required = True
+                        break
+            elif state.fallback_body:
+                if hasattr(state.fallback_body, 'messages') and isinstance(state.fallback_body.messages, list) and state.fallback_body.messages:
+                    # Check if any of the messages are LLM messages
+                    if any(message.startswith("LLM:") for message in state.fallback_body.messages):
+                        llm_required = True
+                        break
+        if llm_required:
+            # Create an LLM instance for use in state bodies
+            f.write("# Create LLM instance for use in state bodies\n")
+            f.write("llm = LLMOpenAI(agent=agent, name='gpt-4o-mini', parameters={})\n\n")
 
         # Write states
         f.write("# STATES\n")
@@ -444,95 +460,95 @@ def agent_model_to_code(model: Agent, file_path: str):
                         # Set the body on the state
                         f.write(f"{state.name}.set_body(Body('{state.name}_body', {state.name}_body))\n")
                 
-                # Write fallback body function if it exists
-                if state.fallback_body:
-                    # Check if the fallback body has a messages attribute
-                    if hasattr(state.fallback_body, 'messages') and isinstance(state.fallback_body.messages, list) and state.fallback_body.messages:
-                        # Check if any of the messages are code messages
-                        has_code = any(message.startswith("CODE:") for message in state.fallback_body.messages)
-                        
-                        if has_code:
-                            # For code messages, write them directly as functions
-                            for message in state.fallback_body.messages:
-                                if message.startswith("CODE:"):
-                                    # Extract the code content
-                                    code_content = message[5:]
-                                    # Write the code directly
-                                    f.write(f"{code_content}\n\n")
-                        
-                            # Set the fallback body to the function defined in the code
-                            # Look for function name in the code
-                            import re
-                            function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
-                            if function_match:
-                                function_name = function_match.group(1)
-                                f.write(f"{state.name}.set_fallback_body(Body('{function_name}', {function_name}))\n")
-                            else:
-                                # If no function name found, use state_name_fallback_body
-                                f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
-                                f.write(f"    session.reply('Code fallback body for {state.name}')\n\n")
-                                f.write(f"{state.name}.set_fallback_body(Body('{state.name}_fallback_body', {state.name}_fallback_body))\n")
-                        else:
-                            # Check if any of the messages are LLM messages
-                            has_llm = any(message.startswith("LLM:") for message in state.fallback_body.messages)
-                            
-                            if has_llm:
-                                # Generate a function that uses llm.predict
-                                f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
-                                f.write(f"    session.reply(llm.predict(session.event.message))\n\n")
-                            else:
-                                # Write a function that outputs all messages
-                                f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
-                                for message in state.fallback_body.messages:
-                                    # Escape single quotes and backslashes
-                                    escaped_message = message.replace('\\', '\\\\').replace("'", "\\'")
-                                    f.write(f"    session.reply('{escaped_message}')\n")
-                                f.write("\n")
-                            
-                            # Set the fallback body on the state
-                            f.write(f"{state.name}.set_fallback_body(Body('{state.name}_fallback_body', {state.name}_fallback_body))\n")
-                
-                # Write transitions
-                for transition in state.transitions:
-                    dest_state = transition.dest
+            # Write fallback body function if it exists
+            if state.fallback_body:
+                # Check if the fallback body has a messages attribute
+                if hasattr(state.fallback_body, 'messages') and isinstance(state.fallback_body.messages, list) and state.fallback_body.messages:
+                    # Check if any of the messages are code messages
+                    has_code = any(message.startswith("CODE:") for message in state.fallback_body.messages)
                     
-                    # Handle different types of transitions
-                    if transition.conditions:
-                        # Check the type of condition
-                        condition_class = transition.conditions.__class__.__name__
-                        
-                        if condition_class == "IntentMatcher":
-                            intent_name = transition.conditions.intent.name
-                            if intent_name == "fallback_intent":
-                                f.write(f"{state.name}.when_no_intent_matched().go_to({dest_state.name})\n")
-                            else:
-                                f.write(f"{state.name}.when_intent_matched({intent_name}).go_to({dest_state.name})\n")
-                        
-                        elif condition_class == "VariableOperationMatcher":
-                            var_name = transition.conditions.var_name
-                            op_name = transition.conditions.operation.__name__
-                            target = transition.conditions.target
-                            f.write(f"{state.name}.when_variable_matches_operation(\n")
-                            f.write(f"    var_name='{var_name}',\n")
-                            f.write(f"    operation=operator.{op_name},\n")
-                            f.write(f"    target='{target}'\n")
-                            f.write(f").go_to({dest_state.name})\n")
-                        
-                        elif condition_class == "FileTypeMatcher":
-                            file_type = transition.conditions.allowed_types
-                            f.write(f"{state.name}.when_file_received('{file_type}').go_to({dest_state.name})\n")
-                        
-                        elif condition_class == "Auto":
-                            f.write(f"{state.name}.go_to({dest_state.name})\n")
-                        
+                    if has_code:
+                        # For code messages, write them directly as functions
+                        for message in state.fallback_body.messages:
+                            if message.startswith("CODE:"):
+                                # Extract the code content
+                                code_content = message[5:]
+                                # Write the code directly
+                                f.write(f"{code_content}\n\n")
+                    
+                        # Set the fallback body to the function defined in the code
+                        # Look for function name in the code
+                        import re
+                        function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
+                        if function_match:
+                            function_name = function_match.group(1)
+                            f.write(f"{state.name}.set_fallback_body(Body('{function_name}', {function_name}))\n")
                         else:
-                            # Default case for custom conditions
-                            f.write(f"# Custom transition from {state.name} to {dest_state.name}\n")
+                            # If no function name found, use state_name_fallback_body
+                            f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
+                            f.write(f"    session.reply('Code fallback body for {state.name}')\n\n")
+                            f.write(f"{state.name}.set_fallback_body(Body('{state.name}_fallback_body', {state.name}_fallback_body))\n")
+                    else:
+                        # Check if any of the messages are LLM messages
+                        has_llm = any(message.startswith("LLM:") for message in state.fallback_body.messages)
+                        
+                        if has_llm:
+                            # Generate a function that uses llm.predict
+                            f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
+                            f.write(f"    session.reply(llm.predict(session.event.message))\n\n")
+                        else:
+                            # Write a function that outputs all messages
+                            f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
+                            for message in state.fallback_body.messages:
+                                # Escape single quotes and backslashes
+                                escaped_message = message.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(f"    session.reply('{escaped_message}')\n")
+                            f.write("\n")
+                        
+                        # Set the fallback body on the state
+                        f.write(f"{state.name}.set_fallback_body(Body('{state.name}_fallback_body', {state.name}_fallback_body))\n")
+            
+            # Write transitions
+            for transition in state.transitions:
+                dest_state = transition.dest
+                
+                # Handle different types of transitions
+                if transition.conditions:
+                    # Check the type of condition
+                    condition_class = transition.conditions.__class__.__name__
+                    
+                    if condition_class == "IntentMatcher":
+                        intent_name = transition.conditions.intent.name
+                        if intent_name == "fallback_intent":
                             f.write(f"{state.name}.when_no_intent_matched().go_to({dest_state.name})\n")
+                        else:
+                            f.write(f"{state.name}.when_intent_matched({intent_name}).go_to({dest_state.name})\n")
+                    
+                    elif condition_class == "VariableOperationMatcher":
+                        var_name = transition.conditions.var_name
+                        op_name = transition.conditions.operation.__name__
+                        target = transition.conditions.target
+                        f.write(f"{state.name}.when_variable_matches_operation(\n")
+                        f.write(f"    var_name='{var_name}',\n")
+                        f.write(f"    operation=operator.{op_name},\n")
+                        f.write(f"    target='{target}'\n")
+                        f.write(f").go_to({dest_state.name})\n")
+                    
+                    elif condition_class == "FileTypeMatcher":
+                        file_type = transition.conditions.allowed_types
+                        f.write(f"{state.name}.when_file_received('{file_type}').go_to({dest_state.name})\n")
+                    
+                    elif condition_class == "Auto":
+                        f.write(f"{state.name}.go_to({dest_state.name})\n")
                     
                     else:
-                        # If no conditions, create a simple transition
-                        f.write(f"{state.name}.go_to({dest_state.name})\n")
+                        # Default case for custom conditions
+                        f.write(f"# Custom transition from {state.name} to {dest_state.name}\n")
+                        f.write(f"{state.name}.when_no_intent_matched().go_to({dest_state.name})\n")
+                
+                else:
+                    # If no conditions, create a simple transition
+                    f.write(f"{state.name}.go_to({dest_state.name})\n")
                 
                 f.write("\n")
 

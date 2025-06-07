@@ -66,4 +66,10 @@ class BAFGenerator(GeneratorInterface):
             generated_code = config_template.render(properties=properties)
             f.write(generated_code)
             print("Agent config file generated in the location: " + config_path)
+        # Copy readme.txt to the output directory
+        readme_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "readme.txt")
+        readme_dst = self.build_generation_path(file_name="readme.txt")
+        if os.path.exists(readme_src):
+            with open(readme_src, "r") as src_file, open(readme_dst, "w") as dst_file:
+                dst_file.write(src_file.read())
 

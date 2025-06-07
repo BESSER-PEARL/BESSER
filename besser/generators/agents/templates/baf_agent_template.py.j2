@@ -1,0 +1,176 @@
+# You may need to add your working directory to the Python path. To do so, uncomment the following lines of code
+# import sys
+# sys.path.append("/Path/to/directory/besser-agentic-framework") # Replace with your directory path
+
+import logging
+import operator
+
+from besser.agent.core.agent import Agent
+from besser.agent.nlp.llm.llm_huggingface import LLMHuggingFace
+from besser.agent.nlp.llm.llm_huggingface_api import LLMHuggingFaceAPI
+from besser.agent.nlp.llm.llm_openai_api import LLMOpenAI
+from besser.agent.nlp.llm.llm_replicate_api import LLMReplicate
+from besser.agent.core.session import Session
+from besser.agent.nlp.intent_classifier.intent_classifier_configuration import LLMIntentClassifierConfiguration, SimpleIntentClassifierConfiguration
+
+# Configure the logging module
+logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
+
+# Create the bot
+agent = Agent('{{ agent.name }}')
+# Load bot properties stored in a dedicated file
+agent.load_properties('config.ini')
+# Define the platform your chatbot will use
+{% for platform in agent.platforms -%}
+{% if platform.__class__.__name__ == 'WebSocketPlatform' -%}
+websocket_platform = agent.use_websocket_platform(use_ui=True)
+{% elif platform.__class__.__name__ == 'TelegramPlatform' -%}
+telegram_platform = agent.use_telegram_platform()
+{% endif -%}
+{% endfor -%}
+
+
+websocket_platform = agent.use_websocket_platform(use_ui=True)
+
+{% macro write_ic_config(ic_config) -%}
+{% if is_class(ic_config, 'SimpleIntentClassifierConfiguration') -%}SimpleIntentClassifierConfiguration(
+        num_words={{ ic_config.num_words }},
+        num_epochs={{ ic_config.num_epochs }},
+        embedding_dim={{ ic_config.embedding_dim }},
+        input_max_num_tokens={{ ic_config.input_max_num_tokens }},
+        discard_oov_sentences={{ ic_config.discard_oov_sentences }},
+        check_exact_prediction_match={{ ic_config.check_exact_prediction_match }},
+        activation_last_layer='{{ ic_config.activation_last_layer }}',
+        activation_hidden_layers='{{ ic_config.activation_hidden_layers }}',
+        lr={{ ic_config.lr }}
+){% elif is_class(ic_config, 'LLMIntentClassifierConfiguration') -%}LLMIntentClassifierConfiguration(
+        llm_suite='{{ ic_config.llm_suite }}',
+        parameters={{ ic_config.parameters }},
+        use_intent_descriptions={{ ic_config.use_intent_descriptions }},
+        use_training_sentences={{ ic_config.use_training_sentences }},
+        use_entity_descriptions={{ ic_config.use_entity_descriptions }},
+        use_entity_synonyms={{ ic_config.use_entity_synonyms }}
+){% endif -%}
+{% endmacro -%}
+
+{% if agent.llms != [] %}
+{% for llm in agent.llms -%}
+llm = {{ llm.__class__.__name__}}(
+    name='{{ llm.name }}',
+    agent=agent,
+    {% if llm.parameters -%}
+    parameters={{ llm.parameters }},
+    {% else -%}
+    parameters={},
+    {% endif -%}
+    {% if llm.num_previous_messages -%}
+    num_previous_messages={{ llm.num_previous_messages }},
+    {% endif -%}
+)
+{% endfor -%}
+{% endif -%}
+
+{% if agent.default_ic_config != None -%}
+agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
+{% endif -%}
+{% if agent.entities -%}
+##############################
+# ENTITIES
+##############################
+
+{% for entity in agent.entities -%}
+{% if is_class(entity, 'BaseEntity') -%}
+from besser.agent.library.entity.base_entities import {{ entity.name }}
+{% endif -%}
+{% endfor %}
+{% for entity in agent.entities -%}
+{% if is_class(entity, 'CustomEntity') -%}
+{{ entity.name }} = agent.new_entity('{{ entity.name }}',
+    {% if entity.description -%}
+    description='{{ entity.description }}',
+    {%  endif -%}
+    entries={
+        {% for entry in entity.entries -%}
+        '{{ entry.value }}': [
+            {% for synonym in entry.synonyms -%}
+            '{{ synonym }}',
+            {% endfor -%}
+        ],
+        {% endfor -%}
+    }
+)
+{% endif -%}
+{% endfor -%}
+{% endif -%}
+##############################
+# INTENTS
+##############################
+
+{% for intent in agent.intents -%}
+{{ intent.name }} = agent.new_intent('{{ intent.name }}', [
+    {% for training_sentence in intent.training_sentences -%}
+    '{{ training_sentence }}',
+    {% endfor -%}
+])
+{% for parameter in intent.parameters -%}
+{{ intent.name }}.parameter('{{ parameter.name }}', '{{ parameter.fragment }}', {{ parameter.entity.name }})
+{% endfor %}
+{% endfor -%}
+
+##############################
+# STATES
+##############################
+
+{% for state in agent.states -%}
+{{ state.name }} = agent.new_state('{{ state.name }}'{% if state.initial %}, initial=True{% endif %}{% if state.ic_config != None %},
+    ic_config={{ write_ic_config(state.ic_config) }}{% endif -%})
+{% endfor %}
+
+{% if agent.global_initial_states != [] -%}
+# GLOBAL STATES
+
+{% for (state, intent) in agent.global_initial_states -%}
+{{ state.name }}.set_global({{ intent.name }})
+{% endfor %}
+{% endif -%}
+{% set ns = namespace(custom_events=[], bodies=[]) -%}
+{% for state in agent.states -%}
+# {{ state.name }}
+{% if state.body != None -%}
+{% if state.body.name not in ns.bodies -%}
+{{ replace_bot_session_with_session_in_signature(state.body) }}
+{% set ns.bodies = ns.bodies + [state.body.name] %}
+{% endif -%}
+{{ state.name }}.set_body({{ state.body.name}})
+{% endif %}
+{% if state.fallback_body != None -%}
+{{ replace_bot_session_with_session_in_signature(state.fallback_body) }}
+{{ state.name }}.set_fallback_body({{ state.fallback_body.name}})
+{% endif %}
+{% for transition in state.transitions -%}
+{% if is_class(transition.conditions, 'IntentMatcher') -%}
+{% if transition.conditions.intent.name == 'fallback_intent' -%}
+{{ state.name }}.when_no_intent_matched().go_to({{ transition.dest.name }})
+{% else -%}
+{{ state.name }}.when_intent_matched({{ transition.conditions.intent.name }}).go_to({{ transition.dest.name }})
+{% endif -%}
+{% elif is_class(transition.conditions, 'VariableOperationMatcher') -%}
+{{ state.name }}.when_variable_matches_operation('{{ transition.conditions.var_name }}', operator.{{ transition.conditions.operation.__name__ }}, '{{ transition.conditions.target }}').go_to({{ transition.dest.name }})
+{% elif is_class(transition.conditions, 'FileTypeMatcher') -%}
+{{ state.name }}.when_file_received({% if transition.conditions.allowed_types -%}{% if is_type(transition.conditions.allowed_types, 'str') -%}'{{ transition.conditions.allowed_types }}'{% else -%}{{ transition.conditions.allowed_types }}{% endif -%}{% endif -%}).go_to({{ transition.dest.name }})
+{% elif is_class(transition.conditions, 'Auto')%}
+{{ state.name }}.go_to({{ transition.dest.name }})
+{% else %}
+{% if transition.event.name not in ns.custom_events -%}
+
+{% set ns.custom_events = ns.custom_events + [transition.event.name] %}
+{% endif -%}
+{{ state.name }}.when_event_go_to({{ transition.event.name }}, {{ transition.dest.name }}, event_params={{ transition.event_params }})
+{% endif -%}
+{% endfor %}
+{% endfor -%}
+
+# RUN APPLICATION
+
+if __name__ == '__main__':
+    agent.run()

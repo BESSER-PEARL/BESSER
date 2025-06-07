@@ -26,6 +26,7 @@ own generator).
    generators/build_generator
    generators/pytorch
    generators/tensorflow
+   generators/baf
 
 
 .. warning::

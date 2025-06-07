@@ -73,7 +73,7 @@ For this example, the file contains the following information:
 
 
 Model Generation
----------------
+------------------
 
 To generate the B-UML model for this example, follow the instructions outlined in the :doc:`UI Mock-Up to B-UML <../buml_language/model_building/mockup_to_buml>` section.
 Once all steps are completed:

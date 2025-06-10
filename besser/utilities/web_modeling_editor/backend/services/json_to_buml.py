@@ -728,9 +728,8 @@ def process_agent_diagram(json_data):
     agent.add_property(ConfigProperty('nlp', 'nlp.replicate.api_key', 'YOUR-API-KEY'))
 
     # Get elements and relationships from the JSON data
-    # The elements structure is different than expected - it's directly under 'elements', not nested
-    elements = json_data.get('elements', {})
-    relationships = json_data.get('relationships', {})
+    elements = json_data.get('elements', {}).get('elements', {})
+    relationships = json_data.get('elements', {}).get('relationships', {})
     
     # Track states and bodies for later reference
     states_by_id = {}

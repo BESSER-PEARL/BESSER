@@ -165,7 +165,7 @@ async def generate_output(input_data: ClassDiagramInput):
         if generator == "agent":
             try:
                 # Create the agent model from the elements
-                agent_model = process_agent_diagram(input_data.elements)
+                agent_model = process_agent_diagram(json_data)
                 zip_buffer, file_name = generate_agent_files(agent_model)
                 
                 return StreamingResponse(
@@ -439,7 +439,7 @@ async def export_buml(input_data: ClassDiagramInput):
                 headers={"Content-Disposition": "attachment; filename=domain_model.py"},
             )
         elif elements_data.get("type") == "AgentDiagram":
-            agent_model = process_agent_diagram(elements_data)
+            agent_model = process_agent_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "agent_buml.py")
             agent_model_to_code(agent_model, output_file_path)
             with open(output_file_path, "rb") as f:

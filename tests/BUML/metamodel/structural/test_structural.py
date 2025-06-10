@@ -252,11 +252,13 @@ def test_classes_sorted_by_inheritance():
 
 # Testing synonyms of a Named Element
 def test_synonyms():
-    class_a: Class = Class(name="Library", synonyms=["synonym1", "synonym2", "synonym3"])
-    assert len(class_a.synonyms) == 3
-    assert class_a.synonyms[0] == "synonym1"
-    assert class_a.synonyms[1] == "synonym2"
-    assert class_a.synonyms[2] == "synonym3"
+    metadata: Metadata = Metadata()
+    metadata.synonyms = ["synonym1", "synonym2", "synonym3"]
+    class_a: Class = Class(name="Library", metadata=metadata)
+    assert len(class_a.metadata.synonyms) == 3
+    assert class_a.metadata.synonyms[0] == "synonym1"
+    assert class_a.metadata.synonyms[1] == "synonym2"
+    assert class_a.metadata.synonyms[2] == "synonym3"
 
 # Testing all_parents and inherited_attributes methods
 # GrandParent (attr1)

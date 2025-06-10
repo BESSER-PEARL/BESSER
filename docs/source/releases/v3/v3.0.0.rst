@@ -1,0 +1,25 @@
+Version 3.0.0
+=============
+
+New Features and Improvements
+-----------------------------
+
+**Web Modeling Editor**:
+
+* Added support for Agent model creation and visualization
+* Agent code generation: Generate fully functional conversational agents directly from agent models using `BESSER Agentic Framework (BAF) <https://github.com/BESSER-PEARL/BESSER-Agentic-Framework>`_
+* Enhanced structural models with metadata support - you can now add descriptions and URIs to classes
+
+
+**BESSER Low-code Platform**:
+
+* Agent metamodel extension: In B-UML you can now define agent models to represent intelligent entities with state machine-like behavior, including states, transitions, events, conditions, actions, and sessions for building conversational and autonomous agents.
+* Agent code generation: Generate fully functional conversational agents directly from agent models using BAF, with complete Python code including intents, entities, states, transitions, and platform integrations ready for deployment.
+* Structural metamodel enhancement: Added MetadataClass support allowing you to enrich your models with descriptions, URIs, and synonyms for better documentation and semantic information.
+* Improved the Python Generator to support generation of methods to handle bidirectional consistency in associations
+
+Fixes
+-----
+
+* Fixed issue: `291 <https://github.com/BESSER-PEARL/BESSER/issues/291>`_ 
+* Fixed issue: `289 <https://github.com/BESSER-PEARL/BESSER/issues/289>`_

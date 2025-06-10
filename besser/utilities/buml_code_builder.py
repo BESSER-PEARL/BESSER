@@ -1,5 +1,7 @@
 import os
-from besser.BUML.metamodel.structural.structural import DomainModel, AssociationClass
+from besser.BUML.metamodel.structural.structural import DomainModel, AssociationClass, Metadata
+from besser.BUML.metamodel.state_machine.agent import Agent, Intent
+from besser.BUML.metamodel.state_machine.state_machine import Body
 from besser.utilities import sort_by_timestamp as sort
 
 PRIMITIVE_TYPE_MAPPING = {
@@ -50,12 +52,12 @@ def domain_model_to_code(model: DomainModel, file_path: str):
     Generates Python code for a B-UML model and writes it to a specified file.
 
     Parameters:
-    model (DomainModel): The B-UML model object containing classes, enumerations, 
-        associations, and generalizations.
-    file_path (str): The path where the generated code will be saved.
+        model (DomainModel): The B-UML model object containing classes, enumerations, 
+            associations, and generalizations.
+        file_path (str): The path where the generated code will be saved.
 
     Outputs:
-    - A Python file containing the base code representation of the B-UML domain model.
+        - A Python file containing the base code representation of the B-UML domain model.
     """
     output_dir = os.path.dirname(file_path)
     if output_dir and not os.path.exists(output_dir):
@@ -72,7 +74,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         f.write("    Enumeration, EnumerationLiteral, Multiplicity,\n")
         f.write("    StringType, IntegerType, FloatType, BooleanType,\n")
         f.write("    TimeType, DateType, DateTimeType, TimeDeltaType,\n")
-        f.write("    AnyType, Constraint, AssociationClass\n")
+        f.write("    AnyType, Constraint, AssociationClass, Metadata\n")
         f.write(")\n\n")
 
         # Write enumerations only if they exist
@@ -103,7 +105,26 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         f.write("# Classes\n")
         for cls in regular_classes:
             cls_var_name = safe_class_name(cls.name)
-            f.write(f"{cls_var_name} = Class(name=\"{cls.name}\"{', is_abstract=True' if cls.is_abstract else ''})\n")
+            
+            # Build class creation parameters
+            class_params = [f'name="{cls.name}"']
+            
+            if cls.is_abstract:
+                class_params.append('is_abstract=True')
+            
+            # Add metadata if it exists
+            if hasattr(cls, 'metadata') and cls.metadata:
+                metadata_params = []
+                if cls.metadata.description:
+                    metadata_params.append(f'description="{cls.metadata.description}"')
+                if cls.metadata.uri:
+                    metadata_params.append(f'uri="{cls.metadata.uri}"')
+                
+                if metadata_params:
+                    metadata_str = f"Metadata({', '.join(metadata_params)})"
+                    class_params.append(f'metadata={metadata_str}')
+            
+            f.write(f"{cls_var_name} = Class({', '.join(class_params)})\n")
         f.write("\n")
 
         # Write class members for regular classes
@@ -315,3 +336,221 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         f.write(")\n")
 
     print(f"BUML model saved to {file_path}")
+
+def agent_model_to_code(model: Agent, file_path: str):
+    """
+    Generates Python code for a B-UML Agent model and writes it to a specified file.
+
+    Parameters:
+    model (Agent): The B-UML Agent model object containing states, intents, and transitions.
+    file_path (str): The path where the generated code will be saved.
+
+    Outputs:
+    - A Python file containing the code representation of the B-UML agent model.
+    """
+    output_dir = os.path.dirname(file_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    if not file_path.endswith('.py'):
+        file_path += '.py'
+
+    with open(file_path, 'w', encoding='utf-8') as f:
+        # Write imports
+        f.write("# Generated B-UML Agent Model\n")
+        f.write("import datetime\n")
+        f.write("from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty\n")
+        f.write("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate\n")
+        f.write("import operator\n\n")
+
+        # Create agent
+        f.write(f"agent = Agent('{model.name}')\n\n")
+        
+        # Write configuration properties
+        for prop in model.properties:
+            f.write(f"agent.add_property(ConfigProperty('{prop.section}', '{prop.name}', {repr(prop.value)}))\n")
+        f.write("\n")
+
+        # Write intents
+        f.write("# INTENTS\n")
+        for intent in model.intents:
+            f.write(f"{intent.name} = agent.new_intent('{intent.name}', [\n")
+            for sentence in intent.training_sentences:
+                f.write(f"    '{sentence}',\n")
+            f.write("])\n")
+        f.write("\n")
+        
+        # Check if an LLM is necessary
+        llm_required = False
+        for state in model.states:
+            if state.body:
+                if hasattr(state.body, 'messages') and isinstance(state.body.messages, list) and state.body.messages:
+                    # Check if any of the messages are LLM messages
+                    if any(message.startswith("LLM:") for message in state.body.messages):
+                        llm_required = True
+                        break
+            elif state.fallback_body:
+                if hasattr(state.fallback_body, 'messages') and isinstance(state.fallback_body.messages, list) and state.fallback_body.messages:
+                    # Check if any of the messages are LLM messages
+                    if any(message.startswith("LLM:") for message in state.fallback_body.messages):
+                        llm_required = True
+                        break
+        if llm_required:
+            # Create an LLM instance for use in state bodies
+            f.write("# Create LLM instance for use in state bodies\n")
+            f.write("llm = LLMOpenAI(agent=agent, name='gpt-4o-mini', parameters={})\n\n")
+
+        # Write states
+        f.write("# STATES\n")
+        for state in model.states:
+            f.write(f"{state.name} = agent.new_state('{state.name}'")
+            if state.initial:
+                f.write(", initial=True")
+            f.write(")\n")
+        f.write("\n")
+
+        # Write bodies for states
+        for state in model.states:
+            f.write(f"# {state.name} state\n")
+            
+            # Write body function if it exists
+            if state.body:
+                # Check if the body has a messages attribute
+                if hasattr(state.body, 'messages') and isinstance(state.body.messages, list) and state.body.messages:
+                    # Check if any of the messages are code messages
+                    has_code = any(message.startswith("CODE:") for message in state.body.messages)
+                    
+                    if has_code:
+                        # For code messages, write them directly as functions
+                        for message in state.body.messages:
+                            if message.startswith("CODE:"):
+                                # Extract the code content
+                                code_content = message[5:]
+                                # Write the code directly
+                                f.write(f"{code_content}\n\n")
+                        
+                        # Set the body to the function defined in the code
+                        # Look for function name in the code
+                        import re
+                        function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
+                        if function_match:
+                            function_name = function_match.group(1)
+                            f.write(f"{state.name}.set_body(Body('{function_name}', {function_name}))\n")
+                        else:
+                            # If no function name found, use state_name_body
+                            f.write(f"def {state.name}_body(session: AgentSession):\n")
+                            f.write(f"    session.reply('Code body for {state.name}')\n\n")
+                            f.write(f"{state.name}.set_body(Body('{state.name}_body', {state.name}_body))\n")
+                    else:
+                        # Check if any of the messages are LLM messages
+                        has_llm = any(message.startswith("LLM:") for message in state.body.messages)
+                        
+                        if has_llm:
+                            # Generate a function that uses llm.predict
+                            f.write(f"def {state.name}_body(session: AgentSession):\n")
+                            f.write(f"    session.reply(llm.predict(session.event.message))\n\n")
+                        else:
+                            # Write a function that outputs all messages
+                            f.write(f"def {state.name}_body(session: AgentSession):\n")
+                            for message in state.body.messages:
+                                # Escape single quotes and backslashes
+                                escaped_message = message.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(f"    session.reply('{escaped_message}')\n")
+                            f.write("\n")
+                        
+                        # Set the body on the state
+                        f.write(f"{state.name}.set_body(Body('{state.name}_body', {state.name}_body))\n")
+                
+            # Write fallback body function if it exists
+            if state.fallback_body:
+                # Check if the fallback body has a messages attribute
+                if hasattr(state.fallback_body, 'messages') and isinstance(state.fallback_body.messages, list) and state.fallback_body.messages:
+                    # Check if any of the messages are code messages
+                    has_code = any(message.startswith("CODE:") for message in state.fallback_body.messages)
+                    
+                    if has_code:
+                        # For code messages, write them directly as functions
+                        for message in state.fallback_body.messages:
+                            if message.startswith("CODE:"):
+                                # Extract the code content
+                                code_content = message[5:]
+                                # Write the code directly
+                                f.write(f"{code_content}\n\n")
+                    
+                        # Set the fallback body to the function defined in the code
+                        # Look for function name in the code
+                        import re
+                        function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
+                        if function_match:
+                            function_name = function_match.group(1)
+                            f.write(f"{state.name}.set_fallback_body(Body('{function_name}', {function_name}))\n")
+                        else:
+                            # If no function name found, use state_name_fallback_body
+                            f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
+                            f.write(f"    session.reply('Code fallback body for {state.name}')\n\n")
+                            f.write(f"{state.name}.set_fallback_body(Body('{state.name}_fallback_body', {state.name}_fallback_body))\n")
+                    else:
+                        # Check if any of the messages are LLM messages
+                        has_llm = any(message.startswith("LLM:") for message in state.fallback_body.messages)
+                        
+                        if has_llm:
+                            # Generate a function that uses llm.predict
+                            f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
+                            f.write(f"    session.reply(llm.predict(session.event.message))\n\n")
+                        else:
+                            # Write a function that outputs all messages
+                            f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
+                            for message in state.fallback_body.messages:
+                                # Escape single quotes and backslashes
+                                escaped_message = message.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(f"    session.reply('{escaped_message}')\n")
+                            f.write("\n")
+                        
+                        # Set the fallback body on the state
+                        f.write(f"{state.name}.set_fallback_body(Body('{state.name}_fallback_body', {state.name}_fallback_body))\n")
+            
+            # Write transitions
+            for transition in state.transitions:
+                dest_state = transition.dest
+                
+                # Handle different types of transitions
+                if transition.conditions:
+                    # Check the type of condition
+                    condition_class = transition.conditions.__class__.__name__
+                    
+                    if condition_class == "IntentMatcher":
+                        intent_name = transition.conditions.intent.name
+                        if intent_name == "fallback_intent":
+                            f.write(f"{state.name}.when_no_intent_matched().go_to({dest_state.name})\n")
+                        else:
+                            f.write(f"{state.name}.when_intent_matched({intent_name}).go_to({dest_state.name})\n")
+                    
+                    elif condition_class == "VariableOperationMatcher":
+                        var_name = transition.conditions.var_name
+                        op_name = transition.conditions.operation.__name__
+                        target = transition.conditions.target
+                        f.write(f"{state.name}.when_variable_matches_operation(\n")
+                        f.write(f"    var_name='{var_name}',\n")
+                        f.write(f"    operation=operator.{op_name},\n")
+                        f.write(f"    target='{target}'\n")
+                        f.write(f").go_to({dest_state.name})\n")
+                    
+                    elif condition_class == "FileTypeMatcher":
+                        file_type = transition.conditions.allowed_types
+                        f.write(f"{state.name}.when_file_received('{file_type}').go_to({dest_state.name})\n")
+                    
+                    elif condition_class == "Auto":
+                        f.write(f"{state.name}.go_to({dest_state.name})\n")
+                    
+                    else:
+                        # Default case for custom conditions
+                        f.write(f"# Custom transition from {state.name} to {dest_state.name}\n")
+                        f.write(f"{state.name}.when_no_intent_matched().go_to({dest_state.name})\n")
+                
+                else:
+                    # If no conditions, create a simple transition
+                    f.write(f"{state.name}.go_to({dest_state.name})\n")
+                
+                f.write("\n")
+
+
+    print(f"Agent model saved to {file_path}")

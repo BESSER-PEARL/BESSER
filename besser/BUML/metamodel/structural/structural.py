@@ -985,6 +985,13 @@ class Class(Type):
 
     def _validate_unique_end_names(self, ends):
         """Ensure that no association end has a duplicate name in this class or its specializations."""
+        # Check for duplicate end names within the provided ends
+        new_names = [e.name for e in ends]
+        if len(new_names) != len(set(new_names)):
+            raise ValueError(
+                f"The association introduces duplicate end names: {', '.join(n for n in new_names if new_names.count(n) > 1)}"
+            )
+
         # Check against current class's ends
         existing_end_names = {e.name for e in self.all_association_ends()}
         for end in ends:
@@ -1137,13 +1144,16 @@ class Association(NamedElement):
             ValueError: if an association has less than two ends.
         """
         if len(ends) <= 1:
-            raise ValueError("An association must have more than one end")
+             raise ValueError("An association must have more than one end")
+        names = [e.name for e in ends]
+        if len(names) != len(set(names)):
+            raise ValueError("Association ends must have unique names")
         if hasattr(self, "ends"):
             for end in self.ends:
                 end.type._delete_association(association=self)
         for end in ends:
-            end.owner = self
             end.type._validate_unique_end_names(ends={e for e in ends if e != end})
+            end.owner = self
             end.type._add_association(association=self)
         self.__ends = ends
 

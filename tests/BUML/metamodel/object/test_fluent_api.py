@@ -78,13 +78,13 @@ domain_model = DomainModel(
 
 def test_team_creation():
     team = Team("team1").attributes(name="Lakers", city="LA", division="West").build()
-    #assert team.name == "Lakers"
+    assert team.name == "Lakers"
     assert team.city == "LA"
     assert team.division == "West"
 
 def test_player_creation():
     player = Player("player1").attributes(name="LeBron", age=38, position="Forward", jerseyNumber=6, country="USA").build()
-    #assert player.name == "LeBron"
+    assert player.name == "LeBron"
     assert player.age == 38
     assert player.position == "Forward"
     assert player.jerseyNumber == 6
@@ -92,7 +92,7 @@ def test_player_creation():
 
 def test_coach_creation():
     coach = Coach("coach1").attributes(name="Vogel", salary=100, country="USA").build()
-    #assert coach.name == "Vogel"
+    assert coach.name == "Vogel"
     assert coach.salary == 100
     assert coach.country == "USA"
 
@@ -103,7 +103,6 @@ def test_player_plays_for_team():
     assert player.plays_for == team
     assert player.plays_for.division == "West"
 
-#####Cheks what happens here
 def test_player_follows_team():
     team = Team("team3").attributes(name="Bulls", city="Chicago", division="East").build()
     player = Player("player3").attributes(name="Jordan", age=59, position="Guard", jerseyNumber=23, country="USA") \

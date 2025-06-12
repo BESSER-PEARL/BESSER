@@ -407,9 +407,9 @@ class Link(NamedElement):
     @connections.setter
     def connections(self, connections: list[LinkEnd]):
         """list[LinkEnd]: Method to set the connections"""
-        if hasattr(self, "connections"):
-            for conn in self.connections:
-                conn.object._delete_link(link=self)
+        old_conns = getattr(self, "_Link__connections", [])
+        for conn in old_conns:
+             conn.object._delete_link(link=self)
         for end in connections:
             end.object._add_link(link=self)
             end.owner = self
@@ -437,7 +437,7 @@ class ObjectModel(NamedElement):
 
     def __init__(self, name: str, objects: set[Object] = None):
         super().__init__(name)
-        self.objects: set[Object] = objects
+        self.objects: set[Object] = objects if objects is not None else set()
 
     @property
     def instances(self) -> set[Union[Object, DataValue]]:

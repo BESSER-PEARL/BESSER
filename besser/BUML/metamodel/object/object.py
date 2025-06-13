@@ -1,5 +1,7 @@
 import string
-from besser.BUML.metamodel.structural import NamedElement, Property, Type, Association
+import datetime
+from typing import Union
+from besser.BUML.metamodel.structural import NamedElement, Property, Type, Association, PrimitiveDataType
 
 class AttributeLink():
     """An attribute link is a named slot in an instance, which holds the value of an attribute
@@ -77,53 +79,72 @@ class Instance(NamedElement):
         self.__classifier = classifier
 
 class Object(Instance):
-    """ An object is an instance that originates from a class.
-    
+    """An object is an instance that originates from a class.
+
     Args:
         name (str): the name of the object instance
         classifier (Type): the classifier of the object instance. It could be for example a Class or a PrimitiveDataType of the structural metamodel.
         slots (list[AttributeLink]): list of properties of the instance
-    
+
     Attributes:
         name (str): inherited from NamedElement, represents the name of the object instance.
         classifier (Type): Inherited from Instance, represents the classifier of the object.
         slots (list[AttributeLink]): list of properties of the instance
     """
-    def __init__(self, name: str, classifier: Type, slots: list[AttributeLink] = []):
+    def __init__(self, name: str, classifier: Type, slots: list[AttributeLink] = None):
         super().__init__(name, classifier)
-
-        self.slots: list[AttributeLink] = slots
+        self.slots = slots if slots is not None else []
         self.__links: set[Link] = set()
 
     @property
+    def name(self):
+        """str: Get the name of the object instance."""
+        return self.__getattr__("name")
+
+    @name.setter
+    def name(self, name: str):
+        """str: Set the name of the object instance."""
+        object.__setattr__(self, "_name", name)
+
+    @property
+    def name_(self):
+        """str: Get the name of the object instance."""
+        return self._name
+
+    @name_.setter
+    def name_(self, name: str):
+        """str: Set the name of the object instance."""
+        object.__setattr__(self, "_name", name)
+
+    @property
     def slots(self) -> list[AttributeLink]:
-        """list[AttributeLink]: Get the slots."""
+        """list[AttributeLink]: Get the list of slots (attributes) of the object instance."""
         return self.__slots
 
     @slots.setter
     def slots(self, slots: list[AttributeLink]):
-        """list[AttributeLink]: Set the slots."""
+        """list[AttributeLink]: Set the list of slots (attributes) of the object instance."""
         self.__slots = slots
 
     def add_slot(self, slot: AttributeLink):
-        """ Method to add attribute link to slots"""
+        """Add a slot (attribute) to the object instance."""
         self.__slots.append(slot)
 
     @property
     def links(self) -> set:
-        """set[Link]: Get the set of links involving the object."""
+        """set[Link]: Get the set of links associated with the object instance."""
         return self.__links
 
     def _add_link(self, link):
-        """Link: Add an link to the set of object links."""
+        """Add a link to the object instance."""
         self.__links.add(link)
 
     def _delete_link(self, link):
-        """Link: Remove a link to the set of object links."""
+        """Delete a link from the object instance."""
         self.__links.discard(link)
 
     def link_ends(self) -> set:
-        """set[LinkEnd]: Get the set of link ends of the object."""
+        """Get the set of link ends associated with the object instance."""
         ends = set()
         for link in self.__links:
             l_ends = link.connections
@@ -136,18 +157,112 @@ class Object(Instance):
         return ends
 
     def __getattr__(self, item):
-        """
-        Gets the value of an attribute using its name..
-
-        """
+        """Get the value of an attribute or link end by its name."""
         for attr in self.__slots:
             if attr.attribute.name == item:
                 return attr.value.value
-        raise AttributeError(f"'{self.name}' object has no attribute '{item}'")
+
+        if item == "name":
+            return self.name_
+
+        matches = [le.object for le in self.link_ends() if le.name == item]
+        if not matches:
+            raise AttributeError(
+                f"'{self.name_}' object, instance of the '{self.classifier.name}' class, "
+                f"has no attribute or link '{item}'"
+            )
+
+        return matches[0] if len(matches) == 1 else set(matches)
+
+    def __setattr__(self, key, value):
+        """Set the value of an attribute or create a link end if the key matches an association end."""
+        if self._is_internal_attr(key):
+            object.__setattr__(self, key, value)
+            return
+
+        if self._is_fully_initialized():
+            if self._set_slot_value(key, value):
+                return
+            if self._set_classifier_attribute(key, value):
+                return
+            if self._handle_association_end(key, value):
+                return
+
+            if key != "name":
+                raise AttributeError(
+                    f"'{self.name_}' object, instance of the '{self.classifier.name}' class, "
+                    f"has no attribute or link '{key}'"
+                )
+
+        object.__setattr__(self, key, value)
+
+    def _is_internal_attr(self, key: str) -> bool:
+        """Check if the key is an internal attribute of the Object class."""
+        return key in {"name_", "classifier", "slots", "_Object__links", "_Object__slots"}
+
+    def _is_fully_initialized(self) -> bool:
+        """Check if the Object instance is fully initialized."""
+        return "_Object__slots" in self.__dict__ and "_Instance__classifier" in self.__dict__
+
+    def _set_slot_value(self, key: str, value) -> bool:
+        """Set the value of an attribute link if it exists in the slots."""
+        for attr_link in self.__slots:
+            if attr_link.attribute.name == key:
+                if isinstance(value, DataValue):
+                    attr_link.value = value
+                else:
+                    attr_link.value.value = value
+                return True
+        return False
+
+    def _set_classifier_attribute(self, key: str, value) -> bool:
+        """Set the value of an attribute if it exists in the classifier's attributes."""
+        for attr in self.classifier.attributes | self.classifier.inherited_attributes():
+            if attr.name == key:
+                data_value = DataValue(classifier=attr.type, value=value)
+                self.slots.append(AttributeLink(value=data_value, attribute=attr))
+                return True
+        return False
+
+    def _handle_association_end(self, key: str, value) -> bool:
+        """Handle the case where the key matches an association end."""
+        for tgt_end in self.classifier.all_association_ends():
+            if tgt_end.name != key:
+                continue
+
+            association = tgt_end.owner
+            src_end = next((end for end in association.ends if end != tgt_end), None)
+            old_links = [e_link.owner for e_link in self.link_ends() if e_link.association_end.name == key]
+
+            if isinstance(value, Object):
+                self._create_link(src_end, tgt_end, value, association)
+            elif isinstance(value, set):
+                for item in value:
+                    self._create_link(src_end, tgt_end, item, association)
+            else:
+                raise TypeError(
+                    f"Invalid value type for association end '{key}': expected Object or set of Objects, "
+                    f"but received {type(value).__name__} with value '{value}'."
+                )
+
+            for old_link in old_links:
+                self._delete_link(old_link)
+            return True
+        return False
+
+    def _create_link(self, src_end, tgt_end, target, association):
+        """Create a link between the source end and the target object."""
+        Link(
+            name=f"{self.name_}_to_{target.name}",
+            association=association,
+            connections=[
+                LinkEnd(name=src_end.name, association_end=src_end, object=self),
+                LinkEnd(name=tgt_end.name, association_end=tgt_end, object=target)
+            ]
+        )
 
     def __repr__(self):
         return f'Object({self.name}, {self.classifier}, {self.slots})'
-
 
 class DataValue(Instance):
     """ An DataValue represent the value of a property or attribute of an Object.
@@ -163,7 +278,7 @@ class DataValue(Instance):
 
     def __init__(self, classifier: Type, value, name=""):
         super().__init__(name, classifier)
-        self.__value = value
+        self.value = value
 
     @property
     def value(self):
@@ -172,8 +287,30 @@ class DataValue(Instance):
 
     @value.setter
     def value(self, val):
-        """Method to set Value"""
+        # Only validate for known primitive types
+        if isinstance(self.classifier, PrimitiveDataType):
+            expected_type = self._primitive_type_to_python_type(self.classifier.name)
+            if expected_type is not None and not isinstance(val, expected_type):
+                raise TypeError(
+                    f"Invalid value type: expected a value of type '{self.classifier.name}', "
+                    f"but received a value of type '{type(val).__name__}' with value '{val}'."
+                )
         self.__value = val
+
+    def _primitive_type_to_python_type(self, typename: str):
+        """Maps a BESSER primitive type name to the corresponding Python type."""
+        mapping = {
+            "str": str,
+            "int": int,
+            "float": float,
+            "bool": bool,
+            "time": datetime.time,
+            "date": datetime.date,
+            "datetime": datetime.datetime,
+            "timedelta": datetime.timedelta,
+            "any": object,
+        }
+        return mapping.get(typename)
 
 class LinkEnd(NamedElement):
     """ A link end is an end point of a link.
@@ -182,17 +319,21 @@ class LinkEnd(NamedElement):
         name (str): the name of the LinkEnd
         association_end (Property): the end represeted by the LinkEnd
         object (Object): the object pointed to by the LinkEnd
+        owner (Link): the Link that owns this LinkEnd
     
     Attributes:
         name (str): inherited from NamedElement, represents the name of the LinkEnd
         association_end (Property): the end of the link
         object (Object): the object pointed to by the LinkEnd
+        owner (Link): the Link that owns this LinkEnd
     """
 
-    def __init__(self, name:str, association_end: Property, object: Object):
+    def __init__(self, name:str, association_end: Property, object: Object, owner: "Link" = None):
         super().__init__(name)
         self.association_end: Property = association_end
         self.object: Object = object
+        self._owner = None
+        self.owner: "Link" = owner
 
     @property
     def association_end(self):
@@ -213,6 +354,21 @@ class LinkEnd(NamedElement):
     def object(self, object: Object):
         """Object: Method to set the object"""
         self.__object = object
+    
+    @property
+    def owner(self):
+        """Link: Method to retrieve the owner link"""
+        return self._owner
+    
+    @owner.setter
+    def owner(self, owner: "Link"):
+        """Link: Method to set the owner link"""
+        if self._owner is not None:
+            self._owner.connections.remove(self)
+        self._owner = owner
+
+    def __repr__(self):
+        return f'LinkEnd({self.name}, end_name={self.association_end.name}, object_linked={self.object.name})'
 
 class Link(NamedElement):
     """ A link represent a relationship between objects.
@@ -251,51 +407,66 @@ class Link(NamedElement):
     @connections.setter
     def connections(self, connections: list[LinkEnd]):
         """list[LinkEnd]: Method to set the connections"""
-        if hasattr(self, "connections"):
-            for conn in self.connections:
-                conn.object._delete_link(link=self)
+        old_conns = getattr(self, "_Link__connections", [])
+        for conn in old_conns:
+             conn.object._delete_link(link=self)
         for end in connections:
             end.object._add_link(link=self)
+            end.owner = self
         self.__connections = connections
 
-    def add_to_connection(self,linkEnd):
+    def add_to_connection(self, linkEnd):
         """Method to add linkend"""
+        linkEnd.owner = self
         self.connections.append(linkEnd)
 
+    def __repr__(self):
+        return f'Link({self.name}, {self.association.name}, {self.connections})'
+
 class ObjectModel(NamedElement):
-    """ An object model is the root element that comprises a number of instances and links.
+    """ An object model is the root element that comprises a number of objects.
 
     Args:
         name (str): the name of the object model
-        
+        objects (set[Object]): set of objects in the model
     
     Attributes:
         name (str): inherited from NamedElement, represents the name of the model
-        association (Association): the Association that represents the Link
-        connections: list of link ends.
+        objects (set[Object]): set of objects in the model
     """
 
-    def __init__(self, name: str, instances: set[Instance], links: set[Link]):
+    def __init__(self, name: str, objects: set[Object] = None):
         super().__init__(name)
-        self.instances: set[Instance] = instances
-        self.links: set[Link] = links
+        self.objects: set[Object] = objects if objects is not None else set()
 
     @property
-    def instances(self):
-        """Association: Method to retrieve the instances"""
-        return self.__instances
-
-    @instances.setter
-    def instances(self, instances: set[Instance]):
-        """Association: Method to set the instances"""
-        self.__instances = instances
+    def instances(self) -> set[Union[Object, DataValue]]:
+        """set[Union[Object, DataValue]: Method to retrieve the intances (Objects + DataValues)."""
+        all_instances = set(self.__objects)
+        for obj in self.__objects:
+            for slot in obj.slots:
+                if isinstance(slot.value, DataValue):
+                    all_instances.add(slot.value)
+        return all_instances
 
     @property
-    def links(self):
-        """Association: Method to retrieve the links"""
-        return self.__links
+    def links(self) -> set[Link]:
+        """set[Link]: Method to retrieve the links."""
+        all_links = set()
+        for obj in self.__objects:
+            all_links.update(obj.links)
+        return all_links
 
-    @links.setter
-    def links(self, links: set[Instance]):
-        """Association: Method to set the links"""
-        self.__links = links
+    @property
+    def objects(self) -> set[Object]:
+        """set[Object]: Method to retrieve the objects."""
+        return self.__objects
+
+    @objects.setter
+    def objects(self, objects: set[Object]):
+        """set[Object]: Method to set the objects"""
+        self.__objects = objects
+
+    def add_object(self, obj: Object):
+        """Object: Method to add an object to the set of objects."""
+        self.__objects.add(obj)

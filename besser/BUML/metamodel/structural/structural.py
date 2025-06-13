@@ -1039,6 +1039,32 @@ class Class(Type):
         """Association: Add an association to the set of class associations."""
         self.__associations.add(association)
 
+    def _validate_unique_end_names(self, ends):
+        """Ensure that no association end has a duplicate name in this class or its specializations."""
+        # Check for duplicate end names within the provided ends
+        new_names = [e.name for e in ends]
+        if len(new_names) != len(set(new_names)):
+            raise ValueError(
+                f"The association introduces duplicate end names: {', '.join(n for n in new_names if new_names.count(n) > 1)}"
+            )
+
+        # Check against current class's ends
+        existing_end_names = {e.name for e in self.all_association_ends()}
+        for end in ends:
+            if end.name in existing_end_names:
+                raise ValueError(
+                    f"The class '{self.name}' cannot have two association ends with the same name: '{end.name}'"
+                )
+
+        # Check against children/specialized classes' ends
+        for child in self.all_specializations():
+            child_end_names = {e.name for e in child.association_ends()}
+            for end in ends:
+                if end.name in child_end_names:
+                    raise ValueError(
+                        f"The class '{child.name}' cannot have two association ends with the same name: '{end.name}'"
+                    )
+
     def _delete_association(self, association):
         """Association: Remove an association to the set of class associations."""
         self.__associations.discard(association)
@@ -1123,6 +1149,10 @@ class Class(Type):
                 return attribute
         return None
 
+    def __call__(self, instance_name: str):
+        from besser.BUML.metamodel.object.builder import ObjectBuilder
+        return ObjectBuilder(self).name(instance_name)
+
     def __repr__(self):
         return (
             f'Class({self.name}, {self.attributes}, {self.methods}, {self.timestamp}, {self.metadata}, '
@@ -1170,11 +1200,15 @@ class Association(NamedElement):
             ValueError: if an association has less than two ends.
         """
         if len(ends) <= 1:
-            raise ValueError("An association must have more than one end")
+             raise ValueError("An association must have more than one end")
+        names = [e.name for e in ends]
+        if len(names) != len(set(names)):
+            raise ValueError("Association ends must have unique names")
         if hasattr(self, "ends"):
             for end in self.ends:
                 end.type._delete_association(association=self)
         for end in ends:
+            end.type._validate_unique_end_names(ends={e for e in ends if e != end})
             end.owner = self
             end.type._add_association(association=self)
         self.__ends = ends
@@ -1295,6 +1329,9 @@ class Generalization(Element):
         """Class: Set the general (parent) class."""
         if hasattr(self, "general"):
             self.general._delete_generalization(generalization=self)
+        # Check unique end names before adding the generalization
+        if hasattr(self, "specific"):
+            self.specific._validate_unique_end_names(ends=general.all_association_ends())
         general._add_generalization(generalization=self)
         self.__general = general
 
@@ -1313,6 +1350,9 @@ class Generalization(Element):
         """
         if specific == self.general:
             raise ValueError("A class cannot be a generalization of itself")
+        # Check unique end names before adding the generalization
+        specific._validate_unique_end_names(ends=self.general.all_association_ends())
+
         if hasattr(self, "specific"):
             self.specific._delete_generalization(generalization=self)
         specific._add_generalization(generalization=self)

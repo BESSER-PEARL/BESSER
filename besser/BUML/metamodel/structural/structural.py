@@ -12,16 +12,19 @@ class Element(ABC):
     Args:
         timestamp (datetime): Object creation datetime (default is current time).
         is_derived (bool): Indicates whether the element is derived (False as default).
+        uncertainty (float): Indicates the uncertainty level of the element as a probability between 0 and 1 (0.0 as default).
     
     Attributes:
         timestamp (datetime): Object creation datetime (default is current time).
         is_derived (bool): Indicates whether the element is derived (False as default).
+        uncertainty (float): Indicates the uncertainty level of the element as a probability between 0 and 1 (0.0 as default).
     """
 
-    def __init__(self, timestamp: datetime = None, is_derived: bool = False):
+    def __init__(self, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0):
         self.timestamp: datetime = timestamp if timestamp is not None else datetime.now() + \
                          timedelta(microseconds=(time.perf_counter_ns() % 1_000_000) / 1000)
         self.is_derived: bool = is_derived
+        self.uncertainty: float = uncertainty
 
     @property
     def timestamp(self) -> datetime:
@@ -42,6 +45,23 @@ class Element(ABC):
     def is_derived(self, is_derived: bool):
         """bool: Set whether the element is derived."""
         self.__is_derived = is_derived
+
+    @property
+    def uncertainty(self) -> float:
+        """float: Get the uncertainty level of the element as a probability between 0 and 1."""
+        return self.__uncertainty
+
+    @uncertainty.setter
+    def uncertainty(self, uncertainty: float):
+        """
+        float: Set the uncertainty level of the element as a probability between 0 and 1.
+        
+        Raises:
+            ValueError: If the uncertainty value is not between 0 and 1 inclusive.
+        """
+        if not 0 <= uncertainty <= 1:
+            raise ValueError("Uncertainty must be a probability between 0 and 1 inclusive")
+        self.__uncertainty = uncertainty
 
 class Metadata(Element):
     """The Metadata class stores additional information about named elements.
@@ -118,8 +138,8 @@ class NamedElement(Element):
     """
 
     def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None, 
-                 visibility: str = "public", is_derived: bool = False):
-        super().__init__(timestamp, is_derived)
+                 visibility: str = "public", is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(timestamp, is_derived, uncertainty)
         self.name: str = name
         self.metadata: Metadata = metadata
         self.visibility: str = visibility
@@ -187,8 +207,8 @@ class Type(NamedElement):
     """
 
     def __init__(self, name: str, timestamp: int = None, metadata: Metadata = None,
-                is_derived: bool = False):
-        super().__init__(name, timestamp, metadata,  is_derived=is_derived)
+                is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
 
     def __repr__(self):
         return f"Type({self.name}, {self.timestamp}, {self.metadata})"
@@ -278,8 +298,8 @@ class EnumerationLiteral(NamedElement):
         metadata (Metadata): Metadata information for the literal (None as default).
     """
 
-    def __init__(self, name: str, owner: DataType=None, timestamp: int = None, metadata: Metadata = None):
-        super().__init__(name, timestamp, metadata)
+    def __init__(self, name: str, owner: DataType=None, timestamp: int = None, metadata: Metadata = None, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, uncertainty=uncertainty)
         self.owner: DataType = owner
 
     @property
@@ -325,8 +345,8 @@ class Enumeration(DataType):
     """
 
     def __init__(self, name: str, literals: set[EnumerationLiteral] = None, timestamp: int = None,
-                 metadata: Metadata = None):
-        super().__init__(name, timestamp, metadata)
+                 metadata: Metadata = None, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, uncertainty=uncertainty)
         self.literals: set[EnumerationLiteral] = literals if literals is not None else set()
 
     @property
@@ -402,8 +422,8 @@ class TypedElement(NamedElement):
     }
 
     def __init__(self, name: str, type: Union[Type, str], timestamp: int = None, metadata: Metadata = None,
-                 visibility: str="public", is_derived: bool = False):
-        super().__init__(name, timestamp, metadata, visibility, is_derived)
+                 visibility: str="public", is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, visibility, is_derived, uncertainty)
         self.type = self.type_mapping.get(type, type)
 
     @property
@@ -432,8 +452,8 @@ class Multiplicity(Element):
          is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, min_multiplicity: int, max_multiplicity: int, is_derived: bool = False):
-        super().__init__(is_derived=is_derived)
+    def __init__(self, min_multiplicity: int, max_multiplicity: int, is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(is_derived=is_derived, uncertainty=uncertainty)
         self.min: int = min_multiplicity
         self.max: int = max_multiplicity
 
@@ -518,8 +538,8 @@ class Property(TypedElement):
     def __init__(self, name: str, type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1),
                  visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True,
                  is_id: bool = False, is_read_only: bool = False, timestamp: int = None,
-                 metadata: Metadata = None, is_derived: bool = False):
-        super().__init__(name, type, timestamp, metadata, visibility, is_derived)
+                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
@@ -633,8 +653,8 @@ class Parameter(TypedElement):
     """
 
     def __init__(self, name: str, type: Type, default_value: Any = None, timestamp: int = None,
-                 metadata: Metadata = None, is_derived: bool = False):
-        super().__init__(name, type, timestamp, metadata, is_derived=is_derived)
+                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, type, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.default_value: Any = default_value
 
     @property
@@ -683,8 +703,8 @@ class Method(TypedElement):
 
     def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False,
                  parameters: set[Parameter] = None, type: Type = None, owner: Type = None,
-                 code: str = "", timestamp: int = None, metadata: Metadata = None, is_derived: bool = False):
-        super().__init__(name, type, timestamp, metadata, visibility, is_derived)
+                 code: str = "", timestamp: int = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.is_abstract: bool = is_abstract
         self.parameters: set[Parameter] = parameters if parameters is not None else set()
         self.owner: Type = owner
@@ -787,8 +807,8 @@ class BehaviorImplementation(NamedElement):
         name (str): The name of the behavior implementation.  
     """
     
-    def __init__(self, name: str):
-        super().__init__(name)
+    def __init__(self, name: str, uncertainty: float = 0.0):
+        super().__init__(name, uncertainty=uncertainty)
 
 
     def __repr__(self):
@@ -807,8 +827,8 @@ class BehaviorDeclaration(NamedElement):
         implementations (set[BehaviorImplementation]): The implementations associated with the behavior.
     """
     
-    def __init__(self, name: str, implementations: set[BehaviorImplementation]):
-        super().__init__(name)
+    def __init__(self, name: str, implementations: set[BehaviorImplementation], uncertainty: float = 0.0):
+        super().__init__(name, uncertainty=uncertainty)
         self.implementations: set[BehaviorImplementation] = implementations
 
 
@@ -874,8 +894,8 @@ class Class(Type):
 
     def __init__(self, name: str, attributes: set[Property] = None, methods: set[Method] = None,
                  is_abstract: bool= False, is_read_only: bool= False, behaviors: set[BehaviorDeclaration] = None,
-                 timestamp: int = None, metadata: Metadata = None, is_derived: bool = False):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived)
+                 timestamp: int = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
         self.behaviors: set[BehaviorDeclaration] = behaviors if behaviors is not None else set()
@@ -1182,8 +1202,8 @@ class Association(NamedElement):
     """
 
     def __init__(self, name: str, ends: set[Property], timestamp: int = None, metadata: Metadata = None,
-                is_derived: bool = False):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived)
+                is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.ends: set[Property] = ends
 
     @property
@@ -1278,8 +1298,8 @@ class AssociationClass(Class):
     """
 
     def __init__(self, name: str, attributes: set[Property], association: Association, timestamp: int = None,
-                 metadata: Metadata = None, is_derived: bool = False):
-        super().__init__(name, attributes, timestamp, metadata, is_derived=is_derived)
+                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, attributes, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.association: Association = association
 
     @property
@@ -1314,8 +1334,8 @@ class Generalization(Element):
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, general: Class, specific: Class, timestamp: int = None, is_derived: bool = False):
-        super().__init__(timestamp, is_derived)
+    def __init__(self, general: Class, specific: Class, timestamp: int = None, is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(timestamp, is_derived, uncertainty)
         self.general: Class = general
         self.specific: Class = specific
 
@@ -1388,8 +1408,8 @@ class GeneralizationSet(NamedElement):
     """
 
     def __init__(self, name: str, generalizations: set[Generalization], is_disjoint: bool, is_complete: bool,
-                timestamp: int = None, metadata: Metadata = None, is_derived: bool = False):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived)
+                timestamp: int = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.generalizations: set[Generalization] = generalizations
         self.is_disjoint: bool = is_disjoint
         self.is_complete: bool = is_complete
@@ -1450,8 +1470,8 @@ class Package(NamedElement):
     """
 
     def __init__(self, name: str, elements: set[NamedElement], timestamp: int = None, metadata: Metadata = None,
-                is_derived: bool = False):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived)
+                is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.elements: set[NamedElement] = elements
 
     @property
@@ -1507,8 +1527,8 @@ class Constraint(NamedElement):
     """
 
     def __init__(self, name: str, context: Class, expression: Any, language: str, timestamp: int = None,
-                 metadata: Metadata = None, is_derived: bool = False):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived)
+                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.context: Class = context
         self.expression: str = expression
         self.language: str = language
@@ -1567,8 +1587,8 @@ class Model(NamedElement):
         elements (set[Element]): Set of model Elements in the Model.
     """
     def __init__(self, name: str, timestamp: int = None, metadata: Metadata = None, is_derived: bool = False,
-                elements: set[Element] = None):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived)
+                elements: set[Element] = None, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.elements: set[Element] = elements if elements is not None else set()
 
     @property
@@ -1616,8 +1636,8 @@ class DomainModel(Model):
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None,
                 generalizations: set[Generalization] = None, packages: set[Package] = None,
                 constraints: set[Constraint] = None, timestamp: int = None, metadata: Metadata = None,
-                is_derived: bool = False, elements: set[Element] = None):
-        super().__init__(name, timestamp, metadata, is_derived=is_derived, elements=elements)
+                is_derived: bool = False, elements: set[Element] = None, uncertainty: float = 0.0):
+        super().__init__(name, timestamp, metadata, is_derived=is_derived, elements=elements, uncertainty=uncertainty)
         # A flag to prevent premature `_update_elements` calls during initialization
         self.__initializing = True
         self.types: set[Type] = types if types is not None else set()

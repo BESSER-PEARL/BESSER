@@ -61,7 +61,7 @@ class Element(ABC):
         """
         if not 0 <= uncertainty <= 1:
             raise ValueError("Uncertainty must be a probability between 0 and 1 inclusive")
-        self.__uncertainty = uncertainty
+        self.__uncertainty = float(uncertainty)
 
 class Metadata(Element):
     """The Metadata class stores additional information about named elements.

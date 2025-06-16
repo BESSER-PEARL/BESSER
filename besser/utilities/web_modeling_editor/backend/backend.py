@@ -28,6 +28,7 @@ from besser.utilities.web_modeling_editor.backend.services.json_to_buml import (
     process_class_diagram,
     process_state_machine,
     process_agent_diagram,
+    process_object_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.services.buml_to_json import (
     domain_model_to_json,
@@ -438,6 +439,32 @@ async def export_buml(input_data: ClassDiagramInput):
                 media_type="text/plain",
                 headers={"Content-Disposition": "attachment; filename=domain_model.py"},
             )
+            
+        elif elements_data.get("type") == "ObjectDiagram":
+            # Handle object diagram - need both class model and object model in one file
+            reference_data = elements_data.get("referenceDiagramData", {})
+            if not reference_data:
+                raise ValueError("Object diagram requires reference class diagram data")
+            
+            # Process the reference class diagram first
+            reference_json = {"elements": reference_data, "diagramTitle": reference_data.get("title", "Reference Classes")}
+            domain_model = process_class_diagram(reference_json)
+            
+            # Process the object diagram with the domain model
+            object_model = process_object_diagram(json_data, domain_model)
+            
+            # Generate a single file with both domain model and object model
+            output_file_path = os.path.join(temp_dir, "complete_model.py")
+            domain_model_to_code(model=domain_model, file_path=output_file_path, objectmodel=object_model)
+            with open(output_file_path, "rb") as f:
+                file_content = f.read()
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={"Content-Disposition": "attachment; filename=complete_model.py"},
+            )
+            
         elif elements_data.get("type") == "AgentDiagram":
             agent_model = process_agent_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "agent_buml.py")

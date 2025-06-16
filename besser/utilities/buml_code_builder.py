@@ -1,5 +1,6 @@
 import os
 from besser.BUML.metamodel.structural.structural import DomainModel, AssociationClass, Metadata
+from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.state_machine.agent import Agent, Intent
 from besser.BUML.metamodel.state_machine.state_machine import Body
 from besser.utilities import sort_by_timestamp as sort
@@ -47,7 +48,7 @@ def safe_class_name(name):
     else:
         return name
 
-def domain_model_to_code(model: DomainModel, file_path: str):
+def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: ObjectModel = None):
     """
     Generates Python code for a B-UML model and writes it to a specified file.
 
@@ -55,9 +56,11 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         model (DomainModel): The B-UML model object containing classes, enumerations, 
             associations, and generalizations.
         file_path (str): The path where the generated code will be saved.
+        objectmodel (ObjectModel, optional): The B-UML object model to include in the same file.
 
     Outputs:
-        - A Python file containing the base code representation of the B-UML domain model.
+        - A Python file containing the base code representation of the B-UML domain model
+          and optionally the object model instances.
     """
     output_dir = os.path.dirname(file_path)
     if output_dir and not os.path.exists(output_dir):
@@ -75,7 +78,16 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         f.write("    StringType, IntegerType, FloatType, BooleanType,\n")
         f.write("    TimeType, DateType, DateTimeType, TimeDeltaType,\n")
         f.write("    AnyType, Constraint, AssociationClass, Metadata\n")
-        f.write(")\n\n")
+        f.write(")\n")
+        
+        # Add object model imports if object model is provided
+        if objectmodel:
+            f.write("from besser.BUML.metamodel.object import (\n")
+            f.write("    ObjectModel, Object, AttributeLink, DataValue, Link, LinkEnd\n")
+            f.write(")\n")
+            f.write("import datetime\n")
+        
+        f.write("\n")
 
         # Write enumerations only if they exist
         enumerations = sort(model.get_enumerations())
@@ -317,7 +329,7 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         types_str = (f"{class_names}, {enum_names}" if class_names and enum_names else
                     class_names or enum_names)
         f.write(f"    types={{{types_str}}},\n")
-        
+
         # Include both regular associations and those used in association classes
         all_assoc_names = ', '.join([assoc.name for assoc in regular_associations] + 
                                     [ac.association.name for ac in association_classes])
@@ -334,6 +346,74 @@ def domain_model_to_code(model: DomainModel, file_path: str):
         else:
             f.write("    generalizations={}\n")
         f.write(")\n")
+
+        # Generate object model code if provided
+        if objectmodel:
+            f.write("\n###############################\n")
+            f.write("\n# Object Model using Fluent API\n")
+            # f.write("from besser.BUML.metamodel.object.builder import ObjectBuilder\n\n")
+            
+            # Write object instances using fluent API
+            f.write("# Object instances created with fluent API\n")
+            for obj in sorted(objectmodel.objects, key=lambda x: x.name_):
+                obj_var_name = f"{obj.name_.lower()}_obj"
+                classifier_var_name = safe_class_name(obj.classifier.name)
+                
+                # Start the fluent API call using the proper syntax: Class("name")
+                f.write(f"{obj_var_name} = {classifier_var_name}(\"{obj.name_}\")")
+
+                # Add attributes if the object has slots
+                if obj.slots:
+                    attributes_dict = {}
+                    for slot in obj.slots:
+                        attr_name = slot.attribute.name
+                        
+                        # Format the value based on type
+                        if isinstance(slot.value.value, str):
+                            value_str = f'"{slot.value.value}"'
+                        elif hasattr(slot.value.value, 'isoformat'):  # datetime objects
+                            value_str = f'datetime.datetime.fromisoformat("{slot.value.value.isoformat()}")'
+                        else:
+                            value_str = str(slot.value.value)
+                        
+                        attributes_dict[attr_name] = value_str
+                    
+                    # Add attributes to the fluent API call
+                    if attributes_dict:
+                        attr_pairs = [f"{k}={v}" for k, v in attributes_dict.items()]
+                        f.write(f".attributes({', '.join(attr_pairs)})")
+                
+                # Complete the fluent API call
+                f.write(".build()\n")
+            
+            f.write("\n")
+            
+            # Add links after objects are created (avoiding forward reference issues)
+            if hasattr(objectmodel, 'links') and objectmodel.links:
+                f.write("# Object links (created after objects to avoid forward references)\n")
+                for link in objectmodel.links:
+                    if len(link.connections) == 2:
+                        # Create link from first object to second object only
+                        end1, end2 = link.connections
+                        obj1_var = f"{end1.object.name_.lower()}_obj"
+                        obj2_var = f"{end2.object.name_.lower()}_obj"
+                        end2_name = end2.association_end.name
+                        
+                        f.write(f"{obj1_var}.{end2_name} = {obj2_var}  # Creates bidirectional link via association '{link.association.name}'\n")
+                f.write("\n")
+            
+            # Create the object model instance
+            f.write("# Object Model instance\n")
+            objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
+            f.write(f"object_model: ObjectModel = ObjectModel(\n")
+            f.write(f"    name=\"{objectmodel.name}\",\n")
+            f.write(f"    objects={{{objects_str}}}\n")
+            f.write(")\n")
+            
+            # Add links information if they exist
+            if hasattr(objectmodel, 'links') and objectmodel.links:
+                f.write(f"\n# Links are automatically included via the objects\n")
+                f.write(f"# Total links in model: {len(objectmodel.links)}\n")
 
     print(f"BUML model saved to {file_path}")
 

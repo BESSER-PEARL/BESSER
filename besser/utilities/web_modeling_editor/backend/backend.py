@@ -539,15 +539,35 @@ async def get_json_model(buml_file: UploadFile = File(...)):
 @api.post("/check-ocl")
 async def check_ocl(input_data: ClassDiagramInput):
     try:
-        # Convert diagram to BUML model
-        json_data = {"elements": input_data.elements}
-        buml_model = process_class_diagram(json_data)
+        # Check if this is an ObjectDiagram by looking at the elements type
+        diagram_type = input_data.elements.get("type") if input_data.elements else None
+        
+        if diagram_type == "ObjectDiagram":
+            # Handle object diagram - need both class model and object model in one file
+            reference_data = input_data.elements.get("referenceDiagramData", {})
+            if not reference_data:
+                raise ValueError("Object diagram requires reference class diagram data")
+            
+            # Process the reference class diagram first
+            reference_json = {"elements": reference_data, "diagramTitle": reference_data.get("title", "Reference Classes")}
+            buml_model = process_class_diagram(reference_json)
+            
+            # Process the object diagram with the domain model
+            json_data = {"elements": input_data.elements}
+            object_model = process_object_diagram(json_data, buml_model)
 
-        if not buml_model:
-            return {"success": False, "message": "Failed to create BUML model"}
+            result = check_ocl_constraint(buml_model, object_model)
 
-        # Check OCL constraints
-        result = check_ocl_constraint(buml_model)
+        else:
+            # Convert diagram to BUML model
+            json_data = {"elements": input_data.elements}
+            buml_model = process_class_diagram(json_data)
+
+            if not buml_model:
+                return {"success": False, "message": "Failed to create BUML model"}
+
+            # Check OCL constraints
+            result = check_ocl_constraint(buml_model)
 
         # Add warnings to the message if they exist
         if hasattr(buml_model, "ocl_warnings") and buml_model.ocl_warnings:

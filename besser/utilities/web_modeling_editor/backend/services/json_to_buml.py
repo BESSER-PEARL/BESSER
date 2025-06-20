@@ -818,7 +818,6 @@ def process_object_diagram(json_data, domain_model):
                     status_code=400,
                     detail=f"Could not find association for link '{link_name}'. Please ensure all links correspond to valid associations in the class diagram."
                 )
-        print(object_model)
     return object_model
 
 def process_state_machine(json_data):

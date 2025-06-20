@@ -35,6 +35,7 @@ from besser.utilities.web_modeling_editor.backend.services.buml_to_json import (
     parse_buml_content,
     state_machine_to_json,
     agent_buml_to_json,
+    object_buml_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.ocl_checker import (
     check_ocl_constraint,
@@ -501,12 +502,10 @@ async def export_buml(input_data: ClassDiagramInput):
 async def get_json_model(buml_file: UploadFile = File(...)):
     try:
         content = await buml_file.read()
-        buml_content = content.decode("utf-8")
-
-        # Try to determine if it's a state machine or domain model
+        buml_content = content.decode("utf-8")      # Try to determine what type of model this is
         is_state_machine = "StateMachine" in buml_content and "Session" in buml_content
-
         is_agent = "Agent" in buml_content and "Session" in buml_content
+        is_object_model = "ObjectModel" in buml_content
 
         if is_state_machine:
             # Convert the state machine Python code directly to JSON
@@ -517,6 +516,12 @@ async def get_json_model(buml_file: UploadFile = File(...)):
             # Convert the agent Python code directly to JSON
             json_model = agent_buml_to_json(buml_content)
             model_name = buml_file.filename
+            
+        elif is_object_model:
+            # Convert the object model Python code directly to JSON
+            json_model = object_buml_to_json(buml_content)
+            model_name = buml_file.filename
+  
         else:
             # Parse the BUML content into a domain model and get OCL constraints
             domain_model = parse_buml_content(buml_content)

@@ -1648,7 +1648,12 @@ class DomainModel(Model):
         Raises:
             ValueError: if there are two types with the same name.
         """
-        types = types | data_types
+        primitive_names = {'int', 'str', 'bool', 'float', 'datetime', 'date', 'time', 'timedelta', 'any'}
+        has_primitives = any(t.name in primitive_names for t in types)
+    
+        if not has_primitives:
+            types = types | data_types
+
         names_seen = set()
         duplicates = set()
 

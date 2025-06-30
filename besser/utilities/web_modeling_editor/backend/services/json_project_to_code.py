@@ -1,4 +1,3 @@
-from besser.BUML.metamodel.project import Project
 
 def json_to_project_code(json_obj):
     """
@@ -14,17 +13,17 @@ def json_to_project_code(json_obj):
     models = data.get("models", [])
     print(data)
 
-    # Format the models list as a Python list of strings
-    models_str = "[" + ", ".join(f'"{m}"' for m in models) + "]"
-
     code = (
         f'from besser.BUML.metamodel.project import Project\n'
+        f'from besser.BUML.metamodel.structural.structural import Metadata\n'
         f'from ClassDiagram import domain_model\n'
         f'from StateMachineDiagram import sm\n'
         f'from AgentDiagram import agent\n\n'
+        f'metadata = Metadata(description="{description}")\n'
         f'project = Project(\n'
         f'    name="{name}",\n'
         f'    models=[domain_model, sm, agent],\n'
+        f'    metadata=metadata\n'
         f')'
     )
     return code

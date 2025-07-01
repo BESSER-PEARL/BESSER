@@ -409,6 +409,31 @@ async def deploy_app(input_data: ClassDiagramInput):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
  
+@api.post("/export-project")
+async def export_project(input_data: ClassDiagramInput):
+    try:
+        json_data = input_data.model_dump()
+        elements_data = input_data.elements
+        
+        if elements_data.get("type") != "Project":
+            raise HTTPException(
+                status_code=400, 
+                detail="This endpoint is only for Project type exports"
+            )
+        
+        code = json_to_project_code(json_data)
+        return Response(
+            content=code,
+            media_type="text/plain",
+            headers={"Content-Disposition": "attachment; filename=project.py"},
+        )
+        
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+
 @api.post("/export-buml")
 async def export_buml(input_data: ClassDiagramInput):
     # Create unique temporary directory for this request
@@ -483,14 +508,6 @@ async def export_buml(input_data: ClassDiagramInput):
                 headers={
                     "Content-Disposition": "attachment; filename=agent_buml.py"
                 },
-            )
-
-        elif elements_data.get("type") == "Project":
-            code = json_to_project_code(json_data)
-            return Response(
-                content=code,
-                media_type="text/plain",
-                headers={"Content-Disposition": "attachment; filename=project.py"},
             )
 
         else:

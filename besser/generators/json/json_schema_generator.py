@@ -1,5 +1,6 @@
 import os
 import json
+import re
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import (
     DomainModel, IntegerType, StringType, Class, 
@@ -206,7 +207,9 @@ class JSONSchemaGenerator(GeneratorInterface):
         """Generates an example JSON based on the rendered schema string."""
         schema = json.loads(schema_str)
 
-        model_name = schema.get('title', 'Entity').split()[-1]
+        title = schema.get('title', 'Entity')
+        match = re.search(r'Smart Data models - (\w+)', title)
+        model_name = match.group(1) if match else title
 
         # Collect properties from 'allOf' or 'properties'
         properties = {}

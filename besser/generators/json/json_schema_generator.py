@@ -258,7 +258,6 @@ class JSONSchemaGenerator(GeneratorInterface):
         for prop, details in all_props.items():
             example_obj[prop] = get_example_value(prop, details)
 
-        # Pretty-print the example
         return json.dumps(example_obj, indent=2)
 
 def get_example_value(prop, details):

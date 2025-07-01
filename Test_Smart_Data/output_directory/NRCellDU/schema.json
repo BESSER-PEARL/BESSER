@@ -39,8 +39,8 @@
         "policy": {
                 "description": "Property",
                 "enum": [
-                        "TDD",
-                        "FDD"
+                        "FDD",
+                        "TDD"
                 ],
                 "type": "string"
         },

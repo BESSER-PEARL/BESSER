@@ -1,0 +1,27 @@
+{
+  "id": "urn:ngsi-ld:schema:schema-001",
+  "type": "schema",
+  "rsrp": 10,
+  "rsrq": 3.14,
+  "sinr": 3.14,
+  "ue_1": "urn:ngsi-ld:ue_1:ue_1-01",
+  "name": "example-name",
+  "description": "example-description",
+  "location": {
+    "type": "Point",
+    "coordinates": [
+      12.4924,
+      41.8902
+    ]
+  },
+  "address": {
+    "streetAddress": "Via Example 123",
+    "addressLocality": "Rome",
+    "addressRegion": "Lazio",
+    "postalCode": "00100",
+    "addressCountry": "IT"
+  },
+  "dateCreated": "2025-06-25T08:00:00Z",
+  "dateModified": "2025-06-30T14:15:00Z",
+  "source": "https://example.org/source"
+}

@@ -1,0 +1,28 @@
+{
+  "id": "urn:ngsi-ld:schema:schema-001",
+  "type": "schema",
+  "nRcellId": 10123,
+  "nrCellDU_by_duId": [
+    "urn:ngsi-ld:nrCellDU_by_duId:nrCellDU_by_duId-001"
+  ],
+  "physicalCellId": 10123,
+  "name": "example-name",
+  "description": "example-description",
+  "location": {
+    "type": "Point",
+    "coordinates": [
+      12.4924,
+      41.8902
+    ]
+  },
+  "address": {
+    "streetAddress": "Via Example 123",
+    "addressLocality": "Rome",
+    "addressRegion": "Lazio",
+    "postalCode": "00100",
+    "addressCountry": "IT"
+  },
+  "dateCreated": "2025-06-25T08:00:00Z",
+  "dateModified": "2025-06-30T14:15:00Z",
+  "source": "https://example.org/source"
+}

@@ -1,4 +1,5 @@
 import os
+import json
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import (
     DomainModel, IntegerType, StringType, Class, 
@@ -158,36 +159,41 @@ class JSONSchemaGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
-        
+
         if self.mode == 'smart_data':
             # Smart Data mode - generate a schema for each class
             template = env.get_template('smart_data_schema.json.j2')
-            
+
             # Get all classes from the model
             classes = [c for c in self.model.types if isinstance(c, Class)]
-            
+
             for class_def in classes:
                 # Create a directory for each class
                 class_dir = os.path.join(self.output_dir, class_def.name)
 
                 os.makedirs(class_dir, exist_ok=True)
-                
+
                 # Prepare schema data for this class
                 schema_data = self._prepare_smart_data_schema_for_class(class_def)
                 print(schema_data)
                 # Generate schema file in the class directory
                 file_path = os.path.join(class_dir, "schema.json")
-                
+
                 with open(file_path, mode="w", encoding='utf-8') as f:
                     generated_code = template.render(schema=schema_data)
                     f.write(generated_code)
-                    
+
+                file_example_path = os.path.join(class_dir, "example.json")
+                with open(file_example_path, mode="w", encoding='utf-8') as f:
+                    generated_example_code = self.generate_example(generated_code)
+                    f.write(generated_example_code)
+
                 print(f"Smart Data schema for {class_def.name} generated in: {file_path}")
         else:
             # Regular JSON Schema mode
             template = env.get_template('json_schema.json.j2')
             file_path = self.build_generation_path(file_name="json_schema.json")
-            
+
             with open(file_path, mode="w") as f:
                 generated_code = template.render(
                     classes=self.model.classes_sorted_by_inheritance(),
@@ -195,3 +201,109 @@ class JSONSchemaGenerator(GeneratorInterface):
                 )
                 f.write(generated_code)
                 print("Code generated in the location: " + file_path)
+
+    def generate_example(self, schema_str):
+        """Generates an example JSON based on the rendered schema string."""
+        schema = json.loads(schema_str)
+
+        model_name = schema.get('title', 'Entity').split()[-1]
+
+        # Collect properties from 'allOf' or 'properties'
+        properties = {}
+        if 'properties' in schema:
+            all_props = schema.get('properties', {})
+        else:
+            # Assume Smart Data Models style with 'allOf' blocks
+            all_props = {}
+            for block in schema.get('allOf', []):
+                if 'properties' in block:
+                    all_props.update(block['properties'])
+
+        # Add known GSMA-Commons/Location-Commons fields manually if not already present
+        commons_defaults = {
+            "name": {"type": "string", "example": f"{model_name}-001"},
+            "description": {"type": "string", "example": f"Example instance of {model_name}"},
+            "location": {
+                "type": "object",
+                "example": {
+                    "type": "Point",
+                    "coordinates": [12.4924, 41.8902]
+                }
+            },
+            "address": {
+                "type": "object",
+                "example": {
+                    "streetAddress": "Via Example 123",
+                    "addressLocality": "Rome",
+                    "addressRegion": "Lazio",
+                    "postalCode": "00100",
+                    "addressCountry": "IT"
+                }
+            },
+            "dateCreated": {"type": "string", "example": "2025-06-25T08:00:00Z"},
+            "dateModified": {"type": "string", "example": "2025-06-30T14:15:00Z"},
+            "source": {"type": "string", "example": "https://example.org/source"}
+        }
+
+        for prop, details in commons_defaults.items():
+            if prop not in all_props:
+                all_props[prop] = details
+
+        # Generate example values
+        example_obj = {
+            "id": f"urn:ngsi-ld:{model_name}:{model_name}-001",
+            "type": model_name
+        }
+
+        for prop, details in all_props.items():
+            example_obj[prop] = get_example_value(prop, details)
+
+        # Pretty-print the example
+        return json.dumps(example_obj, indent=2)
+
+def get_example_value(prop, details):
+    """Generate an example value based on property type and format."""
+    COMMON_EXAMPLES = {
+        "location": {
+            "type": "Point",
+            "coordinates": [12.4924, 41.8902]
+        },
+        "address": {
+            "streetAddress": "Via Example 123",
+            "addressLocality": "Rome",
+            "addressRegion": "Lazio",
+            "postalCode": "00100",
+            "addressCountry": "IT"
+        },
+        "dateCreated": "2025-06-25T08:00:00Z",
+        "dateModified": "2025-06-30T14:15:00Z",
+        "source": "https://example.org/source"
+    }
+
+    if prop in COMMON_EXAMPLES:
+        return COMMON_EXAMPLES[prop]
+
+    t = details.get('type')
+    fmt = details.get('format')
+    enum = details.get('enum')
+
+    if enum:
+        return enum[0]
+    if t == 'string':
+        if fmt == 'uri':
+            return f"urn:ngsi-ld:{prop}:{prop}-01"
+        return f"example-{prop}"
+    elif t == 'integer':
+        return 10123 if "id" in prop.lower() else 10
+    elif t == 'array':
+        item_fmt = details.get('items', {}).get('format')
+        if item_fmt == 'uri':
+            return [f"urn:ngsi-ld:{prop}:{prop}-001"]
+        return []
+    elif t == 'boolean':
+        return True
+    elif t == 'object':
+        return {}
+    elif t == 'number':
+        return 3.14
+    return None

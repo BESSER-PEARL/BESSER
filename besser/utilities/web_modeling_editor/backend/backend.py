@@ -41,6 +41,10 @@ from besser.utilities.web_modeling_editor.backend.services.ocl_checker import (
     check_ocl_constraint,
 )
 
+from besser.utilities.web_modeling_editor.backend.services.json_project_to_code import (
+    json_to_project_code
+)
+
 app = FastAPI(
     title="Besser Backend API",
     description="API for generating code from UML class diagrams using various generators",
@@ -479,6 +483,14 @@ async def export_buml(input_data: ClassDiagramInput):
                 headers={
                     "Content-Disposition": "attachment; filename=agent_buml.py"
                 },
+            )
+
+        elif elements_data.get("type") == "Project":
+            code = json_to_project_code(json_data)
+            return Response(
+                content=code,
+                media_type="text/plain",
+                headers={"Content-Disposition": "attachment; filename=project.py"},
             )
 
         else:

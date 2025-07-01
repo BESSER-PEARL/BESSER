@@ -371,33 +371,222 @@ def test_attribute_reassignment():
 
 def test_domain_model_elements_recalculation():
     # Create types
-    class1: Class = Class(name="Class1")
-    class2: Class = Class(name="Class2")
-
+    class1 = Class(name="Class1")
+    class2 = Class(name="Class2")
+    
     # Create associations
-    aend1: Property = Property(name="end1", type=class1, multiplicity=Multiplicity(0, 1))
-    aend2: Property = Property(name="end2", type=class2, multiplicity=Multiplicity(0, 1))
-    association1: BinaryAssociation = BinaryAssociation(name="Association1", ends={aend1, aend2})
-
-    # Create generalizations
-    generalization1: Generalization = Generalization(general=class1, specific=class2)
-
-    # Create packages
-    package1: Package = Package(name="Package1", elements={class1, class2, association1, generalization1})
-
-    # Create constraints
-    constraint1: Constraint = Constraint(name="Constraint1", context=class1, expression="context Class1 inv: self.end1->notEmpty()", language="OCL")
-
+    end1 = Property(name="end1", type=class2)
+    end2 = Property(name="end2", type=class1)
+    association = BinaryAssociation(name="Assoc1", ends={end1, end2})
+    
+    # Create generalization
+    generalization = Generalization(general=class1, specific=class2)
+    
+    # Create package
+    package = Package(name="Package1", elements={class1})
+    
+    # Create constraint
+    constraint = Constraint(name="Constraint1", context=class1, expression="self.name <> ''", language="OCL")
+    
     # Create domain model
-    domain_model: DomainModel = DomainModel(
-        name="TestDomainModel",
+    domain_model = DomainModel(
+        name="TestModel",
         types={class1, class2},
-        associations={association1},
-        generalizations={generalization1},
-        packages={package1},
-        constraints={constraint1}
+        associations={association},
+        generalizations={generalization},
+        packages={package},
+        constraints={constraint}
     )
+    
+    # Check that elements are properly calculated
+    expected_elements = {class1, class2, association, generalization, package, constraint}
+    # Add primitive data types that are automatically included
+    expected_elements.update(data_types)
+    
+    assert domain_model.elements == expected_elements
 
-    # Verify elements property
-    expected_elements = {class1, class2, association1, generalization1, package1, constraint1}
-    assert domain_model.elements == (expected_elements | data_types)
+
+# Tests for uncertainty property
+def test_element_uncertainty_default():
+    """Test that Element uncertainty defaults to 0.0"""
+    class1 = Class(name="TestClass")
+    assert class1.uncertainty == 0.0
+    
+    property1 = Property(name="testProp", type=StringType)
+    assert property1.uncertainty == 0.0
+    
+    association_end = Property(name="end1", type=class1)
+    assert association_end.uncertainty == 0.0
+
+
+def test_element_uncertainty_initialization():
+    """Test that Element uncertainty can be set during initialization"""
+    class1 = Class(name="TestClass", uncertainty=0.5)
+    assert class1.uncertainty == 0.5
+    
+    property1 = Property(name="testProp", type=StringType, uncertainty=0.8)
+    assert property1.uncertainty == 0.8
+    
+    # Test with association end
+    class2 = Class(name="TestClass2")
+    association_end = Property(name="end1", type=class2, uncertainty=0.3)
+    assert association_end.uncertainty == 0.3
+
+
+def test_element_uncertainty_setter_valid_values():
+    """Test that uncertainty setter accepts valid values between 0 and 1"""
+    class1 = Class(name="TestClass")
+    
+    # Test boundary values
+    class1.uncertainty = 0.0
+    assert class1.uncertainty == 0.0
+    
+    class1.uncertainty = 1.0
+    assert class1.uncertainty == 1.0
+    
+    # Test intermediate values
+    class1.uncertainty = 0.5
+    assert class1.uncertainty == 0.5
+    
+    class1.uncertainty = 0.25
+    assert class1.uncertainty == 0.25
+    
+    class1.uncertainty = 0.999
+    assert class1.uncertainty == 0.999
+
+
+def test_element_uncertainty_setter_invalid_values():
+    """Test that uncertainty setter rejects invalid values outside [0,1]"""
+    class1 = Class(name="TestClass")
+    
+    # Test values greater than 1
+    with pytest.raises(ValueError) as excinfo:
+        class1.uncertainty = 1.1
+    assert "Uncertainty must be a probability between 0 and 1 inclusive" in str(excinfo.value)
+    
+    with pytest.raises(ValueError) as excinfo:
+        class1.uncertainty = 2.0
+    assert "Uncertainty must be a probability between 0 and 1 inclusive" in str(excinfo.value)
+    
+    # Test negative values
+    with pytest.raises(ValueError) as excinfo:
+        class1.uncertainty = -0.1
+    assert "Uncertainty must be a probability between 0 and 1 inclusive" in str(excinfo.value)
+    
+    with pytest.raises(ValueError) as excinfo:
+        class1.uncertainty = -1.0
+    assert "Uncertainty must be a probability between 0 and 1 inclusive" in str(excinfo.value)
+
+
+def test_element_uncertainty_inheritance():
+    """Test that uncertainty property is inherited by all Element subclasses"""
+    # Test with different Element subclasses
+    class1 = Class(name="TestClass", uncertainty=0.2)
+    assert class1.uncertainty == 0.2
+    
+    property1 = Property(name="testProp", type=StringType, uncertainty=0.3)
+    assert property1.uncertainty == 0.3
+    
+    method1 = Method(name="testMethod", uncertainty=0.4)
+    assert method1.uncertainty == 0.4
+    
+    parameter1 = Parameter(name="testParam", type=IntegerType, uncertainty=0.5)
+    assert parameter1.uncertainty == 0.5
+    
+    enum1 = Enumeration(name="TestEnum", uncertainty=0.6)
+    assert enum1.uncertainty == 0.6
+    
+    literal1 = EnumerationLiteral(name="TestLiteral", uncertainty=0.7)
+    assert literal1.uncertainty == 0.7
+
+
+def test_element_uncertainty_with_associations():
+    """Test uncertainty property with associations"""
+    class1 = Class(name="Class1", uncertainty=0.2)
+    class2 = Class(name="Class2", uncertainty=0.3)
+    
+    end1 = Property(name="end1", type=class2, uncertainty=0.4)
+    end2 = Property(name="end2", type=class1, uncertainty=0.5)
+    
+    association = BinaryAssociation(name="TestAssoc", ends={end1, end2}, uncertainty=0.6)
+    
+    assert class1.uncertainty == 0.2
+    assert class2.uncertainty == 0.3
+    assert end1.uncertainty == 0.4
+    assert end2.uncertainty == 0.5
+    assert association.uncertainty == 0.6
+
+
+def test_element_uncertainty_with_generalization():
+    """Test uncertainty property with generalization"""
+    parent_class = Class(name="Parent", uncertainty=0.1)
+    child_class = Class(name="Child", uncertainty=0.2)
+    
+    generalization = Generalization(general=parent_class, specific=child_class, uncertainty=0.3)
+    
+    assert parent_class.uncertainty == 0.1
+    assert child_class.uncertainty == 0.2
+    assert generalization.uncertainty == 0.3
+
+
+def test_element_uncertainty_with_multiplicity():
+    """Test uncertainty property with multiplicity"""
+    multiplicity = Multiplicity(min_multiplicity=1, max_multiplicity=5, uncertainty=0.4)
+    assert multiplicity.uncertainty == 0.4
+    
+    # Test with property that has multiplicity
+    class1 = Class(name="TestClass")
+    property1 = Property(
+        name="testProp", 
+        type=StringType, 
+        multiplicity=multiplicity,
+        uncertainty=0.7
+    )
+    
+    assert property1.uncertainty == 0.7
+    assert property1.multiplicity.uncertainty == 0.4
+
+
+def test_element_uncertainty_domain_model():
+    """Test uncertainty property in domain model context"""
+    class1 = Class(name="Class1", uncertainty=0.1)
+    class2 = Class(name="Class2", uncertainty=0.2)
+    
+    end1 = Property(name="end1", type=class2, uncertainty=0.3)
+    end2 = Property(name="end2", type=class1, uncertainty=0.4)
+    association = BinaryAssociation(name="Assoc1", ends={end1, end2}, uncertainty=0.5)
+    
+    generalization = Generalization(general=class1, specific=class2, uncertainty=0.6)
+    
+    domain_model = DomainModel(
+        name="TestModel",
+        types={class1, class2},
+        associations={association},
+        generalizations={generalization},
+        uncertainty=0.8
+    )
+    
+    assert domain_model.uncertainty == 0.8
+    assert class1.uncertainty == 0.1
+    assert class2.uncertainty == 0.2
+    assert association.uncertainty == 0.5
+    assert generalization.uncertainty == 0.6
+
+
+def test_element_uncertainty_type_validation():
+    """Test that uncertainty property accepts float values"""
+    class1 = Class(name="TestClass")
+    
+    # Test with integer that should be converted to float
+    class1.uncertainty = 1
+    assert class1.uncertainty == 1.0
+    assert isinstance(class1.uncertainty, float)
+    
+    class1.uncertainty = 0
+    assert class1.uncertainty == 0.0
+    assert isinstance(class1.uncertainty, float)
+    
+    # Test with explicit float
+    class1.uncertainty = 0.5
+    assert class1.uncertainty == 0.5
+    assert isinstance(class1.uncertainty, float)

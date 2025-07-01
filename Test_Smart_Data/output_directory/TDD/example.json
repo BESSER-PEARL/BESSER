@@ -1,9 +1,9 @@
 {
-  "id": "urn:ngsi-ld:schema:schema-001",
-  "type": "schema",
+  "id": "urn:ngsi-ld:TDD:TDD-001",
+  "type": "TDD",
   "arfcn": 10,
   "band": 10,
-  "nrcelldu_1": "urn:ngsi-ld:nrcelldu_1:nrcelldu_1-01",
+  "nrcelldu": "urn:ngsi-ld:nrcelldu:nrcelldu-01",
   "name": "example-name",
   "description": "example-description",
   "location": {

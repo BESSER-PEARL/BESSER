@@ -1,6 +1,6 @@
 {
   "id": 10123,
-  "type": "schema",
+  "type": "UE",
   "du": "urn:ngsi-ld:du:du-01",
   "pdus": [
     "urn:ngsi-ld:pdus:pdus-001"

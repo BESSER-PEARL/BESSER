@@ -1,10 +1,10 @@
 {
-  "id": "urn:ngsi-ld:schema:schema-001",
-  "type": "schema",
+  "id": "urn:ngsi-ld:SynchronizationSignal:SynchronizationSignal-001",
+  "type": "SynchronizationSignal",
   "rsrp": 10,
   "rsrq": 3.14,
   "sinr": 3.14,
-  "ue_1": "urn:ngsi-ld:ue_1:ue_1-01",
+  "ue": "urn:ngsi-ld:ue:ue-01",
   "name": "example-name",
   "description": "example-description",
   "location": {

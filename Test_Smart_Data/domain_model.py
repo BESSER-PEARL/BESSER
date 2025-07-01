@@ -89,7 +89,7 @@ UE_PDUSession: BinaryAssociation = BinaryAssociation(
 UE_SynchronizationSignal: BinaryAssociation = BinaryAssociation(
     name="UE_SynchronizationSignal",
     ends={
-        Property(name="ue_1", type=UE, multiplicity=Multiplicity(1, 1)),
+        Property(name="ue", type=UE, multiplicity=Multiplicity(1, 1)),
         Property(name="synchronizationSignal", type=SynchronizationSignal, multiplicity=Multiplicity(1, 9999))
     }
 )
@@ -104,7 +104,7 @@ TDD_NRCellDU: BinaryAssociation = BinaryAssociation(
     name="TDD_NRCellDU",
     ends={
         Property(name="tdd", type=TDD, multiplicity=Multiplicity(1, 1)),
-        Property(name="nrcelldu_1", type=NRCellDU, multiplicity=Multiplicity(1, 1))
+        Property(name="nrcelldu", type=NRCellDU, multiplicity=Multiplicity(1, 1))
     }
 )
 

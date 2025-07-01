@@ -30,7 +30,7 @@
                 "description": "Property",
                 "type": "number"
         },
-        "ue_1": {
+        "ue": {
                 "description": "Relationship to UE",
                 "format": "uri",
                 "type": "string"

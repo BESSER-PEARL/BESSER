@@ -79,14 +79,12 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
         f.write("    TimeType, DateType, DateTimeType, TimeDeltaType,\n")
         f.write("    AnyType, Constraint, AssociationClass, Metadata\n")
         f.write(")\n")
-        
+
         # Add object model imports if object model is provided
         if objectmodel:
-            f.write("from besser.BUML.metamodel.object import (\n")
-            f.write("    ObjectModel, Object, AttributeLink, DataValue, Link, LinkEnd\n")
-            f.write(")\n")
+            f.write("from besser.BUML.metamodel.object import ObjectModel\n")
             f.write("import datetime\n")
-        
+
         f.write("\n")
 
         # Write enumerations only if they exist
@@ -117,13 +115,13 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
         f.write("# Classes\n")
         for cls in regular_classes:
             cls_var_name = safe_class_name(cls.name)
-            
+
             # Build class creation parameters
             class_params = [f'name="{cls.name}"']
-            
+
             if cls.is_abstract:
                 class_params.append('is_abstract=True')
-            
+
             # Add metadata if it exists
             if hasattr(cls, 'metadata') and cls.metadata:
                 metadata_params = []
@@ -131,11 +129,11 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                     metadata_params.append(f'description="{cls.metadata.description}"')
                 if cls.metadata.uri:
                     metadata_params.append(f'uri="{cls.metadata.uri}"')
-                
+
                 if metadata_params:
                     metadata_str = f"Metadata({', '.join(metadata_params)})"
                     class_params.append(f'metadata={metadata_str}')
-            
+
             f.write(f"{cls_var_name} = Class({', '.join(class_params)})\n")
         f.write("\n")
 
@@ -155,7 +153,7 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             for method in sort(cls.methods):
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                 visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
-                
+
                 # Build parameters dictionary
                 params = {}
                 if sort(method.parameters):
@@ -163,7 +161,7 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                         param_type = PRIMITIVE_TYPE_MAPPING.get(param.type.name, safe_class_name(param.type.name))
                         default_str = f", default_value='{param.default_value}'" if hasattr(param, 'default_value') and param.default_value is not None else ""
                         params[param.name] = f"Parameter(name='{param.name}', type={param_type}{default_str})"
-                
+
                 params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
 
                 if method_type:
@@ -245,19 +243,19 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                     ")\n"
                 )
                 f.write("\n")
-                
+
                 # Now write the attributes for the association class
                 for attr in sort(ac.attributes):
                     attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
                     visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
                     f.write(f"{ac_var_name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
                            f"type={attr_type}{visibility_str})\n")
-                
+
                 # Write methods for the association class
                 for method in sort(ac.methods):
                     method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                     visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
-                    
+
                     # Build parameters dictionary
                     params = {}
                     if sort(method.parameters):
@@ -274,19 +272,19 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                     else:
                         f.write(f"{ac_var_name}_m_{method.name}: Method = Method(name=\"{method.name}\""
                                f"{visibility_str}, parameters={params_str})\n")
-                
+
                 # Create attributes set string if attributes exist
                 attributes_str = ""
                 if sort(ac.attributes):
                     attrs_str = ", ".join([f"{ac_var_name}_{attr.name}" for attr in ac.attributes])
                     attributes_str = f"attributes={{{attrs_str}}}, "
-                
+
                 # Create methods set string if methods exist
                 methods_str = ""
                 if sort(ac.methods):
                     methods_list = ", ".join([f"{ac_var_name}_m_{method.name}" for method in ac.methods])
                     methods_str = f", methods={{{methods_list}}}"
-                
+
                 # Now create the association class
                 f.write(f"{ac_var_name} = AssociationClass(\n")
                 f.write(f"    name=\"{ac.name}\",\n")
@@ -322,7 +320,7 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
         f.write("# Domain Model\n")
         f.write("domain_model = DomainModel(\n")
         f.write(f"    name=\"{model.name}\",\n")
-        
+
         # Include all classes (regular and association) and enumerations in types
         class_names = ', '.join(safe_class_name(cls.name) for cls in sort(model.get_classes()))
         enum_names = ', '.join(safe_class_name(enum.name) for enum in sort(model.get_enumerations()))
@@ -337,7 +335,7 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             f.write(f"    associations={{{all_assoc_names}}},\n")
         else:
             f.write("    associations={},\n")
-            
+
         if hasattr(model, 'constraints') and model.constraints:
             constraints_str = ', '.join(c.name.replace("-", "_") for c in sort(model.constraints))
             f.write(f"    constraints={{{constraints_str}}},\n")
@@ -349,16 +347,14 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
         # Generate object model code if provided
         if objectmodel:
-            f.write("\n###############################\n")
-            f.write("\n# Object Model using Fluent API\n")
-            # f.write("from besser.BUML.metamodel.object.builder import ObjectBuilder\n\n")
-            
+            f.write("\n###################################\n")
+            f.write("# Object Model using the Fluent API\n\n")
+
             # Write object instances using fluent API
-            f.write("# Object instances created with fluent API\n")
             for obj in sorted(objectmodel.objects, key=lambda x: x.name_):
                 obj_var_name = f"{obj.name_.lower()}_obj"
                 classifier_var_name = safe_class_name(obj.classifier.name)
-                
+
                 # Start the fluent API call using the proper syntax: Class("name")
                 f.write(f"{obj_var_name} = {classifier_var_name}(\"{obj.name_}\")")
 
@@ -367,7 +363,7 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                     attributes_dict = {}
                     for slot in obj.slots:
                         attr_name = slot.attribute.name
-                        
+
                         # Format the value based on type
                         if isinstance(slot.value.value, str):
                             value_str = f'"{slot.value.value}"'
@@ -375,33 +371,45 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                             value_str = f'datetime.datetime.fromisoformat("{slot.value.value.isoformat()}")'
                         else:
                             value_str = str(slot.value.value)
-                        
+
                         attributes_dict[attr_name] = value_str
-                    
+
                     # Add attributes to the fluent API call
                     if attributes_dict:
                         attr_pairs = [f"{k}={v}" for k, v in attributes_dict.items()]
                         f.write(f".attributes({', '.join(attr_pairs)})")
-                
+
                 # Complete the fluent API call
                 f.write(".build()\n")
-            
+
             f.write("\n")
-            
+
             # Add links after objects are created (avoiding forward reference issues)
             if hasattr(objectmodel, 'links') and objectmodel.links:
-                f.write("# Object links (created after objects to avoid forward references)\n")
+
+                # Group links by (source_obj_var, end_name)
+                grouped_links = {}
                 for link in objectmodel.links:
                     if len(link.connections) == 2:
-                        # Create link from first object to second object only
                         end1, end2 = link.connections
                         obj1_var = f"{end1.object.name_.lower()}_obj"
                         obj2_var = f"{end2.object.name_.lower()}_obj"
                         end2_name = end2.association_end.name
-                        
-                        f.write(f"{obj1_var}.{end2_name} = {obj2_var}  # Creates bidirectional link via association '{link.association.name}'\n")
+
+                        key = (obj1_var, end2_name)
+                        grouped_links.setdefault(key, set()).add(obj2_var)
+
+                # Write assignments for each group
+                for (obj_var, end_name), targets in grouped_links.items():
+                    if len(targets) == 1:
+                        [single_target] = targets
+                        f.write(f"{obj_var}.{end_name} = {single_target}\n")
+                    else:
+                        target_str = ", ".join(sorted(targets))  # sorted for consistency
+                        f.write(f"{obj_var}.{end_name} = {{{target_str}}}\n")
+
                 f.write("\n")
-            
+
             # Create the object model instance
             f.write("# Object Model instance\n")
             objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
@@ -409,11 +417,6 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             f.write(f"    name=\"{objectmodel.name}\",\n")
             f.write(f"    objects={{{objects_str}}}\n")
             f.write(")\n")
-            
-            # Add links information if they exist
-            if hasattr(objectmodel, 'links') and objectmodel.links:
-                f.write(f"\n# Links are automatically included via the objects\n")
-                f.write(f"# Total links in model: {len(objectmodel.links)}\n")
 
     print(f"BUML model saved to {file_path}")
 

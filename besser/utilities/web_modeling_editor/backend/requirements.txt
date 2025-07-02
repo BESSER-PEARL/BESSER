@@ -1,6 +1,6 @@
-#fastapi
-#uvicorn
-#pydantic
+fastapi
+uvicorn
+pydantic
 python-multipart
 PyYAML
-bocl
+bocl == 0.3.0

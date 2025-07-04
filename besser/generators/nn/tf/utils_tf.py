@@ -43,10 +43,10 @@ class SetupLayerTF:
         lyr_name = self.layer.name
         lyr = f"self.{lyr_name} = layers"
         if cls_name == "LinearLayer":
-            lyr = (
-                f"{lyr}.Dense(units={self.layer.out_features}, "
-                f"activation={actv_func})"
-            )
+            lyr = f"{lyr}.Dense(units={self.layer.out_features}"
+            if actv_func:
+                lyr = f"{lyr}, activation={actv_func}"
+            lyr = f"{lyr})"
         elif cls_name == "FlattenLayer":
             lyr = f"{lyr}.Flatten()"
         else: #cls_name == "EmbeddingLayer"
@@ -80,8 +80,11 @@ class SetupLayerTF:
         layer_type = cls_name[:-5]
         lyr = (
             f"layers.{layer_type}(units={self.layer.hidden_size}, "
-            f"activation={actv_func}, dropout={self.layer.dropout}"
+            f"dropout={self.layer.dropout}"
         )
+
+        if actv_func:
+            lyr = f"{lyr}, activation={actv_func}"
 
         if self.layer.return_type == "full":
             lyr = f"{lyr}, return_sequences=True)"
@@ -139,8 +142,12 @@ class SetupLayerTF:
         lyr = (
             f"{lyr}self.{lyr_name} = layers.Conv{dim}D(filters={filters}, "
             f"kernel_size={kernel}, strides={stride}, "
-            f"padding='{pad_type}', activation={actv_func})"
+            f"padding='{pad_type}'"
         )
+        if actv_func:
+            lyr = f"{lyr}, activation={actv_func}"
+        lyr = f"{lyr})"
+        
         return lyr
 
     def setup_pooling(self, lyr_name: str):

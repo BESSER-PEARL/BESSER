@@ -85,11 +85,11 @@ def test_nn_subclassing(tmpdir):
     # Check for expected lines in the file
     assert f"class NeuralNetwork(tf.keras.Model):" in content, "Missing NN class definition in the generated file."
     assert f"{nn_model.name} = NeuralNetwork()" in content, "Missing NN class instantiation in the generated file."
-    assert f"train_loader = load_dataset(\"{nn_model.train_data.path_data}\"" in content, "Training data path is incorrect."
-    assert f"IMAGE_SIZE = ({nn_model.train_data.image.shape[0]}, {nn_model.train_data.image.shape[1]})" in content, "Image shape is incorrect."
-    assert f"batch_size={nn_model.configuration.batch_size}" in content, "Batch size is incorrect."
+    assert f"train_path = \"{nn_model.train_data.path_data}\"" in content, "Training data path is incorrect."
+    assert f"image_size = ({nn_model.train_data.image.shape[0]}, {nn_model.train_data.image.shape[1]})" in content, "Image shape is incorrect."
+    assert f"batch_size = {nn_model.configuration.batch_size}" in content, "Batch size is incorrect."
     assert f"learning_rate={nn_model.configuration.learning_rate}" in content, "Learning rate is incorrect."
-    assert f"for epoch in range({nn_model.configuration.epochs})" in content, "Epochs is incorrect."
+    assert f"epochs = {nn_model.configuration.epochs}" in content, "Epochs is incorrect."
     assert f"metrics = {nn_model.configuration.metrics}" in content, "Metrics is incorrect."
 
 

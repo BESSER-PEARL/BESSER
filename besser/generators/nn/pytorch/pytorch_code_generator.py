@@ -34,7 +34,7 @@ class PytorchGenerator(NNCodeGenerator):
     """
     def __init__(self, model: NN, output_dir: str | None = None,
                  generation_type: str = "subclassing",
-                 channel_last: bool = False):
+                 channel_last: bool = True):
 
         setup_layer: SetupLayerTorch = SetupLayerTorch
         setup_tensorop: Callable = get_tensorop_syntax

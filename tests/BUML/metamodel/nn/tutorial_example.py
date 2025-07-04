@@ -5,8 +5,10 @@ https://www.kaggle.com/datasets/swaroopkml/cifar10-pngs-in-folders
 """
 from besser.BUML.metamodel.nn import NN, Conv2D, PoolingLayer, \
     FlattenLayer, LinearLayer, Configuration, Image, Dataset
-from besser.generators.nn.pytorch import PytorchGenerator
-from besser.generators.nn.tf import TFGenerator
+from besser.generators.nn.pytorch.pytorch_code_generator import (
+    PytorchGenerator
+)
+from besser.generators.nn.tf.tf_code_generator import TFGenerator
 
 
 nn_model: NN = NN(name="my_model")

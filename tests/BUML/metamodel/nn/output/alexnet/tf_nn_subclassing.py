@@ -46,5 +46,4 @@ class NeuralNetwork(tf.keras.Model):
         x = self.classifier(x)
         return x
 
-    
 

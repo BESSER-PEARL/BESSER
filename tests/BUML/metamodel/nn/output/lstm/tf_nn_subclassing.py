@@ -28,5 +28,4 @@ class NeuralNetwork(tf.keras.Model):
         x = self.l6(x)
         return x
 
-    
 

@@ -7,8 +7,10 @@ https://pytorch.org/vision/main/_modules/torchvision/models/alexnet.html
 
 from besser.BUML.metamodel.nn import NN, Conv2D, PoolingLayer, \
     FlattenLayer, LinearLayer, DropoutLayer
-from besser.generators.nn.pytorch import PytorchGenerator
-from besser.generators.nn.tf import TFGenerator
+from besser.generators.nn.pytorch.pytorch_code_generator import (
+    PytorchGenerator
+)
+from besser.generators.nn.tf.tf_code_generator import TFGenerator
 
 
 features: NN = NN(name="features")

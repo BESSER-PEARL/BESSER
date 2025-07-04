@@ -15,11 +15,6 @@ class NeuralNetwork(nn.Module):
 # Dataset preparation
 {{ nn_components.prepare_data(model.train_data, model.test_data, model.configuration) -}}
 
-# Define the network, loss function, and optimizer
-{{ model.name }} = NeuralNetwork()
-criterion = {{ nn_components.get_loss_function(model.configuration) }}
-optimizer = {{ nn_components.get_optimizer(model) }}
-
 # Train the neural network
 {{ nn_components.train_model(model, model.train_data.task_type) }}
 
@@ -28,4 +23,14 @@ optimizer = {{ nn_components.get_optimizer(model) }}
 
 # Save the neural network
 {{ nn_components.save_model(model) }}
+
+
+
+{%- set template = "subclassing" -%}
+
+{{ nn_components.main(model, modules_details, template) }}
+
+if __name__ == "__main__":
+    main()
+
 {%- endif -%}

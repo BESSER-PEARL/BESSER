@@ -6,8 +6,10 @@ https://github.com/g9g99g9g/basic/blob/master/ANN/LSTM_vs_GRU/yelp_reviews_emoti
 
 from besser.BUML.metamodel.nn import NN, LinearLayer, DropoutLayer, \
    EmbeddingLayer, LSTMLayer
-from besser.generators.nn.pytorch import PytorchGenerator
-from besser.generators.nn.tf import TFGenerator
+from besser.generators.nn.pytorch.pytorch_code_generator import (
+    PytorchGenerator
+)
+from besser.generators.nn.tf.tf_code_generator import TFGenerator
 
 
 lstm_model: NN = NN(name="lstm")

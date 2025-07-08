@@ -246,14 +246,14 @@ def process_ocl_constraints(ocl_text: str, domain_model: DomainModel, counter: i
 
 def process_class_diagram(json_data):
     """Process Class Diagram specific elements."""
-    title = json_data.get('diagramTitle', '')
+    title = json_data.get('title', '')
     if ' ' in title:
         title = title.replace(' ', '_')
 
     domain_model = DomainModel(title)
     # Get elements and OCL constraints from the JSON data
-    elements = json_data.get('elements', {}).get('elements', {})
-    relationships = json_data.get('elements', {}).get('relationships', {})
+    elements = json_data.get('model', {}).get('elements', {})
+    relationships = json_data.get('model', {}).get('relationships', {})
 
     # FIRST PASS: Process all type declarations (enumerations and classes)
     # 1. First process enumerations
@@ -499,7 +499,7 @@ def process_class_diagram(json_data):
                 ends={source_property, target_property}
             )
             domain_model.associations.add(association)
-            
+
             # Store the association for association class processing
             association_by_id[rel_id] = association
 
@@ -512,39 +512,39 @@ def process_class_diagram(json_data):
         class_element = elements.get(class_id)
         if not class_element:
             continue
-            
+
         class_name = class_element.get("name", "")
         class_obj = domain_model.get_class_by_name(class_name)
-        
+
         if not class_obj:
             continue
-            
+
         # An association class should only be linked to one association
         if len(association_ids) > 1:
             print(f"Warning: Class '{class_name}' is linked to multiple associations. Only using the first one.")
-            
+
         # Get the first association
         association_id = next(iter(association_ids))
         association = association_by_id.get(association_id)
-        
+
         if not association:
             continue
-            
+
         # Get attributes and methods from the original class
         attributes = class_obj.attributes
         methods = class_obj.methods
-        
+
         # Create the association class with attributes and methods
         association_class = AssociationClass(
             name=class_name,
             attributes=attributes,
             association=association
         )
-        
+
         # Add methods to the association class if they exist
         if methods:
             association_class.methods = methods
-            
+
         # Update the domain model - remove the regular class and add the association class
         domain_model.types.discard(class_obj)
         domain_model.types.add(association_class)
@@ -568,7 +568,7 @@ def process_class_diagram(json_data):
                     continue    # Attach warnings to domain model for later use
     domain_model.ocl_warnings = all_warnings
     domain_model.constraints = all_constraints
-    
+
     # Store the association_by_id mapping for object diagram processing
     domain_model.association_by_id = association_by_id
 
@@ -577,26 +577,26 @@ def process_class_diagram(json_data):
 def process_object_diagram(json_data, domain_model):
     """Process Object Diagram specific elements and return an ObjectModel."""
     from besser.BUML.metamodel.object.builder import ObjectBuilder
-    
+
     title = json_data.get('diagramTitle', 'Generated_Object_Model')
     if ' ' in title:
         title = title.replace(' ', '_')
-    
+
     object_model = ObjectModel(title)
-    
+
     # Get elements and relationships from the JSON data
     elements = json_data.get('elements', {}).get('elements', {})
     relationships = json_data.get('elements', {}).get('relationships', {})
-    
+
     # Track objects by their ID for link creation
     objects_by_id = {}
-    
+
     # First pass: Create objects using fluent API
     for element_id, element in elements.items():
         if element.get("type") == "ObjectName":
             object_name = element.get("name", "")
             class_id = element.get("classId")
-            
+
             # Find the corresponding class in the domain model using classId
             class_obj = None
             if class_id:
@@ -604,7 +604,7 @@ def process_object_diagram(json_data, domain_model):
                 reference_data = json_data.get('elements', {}).get('referenceDiagramData', {})
                 if not reference_data:
                     reference_data = json_data.get('referenceDiagramData', {})
-                
+
                 if reference_data:
                     reference_elements = reference_data.get('elements', {})
                     class_element = reference_elements.get(class_id)
@@ -630,24 +630,24 @@ def process_object_diagram(json_data, domain_model):
             # Fall back to searching by object name if class ID lookup fails
             if not class_obj:
                 class_obj = domain_model.get_class_by_name(object_name)
-               
-            
+
+
             if not class_obj:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Could not find class for object '{object_name}' with class ID '{class_id}'. Please ensure all objects have corresponding classes in the class diagram."
                 )
-            
+
             # Create object using fluent API
             builder = ObjectBuilder(class_obj).name(object_name)
-            
+
             # Process object attributes (slots) and add them to builder
             attributes_dict = {}
             for attr_id in element.get("attributes", []):
                 attr_element = elements.get(attr_id)
                 if attr_element and attr_element.get("type") == "ObjectAttribute":
                     attr_string = attr_element.get("name", "")
-                    
+
                     # Parse the attribute string to extract name, type, and value
                     # Format: "+ name: type = value"
                     value = None
@@ -662,13 +662,13 @@ def process_object_diagram(json_data, domain_model):
                         if attr_name and value is not None:
                             # Find the corresponding property in the class or its parents
                             property_obj = None
-                            
+
                             # First check the class itself
                             for prop in class_obj.attributes:
                                 if prop.name == attr_name:
                                     property_obj = prop
                                     break
-                            
+
                             # If not found, check parent classes (for inheritance)
                             if not property_obj:
                                 for gen in domain_model.generalizations:
@@ -679,7 +679,7 @@ def process_object_diagram(json_data, domain_model):
                                                 break
                                         if property_obj:
                                             break
-                            
+
                             if property_obj:
                                 # Convert value to appropriate type
                                 converted_value = value
@@ -699,23 +699,23 @@ def process_object_diagram(json_data, domain_model):
                                         converted_value = value.lower() in ['true', '1', 'yes']
                                 
                                 attributes_dict[attr_name] = converted_value
-                                
+
                     except Exception as e:
                         print(f"Warning: Could not process attribute '{attr_string}' for object '{object_name}': {e}")
                         continue
-            
+
             # Add attributes to builder if any were found
             if attributes_dict:
                 builder = builder.attributes(**attributes_dict)
-            
+
             # Build the object
             obj = builder.build()
             # print(f"Created object '{object_name}' of class '{class_obj.name}'")
-            
+
             # Add the object to the model and track it
             object_model.add_object(obj)
             objects_by_id[element_id] = obj
-    
+
     # Second pass: Create links between objects
     for rel_id, relationship in relationships.items():
         if relationship.get("type") == "ObjectLink":
@@ -723,7 +723,7 @@ def process_object_diagram(json_data, domain_model):
             target_id = relationship.get("target", {}).get("element")
             link_name = relationship.get("name", "")
             association_id = relationship.get("associationId")
-            
+
             source_obj = objects_by_id.get(source_id)
             target_obj = objects_by_id.get(target_id)
             
@@ -738,7 +738,7 @@ def process_object_diagram(json_data, domain_model):
                 # First try to find the association directly by ID from the domain model
                 if hasattr(domain_model, 'association_by_id') and domain_model.association_by_id:
                     association_obj = domain_model.association_by_id.get(association_id)
-                
+
                 # If not found by direct ID lookup, try the reference diagram approach
                 if not association_obj:
                     # Look for the association by ID in the reference diagram data
@@ -758,7 +758,7 @@ def process_object_diagram(json_data, domain_model):
                                     if assoc.name == assoc_name:
                                         association_obj = assoc
                                         break
-            
+
             # If still not found, try to find association by matching the connected classes
             if not association_obj:
                 for assoc in domain_model.associations:
@@ -783,7 +783,7 @@ def process_object_diagram(json_data, domain_model):
                             if gen.specific == source_obj.classifier and gen.general == end.type:
                                 source_matches = True
                                 break
-                    
+
                     # Check if end type matches target object (considering inheritance)
                     target_matches = False
                     if end.type == target_obj.classifier:
@@ -794,7 +794,7 @@ def process_object_diagram(json_data, domain_model):
                             if gen.specific == target_obj.classifier and gen.general == end.type:
                                 target_matches = True
                                 break
-                    
+
                     if source_matches:
                         link_end = LinkEnd(name=f"{end.name}_end", association_end=end, object=source_obj)
                         link_ends.append(link_end)
@@ -823,13 +823,19 @@ def process_object_diagram(json_data, domain_model):
 def process_state_machine(json_data):
     """Process State Machine Diagram specific elements and return Python code as string."""
     code_lines = []
+    code_lines.append("#######################")
+    code_lines.append("# STATE MACHINE MODEL #")
+    code_lines.append("#######################")
+    code_lines.append("")
     code_lines.append("import datetime")
     code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event\n")
-    sm_name = json_data.get("name", "Generated_State_Machine")
+    sm_name = json_data.get("title", "Generated_State_Machine")
+    if ' ' in sm_name:
+        sm_name = sm_name.replace(' ', '_')
     code_lines.append(f"sm = StateMachine(name='{sm_name}')\n")
 
-    elements = json_data.get("elements", {})
-    relationships = json_data.get("relationships", {})
+    elements = json_data.get('model', {}).get('elements', {})
+    relationships = json_data.get('model', {}).get('relationships', {})
 
     # Track states by ID for later reference
     states_by_id = {}
@@ -853,14 +859,14 @@ def process_state_machine(json_data):
         if element.get("type") == "StateCodeBlock":
             name = element.get("name", "")
             code_content = element.get("code", {})
-            
+
             # If name is empty, try to extract function name from code content
             if not name:
                 # Look for "def function_name(" pattern in the code
                 function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
                 if function_match:
                     name = function_match.group(1)
-                    
+
             # Clean up the code content by removing extra newlines
             cleaned_code = "\n".join(line for line in code_content.splitlines() if line.strip())
             # Write the function definition with its code content
@@ -955,12 +961,12 @@ def process_agent_diagram(json_data):
     import json as json_lib
 
     # Create the agent model
-    title = json_data.get('diagramTitle', 'Generated_Agent')
+    title = json_data.get('title', 'Generated_Agent')
     if ' ' in title:
         title = title.replace(' ', '_')
 
     agent = Agent(title)
-    
+
     # Add default configuration properties
     agent.add_property(ConfigProperty('websocket_platform', 'websocket.host', 'localhost'))
     agent.add_property(ConfigProperty('websocket_platform', 'websocket.port', 8765))
@@ -976,22 +982,22 @@ def process_agent_diagram(json_data):
     agent.add_property(ConfigProperty('nlp', 'nlp.replicate.api_key', 'YOUR-API-KEY'))
 
     # Get elements and relationships from the JSON data
-    elements = json_data.get('elements', {}).get('elements', {})
-    relationships = json_data.get('elements', {}).get('relationships', {})
-    
+    elements = json_data.get('model', {}).get('elements', {})
+    relationships = json_data.get('model', {}).get('relationships', {})
+
     # Track states and bodies for later reference
     states_by_id = {}
     bodies_by_id = {}
     fallback_bodies_by_id = {}
     intents_by_id = {}
-    
+
     # First pass: Process intents
     intent_count = 0
     for element_id, element in elements.items():
         if element.get("type") == "AgentIntent":
             intent_name = element.get("name")
             training_sentences = []
-            
+
             # Collect training sentences
             for body_id in element.get("bodies", []):
                 body_element = elements.get(body_id)
@@ -999,13 +1005,13 @@ def process_agent_diagram(json_data):
                     training_sentence = sanitize_text(body_element.get("name", ""))
                     if training_sentence:
                         training_sentences.append(training_sentence)
-            
+
             # Create intent and add to agent
             intent = Intent(intent_name, training_sentences)
             agent.add_intent(intent)
             intents_by_id[element_id] = intent
             intent_count += 1
-    
+
     # First identify the initial state
     initial_state_id = None
     for element_id, element in elements.items():
@@ -1019,15 +1025,15 @@ def process_agent_diagram(json_data):
                     break
             if initial_state_id:
                 break
-    
+
     # Process the initial state first if found
     if initial_state_id:
         element = elements.get(initial_state_id)
         state_name = element.get("name", "")
-        
+
         agent_state = agent.new_state(name=state_name, initial=True)
         states_by_id[initial_state_id] = agent_state
-        
+
         # Process state bodies
         body_count = 0
         body_messages = []
@@ -1037,7 +1043,7 @@ def process_agent_diagram(json_data):
                 body_name = f"{state_name}_body"
                 body_type = body_element.get("replyType")
                 body_content = body_element.get("name", "")
-                
+
                 # Collect messages for this body
                 if body_type == "text":
                     body_messages.append(sanitize_text(body_content))
@@ -1047,14 +1053,14 @@ def process_agent_diagram(json_data):
                 elif body_type == "code":
                     # For code, store as a special code message
                     body_messages.append(f"CODE:{sanitize_text(body_content)}")
-                
+
                 body_count += 1
-        
+
         # Create a single body function that combines all messages
         if body_messages:
             # Check if any of the messages are LLM messages
             has_llm = any(message.startswith("LLM:") for message in body_messages)
-            
+
             # If we have an LLM message, create a function that uses llm.predict
             if has_llm:
                 f_name = f"{state_name}_body"
@@ -1062,7 +1068,7 @@ def process_agent_diagram(json_data):
                     def body_function(session):
                         session.reply(llm.predict(session.event.message))
                     return body_function
-                
+
                 body = Body(f_name, create_llm_body_function(f_name))
             else:
                 # Otherwise, create a regular function with the messages
@@ -1080,13 +1086,13 @@ def process_agent_diagram(json_data):
                             else:
                                 session.reply(message)
                     return body_function
-                
+
                 body = Body(f"{state_name}_body", create_body_function(body_messages))
-            
+
             # Store the messages directly in the Body object for easier extraction
             body.messages = body_messages
             agent_state.set_body(body)
-        
+
         # Process fallback bodies
         fallback_count = 0
         fallback_messages = []
@@ -1096,7 +1102,7 @@ def process_agent_diagram(json_data):
                 fallback_name = f"{state_name}_fallback_body"
                 fallback_type = fallback_element.get("replyType")
                 fallback_content = fallback_element.get("name", "")
-                
+
                 # Collect messages for this fallback body
                 if fallback_type == "text":
                     fallback_messages.append(sanitize_text(fallback_content))
@@ -1106,14 +1112,14 @@ def process_agent_diagram(json_data):
                 elif fallback_type == "code":
                     # For code, store as a special code message
                     fallback_messages.append(f"CODE:{sanitize_text(fallback_content)}")
-                
+
                 fallback_count += 1
-        
+
         # Create a single fallback body function that combines all messages
         if fallback_messages:
             # Check if any of the messages are LLM messages
             has_llm = any(message.startswith("LLM:") for message in fallback_messages)
-            
+
             # If we have an LLM message, create a function that uses llm.predict
             if has_llm:
                 f_name = f"{state_name}_fallback_body"
@@ -1121,7 +1127,7 @@ def process_agent_diagram(json_data):
                     def fallback_function(session):
                         session.reply(llm.predict(session.event.message))
                     return fallback_function
-                
+
                 fallback_body = Body(f_name, create_llm_fallback_function(f_name))
             else:
                 # Otherwise, create a regular function with the messages
@@ -1138,22 +1144,22 @@ def process_agent_diagram(json_data):
                             else:
                                 session.reply(message)
                     return fallback_function
-                
+
                 fallback_body = Body(f"{state_name}_fallback_body", create_fallback_function(fallback_messages))
-            
+
             # Store the messages directly in the Body object for easier extraction
             fallback_body.messages = fallback_messages
             agent_state.set_fallback_body(fallback_body)
-    
+
     # Now process the rest of the states
     for element_id, element in elements.items():
         if element.get("type") == "AgentState" and element_id != initial_state_id:
             # Create state and add to agent
             state_name = element.get("name", "")
-            
+
             agent_state = agent.new_state(name=state_name, initial=False)
             states_by_id[element_id] = agent_state
-            
+
             # Process state bodies
             body_count = 0
             body_messages = []
@@ -1173,14 +1179,14 @@ def process_agent_diagram(json_data):
                     elif body_type == "code":
                         # For code, store as a special code message
                         body_messages.append(f"CODE:{sanitize_text(body_content)}")
-                    
+
                     body_count += 1
-            
+
             # Create a single body function that combines all messages
             if body_messages:
                 # Check if any of the messages are LLM messages
                 has_llm = any(message.startswith("LLM:") for message in body_messages)
-                
+
                 # If we have an LLM message, create a function that uses llm.predict
                 if has_llm:
                     f_name = f"{state_name}_body"
@@ -1188,7 +1194,7 @@ def process_agent_diagram(json_data):
                         def body_function(session):
                             session.reply(llm.predict(session.event.message))
                         return body_function
-                    
+
                     body = Body(f_name, create_llm_body_function(f_name))
                 else:
                     # Otherwise, create a regular function with the messages
@@ -1206,13 +1212,13 @@ def process_agent_diagram(json_data):
                                 else:
                                     session.reply(message)
                         return body_function
-                    
+
                     body = Body(f"{state_name}_body", create_body_function(body_messages))
-                
+
                 # Store the messages directly in the Body object for easier extraction
                 body.messages = body_messages
                 agent_state.set_body(body)
-            
+
             # Process fallback bodies
             fallback_count = 0
             fallback_messages = []
@@ -1222,7 +1228,7 @@ def process_agent_diagram(json_data):
                     fallback_name = f"{state_name}_fallback_body"
                     fallback_type = fallback_element.get("replyType")
                     fallback_content = fallback_element.get("name", "")
-                    
+
                     # Collect messages for this fallback body
                     if fallback_type == "text":
                         fallback_messages.append(sanitize_text(fallback_content))
@@ -1232,14 +1238,14 @@ def process_agent_diagram(json_data):
                     elif fallback_type == "code":
                         # For code, store as a special code message
                         fallback_messages.append(f"CODE:{sanitize_text(fallback_content)}")
-                    
+
                     fallback_count += 1
-            
+
             # Create a single fallback body function that combines all messages
             if fallback_messages:
                 # Check if any of the messages are LLM messages
                 has_llm = any(message.startswith("LLM:") for message in fallback_messages)
-                
+
                 # If we have an LLM message, create a function that uses llm.predict
                 if has_llm:
                     f_name = f"{state_name}_fallback_body"
@@ -1247,7 +1253,7 @@ def process_agent_diagram(json_data):
                         def fallback_function(session):
                             session.reply(llm.predict(session.event.message))
                         return fallback_function
-                    
+
                     fallback_body = Body(f_name, create_llm_fallback_function(f_name))
                 else:
                     # Otherwise, create a regular function with the messages
@@ -1264,31 +1270,31 @@ def process_agent_diagram(json_data):
                                 else:
                                     session.reply(message)
                         return fallback_function
-                    
+
                     fallback_body = Body(f"{state_name}_fallback_body", create_fallback_function(fallback_messages))
-                
+
                 # Store the messages directly in the Body object for easier extraction
                 fallback_body.messages = fallback_messages
                 agent_state.set_fallback_body(fallback_body)
-    
+
     # Third pass: Process transitions
     transition_count = 0
     for relationship in relationships.values():
         if relationship.get("type") in ["AgentStateTransition", "AgentStateTransitionInit"]:
             source_id = relationship.get("source", {}).get("element")
             target_id = relationship.get("target", {}).get("element")
-            
+
             # Skip initial node transitions (already handled when creating states)
             if elements.get(source_id, {}).get("type") == "StateInitialNode":
                 continue
-            
+
             source_state = states_by_id.get(source_id)
             target_state = states_by_id.get(target_id)
-            
+
             if source_state and target_state:
                 condition_name = relationship.get("condition", "")
                 condition_value = relationship.get("conditionValue", "")
-                
+
                 # Create appropriate transition based on condition
                 if condition_name == "when_intent_matched":
                     # Find the intent by name
@@ -1297,22 +1303,22 @@ def process_agent_diagram(json_data):
                         if intent.name == condition_value:
                             intent_to_match = intent
                             break
-                    
+
                     if intent_to_match:
                         source_state.when_intent_matched(intent_to_match).go_to(target_state)
                         transition_count += 1
-                
+
                 elif condition_name == "when_no_intent_matched":
                     source_state.when_no_intent_matched().go_to(target_state)
                     transition_count += 1
-                
+
                 elif condition_name == "when_variable_operation_matched":
                     # Check if condition_value is a dictionary
                     if isinstance(condition_value, dict):
                         variable_name = condition_value.get("variable")
                         operator_value = condition_value.get("operator")
                         target_value = condition_value.get("targetValue")
-                        
+
                         # Map string operators to actual operator functions
                         operator_map = {
                             "<": operator.lt,
@@ -1322,7 +1328,7 @@ def process_agent_diagram(json_data):
                             ">": operator.gt,
                             "!=": operator.ne
                         }
-                        
+
                         op_func = operator_map.get(operator_value)
                         if op_func:
                             source_state.when_variable_matches_operation(
@@ -1335,7 +1341,7 @@ def process_agent_diagram(json_data):
                         # If condition_value is not a dictionary, add a simple transition
                         source_state.when_no_intent_matched().go_to(target_state)
                         transition_count += 1
-                
+
                 elif condition_name == "when_file_received":
                     mime_types = {
                         "PDF": "application/pdf",
@@ -1346,14 +1352,14 @@ def process_agent_diagram(json_data):
                     if file_type:
                         source_state.when_file_received(file_type).go_to(target_state)
                         transition_count += 1
-                
+
                 elif condition_name == "auto":
                     source_state.go_to(target_state)
                     transition_count += 1
-                
+
                 else:
                     # Default to no_intent_matched if no condition specified
                     source_state.when_no_intent_matched().go_to(target_state)
                     transition_count += 1
-    
+
     return agent

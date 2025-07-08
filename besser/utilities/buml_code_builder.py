@@ -1,6 +1,11 @@
 import os
+import tempfile
+import uuid
+import shutil
 from besser.BUML.metamodel.structural.structural import DomainModel, AssociationClass, Metadata
 from besser.BUML.metamodel.object.object import ObjectModel
+from besser.BUML.metamodel.project import Project
+from besser.BUML.metamodel.state_machine.state_machine import StateMachine
 from besser.BUML.metamodel.state_machine.agent import Agent, Intent
 from besser.BUML.metamodel.state_machine.state_machine import Body
 from besser.utilities import sort_by_timestamp as sort
@@ -70,7 +75,9 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
     with open(file_path, 'w', encoding='utf-8') as f:
         # Write imports
-        f.write("# Generated B-UML Model\n")
+        f.write("####################\n")
+        f.write("# STRUCTURAL MODEL #\n")
+        f.write("####################\n\n")
         f.write("from besser.BUML.metamodel.structural import (\n")
         f.write("    Class, Property, Method, Parameter,\n")
         f.write("    BinaryAssociation, Generalization, DomainModel,\n")
@@ -347,8 +354,9 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
         # Generate object model code if provided
         if objectmodel:
-            f.write("\n###################################\n")
-            f.write("# Object Model using the Fluent API\n\n")
+            f.write("\n################\n")
+            f.write("# OBJECT MODEL #\n")
+            f.write("################\n")
 
             # Write object instances using fluent API
             for obj in sorted(objectmodel.objects, key=lambda x: x.name_):
@@ -439,7 +447,9 @@ def agent_model_to_code(model: Agent, file_path: str):
 
     with open(file_path, 'w', encoding='utf-8') as f:
         # Write imports
-        f.write("# Generated B-UML Agent Model\n")
+        f.write("###############\n")
+        f.write("# AGENT MODEL #\n")
+        f.write("###############\n")
         f.write("import datetime\n")
         f.write("from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty\n")
         f.write("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate\n")
@@ -637,3 +647,82 @@ def agent_model_to_code(model: Agent, file_path: str):
 
 
     print(f"Agent model saved to {file_path}")
+
+
+def project_to_code(project: Project, file_path: str, sm: str = ""):
+    output_dir = os.path.dirname(file_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    if not file_path.endswith('.py'):
+        file_path += '.py'
+
+    domain_model = None
+    objectmodel = None
+    agent_model = None
+    state_machine = None
+
+    for model in project.models:
+        if isinstance(model, DomainModel):
+            domain_model = model
+        if isinstance(model, ObjectModel):
+            objectmodel = model
+        if isinstance(model, Agent):
+            agent_model = model
+
+    models = []
+    with open(file_path, 'w', encoding='utf-8') as f:
+        # Models
+        temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
+
+        if objectmodel and domain_model:
+            output_file_path = os.path.join(temp_dir, "domain_model.py")
+            domain_model_to_code(model=domain_model, file_path=output_file_path, objectmodel=objectmodel)
+            with open(output_file_path, "r") as m:
+                file_content = m.read()
+            content_str = file_content
+            f.write(content_str)
+            f.write("\n\n")
+            models.append("domain_model")
+            models.append("object_model")
+        elif domain_model:
+            output_file_path = os.path.join(temp_dir, "domain_model.py")
+            domain_model_to_code(model=domain_model, file_path=output_file_path)
+            with open(output_file_path, "r") as m:
+                file_content = m.read()
+            content_str = file_content
+            f.write(content_str)
+            f.write("\n\n")
+            models.append("domain_model")
+        if agent_model:
+            output_file_path = os.path.join(temp_dir, "agent_model.py")
+            agent_model_to_code(model=agent_model, file_path=output_file_path)
+            with open(output_file_path, "r") as m:
+                file_content = m.read()
+            content_str = file_content
+            f.write(content_str)
+            f.write("\n\n")
+            models.append("agent")
+
+        if sm != "":
+            f.write(sm)
+            models.append("sm")
+            f.write("\n\n")
+
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+        # Project
+        # Write imports
+        f.write("######################\n")
+        f.write("# PROJECT DEFINITION #\n")
+        f.write("######################\n\n")
+        f.write("from besser.BUML.metamodel.project import Project\n")
+        f.write("from besser.BUML.metamodel.structural.structural import Metadata\n\n")
+
+        # Write metadata and project
+        f.write(f'metadata = Metadata(description="{project.metadata.description}")\n')
+        f.write("project = Project(\n")
+        f.write(f'    name="{project.name}",\n')
+        f.write(f'    models=[{", ".join(models)}],\n')
+        f.write(f'    owner="{project.owner}",\n')
+        f.write("    metadata=metadata\n")
+        f.write(")\n")

@@ -5,11 +5,11 @@ import shutil
 import tempfile
 import uuid
 import asyncio
-from fastapi import FastAPI, HTTPException, File, UploadFile
+from fastapi import FastAPI, HTTPException, File, UploadFile, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 
-from besser.utilities.buml_code_builder import domain_model_to_code, agent_model_to_code
+from besser.utilities.buml_code_builder import domain_model_to_code, agent_model_to_code, project_to_code
 from besser.utilities.web_modeling_editor.backend.services import run_docker_compose
 from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
@@ -21,8 +21,9 @@ from besser.generators.backend import BackendGenerator
 from besser.generators.json import JSONSchemaGenerator
 from besser.generators.agents.baf_generator import BAFGenerator
 
-from besser.utilities.web_modeling_editor.backend.models.class_diagram import (
-    ClassDiagramInput,
+from besser.utilities.web_modeling_editor.backend.models import (
+    DiagramInput,
+    ProjectInput
 )
 from besser.utilities.web_modeling_editor.backend.services.json_to_buml import (
     process_class_diagram,
@@ -41,8 +42,8 @@ from besser.utilities.web_modeling_editor.backend.services.ocl_checker import (
     check_ocl_constraint,
 )
 
-from besser.utilities.web_modeling_editor.backend.services.json_project_to_code import (
-    json_to_project_code
+from besser.utilities.web_modeling_editor.backend.services import (
+    json_to_buml_project
 )
 
 app = FastAPI(
@@ -155,7 +156,7 @@ def generate_agent_files(agent_model):
 
 
 @api.post("/generate-output")
-async def generate_output(input_data: ClassDiagramInput):
+async def generate_output(input_data: DiagramInput):
     temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
     try:
         json_data = input_data.model_dump()
@@ -338,7 +339,7 @@ async def generate_output(input_data: ClassDiagramInput):
 
 
 @api.post("/deploy-app")
-async def deploy_app(input_data: ClassDiagramInput):
+async def deploy_app(input_data: DiagramInput):
     temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
     try:
         json_data = input_data.model_dump()
@@ -408,26 +409,30 @@ async def deploy_app(input_data: ClassDiagramInput):
         print(f"Error during file generation or django deployment: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
- 
-@api.post("/export-project")
-async def export_project(input_data: ClassDiagramInput):
+
+
+@api.post("/export-project_as_buml")
+async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     try:
-        json_data = input_data.model_dump()
-        elements_data = input_data.elements
-        
-        if elements_data.get("type") != "Project":
-            raise HTTPException(
-                status_code=400, 
-                detail="This endpoint is only for Project type exports"
-            )
-        
-        code = json_to_project_code(json_data)
+        buml_project = json_to_buml_project(input_data)
+        state_machine = input_data.diagrams.get("StateMachineDiagram", None)
+
+        state_machine_code = ""
+        if state_machine.model.elements:
+            state_machine_code = process_state_machine(state_machine.model_dump())
+
+        temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
+        output_file_path = os.path.join(temp_dir, "project.py")
+        project_to_code(project=buml_project, file_path=output_file_path, sm=state_machine_code)
+        with open(output_file_path, "r", encoding="utf-8") as f:
+            file_content = f.read()
+        shutil.rmtree(temp_dir, ignore_errors=True)
         return Response(
-            content=code,
+            content=file_content,
             media_type="text/plain",
             headers={"Content-Disposition": "attachment; filename=project.py"},
         )
-        
+
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -435,7 +440,7 @@ async def export_project(input_data: ClassDiagramInput):
 
 
 @api.post("/export-buml")
-async def export_buml(input_data: ClassDiagramInput):
+async def export_buml(input_data: DiagramInput):
     # Create unique temporary directory for this request
     temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
     try:
@@ -469,20 +474,20 @@ async def export_buml(input_data: ClassDiagramInput):
                 media_type="text/plain",
                 headers={"Content-Disposition": "attachment; filename=domain_model.py"},
             )
-            
+
         elif elements_data.get("type") == "ObjectDiagram":
             # Handle object diagram - need both class model and object model in one file
             reference_data = elements_data.get("referenceDiagramData", {})
             if not reference_data:
                 raise ValueError("Object diagram requires reference class diagram data")
-            
+
             # Process the reference class diagram first
             reference_json = {"elements": reference_data, "diagramTitle": reference_data.get("title", "Reference Classes")}
             domain_model = process_class_diagram(reference_json)
-            
+
             # Process the object diagram with the domain model
             object_model = process_object_diagram(json_data, domain_model)
-            
+
             # Generate a single file with both domain model and object model
             output_file_path = os.path.join(temp_dir, "complete_model.py")
             domain_model_to_code(model=domain_model, file_path=output_file_path, objectmodel=object_model)
@@ -494,7 +499,7 @@ async def export_buml(input_data: ClassDiagramInput):
                 media_type="text/plain",
                 headers={"Content-Disposition": "attachment; filename=complete_model.py"},
             )
-            
+
         elif elements_data.get("type") == "AgentDiagram":
             agent_model = process_agent_diagram(json_data)
             output_file_path = os.path.join(temp_dir, "agent_buml.py")
@@ -571,7 +576,7 @@ async def get_json_model(buml_file: UploadFile = File(...)):
 
 
 @api.post("/check-ocl")
-async def check_ocl(input_data: ClassDiagramInput):
+async def check_ocl(input_data: DiagramInput):
     try:
         # Check if this is an ObjectDiagram by looking at the elements type
         diagram_type = input_data.elements.get("type") if input_data.elements else None

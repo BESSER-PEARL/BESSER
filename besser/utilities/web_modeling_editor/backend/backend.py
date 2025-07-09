@@ -260,7 +260,7 @@ async def generate_output(input_data: DiagramInput):
             generator_instance.generate(dbms=dbms)
         else:
             # Save buml_model to a file for inspection
-            generator_instance = generator_class(buml_model)
+            generator_instance = generator_class(buml_model, output_dir=temp_dir)
             try:
                 # Generate the code
                 generator_instance.generate()
@@ -418,7 +418,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
         state_machine = input_data.diagrams.get("StateMachineDiagram", None)
 
         state_machine_code = ""
-        if state_machine.model.elements:
+        if state_machine.model.get("elements"):
             state_machine_code = process_state_machine(state_machine.model_dump())
 
         temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
@@ -579,29 +579,35 @@ async def get_json_model(buml_file: UploadFile = File(...)):
 async def check_ocl(input_data: DiagramInput):
     try:
         # Check if this is an ObjectDiagram by looking at the elements type
-        diagram_type = input_data.elements.get("type") if input_data.elements else None
-        
+        diagram_type = input_data.model.get("type") if input_data.model else None
+
         if diagram_type == "ObjectDiagram":
             # Handle object diagram - need both class model and object model in one file
-            reference_data = input_data.elements.get("referenceDiagramData", {})
+            reference_data = input_data.model.get("referenceDiagramData", {})
             if not reference_data:
                 raise ValueError("Object diagram requires reference class diagram data")
             
             # Process the reference class diagram first
-            reference_json = {"elements": reference_data, "diagramTitle": reference_data.get("title", "Reference Classes")}
+            reference_json = {
+                "title": reference_data.get("title", "Reference Classes"),
+                "model": {
+                    "elements": reference_data.get("elements", {}),
+                    "relationships": reference_data.get("relationships", {})
+                }
+            }
             buml_model = process_class_diagram(reference_json)
-            
             # Process the object diagram with the domain model
-            json_data = {"elements": input_data.elements}
+            json_data = {"elements": input_data.model}
             object_model = process_object_diagram(json_data, buml_model)
-
             result = check_ocl_constraint(buml_model, object_model)
 
         else:
             # Convert diagram to BUML model
-            json_data = {"elements": input_data.elements}
+            json_data = {
+                    "title": input_data.title,
+                    "model": input_data.model
+                }
             buml_model = process_class_diagram(json_data)
-
             if not buml_model:
                 return {"success": False, "message": "Failed to create BUML model"}
 

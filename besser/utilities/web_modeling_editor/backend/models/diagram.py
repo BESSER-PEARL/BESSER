@@ -1,4 +1,4 @@
-from typing import Dict, Any, Literal
+from typing import Dict, Any, Literal, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -13,25 +13,11 @@ class SQLConfig(BaseModel):
 class SQLAlchemyConfig(BaseModel):
     dbms: Literal["sqlite", "postgresql", "mysql", "mssql", "mariadb"] = "sqlite"
 
-class SizeInput(BaseModel):
-    width: int
-    height: int
-
-class InteractiveInput(BaseModel):
-    elements: Dict[str, Any] = Field(default_factory=dict)
-    relationships: Dict[str, Any] = Field(default_factory=dict)
-
-class ModelInput(BaseModel):
-    version: str
-    type: str
-    size: SizeInput
-    elements: Dict[str, Any] = Field(default_factory=dict)
-    relationships: Dict[str, Any] = Field(default_factory=dict)
-    interactive: InteractiveInput
-    assessments: Dict[str, Any] = Field(default_factory=dict)
 
 class DiagramInput(BaseModel):
-    id: str
+    id: Optional[str] = None
     title: str
-    model: ModelInput
-    lastUpdate: datetime
+    model: Dict[str, Any]
+    lastUpdate: Optional[datetime] = None
+    generator: Optional[str] = None
+    config: Optional[dict] = None

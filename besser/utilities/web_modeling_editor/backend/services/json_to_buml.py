@@ -583,10 +583,15 @@ def process_object_diagram(json_data, domain_model):
         title = title.replace(' ', '_')
 
     object_model = ObjectModel(title)
-
     # Get elements and relationships from the JSON data
-    elements = json_data.get('elements', {}).get('elements', {})
-    relationships = json_data.get('elements', {}).get('relationships', {})
+    elements = json_data.get('elements', {})
+    relationships = json_data.get('relationships', {})
+
+     # If elements is empty, try the nested structure
+    if not elements and 'elements' in json_data.get('elements', {}):
+        elements = json_data.get('elements', {}).get('elements', {})
+        relationships = json_data.get('elements', {}).get('relationships', {})
+
 
     # Track objects by their ID for link creation
     objects_by_id = {}

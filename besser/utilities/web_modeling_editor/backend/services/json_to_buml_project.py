@@ -21,7 +21,13 @@ def json_to_buml_project(project):
     # Filter out empty diagrams (those without elements)
     for d_name in diagram_names:
         diag = project.diagrams.get(d_name)
-        if diag and diag.model.elements:
+        elements = None
+        if diag and hasattr(diag, "model"):
+            if isinstance(diag.model, dict):
+                elements = diag.model.get("elements")
+            else:
+                elements = getattr(diag.model, "elements", None)
+        if diag and elements:
             diagrams[d_name] = diag
         else:
             diagrams[d_name] = None
@@ -38,8 +44,9 @@ def json_to_buml_project(project):
 
     # Process ObjectDiagram only if it exists and domain_model is available
     object_model_py = diagrams.get("ObjectDiagram")
+    print(object_model_py.model.get("referenceDiagramData"))
     if object_model_py and domain_model:
-        object_model = process_object_diagram(object_model_py.model_dump(), domain_model)
+        object_model = process_object_diagram(object_model_py.model, domain_model)
         model_list.append(object_model)
 
     # Process AgentDiagram if it exists

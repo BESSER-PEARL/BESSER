@@ -384,6 +384,12 @@ class Enumeration(DataType):
                 raise ValueError(f"An enumeration cannot have two literals with the same name: '{literal.name}'")
         self.literals.add(literal)
 
+    def __getattr__(self, name):
+        for literal in self.literals:
+            if literal.name == name:
+                return literal
+        raise AttributeError(f"{name} is not a valid literal of {self.name}")
+
     def __repr__(self):
         return f"Enumeration({self.name}, {self.literals}, {self.timestamp}, {self.metadata})"
 

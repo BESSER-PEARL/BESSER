@@ -37,6 +37,7 @@ from besser.utilities.web_modeling_editor.backend.services.buml_to_json import (
     state_machine_to_json,
     agent_buml_to_json,
     object_buml_to_json,
+    project_to_json,
 )
 from besser.utilities.web_modeling_editor.backend.services.ocl_checker import (
     check_ocl_constraint,
@@ -532,43 +533,22 @@ async def export_buml(input_data: DiagramInput):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
+from fastapi import UploadFile, File, HTTPException
+from datetime import datetime
+
 @api.post("/get-json-model")
 async def get_json_model(buml_file: UploadFile = File(...)):
     try:
         content = await buml_file.read()
-        buml_content = content.decode("utf-8")      # Try to determine what type of model this is
-        is_state_machine = "StateMachine" in buml_content and "Session" in buml_content
-        is_agent = "Agent" in buml_content and "Session" in buml_content
-        is_object_model = "ObjectModel" in buml_content
+        buml_content = content.decode("utf-8")
 
-        if is_state_machine:
-            # Convert the state machine Python code directly to JSON
-            json_model = state_machine_to_json(buml_content)
-            model_name = buml_file.filename
-        
-        elif is_agent:
-            # Convert the agent Python code directly to JSON
-            json_model = agent_buml_to_json(buml_content)
-            model_name = buml_file.filename
-            
-        elif is_object_model:
-            # Convert the object model Python code directly to JSON
-            json_model = object_buml_to_json(buml_content)
-            model_name = buml_file.filename
-  
-        else:
-            # Parse the BUML content into a domain model and get OCL constraints
-            domain_model = parse_buml_content(buml_content)
-            # Convert the domain model to JSON format
-            json_model = domain_model_to_json(domain_model)
-            model_name = domain_model.name
+        parsed_project = project_to_json(buml_content)
 
-        wrapped_response = {
-            "title": model_name,
-            "model": json_model,
+        return {
+            "project": parsed_project,
+            "exportedAt": datetime.utcnow().isoformat() + "Z",
+            "version": "2.0.0"
         }
-
-        return wrapped_response
 
     except Exception as e:
         print(f"Error in get_json_model: {str(e)}")

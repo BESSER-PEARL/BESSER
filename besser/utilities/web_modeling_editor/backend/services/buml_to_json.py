@@ -1,5 +1,7 @@
 import uuid
 import ast
+from datetime import datetime
+import re
 
 from besser.BUML.metamodel.structural import (
     Class,
@@ -15,7 +17,9 @@ from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY,
     Constraint,
     AssociationClass,
+    Metadata,
 )
+from besser.BUML.metamodel.project import Project
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     VISIBILITY_MAP,
     RELATIONSHIP_TYPES,
@@ -1780,7 +1784,7 @@ def object_buml_to_json(content: str):
                                         "isManuallyLayouted": False,
                                         "associationId": assoc_id
                                     }
-        
+
         return {
             "version": "3.0.0",
             "type": "ObjectDiagram",
@@ -1791,7 +1795,7 @@ def object_buml_to_json(content: str):
             "assessments": {},
             "referenceDiagramData": reference_diagram_json
         }
-        
+  
     except Exception as e:
         print(f"Error parsing object BUML content: {str(e)}")
         return {
@@ -1803,3 +1807,110 @@ def object_buml_to_json(content: str):
             "relationships": {},
             "assessments": {},
         }
+
+
+def project_to_json(content: str) -> dict:
+    """Convert a BUML project content to JSON format matching the frontend structure."""
+
+    def extract_section(name: str, next_headers: list) -> str:
+        """Extract section starting with # <NAME> and ending before next known header."""
+        pattern = rf"# {name.upper()} MODEL #(.*?)# ({'|'.join(next_headers)})"
+        match = re.search(pattern, content, re.DOTALL)
+        if match:
+            return match.group(1).strip()
+
+        # Handle last section or single-section case
+        pattern = rf"# {name.upper()} MODEL #(.*?)(# PROJECT DEFINITION|$)"
+        match = re.search(pattern, content, re.DOTALL)
+        return match.group(1).strip() if match else ""
+
+    # Detect models included in the project
+    model_match = re.search(r"models\s*=\s*\[(.*?)\]", content, re.DOTALL)
+    if not model_match:
+        raise ValueError("No models defined in 'models=[...]'")
+
+    model_names = re.findall(r'\b(\w+)\b', model_match.group(1))
+
+    # Extract project name, description, and owner
+    name_match = re.search(r'Project\s*\(\s*name\s*=\s*"(.*?)"', content)
+    project_name = name_match.group(1) if name_match else "Unnamed Project"
+
+    desc_match = re.search(r'Metadata\s*\(\s*description\s*=\s*"(.*?)"', content)
+    project_description = desc_match.group(1) if desc_match else "No description"
+
+    owner_match = re.search(r'owner\s*=\s*"(.*?)"', content)
+    project_owner = owner_match.group(1) if owner_match else "Unknown"
+
+    # Define section order
+    section_extractors = {
+        'domain_model': ('STRUCTURAL', ['OBJECT', 'AGENT', 'STATE MACHINE']),
+        'object_model': ('OBJECT', ['AGENT', 'STATE MACHINE']),
+        'agent': ('AGENT', ['STATE MACHINE']),
+        'sm': ('STATE MACHINE', []),
+    }
+
+    diagram_jsons = {}
+
+    for model_name in model_names:
+        if model_name not in section_extractors:
+            continue
+
+        header, next_headers = section_extractors[model_name]
+        section_code = extract_section(header, next_headers)
+
+        diagram_id = str(uuid.uuid4())
+        last_update = datetime.utcnow().isoformat() + "Z"
+
+        if model_name == "domain_model":
+            parsed_domain_model = parse_buml_content(section_code)
+            model = domain_model_to_json(parsed_domain_model)
+            diagram_jsons["ClassDiagram"] = {
+                "id": diagram_id,
+                "title": "Class Diagram",
+                "model": model,
+                "lastUpdate": last_update
+            }
+            print(model)
+        elif model_name == "object_model":
+            model = object_buml_to_json(section_code)
+            diagram_jsons["ObjectDiagram"] = {
+                "id": diagram_id,
+                "title": "Object Diagram",
+                "model": model,
+                "lastUpdate": last_update
+            }
+        elif model_name == "agent":
+            model = agent_buml_to_json(section_code)
+            diagram_jsons["AgentDiagram"] = {
+                "id": diagram_id,
+                "title": "Agent Diagram",
+                "model": model,
+                "lastUpdate": last_update
+            }
+        elif model_name == "sm":
+            model = state_machine_to_json(section_code)
+            diagram_jsons["StateMachineDiagram"] = {
+                "id": diagram_id,
+                "title": "State Machine Diagram",
+                "model": model,
+                "lastUpdate": last_update
+            }
+
+    project_id = str(uuid.uuid4())
+    created_at = datetime.utcnow().isoformat() + "Z"
+
+    return {
+        "id": project_id,
+        "type": "Project",
+        "name": project_name,
+        "description": project_description,
+        "owner": project_owner,
+        "createdAt": created_at,
+        "currentDiagramType": "ClassDiagram",
+        "diagrams": diagram_jsons,
+        "settings": {
+            "defaultDiagramType": "ClassDiagram",
+            "autoSave": True,
+            "collaborationEnabled": False
+        }
+    }

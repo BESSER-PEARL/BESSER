@@ -15,6 +15,7 @@ import tempfile
 import importlib.util
 import sys
 import asyncio
+from datetime import datetime
 from typing import List, Dict, Any
 
 # Core FastAPI imports
@@ -28,17 +29,6 @@ from besser.utilities.buml_code_builder import (
     agent_model_to_code, 
     project_to_code
 )
-
-# BESSER generators
-from besser.generators.django import DjangoGenerator
-from besser.generators.python_classes import PythonGenerator
-from besser.generators.java_classes import JavaGenerator
-from besser.generators.pydantic_classes import PydanticGenerator
-from besser.generators.sql_alchemy import SQLAlchemyGenerator
-from besser.generators.sql import SQLGenerator
-from besser.generators.backend import BackendGenerator
-from besser.generators.json import JSONSchemaGenerator
-from besser.generators.agents.baf_generator import BAFGenerator
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -70,28 +60,34 @@ from besser.utilities.web_modeling_editor.backend.services.validators import (
 from besser.utilities.web_modeling_editor.backend.services.deployment import (
     run_docker_compose,
 )
-
-# Initialize FastAPI applications
-app = FastAPI(
-    title="BESSER Backend API",
-    description="API for generating code from UML class diagrams using various generators",
-    version="1.0.0",
+from besser.utilities.web_modeling_editor.backend.services.utils import (
+    cleanup_temp_resources,
+    validate_generator,
 )
 
-# Create API sub-application
-api = FastAPI(
+# Backend configuration
+from besser.utilities.web_modeling_editor.backend.config import (
+    SUPPORTED_GENERATORS,
+    get_generator_info,
+    get_filename_for_generator,
+    is_generator_supported,
+)
+
+# Initialize FastAPI application
+app = FastAPI(
     title="BESSER Backend API",
     description="Backend services for web modeling editor",
     version="1.0.0",
 )
 
 # Configure CORS middleware
-api.add_middleware(
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # In production, replace with specific domains
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],  # Expose Content-Disposition header to frontend
 )
 
 # Constants
@@ -101,63 +97,9 @@ OUTPUT_DIR = "output"
 AGENT_MODEL_FILENAME = "agent_model.py"
 AGENT_OUTPUT_FILENAME = "agent_output.zip"
 
-# Generator configuration mapping
-SUPPORTED_GENERATORS = {
-    # Object-oriented generators
-    "python": PythonGenerator,
-    "java": JavaGenerator,
-    "pydantic": PydanticGenerator,
-    
-    # Web framework generators
-    "django": DjangoGenerator,
-    "backend": BackendGenerator,
-    
-    # Database generators
-    "sqlalchemy": SQLAlchemyGenerator,
-    "sql": SQLGenerator,
-    
-    # Data format generators
-    "jsonschema": JSONSchemaGenerator,
-    
-    # AI/Agent generators
-    "agent": BAFGenerator
-}
-
-
-# Utility functions
-def cleanup_temp_resources(temp_dir: str = None, output_dir: str = OUTPUT_DIR):
-    """
-    Clean up temporary resources.
-    
-    Args:
-        temp_dir: Temporary directory to clean up
-        output_dir: Output directory to clean up
-    """
-    if temp_dir and os.path.exists(temp_dir):
-        shutil.rmtree(temp_dir, ignore_errors=True)
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir, ignore_errors=True)
-    
-    # Remove temp directory from sys.path if it exists
-    if temp_dir in sys.path:
-        sys.path.remove(temp_dir)
-
-
-def validate_generator(generator_type: str) -> bool:
-    """
-    Validate if the generator type is supported.
-    
-    Args:
-        generator_type: The type of generator to validate
-        
-    Returns:
-        bool: True if generator is supported, False otherwise
-    """
-    return generator_type in SUPPORTED_GENERATORS
-
 
 # API Endpoints
-@api.get("/")
+@app.get("/besser_api/")
 def get_api_root():
     """
     Get API root information.
@@ -170,12 +112,12 @@ def get_api_root():
         "version": API_VERSION,
         "supported_generators": list(SUPPORTED_GENERATORS.keys()),
         "endpoints": {
-            "generate": "/generate-output",
-            "deploy": "/deploy-app", 
-            "export_buml": "/export-buml",
-            "export_project": "/export-project_as_buml",
-            "get_model": "/get-json-model",
-            "validate_ocl": "/check-ocl"
+            "generate": "/besser_api/generate-output",
+            "deploy": "/besser_api/deploy-app", 
+            "export_buml": "/besser_api/export-buml",
+            "export_project": "/besser_api/export-project_as_buml",
+            "get_model": "/besser_api/get-json-model",
+            "validate_ocl": "/besser_api/check-ocl"
         }
     }
 
@@ -210,12 +152,16 @@ def generate_agent_files(agent_model):
         agent_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(agent_module)
         
+        # Get the BAFGenerator from the supported generators
+        generator_info = get_generator_info("agent")
+        generator_class = generator_info.generator_class
+        
         # Use the BAFGenerator with the agent model from the module
         if hasattr(agent_module, 'agent'):
-            generator = BAFGenerator(agent_module.agent)
+            generator = generator_class(agent_module.agent)
         else:
             # Fall back to the original agent model
-            generator = BAFGenerator(agent_model)
+            generator = generator_class(agent_model)
         
         generator.generate()
         
@@ -243,7 +189,7 @@ def generate_agent_files(agent_model):
         cleanup_temp_resources(temp_dir)
 
 
-@api.post("/generate-output")
+@app.post("/besser_api/generate-output")
 async def generate_code_output(input_data: DiagramInput):
     """
     Generate code from UML diagram data using specified generator.
@@ -252,184 +198,36 @@ async def generate_code_output(input_data: DiagramInput):
         input_data: DiagramInput containing diagram data and generator type
         
     Returns:
-        StreamingResponse: ZIP file containing generated code
+        StreamingResponse or Response: Generated code file or ZIP
         
     Raises:
         HTTPException: If generator is not supported or generation fails
     """
     temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
+    
     try:
         json_data = input_data.model_dump()
-        generator = input_data.generator
+        generator_type = input_data.generator
 
-        if not validate_generator(generator):
+        # Validate generator type
+        if not is_generator_supported(generator_type):
             raise HTTPException(
                 status_code=400, 
-                detail=f"Invalid generator type: {generator}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
+                detail=f"Invalid generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
             )
 
-        buml_model = None
-
-        if generator == "agent":
-            try:
-                # Create the agent model from the elements
-                agent_model = process_agent_diagram(json_data)
-                zip_buffer, file_name = generate_agent_files(agent_model)
-                
-                return StreamingResponse(
-                    zip_buffer,
-                    media_type="application/zip",
-                    headers={"Content-Disposition": f"attachment; filename={file_name}"},
-                )
-            except Exception as e:
-                print(f"Error processing agent diagram: {str(e)}")
-                raise HTTPException(
-                    status_code=500, 
-                    detail=f"Error processing agent diagram: {str(e)}"
-                )
-            
-        else:
-            # Process the class diagram JSON data
-            buml_model = process_class_diagram(json_data)
-
-        generator_class = SUPPORTED_GENERATORS[generator]
-
-        # Handle Django generator with config
-        if generator == "django":
-            if not input_data.config:
-                raise HTTPException(
-                    status_code=400, detail="Django configuration is required"
-                )
-
-            # Clean up any existing project directory first
-            project_dir = os.path.join(temp_dir, input_data.config["project_name"])
-            if os.path.exists(project_dir):
-                shutil.rmtree(project_dir)
-
-            # Create a fresh project directory
-            os.makedirs(temp_dir, exist_ok=True)
-
-            # Change to temp directory before running django-admin
-            original_cwd = os.getcwd()
-            os.chdir(temp_dir)
-
-            try:
-                generator_instance = generator_class(
-                    model=buml_model,
-                    project_name=input_data.config["project_name"],
-                    app_name=input_data.config["app_name"],
-                    containerization=input_data.config["containerization"],
-                    output_dir=temp_dir,
-                )
-
-                # Generate the Django project
-                generator_instance.generate()
-
-                # Wait a moment for file system operations to complete
-                await asyncio.sleep(1)
-
-                # Check if the project directory exists and has content
-                if not os.path.exists(project_dir) or not os.listdir(project_dir):
-                    raise ValueError("Django project generation failed: Output directory is empty")
-
-            finally:
-                # Always restore the original working directory
-                os.chdir(original_cwd)
-
-        # Handle SQL generator with config
-        elif generator == "sql":
-            dialect = "standard"
-            if input_data.config and "dialect" in input_data.config:
-                dialect = input_data.config["dialect"]
-            generator_instance = generator_class(
-                buml_model, output_dir=temp_dir, sql_dialect=dialect
-            )
-            generator_instance.generate()
-
-        # Handle SQLAlchemy generator with config
-        elif generator == "sqlalchemy":
-            dbms = "sqlite"
-            if input_data.config and "dbms" in input_data.config:
-                dbms = input_data.config["dbms"]
-            generator_instance = generator_class(
-                buml_model, 
-                output_dir=temp_dir
-            )
-            generator_instance.generate(dbms=dbms)
-
-            generator_instance = generator_class(buml_model, output_dir=temp_dir)
-            generator_instance.generate(dbms=dbms)
-        else:
-            # Save buml_model to a file for inspection
-            generator_instance = generator_class(buml_model, output_dir=temp_dir)
-            try:
-                # Generate the code
-                generator_instance.generate()
-            except Exception as e:
-                raise HTTPException(status_code=500, detail="Code generation failed.")
-
-        # Handle zip file generators
-        if generator in ["java", "backend", "django"]:
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                # For Django, start from the project directory
-                base_dir = project_dir if generator == "django" else temp_dir
-                for root, _, files in os.walk(base_dir):
-                    for file in files:
-                        file_path = os.path.join(root, file)
-                        arc_name = os.path.relpath(file_path, base_dir)
-                        zip_file.write(file_path, arc_name)
-
-            zip_buffer.seek(0)
-            file_name = f"{generator}_output.zip"
-            shutil.rmtree(temp_dir, ignore_errors=True)
-            return StreamingResponse(
-                zip_buffer,
-                media_type="application/zip",
-                headers={"Content-Disposition": f"attachment; filename={file_name}"},
-            )
-        if generator == "agent":
-            # Create a zip file containing the two files in the output folder
-            try:
-                output_dir = os.path.join("output")
-                if not os.path.exists(output_dir) or len(os.listdir(output_dir)) < 2:
-                    raise HTTPException(
-                        status_code=500, detail="Output folder does not contain the required files."
-                    )
-                zip_buffer = io.BytesIO()
-                with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                    for file_name in os.listdir(output_dir):
-                        file_path = os.path.join(output_dir, file_name)
-                        zip_file.write(file_path, file_name)
-                zip_buffer.seek(0)
-                file_name = "agent_output.zip"
-                shutil.rmtree("output", ignore_errors=True)
-                return StreamingResponse(
-                    zip_buffer,
-                    media_type="application/zip",
-                    headers={"Content-Disposition": f"attachment; filename={file_name}"},
-                )
-            except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Error creating zip file: {str(e)}")
-        # For non-zip generators, find the generated file
-        files = os.listdir(temp_dir)
-        if not files:
-            raise ValueError(f"{generator} generation failed: No output files were created.")
-
-
-        file_name = files[0]
-        output_file_path = os.path.join(temp_dir, file_name)
-        with open(output_file_path, "rb") as f:
-            file_content = f.read()
-
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        return Response(
-            content=file_content,
-            media_type="text/plain",
-            headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+        generator_info = get_generator_info(generator_type)
+        
+        # Handle agent generators (different diagram type)
+        if generator_info.category == "ai_agent":
+            return await _handle_agent_generation(json_data)
+        
+        # Handle class diagram based generators
+        return await _handle_class_diagram_generation(
+            json_data, generator_type, generator_info, input_data.config, temp_dir
         )
+        
     except HTTPException as e:
-        # Handle known exceptions with specific status codes
         cleanup_temp_resources(temp_dir)
         raise e
     except Exception as e:
@@ -437,7 +235,188 @@ async def generate_code_output(input_data: DiagramInput):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-@api.post("/deploy-app")
+async def _handle_agent_generation(json_data: dict):
+    """Handle agent diagram generation."""
+    try:
+        agent_model = process_agent_diagram(json_data)
+        zip_buffer, file_name = generate_agent_files(agent_model)
+        
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={file_name}"},
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error processing agent diagram: {str(e)}"
+        )
+
+
+async def _handle_class_diagram_generation(
+    json_data: dict, 
+    generator_type: str, 
+    generator_info, 
+    config: dict, 
+    temp_dir: str
+):
+    """Handle class diagram based generation."""
+    # Process the class diagram JSON data
+    buml_model = process_class_diagram(json_data)
+    generator_class = generator_info.generator_class
+    
+    # Generate based on generator type
+    if generator_type == "django":
+        return await _generate_django(buml_model, generator_class, config, temp_dir)
+    elif generator_type == "sql":
+        return await _generate_sql(buml_model, generator_class, config, temp_dir)
+    elif generator_type == "sqlalchemy":
+        return await _generate_sqlalchemy(buml_model, generator_class, config, temp_dir)
+    else:
+        return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
+
+
+async def _generate_django(buml_model, generator_class, config: dict, temp_dir: str):
+    """Generate Django project."""
+    if not config:
+        raise HTTPException(status_code=400, detail="Django configuration is required")
+
+    project_dir = os.path.join(temp_dir, config["project_name"])
+    
+    # Clean up any existing project directory
+    if os.path.exists(project_dir):
+        shutil.rmtree(project_dir)
+
+    os.makedirs(temp_dir, exist_ok=True)
+    original_cwd = os.getcwd()
+    os.chdir(temp_dir)
+
+    try:
+        generator_instance = generator_class(
+            model=buml_model,
+            project_name=config["project_name"],
+            app_name=config["app_name"],
+            containerization=config["containerization"],
+            output_dir=temp_dir,
+        )
+        generator_instance.generate()
+        
+        # Wait for file system operations
+        await asyncio.sleep(1)
+
+        # Validate generation
+        if not os.path.exists(project_dir) or not os.listdir(project_dir):
+            raise ValueError("Django project generation failed: Output directory is empty")
+
+        # Create ZIP file
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for root, _, files in os.walk(project_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arc_name = os.path.relpath(file_path, project_dir)
+                    zip_file.write(file_path, arc_name)
+
+        zip_buffer.seek(0)
+        file_name = get_filename_for_generator("django")
+        
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={file_name}"},
+        )
+    finally:
+        os.chdir(original_cwd)
+        cleanup_temp_resources(temp_dir)
+
+
+async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str):
+    """Generate SQL files."""
+    dialect = "standard"
+    if config and "dialect" in config:
+        dialect = config["dialect"]
+    
+    generator_instance = generator_class(
+        buml_model, output_dir=temp_dir, sql_dialect=dialect
+    )
+    generator_instance.generate()
+    
+    return _create_file_response(temp_dir, "sql")
+
+
+async def _generate_sqlalchemy(buml_model, generator_class, config: dict, temp_dir: str):
+    """Generate SQLAlchemy files."""
+    dbms = "sqlite"
+    if config and "dbms" in config:
+        dbms = config["dbms"]
+    
+    generator_instance = generator_class(buml_model, output_dir=temp_dir)
+    generator_instance.generate(dbms=dbms)
+    
+    return _create_file_response(temp_dir, "sqlalchemy")
+
+
+async def _generate_standard(buml_model, generator_class, generator_type: str, generator_info, temp_dir: str):
+    """Generate standard files (non-Django, non-SQL)."""
+    generator_instance = generator_class(buml_model, output_dir=temp_dir)
+    
+    try:
+        generator_instance.generate()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Code generation failed.")
+
+    # Return ZIP or single file based on generator info
+    if generator_info.output_type == "zip":
+        return _create_zip_response(temp_dir, generator_type)
+    else:
+        return _create_file_response(temp_dir, generator_type)
+
+
+def _create_zip_response(temp_dir: str, generator_type: str):
+    """Create a ZIP file response."""
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for root, _, files in os.walk(temp_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arc_name = os.path.relpath(file_path, temp_dir)
+                zip_file.write(file_path, arc_name)
+
+    zip_buffer.seek(0)
+    file_name = get_filename_for_generator(generator_type)
+    cleanup_temp_resources(temp_dir)
+    
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={file_name}"},
+    )
+
+
+def _create_file_response(temp_dir: str, generator_type: str):
+    """Create a single file response."""
+    files = os.listdir(temp_dir)
+    if not files:
+        raise ValueError(f"{generator_type} generation failed: No output files were created.")
+
+    file_name = files[0]
+    output_file_path = os.path.join(temp_dir, file_name)
+    
+    with open(output_file_path, "rb") as f:
+        file_content = f.read()
+
+    # Use the proper filename from config
+    proper_filename = get_filename_for_generator(generator_type)
+    cleanup_temp_resources(temp_dir)
+    
+    return Response(
+        content=file_content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{proper_filename}"'},
+    )
+
+
+@app.post("/besser_api/deploy-app")
 async def deploy_app(input_data: DiagramInput):
     """
     Deploy application using Docker Compose.
@@ -456,14 +435,14 @@ async def deploy_app(input_data: DiagramInput):
         json_data = input_data.model_dump()
         generator = input_data.generator
 
-        if not validate_generator(generator):
+        if not validate_generator(generator, SUPPORTED_GENERATORS):
             raise HTTPException(
                 status_code=400, 
                 detail=f"Invalid generator type: {generator}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
             )
 
         buml_model = process_class_diagram(json_data)
-        generator_class = SUPPORTED_GENERATORS[generator]
+        generator_class = SUPPORTED_GENERATORS[generator].generator_class
 
         # Handle Django generator with config
         if generator == "django":
@@ -523,7 +502,7 @@ async def deploy_app(input_data: DiagramInput):
 
 
 
-@api.post("/export-project_as_buml")
+@app.post("/besser_api/export-project_as_buml")
 async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     try:
         buml_project = json_to_buml_project(input_data)
@@ -551,7 +530,7 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-@api.post("/export-buml")
+@app.post("/besser_api/export-buml")
 async def export_buml(input_data: DiagramInput):
     # Create unique temporary directory for this request
     temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
@@ -644,10 +623,7 @@ async def export_buml(input_data: DiagramInput):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-from fastapi import UploadFile, File, HTTPException
-from datetime import datetime
-
-@api.post("/get-json-model")
+@app.post("/besser_api/get-json-model")
 async def get_json_model(buml_file: UploadFile = File(...)):
     try:
         content = await buml_file.read()
@@ -666,7 +642,7 @@ async def get_json_model(buml_file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@api.post("/check-ocl")
+@app.post("/besser_api/check-ocl")
 async def check_ocl(input_data: DiagramInput):
     try:
         # Check if this is an ObjectDiagram by looking at the elements type
@@ -716,9 +692,6 @@ async def check_ocl(input_data: DiagramInput):
         print(f"Error in check_ocl: {str(e)}")
         return {"success": False, "message": f"{str(e)}"}
 
-
-# Mount the API sub-application
-app.mount("/besser_api", api)
 
 # Main application entry point
 if __name__ == "__main__":

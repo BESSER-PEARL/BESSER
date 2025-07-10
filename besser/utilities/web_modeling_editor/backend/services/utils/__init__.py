@@ -9,6 +9,10 @@ from .layout_calculator import (
     calculate_path_points,
     calculate_relationship_bounds,
 )
+from .resource_manager import (
+    cleanup_temp_resources,
+    validate_generator,
+)
 
 __all__ = [
     "calculate_center_point",
@@ -16,4 +20,6 @@ __all__ = [
     "calculate_connection_points",
     "calculate_path_points",
     "calculate_relationship_bounds",
+    "cleanup_temp_resources",
+    "validate_generator",
 ]

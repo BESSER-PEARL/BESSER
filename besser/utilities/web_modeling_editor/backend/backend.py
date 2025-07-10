@@ -546,7 +546,7 @@ async def get_json_model(buml_file: UploadFile = File(...)):
 
         return {
             "project": parsed_project,
-            "exportedAt": datetime.utcnow().isoformat() + "Z",
+            "exportedAt": datetime.utcnow().isoformat(),
             "version": "2.0.0"
         }
 

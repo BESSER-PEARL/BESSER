@@ -1,6 +1,6 @@
 import uuid
 import ast
-from datetime import datetime
+from datetime import datetime, UTC
 import re
 
 from besser.BUML.metamodel.structural import (
@@ -1809,17 +1809,26 @@ def object_buml_to_json(content: str):
         }
 
 
+def empty_model(diagram_type: str) -> dict:
+    return {
+        "version": "3.0.0",
+        "type": diagram_type,
+        "size": {"width": 1400, "height": 740},
+        "elements": {},
+        "relationships": {},
+        "interactive": {"elements": {}, "relationships": {}},
+        "assessments": {}
+    }
+
 def project_to_json(content: str) -> dict:
     """Convert a BUML project content to JSON format matching the frontend structure."""
 
     def extract_section(name: str, next_headers: list) -> str:
-        """Extract section starting with # <NAME> and ending before next known header."""
         pattern = rf"# {name.upper()} MODEL #(.*?)# ({'|'.join(next_headers)})"
         match = re.search(pattern, content, re.DOTALL)
         if match:
             return match.group(1).strip()
 
-        # Handle last section or single-section case
         pattern = rf"# {name.upper()} MODEL #(.*?)(# PROJECT DEFINITION|$)"
         match = re.search(pattern, content, re.DOTALL)
         return match.group(1).strip() if match else ""
@@ -1831,17 +1840,15 @@ def project_to_json(content: str) -> dict:
 
     model_names = re.findall(r'\b(\w+)\b', model_match.group(1))
 
-    # Extract project name, description, and owner
-    name_match = re.search(r'Project\s*\(\s*name\s*=\s*"(.*?)"', content)
-    project_name = name_match.group(1) if name_match else "Unnamed Project"
+    # Extract project metadata
+    project_name = re.search(r'Project\s*\(\s*name\s*=\s*"(.*?)"', content)
+    project_description = re.search(r'Metadata\s*\(\s*description\s*=\s*"(.*?)"', content)
+    project_owner = re.search(r'owner\s*=\s*"(.*?)"', content)
 
-    desc_match = re.search(r'Metadata\s*\(\s*description\s*=\s*"(.*?)"', content)
-    project_description = desc_match.group(1) if desc_match else "No description"
+    project_name = project_name.group(1) if project_name else "Unnamed Project"
+    project_description = project_description.group(1) if project_description else "No description"
+    project_owner = project_owner.group(1) if project_owner else "Unknown"
 
-    owner_match = re.search(r'owner\s*=\s*"(.*?)"', content)
-    project_owner = owner_match.group(1) if owner_match else "Unknown"
-
-    # Define section order
     section_extractors = {
         'domain_model': ('STRUCTURAL', ['OBJECT', 'AGENT', 'STATE MACHINE']),
         'object_model': ('OBJECT', ['AGENT', 'STATE MACHINE']),
@@ -1851,6 +1858,11 @@ def project_to_json(content: str) -> dict:
 
     diagram_jsons = {}
 
+    # Extraemos primero el domain_model si existe (porque lo vamos a usar también para object_model)
+    domain_code = ""
+    if "domain_model" in model_names:
+        domain_code = extract_section(*section_extractors["domain_model"])
+
     for model_name in model_names:
         if model_name not in section_extractors:
             continue
@@ -1859,7 +1871,7 @@ def project_to_json(content: str) -> dict:
         section_code = extract_section(header, next_headers)
 
         diagram_id = str(uuid.uuid4())
-        last_update = datetime.utcnow().isoformat() + "Z"
+        last_update = datetime.now(UTC).isoformat()
 
         if model_name == "domain_model":
             parsed_domain_model = parse_buml_content(section_code)
@@ -1870,15 +1882,17 @@ def project_to_json(content: str) -> dict:
                 "model": model,
                 "lastUpdate": last_update
             }
-            print(model)
+
         elif model_name == "object_model":
-            model = object_buml_to_json(section_code)
+            combined_code = domain_code + "\n" + section_code
+            model = object_buml_to_json(combined_code)
             diagram_jsons["ObjectDiagram"] = {
                 "id": diagram_id,
                 "title": "Object Diagram",
                 "model": model,
                 "lastUpdate": last_update
             }
+
         elif model_name == "agent":
             model = agent_buml_to_json(section_code)
             diagram_jsons["AgentDiagram"] = {
@@ -1887,6 +1901,7 @@ def project_to_json(content: str) -> dict:
                 "model": model,
                 "lastUpdate": last_update
             }
+
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
             diagram_jsons["StateMachineDiagram"] = {
@@ -1897,7 +1912,23 @@ def project_to_json(content: str) -> dict:
             }
 
     project_id = str(uuid.uuid4())
-    created_at = datetime.utcnow().isoformat() + "Z"
+    created_at = datetime.now(UTC).isoformat()
+
+    diagram_defaults = {
+        "ClassDiagram": "ClassDiagram",
+        "ObjectDiagram": "ObjectDiagram",
+        "AgentDiagram": "AgentDiagram",
+        "StateMachineDiagram": "StateMachineDiagram"
+    }
+
+    for diagram_type, model_type in diagram_defaults.items():
+        if diagram_type not in diagram_jsons:
+            diagram_jsons[diagram_type] = {
+                "id": str(uuid.uuid4()),
+                "title": diagram_type.replace("Diagram", " Diagram"),
+                "model": empty_model(model_type),
+                "lastUpdate": datetime.now(UTC).isoformat()
+            }
 
     return {
         "id": project_id,

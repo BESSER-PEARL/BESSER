@@ -31,6 +31,7 @@ def process_object_diagram(json_data, domain_model):
     # First pass: Create objects using fluent API
     for element_id, element in elements.items():
         if element.get("type") == "ObjectName":
+            # Extract object name and class ID
             object_name = element.get("name", "")
             class_id = element.get("classId")
 
@@ -38,9 +39,7 @@ def process_object_diagram(json_data, domain_model):
             class_obj = None
             if class_id:
                 # Get the reference data to find the class name by ID
-                reference_data = json_data.get('elements', {}).get('referenceDiagramData', {})
-                if not reference_data:
-                    reference_data = json_data.get('referenceDiagramData', {})
+                reference_data = json_data.get('referenceDiagramData', {})
 
                 if reference_data:
                     reference_elements = reference_data.get('elements', {})
@@ -197,9 +196,7 @@ def process_object_diagram(json_data, domain_model):
                 # If not found by direct ID lookup, try the reference diagram approach
                 if not association_obj:
                     # Look for the association by ID in the reference diagram data
-                    reference_data = json_data.get('elements', {}).get('referenceDiagramData', {})
-                    if not reference_data:
-                        reference_data = json_data.get('referenceDiagramData', {})
+                    reference_data = json_data.get('referenceDiagramData', {})
                     if reference_data:
                         reference_relationships = reference_data.get('relationships', {})
                         assoc_element = reference_relationships.get(association_id)

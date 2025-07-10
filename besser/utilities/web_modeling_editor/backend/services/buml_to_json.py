@@ -1525,7 +1525,7 @@ def analyze_function_node(node: ast.FunctionDef, source_code: str) -> dict:
         "code": source_code
     }
 
-def object_buml_to_json(content: str):
+def object_buml_to_json(content: str, domain_json: dict) -> dict:
     """Convert an object model Python file content to JSON format matching the frontend structure."""
     import ast
     import uuid
@@ -1560,10 +1560,9 @@ def object_buml_to_json(content: str):
         return x, y
     
     try:
-        # First, parse the domain model (class diagram) using parse_buml_content
-        domain_model = parse_buml_content(content)
-        reference_diagram_json = domain_model_to_json(domain_model)
-        
+
+        reference_diagram_json = domain_json
+
         # Create mapping from class names to class IDs in reference diagram
         class_name_to_id = {}
         class_id_to_attributes = {}
@@ -1885,7 +1884,7 @@ def project_to_json(content: str) -> dict:
 
         elif model_name == "object_model":
             combined_code = domain_code + "\n" + section_code
-            model = object_buml_to_json(combined_code)
+            model = object_buml_to_json(combined_code, diagram_jsons["ClassDiagram"].get("model", {}))
             diagram_jsons["ObjectDiagram"] = {
                 "id": diagram_id,
                 "title": "Object Diagram",

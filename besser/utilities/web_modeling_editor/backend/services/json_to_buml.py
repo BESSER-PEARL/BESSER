@@ -688,7 +688,26 @@ def process_object_diagram(json_data, domain_model):
                             if property_obj:
                                 # Convert value to appropriate type
                                 converted_value = value
-                                if hasattr(property_obj.type, 'name'):
+                                
+                                # Check if the property type is an enumeration
+                                if hasattr(property_obj.type, 'literals'):  # This is an enumeration
+                                    # Use the enumeration's __getattr__ method to get the literal
+                                    # This will return the actual literal from the enumeration
+                                    try:
+                                        # Find the literal in the enumeration by name
+                                        for literal in property_obj.type.literals:
+                                            if literal.name == value:
+                                                converted_value = literal
+                                                break
+                                        else:
+                                            # If not found by iteration, try getattr as fallback
+                                            converted_value = getattr(property_obj.type, value)
+                                    except (AttributeError, StopIteration):
+                                        # If literal not found, keep original value and warn
+                                        print(f"Warning: Enumeration literal '{value}' not found in {property_obj.type.name}")
+                                        converted_value = value
+                                    
+                                elif hasattr(property_obj.type, 'name'):
                                     type_name = property_obj.type.name if hasattr(property_obj.type, 'name') else str(property_obj.type)
                                     if type_name in ['int', 'IntegerType']:
                                         try:

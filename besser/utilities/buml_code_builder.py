@@ -377,6 +377,11 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                             value_str = f'"{slot.value.value}"'
                         elif hasattr(slot.value.value, 'isoformat'):  # datetime objects
                             value_str = f'datetime.datetime.fromisoformat("{slot.value.value.isoformat()}")'
+                        elif hasattr(slot.value.value, 'owner') and hasattr(slot.value.value.owner, 'name'):
+                            # This is an enumeration literal - generate the proper reference
+                            enum_name = slot.value.value.owner.name
+                            literal_name = slot.value.value.name
+                            value_str = f"{enum_name}.{literal_name}"
                         else:
                             value_str = str(slot.value.value)
 

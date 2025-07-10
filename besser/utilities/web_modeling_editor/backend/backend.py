@@ -1,16 +1,35 @@
+"""
+BESSER Backend API
+
+This module provides FastAPI endpoints for the BESSER web modeling editor backend.
+It handles code generation from UML diagrams using various generators.
+"""
+
+# Standard library imports
 import os
 import io
+import uuid
 import zipfile
 import shutil
 import tempfile
-import uuid
+import importlib.util
+import sys
 import asyncio
+from typing import List, Dict, Any
+
+# Core FastAPI imports
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 
-from besser.utilities.buml_code_builder import domain_model_to_code, agent_model_to_code, project_to_code
-from besser.utilities.web_modeling_editor.backend.services import run_docker_compose
+# BESSER utilities
+from besser.utilities.buml_code_builder import (
+    domain_model_to_code, 
+    agent_model_to_code, 
+    project_to_code
+)
+
+# BESSER generators
 from besser.generators.django import DjangoGenerator
 from besser.generators.python_classes import PythonGenerator
 from besser.generators.java_classes import JavaGenerator
@@ -21,67 +40,144 @@ from besser.generators.backend import BackendGenerator
 from besser.generators.json import JSONSchemaGenerator
 from besser.generators.agents.baf_generator import BAFGenerator
 
+# Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
     DiagramInput,
     ProjectInput
 )
-from besser.utilities.web_modeling_editor.backend.services.json_to_buml import (
+
+# Backend services - Converters
+from besser.utilities.web_modeling_editor.backend.services.converters import (
+    # JSON to BUML converters
     process_class_diagram,
     process_state_machine,
     process_agent_diagram,
     process_object_diagram,
-)
-from besser.utilities.web_modeling_editor.backend.services.buml_to_json import (
-    domain_model_to_json,
+    json_to_buml_project,
+    # BUML to JSON converters
+    class_buml_to_json,
     parse_buml_content,
     state_machine_to_json,
     agent_buml_to_json,
     object_buml_to_json,
     project_to_json,
 )
-from besser.utilities.web_modeling_editor.backend.services.ocl_checker import (
+
+# Backend services - Other services
+from besser.utilities.web_modeling_editor.backend.services.validators import (
     check_ocl_constraint,
 )
-
-from besser.utilities.web_modeling_editor.backend.services import (
-    json_to_buml_project
+from besser.utilities.web_modeling_editor.backend.services.deployment import (
+    run_docker_compose,
 )
 
+# Initialize FastAPI applications
 app = FastAPI(
-    title="Besser Backend API",
+    title="BESSER Backend API",
     description="API for generating code from UML class diagrams using various generators",
     version="1.0.0",
 )
 
-# API sub-application
-api = FastAPI()
+# Create API sub-application
+api = FastAPI(
+    title="BESSER Backend API",
+    description="Backend services for web modeling editor",
+    version="1.0.0",
+)
 
-# Set up CORS middleware
+# Configure CORS middleware
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # In production, replace with specific domains
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Define generator mappings
-GENERATOR_CONFIG = {
+# Constants
+API_VERSION = "1.0.0"
+TEMP_DIR_PREFIX = "besser_agent_"
+OUTPUT_DIR = "output"
+AGENT_MODEL_FILENAME = "agent_model.py"
+AGENT_OUTPUT_FILENAME = "agent_output.zip"
+
+# Generator configuration mapping
+SUPPORTED_GENERATORS = {
+    # Object-oriented generators
     "python": PythonGenerator,
     "java": JavaGenerator,
-    "django": DjangoGenerator,
     "pydantic": PydanticGenerator,
+    
+    # Web framework generators
+    "django": DjangoGenerator,
+    "backend": BackendGenerator,
+    
+    # Database generators
     "sqlalchemy": SQLAlchemyGenerator,
     "sql": SQLGenerator,
-    "backend": BackendGenerator,
+    
+    # Data format generators
     "jsonschema": JSONSchemaGenerator,
+    
+    # AI/Agent generators
     "agent": BAFGenerator
 }
 
 
+# Utility functions
+def cleanup_temp_resources(temp_dir: str = None, output_dir: str = OUTPUT_DIR):
+    """
+    Clean up temporary resources.
+    
+    Args:
+        temp_dir: Temporary directory to clean up
+        output_dir: Output directory to clean up
+    """
+    if temp_dir and os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir, ignore_errors=True)
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir, ignore_errors=True)
+    
+    # Remove temp directory from sys.path if it exists
+    if temp_dir in sys.path:
+        sys.path.remove(temp_dir)
+
+
+def validate_generator(generator_type: str) -> bool:
+    """
+    Validate if the generator type is supported.
+    
+    Args:
+        generator_type: The type of generator to validate
+        
+    Returns:
+        bool: True if generator is supported, False otherwise
+    """
+    return generator_type in SUPPORTED_GENERATORS
+
+
+# API Endpoints
 @api.get("/")
-def read_api_root():
-    return {"message": "BESSER API is running."}
+def get_api_root():
+    """
+    Get API root information.
+    
+    Returns:
+        dict: Basic API information including available generators
+    """
+    return {
+        "message": "BESSER Backend API",
+        "version": API_VERSION,
+        "supported_generators": list(SUPPORTED_GENERATORS.keys()),
+        "endpoints": {
+            "generate": "/generate-output",
+            "deploy": "/deploy-app", 
+            "export_buml": "/export-buml",
+            "export_project": "/export-project_as_buml",
+            "get_model": "/get-json-model",
+            "validate_ocl": "/check-ocl"
+        }
+    }
 
 
 def generate_agent_files(agent_model):
@@ -93,20 +189,20 @@ def generate_agent_files(agent_model):
         
     Returns:
         tuple: (zip_buffer, file_name) containing the zip file buffer and filename
+        
+    Raises:
+        Exception: If agent file generation fails
     """
+    temp_dir = None
     try:
         # Create a temporary directory
-        temp_dir = tempfile.mkdtemp(prefix=f"besser_agent_{uuid.uuid4().hex}_")
+        temp_dir = tempfile.mkdtemp(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_")
         
         # Generate the agent model to a file
-        agent_file = os.path.join(temp_dir, "agent_model.py")
+        agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
         agent_model_to_code(agent_model, agent_file)
         
         # Execute the generated agent model file
-        import sys
-        import importlib.util
-        
-        # Add the temp directory to sys.path so we can import the module
         sys.path.insert(0, temp_dir)
         
         # Import the generated module
@@ -114,15 +210,14 @@ def generate_agent_files(agent_model):
         agent_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(agent_module)
         
-        # Now use the BAFGenerator with the agent model from the module
+        # Use the BAFGenerator with the agent model from the module
         if hasattr(agent_module, 'agent'):
-            # Use the agent from the module
-            x = BAFGenerator(agent_module.agent)
+            generator = BAFGenerator(agent_module.agent)
         else:
             # Fall back to the original agent model
-            x = BAFGenerator(agent_model)
+            generator = BAFGenerator(agent_model)
         
-        x.generate()
+        generator.generate()
         
         # Create a zip file with all the generated files
         zip_buffer = io.BytesIO()
@@ -131,41 +226,46 @@ def generate_agent_files(agent_model):
             zip_file.write(agent_file, os.path.basename(agent_file))
             
             # Add all files from the output directory
-            output_dir = "output"
-            if os.path.exists(output_dir):
-                for file_name in os.listdir(output_dir):
-                    file_path = os.path.join(output_dir, file_name)
+            if os.path.exists(OUTPUT_DIR):
+                for file_name in os.listdir(OUTPUT_DIR):
+                    file_path = os.path.join(OUTPUT_DIR, file_name)
                     if os.path.isfile(file_path):
                         zip_file.write(file_path, file_name)
         
         zip_buffer.seek(0)
-        file_name = "agent_output.zip"
+        return zip_buffer, AGENT_OUTPUT_FILENAME
         
-        # Clean up
-        shutil.rmtree(temp_dir, ignore_errors=True)
-        if os.path.exists(output_dir):
-            shutil.rmtree(output_dir, ignore_errors=True)
-        
-        # Remove the temp directory from sys.path
-        if temp_dir in sys.path:
-            sys.path.remove(temp_dir)
-        
-        return zip_buffer, file_name
     except Exception as e:
         print(f"Error generating agent files: {str(e)}")
         raise e
+    finally:
+        # Clean up resources
+        cleanup_temp_resources(temp_dir)
 
 
 @api.post("/generate-output")
-async def generate_output(input_data: DiagramInput):
+async def generate_code_output(input_data: DiagramInput):
+    """
+    Generate code from UML diagram data using specified generator.
+    
+    Args:
+        input_data: DiagramInput containing diagram data and generator type
+        
+    Returns:
+        StreamingResponse: ZIP file containing generated code
+        
+    Raises:
+        HTTPException: If generator is not supported or generation fails
+    """
     temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
     try:
         json_data = input_data.model_dump()
         generator = input_data.generator
 
-        if generator not in GENERATOR_CONFIG:
+        if not validate_generator(generator):
             raise HTTPException(
-                status_code=400, detail="Invalid generator type specified."
+                status_code=400, 
+                detail=f"Invalid generator type: {generator}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
             )
 
         buml_model = None
@@ -192,7 +292,7 @@ async def generate_output(input_data: DiagramInput):
             # Process the class diagram JSON data
             buml_model = process_class_diagram(json_data)
 
-        generator_class = GENERATOR_CONFIG[generator]
+        generator_class = SUPPORTED_GENERATORS[generator]
 
         # Handle Django generator with config
         if generator == "django":
@@ -330,27 +430,40 @@ async def generate_output(input_data: DiagramInput):
         )
     except HTTPException as e:
         # Handle known exceptions with specific status codes
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        cleanup_temp_resources(temp_dir)
         raise e
     except Exception as e:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        cleanup_temp_resources(temp_dir)
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
 @api.post("/deploy-app")
 async def deploy_app(input_data: DiagramInput):
+    """
+    Deploy application using Docker Compose.
+    
+    Args:
+        input_data: DiagramInput containing diagram data and generator type
+        
+    Returns:
+        dict: Deployment status and information
+        
+    Raises:
+        HTTPException: If deployment fails
+    """
     temp_dir = tempfile.mkdtemp(prefix=f'besser_{uuid.uuid4().hex}_')
     try:
         json_data = input_data.model_dump()
         generator = input_data.generator
 
-        if generator not in GENERATOR_CONFIG:
-            raise HTTPException(status_code=400, detail="Invalid generator type specified.")
+        if not validate_generator(generator):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid generator type: {generator}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
+            )
 
         buml_model = process_class_diagram(json_data)
-        generator_class = GENERATOR_CONFIG[generator]
+        generator_class = SUPPORTED_GENERATORS[generator]
 
         # Handle Django generator with config
         if generator == "django":
@@ -395,18 +508,16 @@ async def deploy_app(input_data: DiagramInput):
                 # Always restore the original working directory
                 os.chdir(original_cwd)
 
-            shutil.rmtree(temp_dir, ignore_errors=True)
+            cleanup_temp_resources(temp_dir)
 
         else:
             raise ValueError("Deployment only possible for Django projects")
     except HTTPException as e:
         # Handle known exceptions with specific status codes
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        cleanup_temp_resources(temp_dir)
         raise e
     except Exception as e:
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        cleanup_temp_resources(temp_dir)
         print(f"Error during file generation or django deployment: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
@@ -602,13 +713,19 @@ async def check_ocl(input_data: DiagramInput):
         return result
 
     except Exception as e:
-        print(f"Error in check_ocl: {str(e)}")  # Debug print
+        print(f"Error in check_ocl: {str(e)}")
         return {"success": False, "message": f"{str(e)}"}
 
 
-# Mount the `api` app under `/besser_api`
+# Mount the API sub-application
 app.mount("/besser_api", api)
 
+# Main application entry point
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=9000)
+    uvicorn.run(
+        app, 
+        host="0.0.0.0", 
+        port=9000,
+        log_level="info"
+    )

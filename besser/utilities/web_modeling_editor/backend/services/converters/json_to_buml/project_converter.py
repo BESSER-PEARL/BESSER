@@ -1,4 +1,8 @@
-from besser.utilities.web_modeling_editor.backend.services import (
+"""
+Project conversion from JSON to BUML format.
+"""
+
+from . import (
     process_class_diagram,
     process_object_diagram,
     process_agent_diagram,

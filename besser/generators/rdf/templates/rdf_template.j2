@@ -8,19 +8,19 @@
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
-{# Iterate over classes and generate the classes #}
 # Class definition
 {% for class_obj in model.classes_sorted_by_inheritance() %}
-    {# Handling generalizations (inheritance) #}
     {% if class_obj.parents() %}
         {% for parent in class_obj.parents() %}
 {{ vocab.uri_or_prefixed(class_obj) }} rdf:type rdfs:Class ;
           rdfs:subClassOf {{ vocab.uri_or_prefixed(parent) }}{% if class_obj.metadata and class_obj.metadata.description %} ;
-          rdfs:comment "{{class_obj.metadata.description}}"{% endif %} .
+          rdfs:comment "{{class_obj.metadata.description}}"{% endif %} ;
+          rdfs:label "{{ class_obj.name }}" .
         {% endfor %}
     {% else %}
 {{ vocab.uri_or_prefixed(class_obj) }} rdf:type rdfs:Class{% if class_obj.metadata and class_obj.metadata.description %} ;
-          rdfs:comment "{{class_obj.metadata.description}}"{% endif %} .
+          rdfs:comment "{{class_obj.metadata.description}}"{% endif %} ;
+          rdfs:label "{{ class_obj.name }}" .
     {% endif %}
 {% endfor %}
 
@@ -31,15 +31,15 @@
         rdfs:domain {{ vocab.uri_or_prefixed(class_obj) }} ;
         {% if types[property.type.name ] %}
         rdfs:range xsd:{{ types[property.type.name] }}{% if property.metadata and property.metadata.description %} ;
-        rdfs:comment "{{ property.metadata.description }}"{% endif %} .
+        rdfs:comment "{{ property.metadata.description }}"{% endif %} ;
         {% else %}
         rdfs:range xsd:{{ property.type.name }}{% if property.metadata and property.metadata.description %} ;
-        rdfs:comment "{{ property.metadata.description }}"{% endif %} .
+        rdfs:comment "{{ property.metadata.description }}"{% endif %} ;
         {% endif %}
+        rdfs:label "{{ property.name }}" .
     {% endfor %}
 {% endfor %}
 
-{# Iterate over associations #}
 # Relationship Definition
 {% for association in model.associations %}
     {% if association.ends|length == 2 -%}
@@ -50,41 +50,41 @@
         {% endfor %}
         {% set class1_name = ns.end1.type.name %}
         {% set class2_name = ns.end2.type.name %}
-        {# Check multiplicity #}
         {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
-        {# N:M #}     
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{ association.metadata.description }}"{% endif %} .
+    rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
+    rdfs:label "{{ ns.end2.name }}" .
         {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
-        {# N:1 #}
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{ association.metadata.description }}"{% endif %} .
+    rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
+    rdfs:label "{{ ns.end2.name }}" .
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
-        {# 1:N #}
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end2.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end1.type) }}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{ association.metadata.description }}"{% endif %} .
+    rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
+    rdfs:label "{{ ns.end2.name }}" .
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
-        {# 1:1 Relationship: Add unique reference to one of the ends #}
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
-    rdfs:comment "{{ association.metadata.description }}"{% endif %} .
+    rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
+    rdfs:label "{{ ns.end2.name }}" .
         {% endif %}
     {% endif %}
 {%- endfor %}
 
-{# Iterate over enumerations #}
 # Enumeration definition
 {% for enum in model.get_enumerations() %}
 {{ vocab.uri_or_prefixed(enum) }} rdf:type rdfs:Class{% if enum.metadata and enum.metadata.description %} ;
-          rdfs:comment "{{ enum.metadata.description }}"{% endif %} .
+          rdfs:comment "{{ enum.metadata.description }}"{% endif %} ;
+          rdfs:label "{{ enum.name }}" .
     {% for literal in enum.literals %}
-{{ vocab.uri_or_prefixed(literal) }} rdf:type {{ vocab.uri_or_prefixed(enum) }} .
+{{ vocab.uri_or_prefixed(literal) }} rdf:type {{ vocab.uri_or_prefixed(enum) }} ;
+    rdfs:label "{{ literal.name }}" .
     {% endfor %}
 {% endfor %}

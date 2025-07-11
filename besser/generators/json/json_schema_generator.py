@@ -184,12 +184,25 @@ class JSONSchemaGenerator(GeneratorInterface):
                     generated_code = template.render(schema=schema_data)
                     f.write(generated_code)
 
-                file_example_path = os.path.join(class_dir, "example.json")
+                examples_dir = os.path.join(class_dir, "examples")
+                os.makedirs(examples_dir, exist_ok=True)
+
+                file_example_path = os.path.join(examples_dir, "example-normalized.json")
                 with open(file_example_path, mode="w", encoding='utf-8') as f:
                     generated_example_code = self.generate_example(generated_code)
                     f.write(generated_example_code)
 
                 print(f"Smart Data schema for {class_def.name} generated in: {file_path}")
+            
+            # Create empty ADOPTERS.yaml and notes.yaml in the root output directory
+            adopters_file_path = os.path.join(self.output_dir, "ADOPTERS.yaml")
+            notes_file_path = os.path.join(self.output_dir, "notes.yaml")
+
+            with open(adopters_file_path, mode="w", encoding='utf-8') as f:
+                pass
+
+            with open(notes_file_path, mode="w", encoding='utf-8') as f:
+                pass
         else:
             # Regular JSON Schema mode
             template = env.get_template('json_schema.json.j2')

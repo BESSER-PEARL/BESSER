@@ -9,10 +9,12 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
+    - name: Checkout repository with submodules
       uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
-    - name: Create .env file
+    - name: Create .env file dynamically
       run: |
         echo DEPLOYMENT_URL=https://editor.besser-pearl.org > .env
         echo BACKEND_URL=https://editor.besser-pearl.org/besser_api >> .env
@@ -25,17 +27,11 @@ jobs:
         username: ${{ secrets.ARTIFACTORY_USER }}
         password: ${{ secrets.ARTIFACTORY_PASSWORD }}
 
-    - name: Build Docker images via docker-compose
-      run: docker-compose build
+    - name: Build Docker images via docker compose
+      run: docker compose build
 
-    - name: Tag and Push Backend Image
-      run: |
-        BACKEND_IMAGE_ID=$(docker images besser-wme-backend --format "{{.ID}}" | head -n 1)
-        docker tag $BACKEND_IMAGE_ID artefacts.list.lu/besser/web_modeling_editor/backend:latest
-        docker push artefacts.list.lu/besser/web_modeling_editor/backend:latest
+    - name: Push backend image
+      run: docker push artefacts.list.lu/besser/web_modeling_editor/backend:latest
 
-    - name: Tag and Push Frontend Image
-      run: |
-        FRONTEND_IMAGE_ID=$(docker images besser-wme-frontend --format "{{.ID}}" | head -n 1)
-        docker tag $FRONTEND_IMAGE_ID artefacts.list.lu/besser/web_modeling_editor/frontend:latest
-        docker push artefacts.list.lu/besser/web_modeling_editor/frontend:latest
+    - name: Push frontend image
+      run: docker push artefacts.list.lu/besser/web_modeling_editor/frontend:latest

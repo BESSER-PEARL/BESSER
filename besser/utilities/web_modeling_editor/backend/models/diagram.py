@@ -1,5 +1,6 @@
-from pydantic import BaseModel
-from typing import Optional, Dict, Any, Literal
+from typing import Dict, Any, Literal, Optional
+from datetime import datetime
+from pydantic import BaseModel, Field
 
 class DjangoConfig(BaseModel):
     project_name: str
@@ -12,8 +13,11 @@ class SQLConfig(BaseModel):
 class SQLAlchemyConfig(BaseModel):
     dbms: Literal["sqlite", "postgresql", "mysql", "mssql", "mariadb"] = "sqlite"
 
-class ClassDiagramInput(BaseModel):
-    diagramTitle: str = "Diagram"
-    elements: Dict[str, Any]
+
+class DiagramInput(BaseModel):
+    id: Optional[str] = None
+    title: str
+    model: Dict[str, Any]
+    lastUpdate: Optional[datetime] = None
     generator: Optional[str] = None
-    config: Optional[Dict[str, Any]] = None
+    config: Optional[dict] = None

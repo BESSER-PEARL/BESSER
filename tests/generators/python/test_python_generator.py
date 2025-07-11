@@ -37,11 +37,11 @@ class Author:
 book_output = """
 class Book:
 
-    def __init__(self, release: date, title: str, pages: int, Library_end: "Library", writtenBy: set["Author"] = None):
+    def __init__(self, release: date, title: str, pages: int, Library_end: "Library" = None, writtenBy: set["Author"] = None):
         self.release = release
         self.title = title
         self.pages = pages
-        self.Library_end = Library_end if Library_end is not None else set()
+        self.Library_end = Library_end
         self.writtenBy = writtenBy if writtenBy is not None else set()
 """
 
@@ -126,3 +126,46 @@ def test_generator(domain_model, tmpdir):
     assert library_output in generated_code
     assert book_output in generated_code
     assert author_output in generated_code
+
+def test_bidirectional_consistency(domain_model, tmpdir):
+    # Generate the classes
+    output_dir = tmpdir.mkdir("output")
+    generator = PythonGenerator(model=domain_model, output_dir=str(output_dir))
+    generator.generate()
+    output_file = os.path.join(str(output_dir), "classes.py")
+    import importlib.util
+    from datetime import date
+    spec = importlib.util.spec_from_file_location("classes", output_file)
+    classes = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(classes)
+
+    # Create instances
+    Library = classes.Library
+    Book = classes.Book
+    Author = classes.Author
+
+    lib = Library(name="Central", address="Main St")
+    book = Book(release=date.today(), title="Python 101", pages=123, Library_end=lib)
+    author = Author(email="ab.com", member=classes.MemberType.ADULT)
+
+    # Test: Book's Library_end should be lib, and lib.Book_end should include book
+    assert book.Library_end == lib
+    assert book in lib.Book_end
+
+    # Test: Add book to library's Book_end, should update book.Library_end
+    lib2 = Library(name="Branch", address="2nd St")
+    lib2.Book_end = lib2.Book_end | {book}
+    assert book.Library_end == lib2
+    assert book in lib2.Book_end
+    assert book not in lib.Book_end
+
+    # Test: Author writes book
+    author.Book_end = author.Book_end | {book}
+    assert author in book.writtenBy
+    assert book in author.Book_end
+
+    # Test: Set book.writtenBy directly
+    author2 = Author(email="abc.com", member=classes.MemberType.ADULT)
+    book.writtenBy = book.writtenBy | {author2}
+    assert author2 in book.writtenBy
+    assert book in author2.Book_end

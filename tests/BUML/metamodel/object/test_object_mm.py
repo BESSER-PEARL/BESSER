@@ -21,10 +21,10 @@ association1: BinaryAssociation = BinaryAssociation(name="association1", ends={a
 def test_model_initialization():
     obj1: Object = Object(name="object1", classifier=class1, slots=[])
     obj2: Object = Object(name="object2", classifier=class2, slots=[])
-    model: ObjectModel = ObjectModel(name="mymodel", instances={obj1,obj2}, links={})
-    assert len(model.instances) == 2
-    model_empty: ObjectModel = ObjectModel(name="mymodel", instances={}, links={})
-    assert len(model_empty.instances) == 0
+    model: ObjectModel = ObjectModel(name="mymodel", objects={obj1,obj2})
+    assert len(model.objects) == 2
+    model_empty: ObjectModel = ObjectModel(name="mymodel", objects={})
+    assert len(model_empty.objects) == 0
 
 # Testing object initialization
 def test_object_initialization():

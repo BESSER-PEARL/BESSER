@@ -16,3 +16,4 @@ Generators
    generators/api_jsonschema
    generators/api_pytorch
    generators/api_tf
+   generators/api_baf

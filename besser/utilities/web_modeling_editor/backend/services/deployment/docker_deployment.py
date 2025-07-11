@@ -2,7 +2,7 @@ import os
 import subprocess
 import yaml
 
-def removes_volumes():
+def remove_volumes():
     # Load the docker-compose.yml file
     with open("docker-compose.yml", "r", encoding="utf-8") as f:
         compose_data = yaml.safe_load(f)
@@ -58,7 +58,7 @@ def run_docker_compose(directory: str, project_name: str):
 
         # Change working directory to the directory containing the docker-compose.yml
         os.chdir(directory)
-        removes_volumes()
+        remove_volumes()
 
         # Check if the port is already in use by another container
         expected_container = project_name + "_web_1"

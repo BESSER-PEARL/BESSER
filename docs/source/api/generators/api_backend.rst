@@ -1,5 +1,5 @@
 Backend Generator
-===================
+=================
 
 .. automodule:: besser.generators.backend.backend_generator
    :members:

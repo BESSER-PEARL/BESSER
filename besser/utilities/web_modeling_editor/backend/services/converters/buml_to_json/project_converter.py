@@ -5,7 +5,7 @@ Handles project structure processing and diagram coordination.
 
 import uuid
 import re
-from datetime import datetime, UTC
+from datetime import datetime, timezone
 from typing import Dict, Any
 
 from .class_diagram_converter import parse_buml_content, class_buml_to_json
@@ -103,7 +103,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
         section_code = extract_section(header, next_headers)
 
         diagram_id = str(uuid.uuid4())
-        last_update = datetime.now(UTC).isoformat()
+        last_update = datetime.now(timezone.utc).isoformat()
 
         if model_name == "domain_model":
             parsed_domain_model = parse_buml_content(section_code)
@@ -144,7 +144,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
             }
 
     project_id = str(uuid.uuid4())
-    created_at = datetime.now(UTC).isoformat()
+    created_at = datetime.now(timezone.utc).isoformat()
 
     diagram_defaults = {
         "ClassDiagram": "ClassDiagram",
@@ -159,7 +159,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
                 "id": str(uuid.uuid4()),
                 "title": diagram_type.replace("Diagram", " Diagram"),
                 "model": empty_model(model_type),
-                "lastUpdate": datetime.now(UTC).isoformat()
+                "lastUpdate": datetime.now(timezone.utc).isoformat()
             }
 
     return {

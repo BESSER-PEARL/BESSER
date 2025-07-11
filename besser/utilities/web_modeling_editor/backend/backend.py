@@ -697,7 +697,7 @@ async def check_ocl(input_data: DiagramInput):
             }
             buml_model = process_class_diagram(reference_json)
             # Process the object diagram with the domain model
-            object_model = process_object_diagram(input_data.model, buml_model)
+            object_model = process_object_diagram(input_data.model_dump(), buml_model)
             result = check_ocl_constraint(buml_model, object_model)
 
         else:

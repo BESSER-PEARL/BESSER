@@ -24,26 +24,46 @@ def parse_datetime_value(value, type_name):
                 else:  # Try with milliseconds or other formats
                     # Remove milliseconds and timezone info for parsing
                     clean_value = value.split('.')[0].split('+')[0].split('Z')[0]
-                    return datetime.strptime(clean_value, '%Y-%m-%dT%H:%M:%S')
+                    if len(clean_value) == 16:  # After cleaning, check if it's YYYY-MM-DDTHH:MM
+                        return datetime.strptime(clean_value, '%Y-%m-%dT%H:%M')
+                    else:
+                        return datetime.strptime(clean_value, '%Y-%m-%dT%H:%M:%S')
             else:
                 # Try other common formats
-                return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+                try:
+                    return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+                except ValueError:
+                    # Try without seconds
+                    return datetime.strptime(value, '%Y-%m-%d %H:%M')
         elif type_name in ['date', 'DateType']:
             return datetime.strptime(value, '%Y-%m-%d').date()
         elif type_name in ['time', 'TimeType']:
-            return datetime.strptime(value, '%H:%M:%S').time()
+            # Try different time formats
+            if len(value.split(':')) == 2:  # Format: HH:MM
+                return datetime.strptime(value, '%H:%M').time()
+            else:  # Format: HH:MM:SS
+                return datetime.strptime(value, '%H:%M:%S').time()
         elif type_name in ['timedelta', 'TimeDeltaType']:
-            # Parse timedelta from string (e.g., "1 day, 2:30:00" or "2:30:00")
-            # This is a simplified parser - can be extended as needed
+            # Parse timedelta from string (e.g., "1 day, 2:30:00", "2:30:00", or "1:30")
             if 'day' in value:
                 parts = value.split(',')
                 days = int(parts[0].split()[0])
                 time_part = parts[1].strip() if len(parts) > 1 else "0:00:00"
-                hours, minutes, seconds = map(int, time_part.split(':'))
-                return timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
+                time_components = time_part.split(':')
+                if len(time_components) == 2:  # HH:MM format
+                    hours, minutes = map(int, time_components)
+                    return timedelta(days=days, hours=hours, minutes=minutes)
+                else:  # HH:MM:SS format
+                    hours, minutes, seconds = map(int, time_components)
+                    return timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
             else:
-                hours, minutes, seconds = map(int, value.split(':'))
-                return timedelta(hours=hours, minutes=minutes, seconds=seconds)
+                time_components = value.split(':')
+                if len(time_components) == 2:  # HH:MM format
+                    hours, minutes = map(int, time_components)
+                    return timedelta(hours=hours, minutes=minutes)
+                else:  # HH:MM:SS format
+                    hours, minutes, seconds = map(int, time_components)
+                    return timedelta(hours=hours, minutes=minutes, seconds=seconds)
     except (ValueError, IndexError) as e:
         print(f"Warning: Could not parse {type_name} value '{value}': {e}")
         return value
@@ -53,19 +73,19 @@ def parse_datetime_value(value, type_name):
 
 def process_object_diagram(json_data, domain_model):
     """Process Object Diagram specific elements and return an ObjectModel."""
-    title = json_data.get('diagramTitle', 'Generated_Object_Model')
+    title = json_data.get('model', {}).get('diagramTitle', 'Generated_Object_Model')
     if ' ' in title:
         title = title.replace(' ', '_')
 
     object_model = ObjectModel(title)
     # Get elements and relationships from the JSON data
-    elements = json_data.get('elements', {})
-    relationships = json_data.get('relationships', {})
+    elements = json_data.get('model', {}).get('elements', {})
+    relationships = json_data.get('model', {}).get('relationships', {})
 
      # If elements is empty, try the nested structure
-    if not elements and 'elements' in json_data.get('elements', {}):
-        elements = json_data.get('elements', {}).get('elements', {})
-        relationships = json_data.get('elements', {}).get('relationships', {})
+    if not elements and 'model' in json_data.get('model', {}):
+        elements = json_data.get('model', {}).get('elements', {})
+        relationships = json_data.get('model', {}).get('relationships', {})
 
     # Track objects by their ID for link creation
     objects_by_id = {}
@@ -81,7 +101,7 @@ def process_object_diagram(json_data, domain_model):
             class_obj = None
             if class_id:
                 # Get the reference data to find the class name by ID
-                reference_data = json_data.get('referenceDiagramData', {})
+                reference_data = json_data.get('model', {}).get('referenceDiagramData', {})
 
                 if reference_data:
                     reference_elements = reference_data.get('elements', {})
@@ -240,7 +260,7 @@ def process_object_diagram(json_data, domain_model):
                 # If not found by direct ID lookup, try the reference diagram approach
                 if not association_obj:
                     # Look for the association by ID in the reference diagram data
-                    reference_data = json_data.get('referenceDiagramData', {})
+                    reference_data = json_data.get('model', {}).get('referenceDiagramData', {})
                     if reference_data:
                         reference_relationships = reference_data.get('relationships', {})
                         assoc_element = reference_relationships.get(association_id)

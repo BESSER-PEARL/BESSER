@@ -49,7 +49,7 @@ def json_to_buml_project(project):
     # Process ObjectDiagram only if it exists and domain_model is available
     object_model_py = diagrams.get("ObjectDiagram")
     if object_model_py and domain_model:
-        object_model = process_object_diagram(object_model_py.model, domain_model)
+        object_model = process_object_diagram(object_model_py.model_dump(), domain_model)
         model_list.append(object_model)
 
     # Process AgentDiagram if it exists

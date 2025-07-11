@@ -21,3 +21,4 @@ class DiagramInput(BaseModel):
     lastUpdate: Optional[datetime] = None
     generator: Optional[str] = None
     config: Optional[dict] = None
+    referenceDiagramData: Optional[Dict[str, Any]] = None

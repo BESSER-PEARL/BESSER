@@ -10,6 +10,7 @@
 
 # Class definition
 {% for class_obj in model.classes_sorted_by_inheritance() %}
+    {# Handling generalizations (inheritance) #}
     {% if class_obj.parents() %}
         {% for parent in class_obj.parents() %}
 {{ vocab.uri_or_prefixed(class_obj) }} rdf:type rdfs:Class ;
@@ -51,24 +52,28 @@
         {% set class1_name = ns.end1.type.name %}
         {% set class2_name = ns.end2.type.name %}
         {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
+        {# N:M #}
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
     rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
     rdfs:label "{{ ns.end2.name }}" .
         {% elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+        {# N:1 #}
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;
     rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
     rdfs:label "{{ ns.end2.name }}" .
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
+        {# 1:N #}
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end2.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end1.type) }}{% if association.metadata and association.metadata.description %} ;
     rdfs:comment "{{ association.metadata.description }}"{% endif %} ;
     rdfs:label "{{ ns.end2.name }}" .
         {% elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+        {# 1:1 Relationship: Add unique reference to one of the ends #}
 {{ vocab.uri_or_prefixed(ns.end2) }} rdf:type rdf:Property ;
     rdfs:domain {{ vocab.uri_or_prefixed(ns.end1.type) }} ;
     rdfs:range {{ vocab.uri_or_prefixed(ns.end2.type) }}{% if association.metadata and association.metadata.description %} ;

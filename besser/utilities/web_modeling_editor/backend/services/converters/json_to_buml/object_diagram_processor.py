@@ -73,7 +73,7 @@ def parse_datetime_value(value, type_name):
 
 def process_object_diagram(json_data, domain_model):
     """Process Object Diagram specific elements and return an ObjectModel."""
-    title = json_data.get('model', {}).get('diagramTitle', 'Generated_Object_Model')
+    title = json_data.get('title', 'Generated_Object_Model')
     if ' ' in title:
         title = title.replace(' ', '_')
 

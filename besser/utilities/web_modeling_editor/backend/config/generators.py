@@ -83,7 +83,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     # Data format generators (class diagram based)
     "jsonschema": GeneratorInfo(
         generator_class=JSONSchemaGenerator,
-        output_type="file",
+        output_type="file",  # This can be either file or zip depending on mode
         file_extension=".json",
         category="data_format",
         requires_class_diagram=True

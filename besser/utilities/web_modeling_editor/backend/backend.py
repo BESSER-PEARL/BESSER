@@ -272,6 +272,8 @@ async def _handle_class_diagram_generation(
         return await _generate_sql(buml_model, generator_class, config, temp_dir)
     elif generator_type == "sqlalchemy":
         return await _generate_sqlalchemy(buml_model, generator_class, config, temp_dir)
+    elif generator_type == "jsonschema":
+        return await _generate_jsonschema(buml_model, generator_class, config, temp_dir)
     else:
         return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
 
@@ -354,6 +356,37 @@ async def _generate_sqlalchemy(buml_model, generator_class, config: dict, temp_d
     generator_instance.generate(dbms=dbms)
     
     return _create_file_response(temp_dir, "sqlalchemy")
+
+
+async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_dir: str):
+    """Generate JSON Schema files."""
+    mode = "regular"
+    if config and "mode" in config:
+        mode = config["mode"]
+    
+    generator_instance = generator_class(buml_model, output_dir=temp_dir, mode=mode)
+    generator_instance.generate()
+    
+    if mode == "smart_data":
+        # For smart_data mode, we create a zip file with a specific name
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for root, _, files in os.walk(temp_dir):
+                for file in files:
+                    file_path = os.path.join(root, file)
+                    arc_name = os.path.relpath(file_path, temp_dir)
+                    zip_file.write(file_path, arc_name)
+        
+        zip_buffer.seek(0)
+        cleanup_temp_resources(temp_dir)
+        
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": "attachment; filename=smart_data_schemas.zip"},
+        )
+    else:
+        return _create_file_response(temp_dir, "jsonschema")
 
 
 async def _generate_standard(buml_model, generator_class, generator_type: str, generator_info, temp_dir: str):

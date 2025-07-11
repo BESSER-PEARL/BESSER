@@ -7,6 +7,48 @@ from besser.BUML.metamodel.object import ObjectModel
 from besser.BUML.metamodel.object.builder import ObjectBuilder
 from besser.BUML.metamodel.object import Link, LinkEnd
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import parse_attribute
+from datetime import datetime, date, time, timedelta
+import re
+
+
+def parse_datetime_value(value, type_name):
+    """Parse datetime values from string format."""
+    try:
+        if type_name in ['datetime', 'DateTimeType']:
+            # Try different datetime formats
+            if 'T' in value:
+                if len(value) == 16:  # Format: YYYY-MM-DDTHH:MM
+                    return datetime.strptime(value, '%Y-%m-%dT%H:%M')
+                elif len(value) == 19:  # Format: YYYY-MM-DDTHH:MM:SS
+                    return datetime.strptime(value, '%Y-%m-%dT%H:%M:%S')
+                else:  # Try with milliseconds or other formats
+                    # Remove milliseconds and timezone info for parsing
+                    clean_value = value.split('.')[0].split('+')[0].split('Z')[0]
+                    return datetime.strptime(clean_value, '%Y-%m-%dT%H:%M:%S')
+            else:
+                # Try other common formats
+                return datetime.strptime(value, '%Y-%m-%d %H:%M:%S')
+        elif type_name in ['date', 'DateType']:
+            return datetime.strptime(value, '%Y-%m-%d').date()
+        elif type_name in ['time', 'TimeType']:
+            return datetime.strptime(value, '%H:%M:%S').time()
+        elif type_name in ['timedelta', 'TimeDeltaType']:
+            # Parse timedelta from string (e.g., "1 day, 2:30:00" or "2:30:00")
+            # This is a simplified parser - can be extended as needed
+            if 'day' in value:
+                parts = value.split(',')
+                days = int(parts[0].split()[0])
+                time_part = parts[1].strip() if len(parts) > 1 else "0:00:00"
+                hours, minutes, seconds = map(int, time_part.split(':'))
+                return timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
+            else:
+                hours, minutes, seconds = map(int, value.split(':'))
+                return timedelta(hours=hours, minutes=minutes, seconds=seconds)
+    except (ValueError, IndexError) as e:
+        print(f"Warning: Could not parse {type_name} value '{value}': {e}")
+        return value
+    
+    return value
 
 
 def process_object_diagram(json_data, domain_model):
@@ -151,6 +193,8 @@ def process_object_diagram(json_data, domain_model):
                                             converted_value = value
                                     elif type_name in ['bool', 'BooleanType']:
                                         converted_value = value.lower() in ['true', '1', 'yes']
+                                    elif type_name in ['datetime', 'DateTimeType', 'date', 'DateType', 'time', 'TimeType', 'timedelta', 'TimeDeltaType']:
+                                        converted_value = parse_datetime_value(value, type_name)
                                 
                                 attributes_dict[attr_name] = converted_value
 

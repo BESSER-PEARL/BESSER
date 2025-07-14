@@ -116,7 +116,8 @@ def get_api_root():
             "deploy": "/besser_api/deploy-app", 
             "export_buml": "/besser_api/export-buml",
             "export_project": "/besser_api/export-project_as_buml",
-            "get_model": "/besser_api/get-json-model",
+            "get_project_json_model": "/besser_api/get-project-json-model",
+            "get_single_json_model": "/besser_api/get-single-json-model",
             "validate_ocl": "/besser_api/check-ocl"
         }
     }
@@ -656,8 +657,8 @@ async def export_buml(input_data: DiagramInput):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-@app.post("/besser_api/get-json-model")
-async def get_json_model(buml_file: UploadFile = File(...)):
+@app.post("/besser_api/get-project-json-model")
+async def get_project_json_model(buml_file: UploadFile = File(...)):
     try:
         content = await buml_file.read()
         buml_content = content.decode("utf-8")
@@ -671,8 +672,126 @@ async def get_json_model(buml_file: UploadFile = File(...)):
         }
 
     except Exception as e:
-        print(f"Error in get_json_model: {str(e)}")
+        print(f"Error in get_project_json_model: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+    
+@app.post("/besser_api/get-json-model")
+async def get_single_json_model(buml_file: UploadFile = File(...)):
+    """
+    Convert a BUML Python file to JSON format for single diagram import.
+    This endpoint handles both full project files and single diagram files.
+    """
+    try:
+        content = await buml_file.read()
+        buml_content = content.decode("utf-8")
+
+        # First, try to detect what type of file this is by analyzing the content
+        diagram_data = None
+        diagram_type = None
+        diagram_title = buml_file.filename.rsplit('.', 1)[0] if buml_file.filename else "Imported Diagram"
+
+        # Analyze content to determine the type
+        content_lower = buml_content.lower()
+        
+        # Check for specific BUML patterns to determine the diagram type
+        is_agent = any(keyword in content_lower for keyword in [
+            'agent(', '.new_intent(', '.new_state(', 'when_intent_matched', 'session.reply'
+        ])
+        
+        is_state_machine = any(keyword in content_lower for keyword in [
+            'statemachine(', 'sm =', 'when_event_go_to', '.add_transition', '.new_body'
+        ]) and not is_agent
+        
+        is_domain_model = any(keyword in content_lower for keyword in [
+            'domainmodel(', '.create_class(', '.add_attribute(', '.create_association'
+        ])
+        
+        is_project = 'project(' in content_lower or 'def create_project' in content_lower
+
+        # Try to parse based on detected type
+        if is_project:
+            try:
+                parsed_project = project_to_json(buml_content)
+                
+                # Find the first available diagram in the project
+                if parsed_project.get("ClassDiagram") and parsed_project["ClassDiagram"].get("model"):
+                    diagram_data = parsed_project["ClassDiagram"]
+                    diagram_type = "ClassDiagram"
+                elif parsed_project.get("ObjectDiagram") and parsed_project["ObjectDiagram"].get("model"):
+                    diagram_data = parsed_project["ObjectDiagram"]
+                    diagram_type = "ObjectDiagram"
+                elif parsed_project.get("StateMachineDiagram") and parsed_project["StateMachineDiagram"].get("model"):
+                    diagram_data = parsed_project["StateMachineDiagram"]
+                    diagram_type = "StateMachineDiagram"
+                elif parsed_project.get("AgentDiagram") and parsed_project["AgentDiagram"].get("model"):
+                    diagram_data = parsed_project["AgentDiagram"]
+                    diagram_type = "AgentDiagram"
+                    
+                if diagram_data and diagram_data.get("title"):
+                    diagram_title = diagram_data["title"]
+                    
+            except Exception as project_error:
+                print(f"Project parsing failed: {str(project_error)}")
+                
+        elif is_agent:
+            try:
+                print("Detected Agent diagram, parsing...")
+                agent_json = agent_buml_to_json(buml_content)
+                diagram_data = {
+                    "title": diagram_title,
+                    "model": agent_json
+                }
+                diagram_type = "AgentDiagram"
+            except Exception as agent_error:
+                print(f"Agent diagram parsing failed: {str(agent_error)}")
+                
+        elif is_state_machine:
+            try:
+                print("Detected State Machine diagram, parsing...")
+                state_machine_json = state_machine_to_json(buml_content)
+                diagram_data = {
+                    "title": diagram_title,
+                    "model": state_machine_json
+                }
+                diagram_type = "StateMachineDiagram"
+            except Exception as sm_error:
+                print(f"State machine parsing failed: {str(sm_error)}")
+                
+        elif is_domain_model:
+            try:
+                print("Detected Domain Model (Class diagram), parsing...")
+                domain_model = parse_buml_content(buml_content)
+                if domain_model and len(domain_model.types) > 0:
+                    diagram_json = class_buml_to_json(domain_model)
+                    diagram_data = {
+                        "title": diagram_title,
+                        "model": diagram_json
+                    }
+                    diagram_type = "ClassDiagram"
+                else:
+                    raise ValueError("No types found in domain model")
+            except Exception as class_error:
+                print(f"Class diagram parsing failed: {str(class_error)}")
+
+        # Return the diagram in the format expected by the frontend
+        return {
+            "title": diagram_title,
+            "model": {
+                **diagram_data.get("model", {}),
+                "type": diagram_type
+            },
+            "diagramType": diagram_type,
+            "exportedAt": datetime.utcnow().isoformat(),
+            "version": "2.0.0"
+        }
+
+    except HTTPException as e:
+        # Re-raise HTTP exceptions to preserve status codes
+        raise e
+    except Exception as e:
+        print(f"Error in get_single_json_model: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process the uploaded file: {str(e)}")
+
 
 
 @app.post("/besser_api/check-ocl")

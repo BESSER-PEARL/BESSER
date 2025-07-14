@@ -5,3 +5,4 @@ Version 3
    :maxdepth: 1
 
    v3/v3.0.0
+   v3/v3.1.0

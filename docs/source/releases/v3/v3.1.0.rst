@@ -14,6 +14,7 @@ New Features and Improvements
 
 * New Fluent API to define object models.
 * Added concept of `Project` to group related models.
+* Added support in the backend endpoint to check OCL constraints in object models using the `B-OCL interpreter <https://b-ocl-interpreter.readthedocs.io/en/latest/>`_.
 
 **Documentation**:
 

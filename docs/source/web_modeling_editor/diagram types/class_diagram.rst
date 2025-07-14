@@ -1,129 +1,107 @@
 Class Diagrams
 ==============
 
-Class diagrams are the fundamental building blocks of object-oriented modeling. They show the static structure of a system by displaying classes, their attributes, methods, and the relationships between them.
+Class diagrams provide a visual representation of the :doc:`structural model <../../buml_language/model_types/structural>`
+in BESSER. This diagram shows the static structure of a system by displaying classes, their attributes, methods,
+and the relationships between them.
 
-Overview
---------
+Pallete
+-------
 
-Class diagrams provide a visual representation of the structure of your system. They are essential for designing and documenting object-oriented systems, showing how classes relate to each other and what responsibilities each class has.
-
-Key Features
-------------
-
-* **Class Definition**: Define classes with attributes and methods
-* **Relationships**: Show associations, generalizations, and other relationships
-* **Visibility**: Specify public, private, and protected members
-* **Multiplicity**: Define how many instances can participate in relationships
-* **OCL Constraints**: Add formal constraints to your model
+The palette on the left side of the editor contains various shapes and elements you can use to create your class diagram.
+These include **Classes** (with or without methods), **Enumerations**, and **OCL Constraint**. But other elements can be added
+as well, from the canvas itself, such as **Associations**, **Generalizations**, and **Association Classes**.
 
 Getting Started
 ---------------
 
-Adding Classes
-~~~~~~~~~~~~~~
+Classes
+~~~~~~~
 
-To add a class to your diagram:
+To add a class to your diagram drag and drop a class element from the left panel onto the canvas.
+You can open and edit the class properties by double-clicking on the class shape:
 
-1. Drag and drop a class element from the left panel onto the canvas
-2. Classes represent the main entities in your system
-3. Each class should have a meaningful name that reflects its purpose
+.. image:: ../../img/wme/class_diagram/class_prop.png
+  :width: 310
+  :alt: Class properties
+  :align: center
 
-Editing Classes
-~~~~~~~~~~~~~~~
+* The **Name** of the class, without spaces.
+* You can also mark the class as **Abstract** or change it to define an **Enumeration**.
+* The list of **Attributes**.
+* The list of **Methods**.
 
-To edit a class:
+Attribute Format
+~~~~~~~~~~~~~~~~
 
-1. Double-click on the class to open the editing popup
-2. Modify the class properties:
+To define attributes, you can use the following formats:
 
-   * **Name**: Provide a clear, descriptive class name
-   * **Attributes**: Define the data the class holds
-   * **Methods**: Define the behavior the class provides
-
-**Attribute Format:**
-
-Attributes can be specified using various formats:
-
-* ``+ attribute : type`` - Public attribute with specified type
-* ``+ attribute`` - Public attribute with default string type
-* ``attribute`` - Public attribute (default visibility)
-
-**Supported Types:**
-* Primitive types: ``int``, ``float``, ``str``, ``bool``, ``time``, ``date``, ``datetime``, ``timedelta``, ``any``
-* Class types: Any class defined in your model
-* Enum types: Custom enumeration types
+``<<visibility modifier>> <<attribute_name>> : <<data_type>>``
 
 **Visibility Modifiers:**
-* ``+`` - Public (default)
-* ``-`` - Private
-* ``#`` - Protected
+Visibility modifier is public as default, but you can specify it using the following symbols:
 
-**Method Format:**
+* ``+`` Public (default)
+* ``-`` Private
+* ``#`` Protected
 
-Methods can be defined with parameters and return types:
+**Supported Data Types:**
+The data types you can use for attributes include: ``int``, ``float``, ``str`` (default), ``bool``, ``time``,
+``date``, ``datetime``, ``timedelta``, ``any``. As data type of an attribute, it's also possibility to use the
+name of an Enumeration defined in the diagram.
 
-* ``+ notify(sms: str = 'message')`` - Public method with parameter and default value
-* ``- findBook(title: str): Book`` - Private method with parameter and return type
-* ``validate()`` - Public method without parameters
+**Attribute examples:**
 
-Creating Associations and Generalizations
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+* ``+ age: int`` - Public attribute of type integer
+* ``address`` - Public attribute of type string
+* ``state: StateList`` - Public attribute of type StateList (an Enumeration defined in the diagram)
 
-To create relationships between classes:
+Method Format
+~~~~~~~~~~~~~
 
-1. Select the source class with a single click
-2. You'll see blue circles indicating connection points
-3. Click and hold on one of these points
-4. Drag to another class to create the relationship
+Methods can be defined with parameters and return types as follows:
+
+``<<visibility modifier>> <<method_name>>(<<parameter_name>>: <<data_type>>): <<return_type>>``
+
+Some examples of method definitions:
+
+* ``+ notify(sms: str = 'message')`` - Public method that takes a parameter ``sms`` with a default value of ``message``.
+* ``- findBook(title: str): Book`` - Private method that takes a ``title`` parameter of type ``str`` and returns a ``Book`` object.
+* ``validate()`` - Public method without parameters.
+
+Associations and Generalizations
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+To create relationships between classes, click the source class, then click and drag from a blue connection point to the target class.
+Then, you can double-click the relationship line to open the editing popup.
+
+.. image:: ../../img/wme/class_diagram/relationship_prop.png
+  :width: 350
+  :alt: Association properties
+  :align: center
+
+* **Name**: Assign a name to the association
+* **Association Type**: Unidirectional, Bidirectional, Composition, or Generalization
+* **End Names**: Set source and target end names
+* **Multiplicity**: Modify multiplicity at both ends
 
 **Multiplicity Format:**
 
 Define multiplicity using standard UML notation:
+
 * ``1`` - Exactly one
 * ``0..1`` - Zero or one
-* ``0..*`` - Zero or many
+* ``*`` - Zero or many
 * ``1..*`` - One or many
 * ``2..4`` - Between 2 and 4
 
-Editing Associations and Generalizations
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-To edit a relationship:
-
-1. Double-click on the relationship line to open the editing popup
-2. You can modify:
-
-   * **Association Type**: Unidirectional, Bidirectional, Composition
-   * **Generalization**: Change to inheritance relationship
-   * **Name**: Assign a name to the association
-   * **End Names**: Set source and target end names
-   * **Multiplicity**: Modify multiplicity at both ends
-
-Working with Class Diagrams
----------------------------
-
-Common Operations
-~~~~~~~~~~~~~~~~~
-
-**Deleting Classes or Relationships**
-  Select the element and press ``Delete`` or ``Backspace``
-
-**Moving Classes**
-  Select a class and use arrow keys or drag-and-drop to reposition
-
-**Undo/Redo**
-  Use ``Ctrl+Z`` to undo and ``Ctrl+Y`` to redo changes
 
 OCL Constraints
 ~~~~~~~~~~~~~~~
 
-Object Constraint Language (OCL) constraints can be added to validate your model:
-
-1. Drag and drop the OCL shape onto your canvas
-2. Write constraints using the format: ``Context "class name" ...``
-3. Link constraints to classes using dotted lines
-4. Use the Quality Check button to validate syntax
+You can add Object Constraint Language (OCL) constraints to your model by dragging the OCL shape onto the canvas,
+writing constraints in the format ``Context "class_name" ...``, linking them to classes with dotted lines, and using
+the Quality Check button to validate the syntax.
 
 **Example OCL Constraint:**
 ```
@@ -134,33 +112,24 @@ inv: self.age >= 0 and self.age <= 120
 Association Classes
 ~~~~~~~~~~~~~~~~~~~
 
-Association classes combine an association with a class:
+To create an association class, drag a Class shape onto the canvas, link it to the center point of
+an existing association using a dotted line, and define its attributes like a regular class.
 
-1. Drag and drop a Class shape onto the canvas
-2. Link it to an existing association center point using a dotted line
-3. Define attributes for the Association Class like a regular class
-
+.. image:: ../../img/wme/class_diagram/asso_class.png
+  :width: 400
+  :alt: Association Class
+  :align: center
 
 Code Generation
 ~~~~~~~~~~~~~~~
 
-Class diagrams can be used to generate code:
+You can generate code from class diagrams in the Web Modeling editor using the following code generators:
 
-* **Python Classes**: Generate Python class definitions
-* **Java Classes**: Generate Java class files
-* **SQL Schema**: Generate database schemas
-* **JSON Schema**: Generate JSON schema definitions
-* **Pydantic Classes**: Generate Pydantic models for data validation
-
-
-Additional Resources
---------------------
-
-For more information about class diagrams and the BESSER Web Modeling Editor:
-
-* `BESSER Documentation <https://besser.readthedocs.io/en/latest/>`_
-* `WME GitHub Repository <https://github.com/BESSER-PEARL/BESSER_WME_standalone>`_
-* :doc:`../use_the_wme` - General editor usage guide
-* :doc:`object_diagram` - Object diagram documentation
-* :doc:`statemachine_diagram` - State machine diagram documentation
-* :doc:`agent_diagram` - Agent diagram documentation
+* :doc:`Django <../../generators/django>`
+* :doc:`Backend <../../generators/backend>`
+* :doc:`SQL <../../generators/sql>`
+* :doc:`Alchemy <../../generators/alchemy>`
+* :doc:`Python <../../generators/python>`
+* :doc:`Java <../../generators/java>`
+* :doc:`Pydantic <../../generators/pydantic>`
+* :doc:`JSON Schema <../../generators/json_schema>`

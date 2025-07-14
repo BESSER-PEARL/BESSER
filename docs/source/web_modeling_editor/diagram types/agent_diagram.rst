@@ -11,14 +11,14 @@ AgentStates
 AgentStates represent the different conditions or statuses that an agent can be in at any given time. In the WME, you can create an AgentState by dragging the "AgentState" element from the palette onto the canvas.
 
 .. image:: ../../img/wme/agent/agent_state.png
-  :width: 300
+  :width: 200
   :alt: Agent State
   :align: center
 
 
 You will have the possibility to edit the name of the AgentState, and both the action and the fallback action that will be executed when the agent enters this state. 
 
-.. image:: ../../img/wme/agent/wme/agent/agent_body.png
+.. image:: ../../img/wme/agent/agent_body.png
   :width: 600
   :alt: Agent Body
   :align: center
@@ -43,7 +43,7 @@ When you create a transition, you can specify the condition that must be met for
 - **Auto Transition**: This transition occurs automatically. 
 
 .. image:: ../../img/wme/agent/agent_transition.png
-  :width: 300
+  :width: 400
   :alt: Agent State Transition
   :align: center
 
@@ -65,7 +65,7 @@ Example Diagram
 Here is an example of a simple agent diagram that represents the `Greetings Agent <https://besser-agentic-framework.readthedocs.io/latest/your_first_agent.html#the-greetings-agent>`_. 
 
 .. image:: ../../img/wme/agent/greetings_agent.png
-  :width: 600
+  :width: 650
   :alt: Greetings Agent
   :align: center
 
@@ -76,6 +76,6 @@ Once you have created your agent diagram, you can generate the agent by clicking
 This will create the necessary files, which you'll be able to download. Instructions to deploy the agent are also provided.
 
 .. image:: ../../img/wme/agent/agent_generate.png
-  :width: 600
+  :width: 200
   :alt: Greetings Agent
   :align: center

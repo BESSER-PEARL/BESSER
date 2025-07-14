@@ -1,155 +1,65 @@
 Object Diagrams
 ===============
 
-Object diagrams represent instances of classes from class diagrams at a particular point in time. They show how objects interact and what values they contain, providing a snapshot of the system's state.
+Object diagrams provide a visual representation of object instances based on the class diagrams in BESSER.
+They show how specific objects interact, their attribute values, and how associations between them are instantiated.
 
-Overview
---------
+Palette
+-------
 
-Object diagrams are essential for validating your class design by showing concrete examples of how objects will interact in your system. They work best when used in conjunction with class diagrams to demonstrate real-world scenarios and data flow.
-
-Key Features
-------------
-
-* **Instance Representation**: Show specific instances of classes with actual data values
-* **Object Relationships**: Display links between objects that represent association instances
-* **State Snapshots**: Capture the system state at a specific moment in time
-* **Validation Tool**: Help verify that your class design works with real data
+The palette on the left side of the editor includes elements for creating object diagrams.
+You can drag and drop **Objects** and model instance-level relationships (links). All elements are tied
+to the class definitions from your class diagram (or structural model).
 
 Getting Started
 ---------------
 
-Adding Objects
-~~~~~~~~~~~~~~
+Objects
+~~~~~~~
 
-To add an object to your diagram:
+To add an object to your diagram, drag and drop an object element from the left panel onto the canvas.
+Each object represents an instance of a class from your class diagram.
+You can open and edit the object properties by double-clicking on the object shape:
 
-1. Drag and drop the object element from the left panel onto the canvas
-2. Objects represent instances of classes from your class diagram
-3. Each object should have a meaningful name that reflects its purpose
+.. image:: ../../img/wme/object/object_prop.png
+  :width: 350
+  :alt: Object properties
+  :align: center
 
-Editing Objects
-~~~~~~~~~~~~~~~
+* **Name**: Name of the object.
+* **Class**: The class this object instantiates.
+* **Attribute Values**: The values of the object attributes.
 
-To edit an object:
+Object Links
+~~~~~~~~~~~~
 
-1. Double-click on the object to open the editing popup
-2. Modify the object properties:
+To create links between objects, click the source object, then click and drag from a blue
+connection point to the target object. Object links represent instances of associations from the class diagram.
 
-   * **Name**: Follow the format ``objectName : ClassName``
-   * **Type**: Specify the class this object instantiates
-   * **Attribute Values**: Set values using the format ``attributeName = value``
+.. image:: ../../img/wme/object/link_prop.png
+  :width: 370
+  :alt: Object link
+  :align: center
 
-**Example attribute values:**
-  
-* ``name = "John"`` (string value)
-* ``age = 25`` (numeric value)
-* ``isActive = true`` (boolean value)
+You can double-click the link to open the editing popup, where you can:
 
-Creating Object Links
-~~~~~~~~~~~~~~~~~~~~~
-
-To create links between objects:
-
-1. Select the source object with a single click
-2. You'll see blue circles indicating connection points
-3. Click and hold on one of these points
-4. Drag to another object to create the link
-5. Object links represent instances of associations from the class diagram
-
-Editing Object Links
-~~~~~~~~~~~~~~~~~~~~
-
-To modify object links:
-
-1. Double-click on the link to open the editing popup
-2. You can modify:
-
-   * Link name
-   * Associated values or roles
-   * Link properties
-
-Working with Object Diagrams
------------------------------
-
-Common Operations
-~~~~~~~~~~~~~~~~~
-
-**Deleting Objects or Links**
-  Select the element and press ``Delete`` or ``Backspace``
-
-**Moving Objects**
-  Select an object and use arrow keys or drag-and-drop to reposition
-
-**Undo/Redo**
-  Use ``Ctrl+Z`` to undo and ``Ctrl+Y`` to redo changes
-
-Best Practices
-~~~~~~~~~~~~~~
-
-1. **Meaningful Names**: Use descriptive names for objects that reflect their role
-2. **Realistic Values**: Provide realistic attribute values to make diagrams understandable
-3. **Consistent Data**: Ensure attribute values match the expected data types
-4. **Complete Information**: Include all relevant attribute values for clarity
-5. **Clear Relationships**: Make object relationships clear and purposeful
-
-Validation and Quality
-~~~~~~~~~~~~~~~~~~~~~~
-
-Object diagrams help validate your class design by:
-
-* Demonstrating concrete usage scenarios
-* Revealing potential issues with class relationships
-* Testing data flow between objects
-* Verifying that your model works with real data
-
-When creating object diagrams, ensure that:
-
-* All objects have proper type assignments
-* Attribute values are appropriate for their data types
-* Links correctly represent the associations from your class diagram
-* The diagram tells a coherent story about system state
-
-Advanced Features
------------------
-
-Integration with Class Diagrams
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Object diagrams are tightly integrated with class diagrams in the BESSER Web Modeling Editor:
-
-* Objects must reference classes defined in your class diagram
-* Links must correspond to associations in the class diagram
-* The editor validates consistency between object and class diagrams
-
-Quality Validation
-~~~~~~~~~~~~~~~~~~
-
-The editor provides validation features to ensure your object diagram is well-formed:
-
-* Checks that objects reference valid classes
-* Validates that links correspond to proper associations
-* Ensures attribute values match expected types
-* Identifies missing or inconsistent data
-
-**OCL Constraint Validation**
-
-When you click the **Quality Check** button, the editor also validates any OCL (Object Constraint Language) constraints defined in your associated structural (class) diagram:
-
-* Evaluates OCL constraints against the object instances and their attribute values
-* Checks invariants, pre-conditions, and post-conditions defined in the class diagram
-* Reports constraint violations with detailed error messages
-* Helps ensure that your object diagram represents a valid system state
-
-This integration between object diagrams and structural model constraints is powered by `B-OCL <https://b-ocl-interpreter.readthedocs.io/en/latest/>`_, our OCL interpreter, providing comprehensive validation of both structural and instance-level constraints.
+* Modify the **link name**
+* Choose the **Association** this link instantiate.
 
 
-Additional Resources
---------------------
+OCL Constraint Validation
+~~~~~~~~~~~~~~~~~~~~~~~~~
 
-For more information about object diagrams and the BESSER Web Modeling Editor:
+When you click the **Quality Check** button, the editor validates the object diagram against any defined
+OCL constraints in the structural model:
 
-* `BESSER Documentation <https://besser.readthedocs.io/en/latest/>`_
-* `WME GitHub Repository <https://github.com/BESSER-PEARL/BESSER_WME_standalone>`_
-* :doc:`../use_the_wme` - General editor usage guide
-* :doc:`class_diagram` - Related class diagram documentation
+* Evaluates OCL constraints on object instances
+* Verifies invariants, pre-conditions, and post-conditions
+* Displays detailed error messages for constraint violations
+
+This is powered by `B-OCL <https://b-ocl-interpreter.readthedocs.io/en/latest/>`_, BESSER’s OCL interpreter.
+
+Code Generation
+---------------
+
+Object diagrams are not used directly for code generation, but they complement the class diagram by validating that the model behaves correctly with real data.

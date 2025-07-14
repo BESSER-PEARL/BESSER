@@ -36,7 +36,7 @@ def check_ocl_constraint(domain_model, object_model = None):
                     if result is True:
                         valid_constraints.append(f"✅ '{constraint.expression}' - Evaluates to: True \n")
                     elif result is False:
-                        valid_constraints.append(f"⚠️ '{constraint.expression}' - Evaluates to: False \n")
+                        invalid_constraints.append(f"❌ '{constraint.expression}' - Constraint violation: Evaluates to False \n")
                     else:
                         valid_constraints.append(f"✅ '{constraint.expression}' - Evaluates to: {result} \n")
             except Exception as e:

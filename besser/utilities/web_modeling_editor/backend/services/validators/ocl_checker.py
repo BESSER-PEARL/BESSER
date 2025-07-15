@@ -71,8 +71,8 @@ def check_ocl_constraint(domain_model, object_model = None):
                     # Check if there are instances of the context class in the object model
                     context_class_name = extract_context_class_name(constraint.expression)
                     context_instances = [obj for obj in object_model.objects 
-                                       if hasattr(obj, 'type') and obj.type.name.lower() == context_class_name.lower()]
-                    
+                                        if hasattr(obj, 'classifier') and obj.classifier.name.lower() == context_class_name.lower()]
+
                     if not context_instances:
                         # No instances of the context class exist, skip evaluation
                         # valid_constraints.append(f"⚠️ '{constraint.expression}' - No instances of '{context_class_name}' found to evaluate constraint")

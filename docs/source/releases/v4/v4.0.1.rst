@@ -1,0 +1,10 @@
+Version 4.0.1
+=============
+
+This release includes bug fixes and improvements to the OCL validation process.
+
+Fixes
+-----
+
+* Ensures ends are properly initialized in the ``Association`` class to avoid potential runtime issues.
+* Improves error and validation messages in the OCL validator.

@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   besser-wme-backend:
+    image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,7 +10,7 @@ services:
       - "9000:9000"
     volumes:
       - ./:/app
-      - /var/run/docker.sock:/var/run/docker.sock  # Mount Docker socket for Docker communication
+      - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /app/besser
     environment:
       - PYTHONPATH=/app
@@ -26,6 +27,7 @@ services:
       - besser_network
 
   besser-wme-frontend:
+    image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
     build:
       context: ./besser/utilities/web_modeling_editor/BESSER_WME_standalone
       dockerfile: Dockerfile.redis

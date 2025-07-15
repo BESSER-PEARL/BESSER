@@ -21,6 +21,7 @@ where you can find additional information on its usage, configuration, and the t
    :maxdepth: 2
    
    web_modeling_editor/use_the_wme
+   web_modeling_editor/project
    web_modeling_editor/diagrams_types
    web_modeling_editor/deploy_locally
 

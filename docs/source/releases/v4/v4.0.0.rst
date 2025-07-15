@@ -23,7 +23,9 @@ New Features and Improvements
 Fixes
 -----
 
-* Fixed issue: `302 <https://github.com/BESSER-PEARL/BESSER/issues/302>`_ 
+* Fixed issue: `303 <https://github.com/BESSER-PEARL/BESSER/issues/303>`_
+* Fixed issue: `302 <https://github.com/BESSER-PEARL/BESSER/issues/302>`_
 * Fixed issue: `263 <https://github.com/BESSER-PEARL/BESSER/issues/263>`_
 * Fixed issue: `212 <https://github.com/BESSER-PEARL/BESSER/issues/212>`_
 * Fixed issue: `205 <https://github.com/BESSER-PEARL/BESSER/issues/205>`_
+* Fixed issue: `165 <https://github.com/BESSER-PEARL/BESSER/issues/165>`_

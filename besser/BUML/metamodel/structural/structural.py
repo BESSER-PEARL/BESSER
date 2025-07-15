@@ -384,6 +384,12 @@ class Enumeration(DataType):
                 raise ValueError(f"An enumeration cannot have two literals with the same name: '{literal.name}'")
         self.literals.add(literal)
 
+    def __getattr__(self, name):
+        for literal in self.literals:
+            if literal.name == name:
+                return literal
+        raise AttributeError(f"{name} is not a valid literal of {self.name}")
+
     def __repr__(self):
         return f"Enumeration({self.name}, {self.literals}, {self.timestamp}, {self.metadata})"
 
@@ -1668,7 +1674,12 @@ class DomainModel(Model):
         Raises:
             ValueError: if there are two types with the same name.
         """
-        types = types | data_types
+        primitive_names = {'int', 'str', 'bool', 'float', 'datetime', 'date', 'time', 'timedelta', 'any'}
+        has_primitives = any(t.name in primitive_names for t in types)
+    
+        if not has_primitives:
+            types = types | data_types
+
         names_seen = set()
         duplicates = set()
 

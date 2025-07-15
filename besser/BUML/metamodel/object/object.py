@@ -470,3 +470,6 @@ class ObjectModel(NamedElement):
     def add_object(self, obj: Object):
         """Object: Method to add an object to the set of objects."""
         self.__objects.add(obj)
+
+    def __repr__(self):
+        return f'ObjectModel({self.name}, {self.objects})'

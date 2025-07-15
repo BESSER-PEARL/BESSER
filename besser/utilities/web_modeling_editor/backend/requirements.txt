@@ -3,3 +3,4 @@ uvicorn
 pydantic
 python-multipart
 PyYAML
+bocl == 0.3.1

@@ -1,0 +1,31 @@
+Version 4.0.0
+=============
+
+New Features and Improvements
+-----------------------------
+
+**Web Modeling Editor**:
+
+* Introduced project management support, allowing users to create projects and organize all related models (e.g., class diagrams, object models, etc.) within a single project workspace.
+* Added support for creating and editing Object Diagrams, allowing you to represent instances of classes and their relationships defined in the Class Diagram (or structural model).
+* Added support for OCL constraints in Object Diagrams, allowing validation of object instances based on constraints defined in the associated Class Diagram.
+
+**BESSER Low-code Platform**:
+
+* Introduced a fluent API for defining object models.
+* Added the concept of Projects to group related models.
+* Added backend support for validating object models against OCL constraints using the `B-OCL interpreter <https://github.com/BESSER-PEARL/B-OCL-Interpreter>`_.
+
+**Documentation**:
+
+* Updated the Web Modeling Editor documentation, including new sections for :doc:`Project Management <../../web_modeling_editor/project>` and :doc:`Diagram Types <../../web_modeling_editor/diagram_types>`.
+
+Fixes
+-----
+
+* Fixed issue: `303 <https://github.com/BESSER-PEARL/BESSER/issues/303>`_
+* Fixed issue: `302 <https://github.com/BESSER-PEARL/BESSER/issues/302>`_
+* Fixed issue: `263 <https://github.com/BESSER-PEARL/BESSER/issues/263>`_
+* Fixed issue: `212 <https://github.com/BESSER-PEARL/BESSER/issues/212>`_
+* Fixed issue: `205 <https://github.com/BESSER-PEARL/BESSER/issues/205>`_
+* Fixed issue: `165 <https://github.com/BESSER-PEARL/BESSER/issues/165>`_

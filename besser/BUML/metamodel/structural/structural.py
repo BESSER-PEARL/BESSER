@@ -1210,6 +1210,7 @@ class Association(NamedElement):
     def __init__(self, name: str, ends: set[Property], timestamp: int = None, metadata: Metadata = None,
                 is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
+        self.__ends: set[Property] = set()
         self.ends: set[Property] = ends
 
     @property

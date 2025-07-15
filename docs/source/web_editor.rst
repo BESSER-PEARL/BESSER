@@ -8,7 +8,7 @@ design :doc:`B-UML <../buml_language>` models and use the :doc:`BESSER code gene
    The BESSER Web Editor is now live and available at `editor.besser-pearl.org <https://editor.besser-pearl.org>`_. You can access and use it directly in your browser without installing anything locally.
 
 
-.. image:: ./img/WME_SHOW.gif
+.. image:: ./img/besser_new.gif
    :width: 900
    :alt: BESSER Web Editor interface
    :align: center
@@ -21,7 +21,8 @@ where you can find additional information on its usage, configuration, and the t
    :maxdepth: 2
    
    web_modeling_editor/use_the_wme
-   web_modeling_editor/agent_diagram
+   web_modeling_editor/project
+   web_modeling_editor/diagram_types
    web_modeling_editor/deploy_locally
 
 

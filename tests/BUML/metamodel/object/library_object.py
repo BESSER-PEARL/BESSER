@@ -142,16 +142,16 @@ library_link_end: LinkEnd = LinkEnd(name="library_end", association_end=located_
 library_book_link: Link = Link(name="library_book_link", association=book_author_association, connections=[book_link_end2,library_link_end])
 
 # Book object and Author object link
-book_link_end2: LinkEnd = LinkEnd(name="book_end3", association_end=publishes, object=book_obj_2)
+book_link_end3: LinkEnd = LinkEnd(name="book_end3", association_end=publishes, object=book_obj_2)
 author_link_end2: LinkEnd = LinkEnd(name="author_end2", association_end=written_by, object=author_obj)
 author_book_link2: Link = Link(name="author_book_link2", association=book_author_association, connections=[book_link_end2,author_link_end2])
 
 # Book Library and Book object link
-book_link_end3: LinkEnd = LinkEnd(name="book_end4", association_end=has, object=book_obj_2)
+book_link_end4: LinkEnd = LinkEnd(name="book_end4", association_end=has, object=book_obj_2)
 library_link_end3: LinkEnd = LinkEnd(name="library_end3", association_end=located_in, object=library_obj)
 library_book_link3: Link = Link(name="library_book_link3", association=book_author_association, connections=[book_link_end3,library_link_end3])
 
 
 
 # Object model definition
-object_model: ObjectModel = ObjectModel(name="Object_model", instances={library_obj, author_obj, book_obj,book_obj_2}, links={author_book_link, library_book_link,author_book_link2,library_book_link3})
+object_model: ObjectModel = ObjectModel(name="Object_model", objects={library_obj, author_obj, book_obj,book_obj_2})

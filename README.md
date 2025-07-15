@@ -16,6 +16,7 @@ The BESSER low-code platform is built on top of [B-UML](https://besser.readthedo
 With B-UML you can specify your software application and then use any of the [code-generators available](https://besser.readthedocs.io/en/latest/generators.html) to translate your model into executable code suitable for various applications, such as Django web apps or database structures compatible with SQLAlchemy.
 
 **Check out the [BESSER Web Modeling Editor online](https://editor.besser-pearl.org/)**
+![BESSER Web Modeling Editor Demo](./docs/source/img/besser_new.gif)
 
 **Check out the official [documentation](https://besser.readthedocs.io/en/latest/)**
 

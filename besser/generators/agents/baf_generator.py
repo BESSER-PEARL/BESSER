@@ -65,11 +65,11 @@ class BAFGenerator(GeneratorInterface):
             properties = sorted(self.model.properties, key=lambda prop: prop.section)
             generated_code = config_template.render(properties=properties)
             f.write(generated_code)
-            print("Agent config file generated in the location: " + config_path)
-        # Copy readme.txt to the output directory
-        readme_src = os.path.join(os.path.dirname(os.path.abspath(__file__)), "readme.txt")
-        readme_dst = self.build_generation_path(file_name="readme.txt")
-        if os.path.exists(readme_src):
-            with open(readme_src, "r") as src_file, open(readme_dst, "w") as dst_file:
-                dst_file.write(src_file.read())
+            print("Agent config file generated in the location: " + config_path)        # Generate readme.txt using the Jinja2 template
+        readme_template = env.get_template('readme.txt.j2')
+        readme_path = self.build_generation_path(file_name="readme.txt")
+        with open(readme_path, mode="w") as f:
+            generated_code = readme_template.render(agent=self.model)
+            f.write(generated_code)
+            print("Agent readme file generated in the location: " + readme_path)
 

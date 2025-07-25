@@ -483,13 +483,6 @@ class ASTParser(ast.NodeVisitor):
             None, but collects attributes for config and data in 
                 data_config dict.
         """
-        #if node.value.func.id == self.buml_model.name:
-        #    self.buml_model.name = node.targets[0].id
-        #elif node.value.func.id == "classification_report":
-        #    self.data_config["config"]["classification"] = True
-        #elif node.value.func.id == "mean_absolute_error":
-        #    self.data_config["train_data"]["task_type"] = "regression"
-        #    self.data_config["config"]["metrics"] = ["mae"]
         if node.targets[0].id == "batch_size":
             self.data_config["config"]["batch_size"] = node.value.value
         elif node.targets[0].id == "train_path":

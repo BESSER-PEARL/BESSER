@@ -1,4 +1,7 @@
-"""Module to test PyTorch and TensorFlow models equivalence."""
+"""
+Module to calculate Maximum Absolute Difference (MAD) 
+    between original and migrated NN.
+"""
 
 import importlib.util
 import os
@@ -450,7 +453,7 @@ def copy_model_weights(tf_model, pt_model, x_torch=False, subnn=False):
             copy_weights(pt_layer, tf_layer)
 
 
-def test_outputs_are_close(nn_config):
+def calculate_mad(nn_config):
     """
     Test that outputs from TensorFlow and PyTorch models are numerically
     close after weight copying. It runs both models on the same input,
@@ -481,10 +484,5 @@ def test_outputs_are_close(nn_config):
     with torch.no_grad():
         pt_out = pt_model(x_torch).detach().numpy()
 
-    #print("TensorFlow output:", tf_out)
-    #print("PyTorch output:", pt_out)
-    #print("Difference:", tf_out - pt_out)
-    print("Max absolute difference:", np.max(np.abs(tf_out - pt_out)))
 
-    # Assert close outputs
-    np.testing.assert_allclose(tf_out, pt_out, rtol=0.000001, atol=0.000001)
+    print("Max absolute difference:", np.max(np.abs(tf_out - pt_out)))

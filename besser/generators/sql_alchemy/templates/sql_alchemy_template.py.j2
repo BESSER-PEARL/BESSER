@@ -67,7 +67,7 @@ class {{ class.name }}(
     {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
     {%- if attribute.is_id or (attribute.name == ids.get(class.name)) %}, primary_key=True{% endif %})
     {%- endfor %}
-    {%- if class.specializations()|length > 0 %}
+    {%- if (class.specializations()|length > 0 and class.parents()|length == 0) %}
     type_spec: Mapped[str] = mapped_column(String(50))
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",

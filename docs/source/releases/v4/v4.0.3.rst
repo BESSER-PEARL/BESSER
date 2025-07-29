@@ -1,0 +1,6 @@
+Version 4.0.3
+=============
+
+**Highlights**:
+
+* Added support for multiple inheritance in the SQLAlchemy generator.

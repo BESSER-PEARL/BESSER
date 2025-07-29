@@ -129,3 +129,22 @@ def test_many_to_many_foreign_keys(domain_model, tmpdir):
     # Optional: Check that the correct table names are referenced in the foreign keys
     assert 'FOREIGN KEY("writtenBy") REFERENCES author (id)' in generated_code
     assert 'FOREIGN KEY(publishes) REFERENCES book (id)' in generated_code
+
+def test_sql_dialect_postgresql(domain_model, tmpdir):
+    output_dir = tmpdir.mkdir("output")
+    generator = SQLGenerator(model=domain_model, output_dir=str(output_dir), sql_dialect="postgresql")
+    generator.generate()
+    output_file = os.path.join(str(output_dir), "tables_postgresql.sql")
+
+    with open(output_file, "r", encoding="utf-8") as f:
+        code = f.read()
+
+    assert "id SERIAL NOT NULL" in code  # PostgreSQL specific syntax
+
+def test_output_file_not_empty(domain_model, tmpdir):
+    output_dir = tmpdir.mkdir("output")
+    generator = SQLGenerator(model=domain_model, output_dir=str(output_dir), sql_dialect="postgresql")
+    generator.generate()
+    output_file = os.path.join(str(output_dir), "tables_postgresql.sql")
+
+    assert os.path.getsize(output_file) > 0

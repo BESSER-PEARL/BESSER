@@ -137,7 +137,7 @@ class NamedElement(Element):
         is_derived (bool): Indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None, 
+    def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None,
                  visibility: str = "public", is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(timestamp, is_derived, uncertainty)
         self.name: str = name

@@ -5,10 +5,7 @@
   "title": "Smart Data models - {{schema.class_name}} schema",
   "modelTags": "",
   "description": "{% if schema.model_description %}{{ schema.model_description }}{% else %}This class represents {{schema.class_name}}{% endif %}",
-  "required": [
-    "id",
-    "type"
-  ],
+  "required": {{ schema.required | tojson_ordered(indent=4, base_indent=2) }},
   "allOf": [
     {
       "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/GSMA-Commons"
@@ -17,7 +14,7 @@
       "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/Location-Commons"
     },
     {
-      "properties": {{ schema.properties | tojson(indent=8) }}
+      "properties": {{ schema.properties | tojson_ordered(indent=4, base_indent=6) }}
     }
   ],
   "derivedFrom": "3GPP TS 28.541",

@@ -1,0 +1,9 @@
+Version 4.0.2
+=============
+
+This release fixes the OCL grammar to properly support size() method calls (e.g., ``self.title.size() > 10``) in OCL constraints.
+
+Fixes
+-----
+
+* Fixed issue: `310 <https://github.com/BESSER-PEARL/BESSER/issues/310>`_

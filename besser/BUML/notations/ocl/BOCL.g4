@@ -40,7 +40,7 @@ expression:
 
           | primaryExpression?  (DOT ID)* Arrow ISEMPTY LPAREN RPAREN expression? RPAREN* #ISEMPTY
           | primaryExpression?  (DOT ID)* Arrow SUM LPAREN RPAREN  binaryFunctionCall? expression? RPAREN* #SUM
-          | primaryExpression?  (DOT ID)* Arrow SIZE   LPAREN RPAREN binaryFunctionCall? expression? RPAREN* #SIZE
+          | primaryExpression?  (DOT ID)* (DOT | Arrow) SIZE   LPAREN RPAREN binaryFunctionCall? expression? RPAREN* #SIZE
 
           |  Arrow? INCLUDES LPAREN expression RPAREN expression? RPAREN* #INCLUDES
           |  Arrow? EXCLUDES LPAREN expression RPAREN  expression? RPAREN* #EXCLUDES

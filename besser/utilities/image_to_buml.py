@@ -20,7 +20,7 @@ def image_to_plantuml(image_path: str, openai_token: str, openai_model: str = "g
     base64_image = ""
     with open(image_path, "rb") as image_file:
         base64_image = base64.b64encode(image_file.read()).decode('utf-8')
-    text = "Can you turn this drawn uml class diagram into the corresponding PlantUML class diagram? the diagram i sent might have some weird relations or classes, I want you to keep them as they are."
+    text = "Can you turn this drawn uml class diagram into the corresponding PlantUML class diagram? The diagram I sent might have some weird relations or classes, I want you to keep them as they are. If the ends of an association have two labels, omit one of the labels, as PlantUML does not support naming the ends."
     headers = {
         "Content-Type": "application/json",
         "Authorization": "Bearer " + openai_token

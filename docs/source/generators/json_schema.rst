@@ -5,12 +5,15 @@ The JSON Schema generator produces JSON Schema definitions based on a given B-UM
 
 Regular JSON Schema Generation
 ------------------------------
+This example demonstrates how to generate a JSON Schema for a Network Data Schema model. The model describes
+typical entities found in mobile networks, such as network cells, user equipment (UE), sessions, and configuration
+parameters, along with their relationships and attributes.
 
-Let's generate the JSON Schema for a Network Data Schema model. You should create a ``JSONSchemaGenerator`` object, provide the :doc:`../buml_language/model_types/structural`, and use the ``generate`` method as follows:
+To generate the JSON Schema, create a ``JSONSchemaGenerator`` object, provide the :doc:`../buml_language/model_types/structural`,
+(``network_model`` in the example) and call the ``generate`` method as shown:
 
 .. code-block:: python
     
-    # Generated B-UML Model
     from besser.BUML.metamodel.structural import (
         Class, Property, Method, Parameter,
         BinaryAssociation, Generalization, DomainModel,

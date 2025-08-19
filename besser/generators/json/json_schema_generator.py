@@ -37,7 +37,7 @@ class JSONSchemaGenerator(GeneratorInterface):
         """
         type_mapping = {
             IntegerType: "number",
-            StringType: "string",
+            StringType: "string", 
             BooleanType: "boolean",
             FloatType: "number",
             DateTimeType: "string",
@@ -52,11 +52,13 @@ class JSONSchemaGenerator(GeneratorInterface):
             TimeType: "time"
         }
 
-        if isinstance(property_type, Enumeration):
+        # Check if it's an enumeration instance
+        if hasattr(property_type, '__class__') and property_type.__class__.__name__ == 'Enumeration':
             return "string", None
 
-        json_type = type_mapping.get(property_type, "string")
-        json_format = format_mapping.get(property_type, None)
+        # Check if it's a type class (direct type mapping)
+        json_type = type_mapping.get(type(property_type), "string")
+        json_format = format_mapping.get(type(property_type), None)
 
         return json_type, json_format
 
@@ -70,17 +72,9 @@ class JSONSchemaGenerator(GeneratorInterface):
         Returns:
             dict: A dictionary containing the schema data.
         """
-        schema_data = {
-            "type": "object",
-            "properties": {},
-            "required": ["id", "type"],
-            "class_name": class_def.name
-        }
-
-        # Add class description if available
-        if class_def.metadata and class_def.metadata.description:
-            schema_data["model_description"] = class_def.metadata.description
-
+        # Build class-specific properties
+        class_properties = {}
+        
         # Process class attributes
         for attr in class_def.attributes:
             prop_type, prop_format = self._get_property_type(attr.type)
@@ -94,9 +88,8 @@ class JSONSchemaGenerator(GeneratorInterface):
             else:
                 prop_def["description"] = "Property"
 
-            if isinstance(attr.type, Enumeration):
+            if hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'Enumeration':
                 prop_def["enum"] = [lit.name for lit in attr.type.literals]
-                # Fix for enumeration type
                 prop_def["type"] = "string"
 
             if hasattr(attr, 'multiplicity') and attr.multiplicity.max > 1:
@@ -105,18 +98,15 @@ class JSONSchemaGenerator(GeneratorInterface):
                     "items": prop_def
                 }
 
-            schema_data["properties"][attr.name] = prop_def
+            class_properties[attr.name] = prop_def
 
-        # Process association ends for this class - only include direct associations
+        # Process association ends for this class
         for association in self.model.associations:
-            # Find ends that reference this class
             class_ends = [end for end in association.ends if end.type == class_def]
 
-            # Skip if this class is not directly involved in the association
             if not class_ends:
                 continue
 
-            # Find the other end of the association
             for class_end in class_ends:
                 other_ends = [end for end in association.ends if end != class_end]
                 if not other_ends:
@@ -125,50 +115,59 @@ class JSONSchemaGenerator(GeneratorInterface):
                 other_end = other_ends[0]
                 prop_name = other_end.name
 
-                # Skip if the property name is not defined
                 if not prop_name:
                     continue
 
-                # Use association-level description if available
                 relationship_description = (
-                    association.metadata.description
+                    f"Relationship to {other_end.type.name}"
                     if association.metadata and association.metadata.description
-                    else f"Relationship. Reference to {other_end.type.name} entity"
+                    else f"Relationship to {other_end.type.name}"
                 )
 
                 relationship_def = {
-                    "anyOf": [
-                        {
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 256,
-                            "pattern": r"^[\w\-\.\{\}\$\+\*\[\]`|~^@!,:\\]+$",
-                            "description": "Property. Identifier format of any NGSI entity"
-                        },
-                        {
-                            "type": "string",
-                            "format": "uri",
-                            "description": "Property. Identifier format of any NGSI entity"
-                        }
-                    ],
-                    "description": relationship_description
+                    "description": relationship_description,
+                    "type": "string",
+                    "format": "uri"
                 }
 
                 # Handle multiplicity
                 if hasattr(other_end, 'multiplicity') and other_end.multiplicity:
                     if other_end.multiplicity.max > 1:
-                        schema_data["properties"][prop_name] = {
+                        class_properties[prop_name] = {
                             "type": "array",
                             "items": relationship_def
                         }
                     else:
-                        schema_data["properties"][prop_name] = relationship_def
-
-                    # If multiplicity.min >= 1, make the field required
-                    if other_end.multiplicity.min >= 1:
-                        schema_data["required"].append(prop_name)
+                        class_properties[prop_name] = relationship_def
                 else:
-                    schema_data["properties"][prop_name] = relationship_def
+                    class_properties[prop_name] = relationship_def
+
+        # Create the complete schema structure
+        schema_data = {
+            "$schema": "http://json-schema.org/schema",
+            "$schemaVersion": "0.0.1",
+            "$id": f"https://smart-data-models.github.io/dataModel.{self.model.name}/{class_def.name}/schema.json",
+            "title": f"Smart Data models - {class_def.name} schema",
+            "modelTags": "",
+            "description": (
+                class_def.metadata.description if class_def.metadata and class_def.metadata.description 
+                else f"This class represents {class_def.name} for smart data models implementation"
+            ),
+            "required": ["id", "type"],
+            "allOf": [
+                {
+                    "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/GSMA-Commons"
+                },
+                {
+                    "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/Location-Commons"
+                },
+                {
+                    "properties": class_properties
+                }
+            ],
+            "derivedFrom": "",
+            "license": ""
+        }
 
         return schema_data
 
@@ -197,25 +196,46 @@ class JSONSchemaGenerator(GeneratorInterface):
             for class_def in classes:
                 # Create a directory for each class
                 class_dir = os.path.join(self.output_dir, class_def.name)
-
                 os.makedirs(class_dir, exist_ok=True)
+
+                # Create examples directory
+                examples_dir = os.path.join(class_dir, "examples")
+                os.makedirs(examples_dir, exist_ok=True)
 
                 # Prepare schema data for this class
                 schema_data = self._prepare_smart_data_schema_for_class(class_def)
-                # Generate schema file in the class directory
+                
+                # Generate schema.json file
                 file_path = os.path.join(class_dir, "schema.json")
-
                 with open(file_path, mode="w", encoding='utf-8') as f:
                     generated_code = template.render(schema=schema_data)
                     f.write(generated_code)
 
-                examples_dir = os.path.join(class_dir, "examples")
-                os.makedirs(examples_dir, exist_ok=True)
+                # Generate all required example files
+                base_example = self.generate_base_example(class_def)
+                
+                # example.json (key-value format)
+                example_path = os.path.join(examples_dir, "example.json")
+                with open(example_path, mode="w", encoding='utf-8') as f:
+                    f.write(json.dumps(base_example, indent=2))
 
-                file_example_path = os.path.join(examples_dir, "example-normalized.json")
-                with open(file_example_path, mode="w", encoding='utf-8') as f:
-                    generated_example_code = self.generate_example(generated_code)
-                    f.write(generated_example_code)
+                # example-normalized.json (NGSI v2 normalized format)
+                normalized_example = self.generate_normalized_example(base_example)
+                normalized_path = os.path.join(examples_dir, "example-normalized.json")
+                with open(normalized_path, mode="w", encoding='utf-8') as f:
+                    f.write(json.dumps(normalized_example, indent=2))
+
+                # example.jsonld (JSON-LD format)
+                jsonld_example = self.generate_jsonld_example(base_example)
+                jsonld_path = os.path.join(examples_dir, "example.jsonld")
+                with open(jsonld_path, mode="w", encoding='utf-8') as f:
+                    f.write(json.dumps(jsonld_example, indent=2))
+
+                # example-normalized.jsonld (NGSI-LD normalized format)
+                normalized_jsonld_example = self.generate_normalized_jsonld_example(base_example)
+                normalized_jsonld_path = os.path.join(examples_dir, "example-normalized.jsonld")
+                with open(normalized_jsonld_path, mode="w", encoding='utf-8') as f:
+                    f.write(json.dumps(normalized_jsonld_example, indent=2))
 
                 print(f"Smart Data schema for {class_def.name} generated in: {file_path}")
 
@@ -224,10 +244,10 @@ class JSONSchemaGenerator(GeneratorInterface):
             notes_file_path = os.path.join(self.output_dir, "notes.yaml")
 
             with open(adopters_file_path, mode="w", encoding='utf-8') as f:
-                pass
+                f.write("# List of adopters\n")
 
             with open(notes_file_path, mode="w", encoding='utf-8') as f:
-                pass
+                f.write("# Notes about the data model\n")
         else:
             # Regular JSON Schema mode
             template = env.get_template('json_schema.json.j2')
@@ -272,6 +292,141 @@ class JSONSchemaGenerator(GeneratorInterface):
             }
 
         return json.dumps(example_obj, indent=4)
+
+    def generate_base_example(self, class_def):
+        """Generate a base example in key-value format."""
+        example = {
+            "id": f"urn:ngsi-ld:{class_def.name}:{class_def.name}-001",
+            "type": class_def.name
+        }
+
+        # Add common Smart Data Model properties
+        example.update({
+            "name": "example-name",
+            "description": "example-description", 
+            "dateCreated": "2025-06-25T08:00:00Z",
+            "dateModified": "2025-06-30T14:15:00Z",
+            "source": "https://example.org/source"
+        })
+
+        # Add class attributes
+        for attr in class_def.attributes:
+            example[attr.name] = self._get_example_value_for_attribute(attr)
+
+        # Add association relationships
+        for association in self.model.associations:
+            class_ends = [end for end in association.ends if end.type == class_def]
+            if not class_ends:
+                continue
+
+            for class_end in class_ends:
+                other_ends = [end for end in association.ends if end != class_end]
+                if not other_ends:
+                    continue
+
+                other_end = other_ends[0]
+                if other_end.name:
+                    example[other_end.name] = f"urn:ngsi-ld:{other_end.name}:{other_end.name}-01"
+
+        return example
+
+    def generate_normalized_example(self, base_example):
+        """Generate NGSI v2 normalized example."""
+        normalized = {}
+        
+        for key, value in base_example.items():
+            if key in ["id", "type"]:
+                normalized[key] = value
+            else:
+                # Determine the NGSI type based on the value
+                if isinstance(value, str) and value.startswith("urn:ngsi-ld:"):
+                    normalized[key] = {
+                        "type": "Relationship",
+                        "value": value
+                    }
+                elif isinstance(value, str) and ("date" in key.lower() or "time" in key.lower()):
+                    normalized[key] = {
+                        "type": "DateTime", 
+                        "value": value
+                    }
+                elif isinstance(value, bool):
+                    normalized[key] = {
+                        "type": "Boolean",
+                        "value": value
+                    }
+                elif isinstance(value, (int, float)):
+                    normalized[key] = {
+                        "type": "Number",
+                        "value": value
+                    }
+                else:
+                    normalized[key] = {
+                        "type": "Text",
+                        "value": value
+                    }
+
+        return normalized
+
+    def generate_jsonld_example(self, base_example):
+        """Generate JSON-LD example."""
+        jsonld = base_example.copy()
+        jsonld["@context"] = [
+            "https://smartdatamodels.org/context.jsonld"
+        ]
+        return jsonld
+
+    def generate_normalized_jsonld_example(self, base_example):
+        """Generate NGSI-LD normalized example."""
+        normalized_jsonld = {}
+        
+        for key, value in base_example.items():
+            if key in ["id", "type"]:
+                normalized_jsonld[key] = value
+            else:
+                # Create NGSI-LD format
+                if isinstance(value, str) and value.startswith("urn:ngsi-ld:"):
+                    normalized_jsonld[key] = {
+                        "type": "Relationship",
+                        "object": value
+                    }
+                elif isinstance(value, str) and ("date" in key.lower() or "time" in key.lower()):
+                    normalized_jsonld[key] = {
+                        "type": "Property",
+                        "value": {
+                            "@type": "DateTime",
+                            "@value": value
+                        }
+                    }
+                else:
+                    normalized_jsonld[key] = {
+                        "type": "Property",
+                        "value": value
+                    }
+
+        normalized_jsonld["@context"] = [
+            "https://smartdatamodels.org/context.jsonld"
+        ]
+        
+        return normalized_jsonld
+
+    def _get_example_value_for_attribute(self, attr):
+        """Get example value for a specific attribute."""
+        if hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'Enumeration':
+            return next(iter(attr.type.literals)).name if attr.type.literals else "enum-value"
+        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'IntegerType':
+            return 10
+        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'FloatType':
+            return 3.14
+        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'BooleanType':
+            return True
+        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'DateTimeType':
+            return "2025-06-25T08:00:00Z"
+        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'DateType':
+            return "2025-06-25"
+        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'TimeType':
+            return "08:00:00Z"
+        else:  # StringType or default
+            return f"example-{attr.name}"
 
     @staticmethod
     def tojson_ordered(value, indent=4, base_indent=0):

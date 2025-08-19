@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/schema",
+  "$schemaVersion": "0.0.1",
+  "$id": "https://smart-data-models.github.io/dataModel.Class_Diagram/SynchronizationSignal/schema.json",
+  "title": "Smart Data models - SynchronizationSignal schema",
+  "modelTags": "",
+  "description": "This class represents SynchronizationSignal for smart data models implementation",
+  "required": [
+    "id",
+    "type"
+  ],
+  "allOf": [
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/GSMA-Commons"
+    },
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/Location-Commons"
+    },
+    {
+      "properties": {
+        "rsrq": {
+          "type": "string",
+          "description": "Property"
+        },
+        "sinr": {
+          "type": "string",
+          "description": "Property"
+        },
+        "rsrp": {
+          "type": "string",
+          "description": "Property"
+        },
+        "ue": {
+          "description": "Relationship to UE",
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    }
+  ],
+  "derivedFrom": "",
+  "license": ""
+} 

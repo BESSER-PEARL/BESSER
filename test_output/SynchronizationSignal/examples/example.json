@@ -1,0 +1,13 @@
+{
+  "id": "urn:ngsi-ld:SynchronizationSignal:SynchronizationSignal-001",
+  "type": "SynchronizationSignal",
+  "name": "example-name",
+  "description": "example-description",
+  "dateCreated": "2025-06-25T08:00:00Z",
+  "dateModified": "2025-06-30T14:15:00Z",
+  "source": "https://example.org/source",
+  "rsrq": "example-rsrq",
+  "sinr": "example-sinr",
+  "rsrp": "example-rsrp",
+  "ue": "urn:ngsi-ld:ue:ue-01"
+}

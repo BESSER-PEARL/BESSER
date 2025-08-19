@@ -1,0 +1,45 @@
+{
+  "id": "urn:ngsi-ld:NRCellCU:NRCellCU-001",
+  "type": "NRCellCU",
+  "name": {
+    "type": "Property",
+    "value": "example-name"
+  },
+  "description": {
+    "type": "Property",
+    "value": "example-description"
+  },
+  "dateCreated": {
+    "type": "Property",
+    "value": {
+      "@type": "DateTime",
+      "@value": "2025-06-25T08:00:00Z"
+    }
+  },
+  "dateModified": {
+    "type": "Property",
+    "value": {
+      "@type": "DateTime",
+      "@value": "2025-06-30T14:15:00Z"
+    }
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "nRcellId": {
+    "type": "Property",
+    "value": "example-nRcellId"
+  },
+  "physicalCellId": {
+    "type": "Property",
+    "value": "example-physicalCellId"
+  },
+  "nrCellDU_by_duId": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:nrCellDU_by_duId:nrCellDU_by_duId-01"
+  },
+  "@context": [
+    "https://smartdatamodels.org/context.jsonld"
+  ]
+}

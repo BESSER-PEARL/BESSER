@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/schema",
+  "$schemaVersion": "0.0.1",
+  "$id": "https://smart-data-models.github.io/dataModel.Class_Diagram/UE/schema.json",
+  "title": "Smart Data models - UE schema",
+  "modelTags": "",
+  "description": "This class represents UE for smart data models implementation",
+  "required": [
+    "id",
+    "type"
+  ],
+  "allOf": [
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/GSMA-Commons"
+    },
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/Location-Commons"
+    },
+    {
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Property"
+        },
+        "position": {
+          "type": "string",
+          "description": "Property"
+        },
+        "rnti": {
+          "type": "string",
+          "description": "Property"
+        },
+        "du": {
+          "description": "Relationship to NRCellDU",
+          "type": "string",
+          "format": "uri"
+        },
+        "pdus": {
+          "type": "array",
+          "items": {
+            "description": "Relationship to PDUSession",
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "synchronizationSignal": {
+          "type": "array",
+          "items": {
+            "description": "Relationship to SynchronizationSignal",
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    }
+  ],
+  "derivedFrom": "",
+  "license": ""
+} 

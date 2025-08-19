@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/schema",
+  "$schemaVersion": "0.0.1",
+  "$id": "https://smart-data-models.github.io/dataModel.Class_Diagram/NRCellCU/schema.json",
+  "title": "Smart Data models - NRCellCU schema",
+  "modelTags": "",
+  "description": "This class represents NRCellCU for smart data models implementation",
+  "required": [
+    "id",
+    "type"
+  ],
+  "allOf": [
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/GSMA-Commons"
+    },
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/Location-Commons"
+    },
+    {
+      "properties": {
+        "nRcellId": {
+          "type": "string",
+          "description": "Property"
+        },
+        "physicalCellId": {
+          "type": "string",
+          "description": "Property"
+        },
+        "nrCellDU_by_duId": {
+          "type": "array",
+          "items": {
+            "description": "Relationship to NRCellDU",
+            "type": "string",
+            "format": "uri"
+          }
+        }
+      }
+    }
+  ],
+  "derivedFrom": "",
+  "license": ""
+} 

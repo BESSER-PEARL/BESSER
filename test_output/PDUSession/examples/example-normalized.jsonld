@@ -1,0 +1,37 @@
+{
+  "id": "example-id",
+  "type": "PDUSession",
+  "name": {
+    "type": "Property",
+    "value": "example-name"
+  },
+  "description": {
+    "type": "Property",
+    "value": "example-description"
+  },
+  "dateCreated": {
+    "type": "Property",
+    "value": {
+      "@type": "DateTime",
+      "@value": "2025-06-25T08:00:00Z"
+    }
+  },
+  "dateModified": {
+    "type": "Property",
+    "value": {
+      "@type": "DateTime",
+      "@value": "2025-06-30T14:15:00Z"
+    }
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "ue": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:ue:ue-01"
+  },
+  "@context": [
+    "https://smartdatamodels.org/context.jsonld"
+  ]
+}

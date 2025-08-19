@@ -1,0 +1,35 @@
+{
+  "$schema": "http://json-schema.org/schema",
+  "$schemaVersion": "0.0.1",
+  "$id": "https://smart-data-models.github.io/dataModel.Class_Diagram/PDUSession/schema.json",
+  "title": "Smart Data models - PDUSession schema",
+  "modelTags": "",
+  "description": "This class represents PDUSession for smart data models implementation",
+  "required": [
+    "id",
+    "type"
+  ],
+  "allOf": [
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/GSMA-Commons"
+    },
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/Location-Commons"
+    },
+    {
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Property"
+        },
+        "ue": {
+          "description": "Relationship to UE",
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    }
+  ],
+  "derivedFrom": "",
+  "license": ""
+} 

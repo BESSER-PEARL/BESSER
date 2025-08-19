@@ -1,0 +1,12 @@
+{
+  "id": "urn:ngsi-ld:BWP:BWP-001",
+  "type": "BWP",
+  "name": "example-name",
+  "description": "example-description",
+  "dateCreated": "2025-06-25T08:00:00Z",
+  "dateModified": "2025-06-30T14:15:00Z",
+  "source": "https://example.org/source",
+  "subCarrierSpacing": "example-subCarrierSpacing",
+  "numberofRBs": "example-numberofRBs",
+  "nrcelldu": "urn:ngsi-ld:nrcelldu:nrcelldu-01"
+}

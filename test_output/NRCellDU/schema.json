@@ -1,0 +1,69 @@
+{
+  "$schema": "http://json-schema.org/schema",
+  "$schemaVersion": "0.0.1",
+  "$id": "https://smart-data-models.github.io/dataModel.Class_Diagram/NRCellDU/schema.json",
+  "title": "Smart Data models - NRCellDU schema",
+  "modelTags": "",
+  "description": "This class represents NRCellDU for smart data models implementation",
+  "required": [
+    "id",
+    "type"
+  ],
+  "allOf": [
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/GSMA-Commons"
+    },
+    {
+      "$ref": "https://smart-data-models.github.io/data-models/common-schema.json#/definitions/Location-Commons"
+    },
+    {
+      "properties": {
+        "nRCellid": {
+          "type": "string",
+          "description": "Property"
+        },
+        "policy": {
+          "type": "string",
+          "description": "Property",
+          "enum": [
+            "FDD",
+            "TDD"
+          ]
+        },
+        "ssb": {
+          "type": "string",
+          "description": "Property"
+        },
+        "physicalCellId": {
+          "type": "string",
+          "description": "Property"
+        },
+        "tdd": {
+          "description": "Relationship to TDD",
+          "type": "string",
+          "format": "uri"
+        },
+        "userEquipments": {
+          "type": "array",
+          "items": {
+            "description": "Relationship to UE",
+            "type": "string",
+            "format": "uri"
+          }
+        },
+        "bwp": {
+          "description": "Relationship to BWP",
+          "type": "string",
+          "format": "uri"
+        },
+        "nrcellcu": {
+          "description": "Relationship to NRCellCU",
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    }
+  ],
+  "derivedFrom": "",
+  "license": ""
+} 

@@ -1,0 +1,65 @@
+{
+  "id": "urn:ngsi-ld:NRCellDU:NRCellDU-001",
+  "type": "NRCellDU",
+  "name": {
+    "type": "Property",
+    "value": "example-name"
+  },
+  "description": {
+    "type": "Property",
+    "value": "example-description"
+  },
+  "dateCreated": {
+    "type": "Property",
+    "value": {
+      "@type": "DateTime",
+      "@value": "2025-06-25T08:00:00Z"
+    }
+  },
+  "dateModified": {
+    "type": "Property",
+    "value": {
+      "@type": "DateTime",
+      "@value": "2025-06-30T14:15:00Z"
+    }
+  },
+  "source": {
+    "type": "Property",
+    "value": "https://example.org/source"
+  },
+  "nRCellid": {
+    "type": "Property",
+    "value": "example-nRCellid"
+  },
+  "policy": {
+    "type": "Property",
+    "value": "FDD"
+  },
+  "ssb": {
+    "type": "Property",
+    "value": "example-ssb"
+  },
+  "physicalCellId": {
+    "type": "Property",
+    "value": "example-physicalCellId"
+  },
+  "tdd": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:tdd:tdd-01"
+  },
+  "userEquipments": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:userEquipments:userEquipments-01"
+  },
+  "bwp": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:bwp:bwp-01"
+  },
+  "nrcellcu": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:nrcellcu:nrcellcu-01"
+  },
+  "@context": [
+    "https://smartdatamodels.org/context.jsonld"
+  ]
+}

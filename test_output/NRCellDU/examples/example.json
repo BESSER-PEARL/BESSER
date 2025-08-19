@@ -1,0 +1,17 @@
+{
+  "id": "urn:ngsi-ld:NRCellDU:NRCellDU-001",
+  "type": "NRCellDU",
+  "name": "example-name",
+  "description": "example-description",
+  "dateCreated": "2025-06-25T08:00:00Z",
+  "dateModified": "2025-06-30T14:15:00Z",
+  "source": "https://example.org/source",
+  "nRCellid": "example-nRCellid",
+  "policy": "FDD",
+  "ssb": "example-ssb",
+  "physicalCellId": "example-physicalCellId",
+  "tdd": "urn:ngsi-ld:tdd:tdd-01",
+  "userEquipments": "urn:ngsi-ld:userEquipments:userEquipments-01",
+  "bwp": "urn:ngsi-ld:bwp:bwp-01",
+  "nrcellcu": "urn:ngsi-ld:nrcellcu:nrcellcu-01"
+}

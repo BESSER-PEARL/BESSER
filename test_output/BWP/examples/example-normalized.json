@@ -1,0 +1,36 @@
+{
+  "id": "urn:ngsi-ld:BWP:BWP-001",
+  "type": "BWP",
+  "name": {
+    "type": "Text",
+    "value": "example-name"
+  },
+  "description": {
+    "type": "Text",
+    "value": "example-description"
+  },
+  "dateCreated": {
+    "type": "DateTime",
+    "value": "2025-06-25T08:00:00Z"
+  },
+  "dateModified": {
+    "type": "DateTime",
+    "value": "2025-06-30T14:15:00Z"
+  },
+  "source": {
+    "type": "Text",
+    "value": "https://example.org/source"
+  },
+  "subCarrierSpacing": {
+    "type": "Text",
+    "value": "example-subCarrierSpacing"
+  },
+  "numberofRBs": {
+    "type": "Text",
+    "value": "example-numberofRBs"
+  },
+  "nrcelldu": {
+    "type": "Relationship",
+    "value": "urn:ngsi-ld:nrcelldu:nrcelldu-01"
+  }
+}

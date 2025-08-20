@@ -136,6 +136,8 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                     metadata_params.append(f'description="{cls.metadata.description}"')
                 if cls.metadata.uri:
                     metadata_params.append(f'uri="{cls.metadata.uri}"')
+                if cls.metadata.icon:
+                    metadata_params.append(f'icon="{cls.metadata.icon}"')
 
                 if metadata_params:
                     metadata_str = f"Metadata({', '.join(metadata_params)})"

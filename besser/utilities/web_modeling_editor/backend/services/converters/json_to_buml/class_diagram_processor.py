@@ -59,9 +59,10 @@ def process_class_diagram(json_data):
             metadata = None
             description = element.get("description")
             uri = element.get("uri")
-            
-            if description or uri:
-                metadata = Metadata(description=description, uri=uri)
+            icon = element.get("icon")
+
+            if description or uri or icon:
+                metadata = Metadata(description=description, uri=uri, icon=icon)
             try:
                 cls = Class(name=class_name, is_abstract=is_abstract, metadata=metadata)
                 domain_model.types.add(cls)

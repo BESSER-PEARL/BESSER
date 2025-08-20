@@ -265,7 +265,9 @@ def class_buml_to_json(domain_model):
                     element_data["description"] = type_obj.metadata.description
                 if type_obj.metadata.uri:
                     element_data["uri"] = type_obj.metadata.uri
-            
+                if type_obj.metadata.icon:
+                    element_data["icon"] = type_obj.metadata.icon
+
             elements[element_id] = element_data
 
     # Second pass: Create relationships

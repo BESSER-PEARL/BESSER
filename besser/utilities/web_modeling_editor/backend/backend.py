@@ -705,7 +705,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         ])
         
         is_state_machine = any(keyword in content_lower for keyword in [
-            'statemachine(', 'sm =', 'when_event_go_to', '.add_transition', '.new_body'
+            'statemachine(', 'when_event_go_to', '.add_transition', '.new_body'
         ]) and not is_agent
         
         is_domain_model = any(keyword in content_lower for keyword in [

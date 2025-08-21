@@ -43,10 +43,6 @@
     "type": "Property",
     "value": 10
   },
-  "userEquipments": {
-    "type": "Relationship",
-    "object": "urn:ngsi-ld:userEquipments:userEquipments-01"
-  },
   "bwp": {
     "type": "Relationship",
     "object": "urn:ngsi-ld:bwp:bwp-01"
@@ -58,6 +54,10 @@
   "tdd": {
     "type": "Relationship",
     "object": "urn:ngsi-ld:tdd:tdd-01"
+  },
+  "userEquipments": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:userEquipments:userEquipments-01"
   },
   "@context": [
     "https://smartdatamodels.org/context.jsonld"

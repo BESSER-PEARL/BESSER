@@ -29,10 +29,6 @@
     "type": "Number",
     "value": 10
   },
-  "du": {
-    "type": "Relationship",
-    "value": "urn:ngsi-ld:du:du-01"
-  },
   "pdus": {
     "type": "Relationship",
     "value": "urn:ngsi-ld:pdus:pdus-01"
@@ -40,5 +36,9 @@
   "synchronizationSignal": {
     "type": "Relationship",
     "value": "urn:ngsi-ld:synchronizationSignal:synchronizationSignal-01"
+  },
+  "du": {
+    "type": "Relationship",
+    "value": "urn:ngsi-ld:du:du-01"
   }
 }

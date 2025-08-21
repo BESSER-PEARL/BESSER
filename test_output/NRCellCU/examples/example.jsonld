@@ -6,8 +6,8 @@
   "dateCreated": "2025-06-25T08:00:00Z",
   "dateModified": "2025-06-30T14:15:00Z",
   "source": "https://example.org/source",
-  "nRcellId": 10,
   "physicalCellId": 10,
+  "nRcellId": 10,
   "nrCellDU_by_duId": "urn:ngsi-ld:nrCellDU_by_duId:nrCellDU_by_duId-01",
   "@context": [
     "https://smartdatamodels.org/context.jsonld"

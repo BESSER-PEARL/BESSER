@@ -171,7 +171,7 @@ class JSONSchemaGenerator(GeneratorInterface):
 
         # Create the complete schema structure
         schema_data = {
-            "$schema": "http://json-schema.org/schema",
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
             "$schemaVersion": "0.0.1",
             "$id": f"https://smart-data-models.github.io/dataModel.{self.model.name}/{class_def.name}/schema.json",
             "title": f"Smart Data models - {class_def.name} schema",

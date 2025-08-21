@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/schema",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$schemaVersion": "0.0.1",
   "$id": "https://smart-data-models.github.io/dataModel.Class_Diagram/UE/schema.json",
   "title": "Smart Data models - UE schema",
@@ -38,11 +38,6 @@
           "type": "integer",
           "description": "Property. Model:'https://schema.org/Number'. position value"
         },
-        "du": {
-          "description": "Relationship. Model:'https://schema.org/URL'. Reference to NRCellDU",
-          "type": "string",
-          "format": "uri"
-        },
         "pdus": {
           "type": "array",
           "items": {
@@ -58,6 +53,11 @@
             "type": "string",
             "format": "uri"
           }
+        },
+        "du": {
+          "description": "Relationship. Model:'https://schema.org/URL'. Reference to NRCellDU",
+          "type": "string",
+          "format": "uri"
         }
       }
     }

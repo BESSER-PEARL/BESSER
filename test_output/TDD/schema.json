@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/schema",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$schemaVersion": "0.0.1",
   "$id": "https://smart-data-models.github.io/dataModel.Class_Diagram/TDD/schema.json",
   "title": "Smart Data models - TDD schema",
@@ -26,13 +26,13 @@
           ],
           "description": "Property. NGSI Entity type"
         },
-        "arfcn": {
-          "type": "integer",
-          "description": "Property. Model:'https://schema.org/Number'. arfcn value"
-        },
         "band": {
           "type": "integer",
           "description": "Property. Model:'https://schema.org/Number'. band value"
+        },
+        "arfcn": {
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. arfcn value"
         },
         "nrcelldu": {
           "description": "Relationship. Model:'https://schema.org/URL'. Reference to NRCellDU",

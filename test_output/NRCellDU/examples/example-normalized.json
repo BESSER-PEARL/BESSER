@@ -37,10 +37,6 @@
     "type": "Number",
     "value": 10
   },
-  "userEquipments": {
-    "type": "Relationship",
-    "value": "urn:ngsi-ld:userEquipments:userEquipments-01"
-  },
   "bwp": {
     "type": "Relationship",
     "value": "urn:ngsi-ld:bwp:bwp-01"
@@ -52,5 +48,9 @@
   "tdd": {
     "type": "Relationship",
     "value": "urn:ngsi-ld:tdd:tdd-01"
+  },
+  "userEquipments": {
+    "type": "Relationship",
+    "value": "urn:ngsi-ld:userEquipments:userEquipments-01"
   }
 }

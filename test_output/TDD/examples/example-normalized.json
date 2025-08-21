@@ -21,11 +21,11 @@
     "type": "Text",
     "value": "https://example.org/source"
   },
-  "arfcn": {
+  "band": {
     "type": "Number",
     "value": 10
   },
-  "band": {
+  "arfcn": {
     "type": "Number",
     "value": 10
   },

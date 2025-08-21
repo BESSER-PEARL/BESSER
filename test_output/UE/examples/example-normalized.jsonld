@@ -35,10 +35,6 @@
     "type": "Property",
     "value": 10
   },
-  "du": {
-    "type": "Relationship",
-    "object": "urn:ngsi-ld:du:du-01"
-  },
   "pdus": {
     "type": "Relationship",
     "object": "urn:ngsi-ld:pdus:pdus-01"
@@ -46,6 +42,10 @@
   "synchronizationSignal": {
     "type": "Relationship",
     "object": "urn:ngsi-ld:synchronizationSignal:synchronizationSignal-01"
+  },
+  "du": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:du:du-01"
   },
   "@context": [
     "https://smartdatamodels.org/context.jsonld"

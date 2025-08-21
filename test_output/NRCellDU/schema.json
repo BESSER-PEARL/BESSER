@@ -1,5 +1,5 @@
 {
-  "$schema": "http://json-schema.org/schema",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$schemaVersion": "0.0.1",
   "$id": "https://smart-data-models.github.io/dataModel.Class_Diagram/NRCellDU/schema.json",
   "title": "Smart Data models - NRCellDU schema",
@@ -46,14 +46,6 @@
           "type": "integer",
           "description": "Property. Model:'https://schema.org/Number'. ssb value"
         },
-        "userEquipments": {
-          "type": "array",
-          "items": {
-            "description": "Relationship. Model:'https://schema.org/URL'. Reference to UE",
-            "type": "string",
-            "format": "uri"
-          }
-        },
         "bwp": {
           "description": "Relationship. Model:'https://schema.org/URL'. Reference to BWP",
           "type": "string",
@@ -68,6 +60,14 @@
           "description": "Relationship. Model:'https://schema.org/URL'. Reference to TDD",
           "type": "string",
           "format": "uri"
+        },
+        "userEquipments": {
+          "type": "array",
+          "items": {
+            "description": "Relationship. Model:'https://schema.org/URL'. Reference to UE",
+            "type": "string",
+            "format": "uri"
+          }
         }
       }
     }

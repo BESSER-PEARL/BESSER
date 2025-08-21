@@ -27,11 +27,11 @@
     "type": "Property",
     "value": "https://example.org/source"
   },
-  "nRcellId": {
+  "physicalCellId": {
     "type": "Property",
     "value": 10
   },
-  "physicalCellId": {
+  "nRcellId": {
     "type": "Property",
     "value": 10
   },

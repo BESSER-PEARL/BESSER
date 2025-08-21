@@ -6,7 +6,7 @@
   "dateCreated": "2025-06-25T08:00:00Z",
   "dateModified": "2025-06-30T14:15:00Z",
   "source": "https://example.org/source",
-  "arfcn": 10,
   "band": 10,
+  "arfcn": 10,
   "nrcelldu": "urn:ngsi-ld:nrcelldu:nrcelldu-01"
 }

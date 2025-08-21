@@ -8,7 +8,7 @@
   "source": "https://example.org/source",
   "rnti": "example-rnti",
   "position": 10,
-  "du": "urn:ngsi-ld:du:du-01",
   "pdus": "urn:ngsi-ld:pdus:pdus-01",
-  "synchronizationSignal": "urn:ngsi-ld:synchronizationSignal:synchronizationSignal-01"
+  "synchronizationSignal": "urn:ngsi-ld:synchronizationSignal:synchronizationSignal-01",
+  "du": "urn:ngsi-ld:du:du-01"
 }

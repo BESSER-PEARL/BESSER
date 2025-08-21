@@ -21,21 +21,21 @@
     "type": "Text",
     "value": "https://example.org/source"
   },
+  "physicalCellId": {
+    "type": "Number",
+    "value": 10
+  },
   "nRCellid": {
-    "type": "Text",
-    "value": "example-nRCellid"
+    "type": "Number",
+    "value": 10
   },
   "policy": {
     "type": "Text",
     "value": "FDD"
   },
   "ssb": {
-    "type": "Text",
-    "value": "example-ssb"
-  },
-  "physicalCellId": {
-    "type": "Text",
-    "value": "example-physicalCellId"
+    "type": "Number",
+    "value": 10
   },
   "tdd": {
     "type": "Relationship",

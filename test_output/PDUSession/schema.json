@@ -18,12 +18,19 @@
     },
     {
       "properties": {
-        "id": {
+        "type": {
           "type": "string",
-          "description": "Property"
+          "enum": [
+            "PDUSession"
+          ],
+          "description": "Property. NGSI Entity type"
+        },
+        "id": {
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. id value"
         },
         "ue": {
-          "description": "Relationship to UE",
+          "description": "Relationship. Model:'https://schema.org/URL'. Reference to UE",
           "type": "string",
           "format": "uri"
         }

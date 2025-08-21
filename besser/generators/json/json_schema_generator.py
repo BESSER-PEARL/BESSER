@@ -35,32 +35,54 @@ class JSONSchemaGenerator(GeneratorInterface):
         Returns:
             tuple: (type, format) where format is None if not applicable
         """
-        type_mapping = {
-            IntegerType: "number",
-            StringType: "string", 
-            BooleanType: "boolean",
-            FloatType: "number",
-            DateTimeType: "string",
-            TimeType: "string",
-            DateType: "string",
-            list: "array"
-        }
-
-        format_mapping = {
-            DateTimeType: "date-time",
-            DateType: "date",
-            TimeType: "time"
-        }
-
         # Check if it's an enumeration instance
         if hasattr(property_type, '__class__') and property_type.__class__.__name__ == 'Enumeration':
             return "string", None
 
-        # Check if it's a type class (direct type mapping)
-        json_type = type_mapping.get(type(property_type), "string")
-        json_format = format_mapping.get(type(property_type), None)
+        # For BUML types, they are usually type objects/classes, not instances
+        # Check the actual type or class name
+        if property_type == IntegerType or (hasattr(property_type, '__name__') and property_type.__name__ == 'IntegerType'):
+            return "integer", None
+        elif property_type == StringType or (hasattr(property_type, '__name__') and property_type.__name__ == 'StringType'):
+            return "string", None
+        elif property_type == BooleanType or (hasattr(property_type, '__name__') and property_type.__name__ == 'BooleanType'):
+            return "boolean", None
+        elif property_type == FloatType or (hasattr(property_type, '__name__') and property_type.__name__ == 'FloatType'):
+            return "number", None
+        elif property_type == DateTimeType or (hasattr(property_type, '__name__') and property_type.__name__ == 'DateTimeType'):
+            return "string", "date-time"
+        elif property_type == DateType or (hasattr(property_type, '__name__') and property_type.__name__ == 'DateType'):
+            return "string", "date"
+        elif property_type == TimeType or (hasattr(property_type, '__name__') and property_type.__name__ == 'TimeType'):
+            return "string", "time"
+        else:
+            return "string", None
 
-        return json_type, json_format
+    def _get_property_description(self, attr, prop_type):
+        """
+        Generate proper description format for Smart Data Models.
+        
+        Args:
+            attr: The attribute object
+            prop_type: The JSON schema type
+            
+        Returns:
+            str: Formatted description
+        """
+        # Map JSON schema types to schema.org URLs
+        schema_org_mapping = {
+            "integer": "https://schema.org/Number",
+            "number": "https://schema.org/Number", 
+            "string": "https://schema.org/Text",
+            "boolean": "https://schema.org/Boolean"
+        }
+        
+        model_url = schema_org_mapping.get(prop_type, "https://schema.org/Text")
+        
+        if attr.metadata and attr.metadata.description:
+            return f"Property. Model:'{model_url}'. {attr.metadata.description}"
+        else:
+            return f"Property. Model:'{model_url}'. {attr.name} value"
 
     def _prepare_smart_data_schema_for_class(self, class_def):
         """
@@ -75,6 +97,13 @@ class JSONSchemaGenerator(GeneratorInterface):
         # Build class-specific properties
         class_properties = {}
         
+        # Add the mandatory type property
+        class_properties["type"] = {
+            "type": "string",
+            "enum": [class_def.name],
+            "description": "Property. NGSI Entity type"
+        }
+        
         # Process class attributes
         for attr in class_def.attributes:
             prop_type, prop_format = self._get_property_type(attr.type)
@@ -83,10 +112,8 @@ class JSONSchemaGenerator(GeneratorInterface):
             if prop_format is not None:
                 prop_def["format"] = prop_format
 
-            if attr.metadata and attr.metadata.description:
-                prop_def["description"] = attr.metadata.description
-            else:
-                prop_def["description"] = "Property"
+            # Use the proper description format
+            prop_def["description"] = self._get_property_description(attr, prop_type)
 
             if hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'Enumeration':
                 prop_def["enum"] = [lit.name for lit in attr.type.literals]
@@ -119,9 +146,9 @@ class JSONSchemaGenerator(GeneratorInterface):
                     continue
 
                 relationship_description = (
-                    f"Relationship to {other_end.type.name}"
+                    f"Relationship. Model:'https://schema.org/URL'. Reference to {other_end.type.name}"
                     if association.metadata and association.metadata.description
-                    else f"Relationship to {other_end.type.name}"
+                    else f"Relationship. Model:'https://schema.org/URL'. Reference to {other_end.type.name}"
                 )
 
                 relationship_def = {
@@ -237,17 +264,17 @@ class JSONSchemaGenerator(GeneratorInterface):
                 with open(normalized_jsonld_path, mode="w", encoding='utf-8') as f:
                     f.write(json.dumps(normalized_jsonld_example, indent=2))
 
+                # Create ADOPTERS.yaml and notes.yaml in each class directory
+                adopters_file_path = os.path.join(class_dir, "ADOPTERS.yaml")
+                notes_file_path = os.path.join(class_dir, "notes.yaml")
+
+                with open(adopters_file_path, mode="w", encoding='utf-8') as f:
+                    f.write("# List of adopters\n")
+
+                with open(notes_file_path, mode="w", encoding='utf-8') as f:
+                    f.write("# Notes about the data model\n")
+
                 print(f"Smart Data schema for {class_def.name} generated in: {file_path}")
-
-            # Create empty ADOPTERS.yaml and notes.yaml in the root output directory
-            adopters_file_path = os.path.join(self.output_dir, "ADOPTERS.yaml")
-            notes_file_path = os.path.join(self.output_dir, "notes.yaml")
-
-            with open(adopters_file_path, mode="w", encoding='utf-8') as f:
-                f.write("# List of adopters\n")
-
-            with open(notes_file_path, mode="w", encoding='utf-8') as f:
-                f.write("# Notes about the data model\n")
         else:
             # Regular JSON Schema mode
             template = env.get_template('json_schema.json.j2')
@@ -413,17 +440,17 @@ class JSONSchemaGenerator(GeneratorInterface):
         """Get example value for a specific attribute."""
         if hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'Enumeration':
             return next(iter(attr.type.literals)).name if attr.type.literals else "enum-value"
-        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'IntegerType':
+        elif attr.type == IntegerType or (hasattr(attr.type, '__name__') and attr.type.__name__ == 'IntegerType'):
             return 10
-        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'FloatType':
+        elif attr.type == FloatType or (hasattr(attr.type, '__name__') and attr.type.__name__ == 'FloatType'):
             return 3.14
-        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'BooleanType':
+        elif attr.type == BooleanType or (hasattr(attr.type, '__name__') and attr.type.__name__ == 'BooleanType'):
             return True
-        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'DateTimeType':
+        elif attr.type == DateTimeType or (hasattr(attr.type, '__name__') and attr.type.__name__ == 'DateTimeType'):
             return "2025-06-25T08:00:00Z"
-        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'DateType':
+        elif attr.type == DateType or (hasattr(attr.type, '__name__') and attr.type.__name__ == 'DateType'):
             return "2025-06-25"
-        elif hasattr(attr.type, '__class__') and attr.type.__class__.__name__ == 'TimeType':
+        elif attr.type == TimeType or (hasattr(attr.type, '__name__') and attr.type.__name__ == 'TimeType'):
             return "08:00:00Z"
         else:  # StringType or default
             return f"example-{attr.name}"

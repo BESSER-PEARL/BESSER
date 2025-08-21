@@ -18,46 +18,53 @@
     },
     {
       "properties": {
-        "nRCellid": {
+        "type": {
           "type": "string",
-          "description": "Property"
+          "enum": [
+            "NRCellDU"
+          ],
+          "description": "Property. NGSI Entity type"
+        },
+        "physicalCellId": {
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. physicalCellId value"
+        },
+        "nRCellid": {
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. nRCellid value"
         },
         "policy": {
           "type": "string",
-          "description": "Property",
+          "description": "Property. Model:'https://schema.org/Text'. policy value",
           "enum": [
             "FDD",
             "TDD"
           ]
         },
         "ssb": {
-          "type": "string",
-          "description": "Property"
-        },
-        "physicalCellId": {
-          "type": "string",
-          "description": "Property"
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. ssb value"
         },
         "tdd": {
-          "description": "Relationship to TDD",
+          "description": "Relationship. Model:'https://schema.org/URL'. Reference to TDD",
           "type": "string",
           "format": "uri"
         },
         "userEquipments": {
           "type": "array",
           "items": {
-            "description": "Relationship to UE",
+            "description": "Relationship. Model:'https://schema.org/URL'. Reference to UE",
             "type": "string",
             "format": "uri"
           }
         },
         "bwp": {
-          "description": "Relationship to BWP",
+          "description": "Relationship. Model:'https://schema.org/URL'. Reference to BWP",
           "type": "string",
           "format": "uri"
         },
         "nrcellcu": {
-          "description": "Relationship to NRCellCU",
+          "description": "Relationship. Model:'https://schema.org/URL'. Reference to NRCellCU",
           "type": "string",
           "format": "uri"
         }

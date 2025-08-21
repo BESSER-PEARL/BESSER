@@ -27,9 +27,13 @@
     "type": "Property",
     "value": "https://example.org/source"
   },
+  "physicalCellId": {
+    "type": "Property",
+    "value": 10
+  },
   "nRCellid": {
     "type": "Property",
-    "value": "example-nRCellid"
+    "value": 10
   },
   "policy": {
     "type": "Property",
@@ -37,11 +41,7 @@
   },
   "ssb": {
     "type": "Property",
-    "value": "example-ssb"
-  },
-  "physicalCellId": {
-    "type": "Property",
-    "value": "example-physicalCellId"
+    "value": 10
   },
   "tdd": {
     "type": "Relationship",

@@ -18,18 +18,25 @@
     },
     {
       "properties": {
-        "nRcellId": {
+        "type": {
           "type": "string",
-          "description": "Property"
+          "enum": [
+            "NRCellCU"
+          ],
+          "description": "Property. NGSI Entity type"
         },
         "physicalCellId": {
-          "type": "string",
-          "description": "Property"
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. physicalCellId value"
+        },
+        "nRcellId": {
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. nRcellId value"
         },
         "nrCellDU_by_duId": {
           "type": "array",
           "items": {
-            "description": "Relationship to NRCellDU",
+            "description": "Relationship. Model:'https://schema.org/URL'. Reference to NRCellDU",
             "type": "string",
             "format": "uri"
           }

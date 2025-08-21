@@ -27,13 +27,13 @@
     "type": "Property",
     "value": "https://example.org/source"
   },
-  "subCarrierSpacing": {
-    "type": "Property",
-    "value": "example-subCarrierSpacing"
-  },
   "numberofRBs": {
     "type": "Property",
-    "value": "example-numberofRBs"
+    "value": 10
+  },
+  "subCarrierSpacing": {
+    "type": "Property",
+    "value": 10
   },
   "nrcelldu": {
     "type": "Relationship",

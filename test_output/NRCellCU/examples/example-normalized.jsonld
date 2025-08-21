@@ -27,13 +27,13 @@
     "type": "Property",
     "value": "https://example.org/source"
   },
-  "nRcellId": {
-    "type": "Property",
-    "value": "example-nRcellId"
-  },
   "physicalCellId": {
     "type": "Property",
-    "value": "example-physicalCellId"
+    "value": 10
+  },
+  "nRcellId": {
+    "type": "Property",
+    "value": 10
   },
   "nrCellDU_by_duId": {
     "type": "Relationship",

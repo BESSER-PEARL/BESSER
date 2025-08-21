@@ -29,11 +29,11 @@
   },
   "band": {
     "type": "Property",
-    "value": "example-band"
+    "value": 10
   },
   "arfcn": {
     "type": "Property",
-    "value": "example-arfcn"
+    "value": 10
   },
   "nrcelldu": {
     "type": "Relationship",

@@ -1,5 +1,5 @@
 {
-  "id": "example-id",
+  "id": 10,
   "type": "UE",
   "name": {
     "type": "Text",
@@ -21,13 +21,13 @@
     "type": "Text",
     "value": "https://example.org/source"
   },
-  "position": {
-    "type": "Text",
-    "value": "example-position"
-  },
   "rnti": {
     "type": "Text",
     "value": "example-rnti"
+  },
+  "position": {
+    "type": "Number",
+    "value": 10
   },
   "du": {
     "type": "Relationship",

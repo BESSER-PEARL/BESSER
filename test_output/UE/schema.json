@@ -18,27 +18,34 @@
     },
     {
       "properties": {
-        "id": {
+        "type": {
           "type": "string",
-          "description": "Property"
-        },
-        "position": {
-          "type": "string",
-          "description": "Property"
+          "enum": [
+            "UE"
+          ],
+          "description": "Property. NGSI Entity type"
         },
         "rnti": {
           "type": "string",
-          "description": "Property"
+          "description": "Property. Model:'https://schema.org/Text'. rnti value"
+        },
+        "id": {
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. id value"
+        },
+        "position": {
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. position value"
         },
         "du": {
-          "description": "Relationship to NRCellDU",
+          "description": "Relationship. Model:'https://schema.org/URL'. Reference to NRCellDU",
           "type": "string",
           "format": "uri"
         },
         "pdus": {
           "type": "array",
           "items": {
-            "description": "Relationship to PDUSession",
+            "description": "Relationship. Model:'https://schema.org/URL'. Reference to PDUSession",
             "type": "string",
             "format": "uri"
           }
@@ -46,7 +53,7 @@
         "synchronizationSignal": {
           "type": "array",
           "items": {
-            "description": "Relationship to SynchronizationSignal",
+            "description": "Relationship. Model:'https://schema.org/URL'. Reference to SynchronizationSignal",
             "type": "string",
             "format": "uri"
           }

@@ -29,15 +29,15 @@
   },
   "rsrq": {
     "type": "Property",
-    "value": "example-rsrq"
+    "value": 3.14
   },
   "sinr": {
     "type": "Property",
-    "value": "example-sinr"
+    "value": 3.14
   },
   "rsrp": {
     "type": "Property",
-    "value": "example-rsrp"
+    "value": 10
   },
   "ue": {
     "type": "Relationship",

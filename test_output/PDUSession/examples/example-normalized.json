@@ -1,5 +1,5 @@
 {
-  "id": "example-id",
+  "id": 10,
   "type": "PDUSession",
   "name": {
     "type": "Text",

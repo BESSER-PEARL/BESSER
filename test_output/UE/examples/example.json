@@ -1,13 +1,13 @@
 {
-  "id": "example-id",
+  "id": 10,
   "type": "UE",
   "name": "example-name",
   "description": "example-description",
   "dateCreated": "2025-06-25T08:00:00Z",
   "dateModified": "2025-06-30T14:15:00Z",
   "source": "https://example.org/source",
-  "position": "example-position",
   "rnti": "example-rnti",
+  "position": 10,
   "du": "urn:ngsi-ld:du:du-01",
   "pdus": "urn:ngsi-ld:pdus:pdus-01",
   "synchronizationSignal": "urn:ngsi-ld:synchronizationSignal:synchronizationSignal-01"

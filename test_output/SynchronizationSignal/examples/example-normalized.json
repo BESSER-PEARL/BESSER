@@ -22,16 +22,16 @@
     "value": "https://example.org/source"
   },
   "rsrq": {
-    "type": "Text",
-    "value": "example-rsrq"
+    "type": "Number",
+    "value": 3.14
   },
   "sinr": {
-    "type": "Text",
-    "value": "example-sinr"
+    "type": "Number",
+    "value": 3.14
   },
   "rsrp": {
-    "type": "Text",
-    "value": "example-rsrp"
+    "type": "Number",
+    "value": 10
   },
   "ue": {
     "type": "Relationship",

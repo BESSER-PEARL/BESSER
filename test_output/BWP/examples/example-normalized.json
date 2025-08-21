@@ -21,13 +21,13 @@
     "type": "Text",
     "value": "https://example.org/source"
   },
-  "subCarrierSpacing": {
-    "type": "Text",
-    "value": "example-subCarrierSpacing"
-  },
   "numberofRBs": {
-    "type": "Text",
-    "value": "example-numberofRBs"
+    "type": "Number",
+    "value": 10
+  },
+  "subCarrierSpacing": {
+    "type": "Number",
+    "value": 10
   },
   "nrcelldu": {
     "type": "Relationship",

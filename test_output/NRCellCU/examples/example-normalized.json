@@ -21,13 +21,13 @@
     "type": "Text",
     "value": "https://example.org/source"
   },
-  "nRcellId": {
-    "type": "Text",
-    "value": "example-nRcellId"
-  },
   "physicalCellId": {
-    "type": "Text",
-    "value": "example-physicalCellId"
+    "type": "Number",
+    "value": 10
+  },
+  "nRcellId": {
+    "type": "Number",
+    "value": 10
   },
   "nrCellDU_by_duId": {
     "type": "Relationship",

@@ -18,20 +18,27 @@
     },
     {
       "properties": {
-        "rsrq": {
+        "type": {
           "type": "string",
-          "description": "Property"
+          "enum": [
+            "SynchronizationSignal"
+          ],
+          "description": "Property. NGSI Entity type"
+        },
+        "rsrq": {
+          "type": "number",
+          "description": "Property. Model:'https://schema.org/Number'. rsrq value"
         },
         "sinr": {
-          "type": "string",
-          "description": "Property"
+          "type": "number",
+          "description": "Property. Model:'https://schema.org/Number'. sinr value"
         },
         "rsrp": {
-          "type": "string",
-          "description": "Property"
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. rsrp value"
         },
         "ue": {
-          "description": "Relationship to UE",
+          "description": "Relationship. Model:'https://schema.org/URL'. Reference to UE",
           "type": "string",
           "format": "uri"
         }

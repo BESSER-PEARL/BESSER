@@ -37,15 +37,11 @@
   },
   "policy": {
     "type": "Property",
-    "value": "FDD"
+    "value": "TDD"
   },
   "ssb": {
     "type": "Property",
     "value": 10
-  },
-  "tdd": {
-    "type": "Relationship",
-    "object": "urn:ngsi-ld:tdd:tdd-01"
   },
   "userEquipments": {
     "type": "Relationship",
@@ -58,6 +54,10 @@
   "nrcellcu": {
     "type": "Relationship",
     "object": "urn:ngsi-ld:nrcellcu:nrcellcu-01"
+  },
+  "tdd": {
+    "type": "Relationship",
+    "object": "urn:ngsi-ld:tdd:tdd-01"
   },
   "@context": [
     "https://smartdatamodels.org/context.jsonld"

@@ -5,6 +5,7 @@
   "title": "Smart Data models - NRCellDU schema",
   "modelTags": "",
   "description": "This class represents NRCellDU for smart data models implementation",
+  "type": "object",
   "required": [
     "id",
     "type"
@@ -37,18 +38,13 @@
           "type": "string",
           "description": "Property. Model:'https://schema.org/Text'. policy value",
           "enum": [
-            "FDD",
-            "TDD"
+            "TDD",
+            "FDD"
           ]
         },
         "ssb": {
           "type": "integer",
           "description": "Property. Model:'https://schema.org/Number'. ssb value"
-        },
-        "tdd": {
-          "description": "Relationship. Model:'https://schema.org/URL'. Reference to TDD",
-          "type": "string",
-          "format": "uri"
         },
         "userEquipments": {
           "type": "array",
@@ -67,10 +63,15 @@
           "description": "Relationship. Model:'https://schema.org/URL'. Reference to NRCellCU",
           "type": "string",
           "format": "uri"
+        },
+        "tdd": {
+          "description": "Relationship. Model:'https://schema.org/URL'. Reference to TDD",
+          "type": "string",
+          "format": "uri"
         }
       }
     }
   ],
-  "derivedFrom": "",
+  "derivedFrom": "3GPP TS 28.541",
   "license": ""
 } 

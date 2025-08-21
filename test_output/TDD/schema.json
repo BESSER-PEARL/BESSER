@@ -5,6 +5,7 @@
   "title": "Smart Data models - TDD schema",
   "modelTags": "",
   "description": "This class represents TDD for smart data models implementation",
+  "type": "object",
   "required": [
     "id",
     "type"
@@ -25,13 +26,13 @@
           ],
           "description": "Property. NGSI Entity type"
         },
-        "band": {
-          "type": "integer",
-          "description": "Property. Model:'https://schema.org/Number'. band value"
-        },
         "arfcn": {
           "type": "integer",
           "description": "Property. Model:'https://schema.org/Number'. arfcn value"
+        },
+        "band": {
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. band value"
         },
         "nrcelldu": {
           "description": "Relationship. Model:'https://schema.org/URL'. Reference to NRCellDU",
@@ -41,6 +42,6 @@
       }
     }
   ],
-  "derivedFrom": "",
+  "derivedFrom": "3GPP TS 28.541",
   "license": ""
 } 

@@ -5,6 +5,7 @@
   "title": "Smart Data models - NRCellCU schema",
   "modelTags": "",
   "description": "This class represents NRCellCU for smart data models implementation",
+  "type": "object",
   "required": [
     "id",
     "type"
@@ -25,13 +26,13 @@
           ],
           "description": "Property. NGSI Entity type"
         },
-        "physicalCellId": {
-          "type": "integer",
-          "description": "Property. Model:'https://schema.org/Number'. physicalCellId value"
-        },
         "nRcellId": {
           "type": "integer",
           "description": "Property. Model:'https://schema.org/Number'. nRcellId value"
+        },
+        "physicalCellId": {
+          "type": "integer",
+          "description": "Property. Model:'https://schema.org/Number'. physicalCellId value"
         },
         "nrCellDU_by_duId": {
           "type": "array",
@@ -44,6 +45,6 @@
       }
     }
   ],
-  "derivedFrom": "",
+  "derivedFrom": "3GPP TS 28.541",
   "license": ""
 } 

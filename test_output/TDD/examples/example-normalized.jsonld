@@ -27,11 +27,11 @@
     "type": "Property",
     "value": "https://example.org/source"
   },
-  "band": {
+  "arfcn": {
     "type": "Property",
     "value": 10
   },
-  "arfcn": {
+  "band": {
     "type": "Property",
     "value": 10
   },

@@ -5,6 +5,7 @@
   "title": "Smart Data models - UE schema",
   "modelTags": "",
   "description": "This class represents UE for smart data models implementation",
+  "type": "object",
   "required": [
     "id",
     "type"
@@ -61,6 +62,6 @@
       }
     }
   ],
-  "derivedFrom": "",
+  "derivedFrom": "3GPP TS 28.541",
   "license": ""
 } 

@@ -5,6 +5,7 @@
   "title": "Smart Data models - PDUSession schema",
   "modelTags": "",
   "description": "This class represents PDUSession for smart data models implementation",
+  "type": "object",
   "required": [
     "id",
     "type"
@@ -37,6 +38,6 @@
       }
     }
   ],
-  "derivedFrom": "",
+  "derivedFrom": "3GPP TS 28.541",
   "license": ""
 } 

@@ -180,6 +180,7 @@ class JSONSchemaGenerator(GeneratorInterface):
                 class_def.metadata.description if class_def.metadata and class_def.metadata.description 
                 else f"This class represents {class_def.name} for smart data models implementation"
             ),
+            "type": "object",
             "required": ["id", "type"],
             "allOf": [
                 {
@@ -192,7 +193,7 @@ class JSONSchemaGenerator(GeneratorInterface):
                     "properties": class_properties
                 }
             ],
-            "derivedFrom": "",
+            "derivedFrom": "3GPP TS 28.541",
             "license": ""
         }
 

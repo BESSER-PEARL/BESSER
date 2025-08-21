@@ -8,10 +8,10 @@
   "source": "https://example.org/source",
   "physicalCellId": 10,
   "nRCellid": 10,
-  "policy": "FDD",
+  "policy": "TDD",
   "ssb": 10,
-  "tdd": "urn:ngsi-ld:tdd:tdd-01",
   "userEquipments": "urn:ngsi-ld:userEquipments:userEquipments-01",
   "bwp": "urn:ngsi-ld:bwp:bwp-01",
-  "nrcellcu": "urn:ngsi-ld:nrcellcu:nrcellcu-01"
+  "nrcellcu": "urn:ngsi-ld:nrcellcu:nrcellcu-01",
+  "tdd": "urn:ngsi-ld:tdd:tdd-01"
 }

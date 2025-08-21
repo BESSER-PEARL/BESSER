@@ -5,6 +5,7 @@
   "title": "Smart Data models - SynchronizationSignal schema",
   "modelTags": "",
   "description": "This class represents SynchronizationSignal for smart data models implementation",
+  "type": "object",
   "required": [
     "id",
     "type"
@@ -45,6 +46,6 @@
       }
     }
   ],
-  "derivedFrom": "",
+  "derivedFrom": "3GPP TS 28.541",
   "license": ""
 } 

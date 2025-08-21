@@ -21,11 +21,11 @@
     "type": "Text",
     "value": "https://example.org/source"
   },
-  "physicalCellId": {
+  "nRcellId": {
     "type": "Number",
     "value": 10
   },
-  "nRcellId": {
+  "physicalCellId": {
     "type": "Number",
     "value": 10
   },

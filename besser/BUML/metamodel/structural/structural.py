@@ -87,7 +87,7 @@ class Metadata(Element):
         self.description: str = description
         self.uri: str = uri
         self.synonyms: List[str] = synonyms
-        self.icon: str = icon    
+        self.icon: str = icon
 
     @property
     def description(self) -> str:

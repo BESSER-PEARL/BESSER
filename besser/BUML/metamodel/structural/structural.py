@@ -70,21 +70,24 @@ class Metadata(Element):
         description (str): Description of the element (None as default).
         uri (str): Uniform resource identifier for the element (None as default).
         synonyms (List[str]): List of synonyms of the element (None as default).
+        icon (str): Icon representing the element (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
 
     Attributes:
         description (str): Description of the element (None as default).
         uri (str): Uniform resource identifier for the element (None as default).
         synonyms (List[str]): List of synonyms of the element (None as default).
+        icon (str): Icon representing the element (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
     """
 
-    def __init__(self, description: str = None, uri: str = None, synonyms: List[str] = None,
+    def __init__(self, description: str = None, uri: str = None, synonyms: List[str] = None, icon: str = None,
                  timestamp: datetime = None):
         super().__init__(timestamp)
         self.description: str = description
         self.uri: str = uri
         self.synonyms: List[str] = synonyms
+        self.icon: str = icon
 
     @property
     def description(self) -> str:
@@ -116,8 +119,19 @@ class Metadata(Element):
         """List[str]: Set the list of synonyms of the metadata."""
         self.__synonyms = synonyms
 
+    @property
+    def icon(self) -> str:
+        """str: Get the icon representing the metadata."""
+        return self.__icon
+
+    @icon.setter
+    def icon(self, icon: str):
+        """str: Set the icon representing the metadata."""
+        self.__icon = icon
+
     def __repr__(self):
-        return f"Metadata({self.description}, {self.uri}, {self.synonyms}, {self.timestamp})"
+        return f"Metadata({self.description}, {self.uri}, {self.synonyms}, {self.icon}, {self.timestamp})"
+
 
 class NamedElement(Element):
     """NamedElement represent a structural element with a name.

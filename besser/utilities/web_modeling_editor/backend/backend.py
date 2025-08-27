@@ -18,8 +18,14 @@ import asyncio
 from datetime import datetime
 from typing import List, Dict, Any
 
-# Core FastAPI imports
-from fastapi import FastAPI, HTTPException, File, UploadFile, Body
+from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
+
+
+
+
+# BESSER image-to-UML and BUML utilities
+from besser.utilities.image_to_buml import image_to_buml
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import parse_buml_content, class_buml_to_json
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 
@@ -699,7 +705,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         ])
         
         is_state_machine = any(keyword in content_lower for keyword in [
-            'statemachine(', 'sm =', 'when_event_go_to', '.add_transition', '.new_body'
+            'statemachine(', 'when_event_go_to', '.add_transition', '.new_body'
         ]) and not is_agent
         
         is_domain_model = any(keyword in content_lower for keyword in [
@@ -792,6 +798,57 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         print(f"Error in get_single_json_model: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process the uploaded file: {str(e)}")
 
+
+@app.post("/besser_api/get-json-model-from-image")
+async def get_json_model_from_image(
+    image_file: UploadFile = File(...),
+    api_key: str = Form(...)
+):
+    """
+    Accepts a PNG or JPEG image and an OpenAI API key, uses BESSER's imagetouml feature to transform the image into a BUML class diagram, then converts the BUML to JSON and returns the JSON object.
+    """
+    import os
+    import tempfile
+
+    try:
+        # Save uploaded image to a temp folder
+        with tempfile.TemporaryDirectory() as temp_dir:
+            image_path = os.path.join(temp_dir, image_file.filename)
+            with open(image_path, "wb") as f:
+                f.write(await image_file.read())
+
+            # Create a folder for the image as expected by mockup_to_buml
+            image_folder = os.path.join(temp_dir, "images")
+            os.makedirs(image_folder, exist_ok=True)
+            os.rename(image_path, os.path.join(image_folder, image_file.filename))
+
+            # Use image_to_buml to generate DomainModel from image and API key
+            # Find the image file path
+            image_files = [f for f in os.listdir(image_folder) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+            if not image_files:
+                raise HTTPException(status_code=400, detail="No valid image file found.")
+            image_path = os.path.join(image_folder, image_files[0])
+
+            domain_model = image_to_buml(image_path=image_path, openai_token=api_key)
+            diagram_json = class_buml_to_json(domain_model)
+
+            diagram_title = diagram_json.get("title", "Imported Class Diagram")
+            diagram_type = "ClassDiagram"
+            return {
+                "title": diagram_title,
+                "model": {**diagram_json, "type": diagram_type},
+                "diagramType": diagram_type,
+                "exportedAt": datetime.utcnow().isoformat(),
+                "version": "2.0.0",
+            }
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Error in get_json_model_from_image: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to process the uploaded image: {str(e)}"
+        )
 
 
 @app.post("/besser_api/check-ocl")

@@ -101,7 +101,7 @@ def process_class_diagram(json_data):
                         property_ = Property(name=name, type=type_obj, visibility=visibility)
                     else:
                         property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility)
-                    cls.attributes.add(property_)
+                    cls.add_attribute(property_)
 
             # Add methods
             for method_id in element.get("methods", []):
@@ -154,7 +154,7 @@ def process_class_diagram(json_data):
                         else:
                             method_obj.type = PrimitiveDataType(return_type)
                     
-                    cls.methods.add(method_obj)
+                    cls.add_method(method_obj)
 
     # Processing relationships (Associations, Generalizations, and Compositions)
     # Store association classes candidates and their links for third pass processing

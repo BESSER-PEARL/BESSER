@@ -27,7 +27,7 @@ def process_agent_diagram(json_data):
             'luxembourgish': 'lb',
             'portuguese': 'pt',
         }
-        target_lang = lang_map.get(lang.lower())
+        target_lang = lang_map.get(lang.lower()) if isinstance(lang, str) else None
         if not target_lang:
             return text
         try:

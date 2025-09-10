@@ -13,7 +13,8 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
 def process_agent_diagram(json_data):
     # Extract language from config if present
     config = json_data.get('config', {})
-    language = config.get('language').lower() if config and config.get('language') else None
+    lang_value = config.get('language')
+    language = lang_value.lower() if isinstance(lang_value, str) and lang_value else None
 
     def translate_text(text, lang):
         # Use deep-translator's GoogleTranslator for free translation

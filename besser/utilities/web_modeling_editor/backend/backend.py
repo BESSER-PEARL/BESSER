@@ -269,31 +269,33 @@ async def _handle_agent_generation(json_data: dict):
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
                 for agent_model, lang in agent_models:
-                    # Generate agent files in temp dir
                     temp_dir = tempfile.mkdtemp(prefix=f"besser_agent_{lang}_")
-                    agent_file = os.path.join(temp_dir, f"agent_model_{lang}.py")
-                    agent_model_to_code(agent_model, agent_file)
-                    # Import and generate output files
-                    sys.path.insert(0, temp_dir)
-                    spec = importlib.util.spec_from_file_location(f"agent_model_{lang}", agent_file)
-                    agent_module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(agent_module)
-                    generator_info = get_generator_info("agent")
-                    generator_class = generator_info.generator_class
-                    if hasattr(agent_module, 'agent'):
-                        generator = generator_class(agent_module.agent)
-                    else:
-                        generator = generator_class(agent_model)
-                    generator.generate()
-                    # Add agent model file inside language folder
-                    zip_file.write(agent_file, f"{lang}/agent_model_{lang}.py")
-                    # Add all files from output dir inside language folder
-                    if os.path.exists(OUTPUT_DIR):
-                        for file_name in os.listdir(OUTPUT_DIR):
-                            file_path = os.path.join(OUTPUT_DIR, file_name)
-                            if os.path.isfile(file_path):
-                                zip_file.write(file_path, f"{lang}/{file_name}")
-                    cleanup_temp_resources(temp_dir)
+                    try:
+                        # Generate agent files in temp dir
+                        agent_file = os.path.join(temp_dir, f"agent_model_{lang}.py")
+                        agent_model_to_code(agent_model, agent_file)
+                        # Import and generate output files
+                        sys.path.insert(0, temp_dir)
+                        spec = importlib.util.spec_from_file_location(f"agent_model_{lang}", agent_file)
+                        agent_module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(agent_module)
+                        generator_info = get_generator_info("agent")
+                        generator_class = generator_info.generator_class
+                        if hasattr(agent_module, 'agent'):
+                            generator = generator_class(agent_module.agent)
+                        else:
+                            generator = generator_class(agent_model)
+                        generator.generate()
+                        # Add agent model file inside language folder
+                        zip_file.write(agent_file, f"{lang}/agent_model_{lang}.py")
+                        # Add all files from output dir inside language folder
+                        if os.path.exists(OUTPUT_DIR):
+                            for file_name in os.listdir(OUTPUT_DIR):
+                                file_path = os.path.join(OUTPUT_DIR, file_name)
+                                if os.path.isfile(file_path):
+                                    zip_file.write(file_path, f"{lang}/{file_name}")
+                    finally:
+                        cleanup_temp_resources(temp_dir)
             zip_buffer.seek(0)
             return StreamingResponse(
                 zip_buffer,

@@ -3,6 +3,7 @@ Agent diagram processing for converting JSON to BUML format.
 """
 
 import operator
+from deep_translator import GoogleTranslator
 import json as json_lib
 from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty
 from besser.BUML.metamodel.state_machine.agent import Agent, Intent, Auto, IntentMatcher, ReceiveTextEvent
@@ -10,6 +11,29 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
 
 
 def process_agent_diagram(json_data):
+    # Extract language from config if present
+    config = json_data.get('config', {})
+    language = config.get('language').lower() if config and config.get('language') else None
+
+    def translate_text(text, lang):
+        # Use deep-translator's GoogleTranslator for free translation
+        if not lang or lang == 'none':
+            return text
+        lang_map = {
+            'french': 'fr',
+            'german': 'de',
+            'spanish': 'es',
+            'luxembourgish': 'lb',
+            'portuguese': 'pt',
+        }
+        target_lang = lang_map.get(lang.lower())
+        if not target_lang:
+            return text
+        try:
+            return GoogleTranslator(source='auto', target=target_lang).translate(text)
+        except Exception as e:
+            print(f"Translation error: {e}")
+            return text
     """Process Agent Diagram specific elements and return an Agent model."""
     # Create the agent model
     title = json_data.get('title', 'Generated_Agent')
@@ -54,6 +78,8 @@ def process_agent_diagram(json_data):
                 body_element = elements.get(body_id)
                 if body_element:
                     training_sentence = sanitize_text(body_element.get("name", ""))
+                    if language:
+                        training_sentence = translate_text(training_sentence, language)
                     if training_sentence:
                         training_sentences.append(training_sentence)
 
@@ -97,7 +123,10 @@ def process_agent_diagram(json_data):
 
                 # Collect messages for this body
                 if body_type == "text":
-                    body_messages.append(sanitize_text(body_content))
+                    msg = sanitize_text(body_content)
+                    if language:
+                        msg = translate_text(msg, language)
+                    body_messages.append(msg)
                 elif body_type == "llm":
                     # For LLM replies, we need to use llm.predict(session.event.message)
                     body_messages.append(f"LLM:{sanitize_text(body_content)}")
@@ -156,7 +185,10 @@ def process_agent_diagram(json_data):
 
                 # Collect messages for this fallback body
                 if fallback_type == "text":
-                    fallback_messages.append(sanitize_text(fallback_content))
+                    message = sanitize_text(fallback_content)
+                    if language:
+                        message = translate_text(message, language)
+                    fallback_messages.append(message)
                 elif fallback_type == "llm":
                     # For LLM replies, store as a special LLM message
                     fallback_messages.append(f"LLM:{sanitize_text(fallback_content)}")
@@ -223,7 +255,10 @@ def process_agent_diagram(json_data):
                     
                     # Collect messages for this body
                     if body_type == "text":
-                        body_messages.append(sanitize_text(body_content))
+                        msg = sanitize_text(body_content)
+                        if language:
+                            msg = translate_text(msg, language)
+                        body_messages.append(msg)
                     elif body_type == "llm":
                         # For LLM replies, we need to use llm.predict(session.event.message)
                         body_messages.append(f"LLM:{sanitize_text(body_content)}")
@@ -282,7 +317,11 @@ def process_agent_diagram(json_data):
 
                     # Collect messages for this fallback body
                     if fallback_type == "text":
-                        fallback_messages.append(sanitize_text(fallback_content))
+                        msg = sanitize_text(fallback_content)
+                        if language:
+                            msg = translate_text(msg, language)
+                        fallback_messages.append(msg)
+
                     elif fallback_type == "llm":
                         # For LLM replies, store as a special LLM message
                         fallback_messages.append(f"LLM:{sanitize_text(fallback_content)}")

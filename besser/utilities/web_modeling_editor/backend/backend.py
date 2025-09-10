@@ -258,7 +258,12 @@ async def _handle_agent_generation(json_data: dict):
             agent_models.append((process_agent_diagram(default_json_data), 'default'))
             # Agents for each language
             for lang in languages:
-                agent_models.append((process_agent_diagram({**json_data, 'config': {**config, 'language': lang}}), lang))
+                # Preserve all config values and only set 'language'
+                new_config = dict(config) if config else {}
+                new_config['language'] = lang
+                new_json_data = dict(json_data)
+                new_json_data['config'] = new_config
+                agent_models.append((process_agent_diagram(new_json_data), lang))
 
             # Generate files for each agent model
             zip_buffer = io.BytesIO()

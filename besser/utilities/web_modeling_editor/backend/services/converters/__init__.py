@@ -8,6 +8,7 @@ from .json_to_buml import (
     process_agent_diagram,
     process_object_diagram,
     json_to_buml_project,
+    process_gui_diagram,
 )
 from .buml_to_json import (
     class_buml_to_json,

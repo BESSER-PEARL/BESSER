@@ -1,0 +1,6 @@
+{%- macro render_attributes(class, enumerations, types, ids, sort) %}
+    {%- for attribute in sort(class.attributes) %}
+    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {%- if attribute.is_id or (attribute.name == ids.get(class.name)) %}, primary_key=True{% endif %})
+    {%- endfor %}
+{%- endmacro %}

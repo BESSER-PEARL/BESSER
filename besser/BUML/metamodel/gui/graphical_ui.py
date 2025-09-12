@@ -1,5 +1,6 @@
 from enum import Enum
 from besser.BUML.metamodel.structural import NamedElement, Class, Property, Model, Element
+from besser.BUML.metamodel.gui.style import Styling, Layout
 
 
 # FileSourceType
@@ -68,8 +69,7 @@ class ButtonActionType(Enum):
     Help = "Help"
     About= "About"
     Exit = "Exit"
-
-
+    Edit = "Edit"
 
 class ButtonType(Enum):
     """Represents a button type.
@@ -83,7 +83,6 @@ class ButtonType(Enum):
     ToggleButtons = "Toggle Buttons"
     iOSStyleButton = "iOS-style Button"
     CustomizableButton = "Customizable Button"
-
 
 #DataSource
 class DataSource(NamedElement):
@@ -102,7 +101,6 @@ class DataSource(NamedElement):
 
     def __repr__(self):
         return f'DataSource({self.name})'
-
 
 #DataSourceElement
 class DataSourceElement(DataSource):
@@ -161,25 +159,25 @@ class File(DataSource):
 
     Attributes:
         name (str): The name of the file data source.
-        type (FileSourceType): The type of the file data source.
+        file_type (FileSourceType): The type of the file data source.
     """
 
-    def __init__(self, name: str, type:FileSourceType):
+    def __init__(self, name: str, file_type:FileSourceType):
         super().__init__(name)
-        self.type: FileSourceType = type
+        self.file_type: FileSourceType = file_type
 
     @property
-    def type(self) -> FileSourceType:
+    def file_type(self) -> FileSourceType:
         """FileSourceType: Get the type of the file data source."""
-        return self.__type
+        return self.__file_type
 
-    @type.setter
-    def type(self, type: FileSourceType):
+    @file_type.setter
+    def file_type(self, file_type: FileSourceType):
         """FileSourceType: Set the type of the file data source."""
-        self.__type = type
+        self.__file_type = file_type
 
     def __repr__(self):
-        return f'File({self.name}, {self.type})'
+        return f'File({self.name}, {self.file_type})'
 
 
 #CollectionDataSource
@@ -188,49 +186,56 @@ class Collection(DataSource):
 
     Args:
         name (str): The name of the collection data source.
-        type (CollectionSourceType): The type of the collection data source.
+        col_type (CollectionSourceType): The type of the collection data source.
 
     Attributes:
         name (str): The name of the collection data source.
-        type (CollectionSourceType): The type of the collection data source.
+        col_type (CollectionSourceType): The type of the collection data source.
     """
-    def __init__(self, name: str, type:CollectionSourceType):
+    def __init__(self, name: str, col_type: CollectionSourceType):
         super().__init__(name)
-        self.type: CollectionSourceType = type
+        self.col_type: CollectionSourceType = col_type
 
     @property
-    def type(self) -> CollectionSourceType:
+    def col_type(self) -> CollectionSourceType:
         """CollectionSourceType: Get the type of the collection data source."""
-        return self.__type
+        return self.__col_type
 
-    @type.setter
-    def type(self, type: CollectionSourceType):
+    @col_type.setter
+    def col_type(self, col_type: CollectionSourceType):
         """CollectionSourceType: Set the type of the collection data source."""
-        self.__type = type
+        self.__col_type = col_type
 
     def __repr__(self):
-        return f'Collection({self.name}, {self.type})'
-
+        return f'Collection({self.name}, {self.col_type})'
 
 #ViewElement
 class ViewElement(NamedElement):
     """
-    Represents a view element.
+    Represents a view element with optional size, position, and color attributes.
 
     Args:
         name (str): The name of the view element.
-        description (str): A brief description of the view element.
+        description (str): A brief description of the view element (optional).
+        timestamp (datetime): Object creation datetime (default is current time).
         visibility (str, optional): Visibility scope (default: "public").
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
+
 
     Attributes:
         name (str): The name of the view element.
-        description (str): A brief description of the view element.
+        description (str): A brief description of the view element (optional).
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         visibility (str): Visibility scope (default: "public").
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
+
     """
 
-    def __init__(self, name: str, description: str, visibility: str = "public"):
-        super().__init__(name, visibility)
+    def __init__(self, name: str, description: str = "", visibility: str = "public", timestamp: int = None, styling: Styling = None):
+        super().__init__(name, visibility, timestamp)
         self.description: str = description
+        self.styling: Styling = styling
+
 
     @property
     def description(self) -> str:
@@ -242,10 +247,20 @@ class ViewElement(NamedElement):
         """str: Set the description of the view element."""
         self.__description = description
 
-    def __repr__(self):
-        return (f"ViewElement(name={self.name}, description={self.description}, "
-                f"visibility={self.visibility})")
+    @property
+    def styling(self) -> Styling:
+        """Styling: Get the styling of the view element."""
+        return self.__styling
 
+    @styling.setter
+    def styling(self, styling: Styling):
+        """Styling: Set the styling of the view element."""
+        self.__styling = styling
+
+
+    def __repr__(self):
+        return (f"ViewElement(name={self.name}, description={self.description}, visibility={self.visibility}, "
+                f"timestamp={self.timestamp}, styling={self.styling})")
 
 #ViewComponent
 class ViewComponent(ViewElement):
@@ -254,23 +269,25 @@ class ViewComponent(ViewElement):
 
     Args:
         name (str): The name of the view component.
-        description (str): A brief description of the view component.
+        description (str): A brief description of the view component (optional).
+        timestamp (datetime): Object creation datetime (default is current time).
         visibility (str, optional): The visibility scope (default: "public").
-
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
 
     Attributes:
         name (str): The name of the view component.
-        description (str): A brief description of the view component.
+        description (str): A brief description of the view component (optional).
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         visibility (str): The visibility scope of the component.
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
     """
 
-    def __init__(self, name: str, description: str, visibility: str = "public"):
-        super().__init__(name, description, visibility)
+    def __init__(self, name: str, description: str = "", visibility: str = "public",
+                 timestamp: int = None, styling: Styling = None):
+        super().__init__(name, description, visibility, timestamp, styling)
 
     def __repr__(self):
-        return (f"ViewComponent({self.name}, "
-                f"description={self.description}, "
-                f"visibility={self.visibility})")
+        return f'ViewComponent({self.name}, description={self.description}, visibility={self.visibility}, timestamp={self.timestamp}, styling={self.styling})'
 
 #ViewContainer
 class ViewContainer(ViewElement):
@@ -279,15 +296,20 @@ class ViewContainer(ViewElement):
     Args:
         name (str): The name of the view container.
         description (str): The description of the view container.
+        timestamp (datetime): Object creation datetime (default is current time).
+        layout (Layout | None, optional): The layout settings of the container. Defaults to None.
 
     Attributes:
         name (str): The name of the view container.
         description (str): The description of the view container.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
+        layout (Layout | None): The layout settings of the container.
     """
 
-    def __init__(self, name: str, description: str, view_elements: set[ViewElement]):
-        super().__init__(name, description)
+    def __init__(self, name: str, description: str, view_elements: set[ViewElement], timestamp: int = None, layout: Layout=None, styling: Styling=None):
+        super().__init__(name, description, timestamp, styling)
         self.view_elements: set[ViewElement] = view_elements
+        self.layout: Layout | None = layout  # Ensure layout is properly stored
 
     @property
     def view_elements(self) -> set[ViewElement]:
@@ -303,10 +325,18 @@ class ViewContainer(ViewElement):
                 raise ValueError("A screen cannot have two elements with the same name.")
         self.__view_elements = view_elements
 
+    @property
+    def layout(self) -> Layout | None:
+        """Layout | None: Get the layout settings of the container."""
+        return self.__layout
+
+    @layout.setter
+    def layout(self, layout: Layout | None):
+        """Layout | None: Set the layout settings of the container."""
+        self.__layout = layout
 
     def __repr__(self):
-        return (f"ViewContainer({self.name}, description={self.description},"
-                f"view_elements={self.view_elements})")
+        return f'ViewContainer({self.name}, description={self.description}, timestamp={self.timestamp}, view_elements={self.view_elements}, layout={self.layout}, styling={self.styling})'
 
 #Screen
 class Screen(ViewContainer):
@@ -314,24 +344,30 @@ class Screen(ViewContainer):
 
     Args:
         name (str): The name of the screen.
+        description (str): The description of the screen.
+        timestamp (datetime): Object creation datetime (default is current time).
         view_elements (set[ViewElement]): The set of view elements on the screen.
         x_dpi (str): The X DPI (dots per inch) of the screen.
         y_dpi (str): The Y DPI (dots per inch) of the screen.
         screen_size (str): The size of the screen.
-        is_main_page (bool): wether this screen serves as the main page of the model.
+        is_main_page (bool): Indicates whether this screen is the main page.
+        layout (Layout | None, optional): The layout settings (Defaults to None).
 
     Attributes:
         name (str): The name of the screen.
+        description (str): The description of the screen.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         view_elements (set[ViewElement]): The set of view elements on the screen.
         x_dpi (str): The X DPI (dots per inch) of the screen.
         y_dpi (str): The Y DPI (dots per inch) of the screen.
         screen_size (str): The size of the screen.
-        is_main_page (bool): wether this screen serves as the main page of the model.
+        is_main_page (bool): wether this screen serves as the main page.
+        layout (Layout | None, optional): The layout settings (Defaults to None)
     """
 
-    def __init__(self, name: str, description: str, view_elements: set[ViewElement], x_dpi: str,
-                 y_dpi: str, screen_size: str, is_main_page: bool = False):
-        super().__init__(name, description, view_elements)
+    def __init__(self, name: str, description: str, view_elements: set[ViewElement], x_dpi: str = "", y_dpi: str = "",
+                 screen_size: str = "Medium", timestamp: int = None, is_main_page: bool = False, layout: Layout=None):
+        super().__init__(name, description, view_elements, timestamp, layout)
         self.x_dpi: str = x_dpi
         self.y_dpi: str = y_dpi
         self.screen_size: str = screen_size
@@ -367,9 +403,9 @@ class Screen(ViewContainer):
         """str: Set the size of the screen.
 
         Raises:
-            ValueError: If the size provided is not one of the allowed options:
-                                                      'Small','Medium', 'Large', 'xLarge'
+            ValueError: If the size provided is not one of the allowed options: 'Small','Medium', 'Large', 'xLarge'
         """
+
         if screen_size not in ['Small', 'Medium', 'Large', 'xLarge']:
             raise ValueError("Invalid value of screen size")
 
@@ -385,10 +421,8 @@ class Screen(ViewContainer):
         """bool: Set whether the screen is main page."""
         self.__is_main_page = is_main_page
 
-
     def __repr__(self):
-        return (f"Screen({self.name}, {self.x_dpi}, {self.y_dpi}, {self.screen_size}, "
-                f"{self.view_elements}, {self.is_main_page})")
+        return f'Screen({self.name}, description={self.description}, {self.x_dpi}, {self.y_dpi}, {self.screen_size}, timestamp={self.timestamp}, {self.view_elements}, {self.is_main_page})'
 
 #Module
 class Module(NamedElement):
@@ -396,15 +430,17 @@ class Module(NamedElement):
 
     Args:
         name (str): name (str): The name of the module.
+        description (str): The description of the input field.
         screens (set[Screen]): The set of screens contained in the module.
 
     Attributes:
         name (str): name (str): The name of the module.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         screens (set[Screen]): The set of screens contained in the module.
     """
 
-    def __init__(self, name: str, screens: set[Screen], visibility: str = "public"):
-        super().__init__(name, visibility)
+    def __init__(self, name: str, screens: set[Screen], visibility: str = "public", timestamp: int = None):
+        super().__init__(name, visibility, timestamp)
         self.screens: set[Screen] = screens
 
     @property
@@ -422,25 +458,27 @@ class Module(NamedElement):
         self.__screens = screens
 
     def __repr__(self):
-        return f'Module({self.name}, {self.screens})'
+        return f'Module({self.name}, {self.screens}, {self.visibility}, timestamp={self.timestamp})'
 
 # DataList is a type of ViewComponent
 class DataList(ViewComponent):
-    """Represents a list component that encapsulates properties
-       unique to lists, such as list sources.
+    """Represents a list component that encapsulates properties unique to lists, such as list sources.
 
     Args:
         name (str): The name of the list.
+        timestamp (datetime): Object creation datetime (default is current time).
         list_sources (set[DataSource]): The set of data sources associated with the list.
+        styling (Styling, optional): The styling configuration, which includes size, position, and color settings (default: None).
 
     Attributes:
         name (str): The name of the list.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         list_sources (set[DataSource]): The set of data sources associated with the list.
+        styling (Styling, optional): The styling configuration, which includes size, position, and color settings (default: None).
     """
 
-    def __init__(self, name: str, description: str, list_sources: set[DataSource],
-                 visibility: str = "public"):
-        super().__init__(name, description, visibility)
+    def __init__(self, name: str, description: str, list_sources: set[DataSource], visibility: str = "public", timestamp: int = None, styling: Styling = None):
+        super().__init__(name, description, visibility, timestamp, styling=styling)
         self.list_sources: set[DataSource] = list_sources
 
     @property
@@ -452,42 +490,24 @@ class DataList(ViewComponent):
     def list_sources(self, list_sources: set[DataSource]):
         """set[DataSource]: Set the set of data sources associated with the list."""
         if list_sources is not None:
-            names = [DataSource.name for DataSource in list_sources]
+            names = [data_source.name for data_source in list_sources]
             if len(names) != len(set(names)):
                 raise ValueError("A list cannot have two items with the same name.")
         self.__list_sources = list_sources
 
     def __repr__(self):
-        return f'DataList({self.name}, {self.list_sources}, {self.visibility})'
+        return f'DataList({self.name}, {self.description}, {self.list_sources}, {self.visibility}, {self.timestamp}, {self.styling})'
 
 # Button is a type of ViewComponent
 class Button(ViewComponent):
-    """Represents a button component and encapsulates
-       specific properties of a button, such as its name and label.
-
-    Args:
-        name (str): The name of the button.
-        description (str): The description of the button.
-        label (str): The label of the button.
-        buttonType (ButtonType): The type of the button.
-        actionType (ButtonActionType): The action type of the button.
-        targetScreen (Screen, optional): The target Screen associated
-                        with the button when the actionType is "Navigate".
-
-    Attributes:
-        name (str): The name of the button.
-        description (str): The description of the button.
-        label (str): The label of the button.
-        buttonType (ButtonType): The type of the button.
-        actionType (ButtonActionType): The action type of the button.
-        targetScreen (Screen, optional): The target Screen associated with
-                                         the button when the actionType is "Navigate"
+    """
+    Represents a button component and encapsulates specific properties of a button, such as its name and label.
     """
 
-    def __init__(self, name: str, description: str, label: str, buttonType: ButtonType,
-                 actionType: ButtonActionType, targetScreen: Screen = None,
-                 visibility: str = "public"):
-        super().__init__(name, description, visibility)
+    def __init__(self, name: str, description: str, label: str, buttonType: ButtonType, actionType: ButtonActionType,
+                 targetScreen: Screen = None, timestamp: int = None, visibility: str = "public",
+                 styling: Styling = None):
+        super().__init__(name, description, visibility, timestamp, styling=styling)
         self.label = label
         self.buttonType = buttonType
         self.actionType = actionType
@@ -495,124 +515,106 @@ class Button(ViewComponent):
 
     @property
     def label(self) -> str:
-        """str: Get the label of the button."""
         return self.__label
 
     @label.setter
     def label(self, label: str):
-        """str: Set the label of the button."""
         self.__label = label
 
     @property
     def buttonType(self) -> ButtonType:
-        """str: Get the type of the button."""
         return self.__buttonType
 
     @buttonType.setter
     def buttonType(self, buttonType: ButtonType):
-        """str: Set the type of the button."""
         self.__buttonType = buttonType
 
     @property
     def actionType(self) -> ButtonActionType:
-        """str: Get the action type of the button."""
         return self.__actionType
 
     @actionType.setter
     def actionType(self, actionType: ButtonActionType):
-        """str: Set the action type of the button."""
         self.__actionType = actionType
 
     @property
     def targetScreen(self) -> Screen:
-        """Type: Get the target Screen of the button."""
         return self.__targetScreen
 
     @targetScreen.setter
     def targetScreen(self, targetScreen: Screen):
-        """
-        Set the target Screen associated with the button.
-
-        Args:
-            targetScreen (Screen): The target Screen to be associated with the button.
-
-        Raises:
-            ValueError: If actionType is 'Navigate' but targetScreen is not an instance of Screen.
-            ValueError: If the actionType is not 'Navigate' and an target Screen is specified.
-
-        """
         if self.actionType == ButtonActionType.Navigate:
-            if targetScreen is None:
-                raise ValueError("A target Screen must be specified for " \
-                "the button when the actionType is 'Navigate'.")
-            elif not isinstance(targetScreen, Screen):
-                raise ValueError("The target Screen must be an instance of " \
-                "the Screen class when the actionType is 'Navigate'.")
-        elif targetScreen is not None:
-            raise ValueError("A target Screen cannot be specified "\
-            "for the button when the actionType is not 'Navigate'.")
+            if not isinstance(targetScreen, Screen):
+                print("Error: For 'Navigate' actionType, targetScreen must be a Screen object.")
         self.__targetScreen = targetScreen
 
     def __repr__(self):
         return (
-            f'Button({self.name},{self.label}, {self.description},'
-            f'{self.visibility}, {self.label}, {self.buttonType}, {self.actionType})'
-            )
+            f'Button({self.name}, {self.label}, {self.description}, {self.visibility}, '
+            f'{self.timestamp}, {self.label}, {self.buttonType}, {self.actionType}, {self.styling})'
+        )
+
 
 # Image is a type of ViewComponent
 class Image(ViewComponent):
-    """Represents an image component and encapsulates the specific
-       properties of a image, such as its name.
+    """Represents an image component and encapsulates the specific properties of a image, such as its name.
 
     Args:
         name (str): The name of the image.
+        description (str): The description of the input field.
+        timestamp (datetime): Object creation datetime (default is current time).
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
 
     Attributes:
         name (str): The name of the image.
+        description (str): The description of the input field.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
     """
 
-    def __init__(self, name: str, description: str):
-        super().__init__(name, description)
+    def __init__(self, name: str, description: str, timestamp: int = None, styling: Styling =None):
+        super().__init__(name, description, timestamp, styling)
 
     def __repr__(self):
-        return f'Image({self.name},{self.description})'
+        return f'Image({self.name},{self.description}, {self.timestamp}, {self.styling})'
 
 
 # InputField is a type of ViewComponent
 class InputField(ViewComponent):
-    """Represents an input field component and encapsulates specific properties
-       of an input field, such as its type and validation rules.
+    """Represents an input field component and encapsulates specific properties of an input field, such as its type and validation rules.
 
      Args:
         name (str): The name of the input field.
         description (str): The description of the input field.
-        type (str): The type of the input field.
+        timestamp (datetime): Object creation datetime (default is current time).
+        field_type (InputFieldType): The type of the input field.
         validationRules (str): The validation rules for the input field.
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
 
     Attributes:
         name (str): The name of the input field.
         description (str): The description of the input field.
-        type (str): The type of the input field.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
+        field_type (InputFieldType): The type of the input field.
         validationRules (str): The validation rules for the input field.
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
     """
 
-    def __init__(self, name: str, description: str, type: InputFieldType,
-                 validationRules: str = None, visibility: str = "public"):
-        super().__init__(name, description, visibility)
-        self.type: InputFieldType= type
+    def __init__(self, name: str, description: str, field_type: InputFieldType, timestamp: int = None, validationRules: str = None, visibility: str = "public", styling: Styling = None):
+        super().__init__(name, description, visibility, timestamp, styling=styling)
+        self.field_type: InputFieldType = field_type
         self.validationRules: str = validationRules
 
 
-
     @property
-    def type(self) -> InputFieldType:
+    def field_type(self) -> InputFieldType:
         """InputFieldType: Get the type of the input field."""
-        return self.__type
+        return self.__field_type
 
-    @type.setter
-    def type(self, type: InputFieldType):
+    @field_type.setter
+    def field_type(self, field_type: InputFieldType):
         """InputFieldType: Set the type of the collection data source."""
-        self.__type = type
+        self.__field_type = field_type
 
 
     @property
@@ -627,31 +629,29 @@ class InputField(ViewComponent):
         self.__validationRules = validationRules
 
     def __repr__(self):
-        return (
-            f'InputField({self.name},{self.description}, {self.type},'
-            f'{self.validationRules}, {self.visibility})'
-            )
-
+        return f'InputField({self.name},{self.description}, {self.field_type}, {self.timestamp}, {self.validationRules}, {self.visibility}, {self.styling})'
 
 # Form is a type of ViewComponent
 class Form(ViewComponent):
-    """Represents a form component and encapsulates the specific
-        properties of a form, such as its name.
+    """Represents a form component and encapsulates the specific properties of a form, such as its name.
 
     Args:
         name (str): The name of the form.
         description (str): The description of the form.
+        timestamp (datetime): Object creation datetime (default is current time).
         inputFields (set[InputField]): The set of input fields contained in the form.
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
 
     Attributes:
         name (str): The name of the form.
         description (str): The description of the form.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         inputFields (set[InputField]): The set of input fields contained in the form.
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
     """
 
-    def __init__(self, name: str, description: str, inputFields: set[InputField],
-                 visibility: str = "public"):
-        super().__init__(name, description, visibility)
+    def __init__(self, name: str, description: str, inputFields: set[InputField], visibility: str = "public", timestamp: int = None, styling: Styling = None):
+        super().__init__(name, description, visibility, timestamp, styling=styling)
         self.inputFields: set[InputField] = inputFields
 
     @property
@@ -665,18 +665,16 @@ class Form(ViewComponent):
         self.__inputFields = inputFields
 
     def __repr__(self):
-        return f'Form({self.name},{self.description}, {self.inputFields}, {self.visibility})'
+        return f'Form({self.name},{self.description}, {self.inputFields}, {self.visibility}, {self.timestamp}, {self.styling})'
 
 # MenuItem
 class MenuItem(Element):
     """Represents an item of a menu.
 
     Args:
-        name (str): The name of the item.
         label (str): The label of the menu item.
 
     Attributes:
-        name (str): The name of the item.
         label (str): The label of the menu item.
     """
 
@@ -687,25 +685,28 @@ class MenuItem(Element):
     def __repr__(self):
         return f'MenuItem({self.label})'
 
+
 # Menu is a type of ViewComponent
 class Menu(ViewComponent):
-    """Represents a menu component and encapsulates the
-           specific properties of a menu, such as its name.
+    """Represents a menu component and encapsulates the specific properties of a menu, such as its name.
 
     Args:
         name (str): The name of the menu.
         description (str): The description of the menu.
+        timestamp (datetime): Object creation datetime (default is current time).
         menuItems (set[MenuItem]): The set of menu items contained in the menu.
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
 
     Attributes:
         name (str): The name of the menu.
         description (str): The description of the menu.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         menuItems (set[MenuItem]): The set of menu items contained in the menu.
+        styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
     """
 
-    def __init__(self, name: str, description: str, menuItems: set[MenuItem],
-                 visibility: str = "public"):
-        super().__init__(name, description, visibility)
+    def __init__(self, name: str, description: str, menuItems: set[MenuItem], visibility: str = "public", timestamp: int = None, styling: Styling = None):
+        super().__init__(name, description, visibility, timestamp, styling=styling)
         self.menuItems: set[MenuItem] = menuItems
 
     @property
@@ -719,16 +720,56 @@ class Menu(ViewComponent):
         self.__menuItems = menuItems
 
     def __repr__(self):
-        return f'Menu({self.name},{self.description}, {self.menuItems}, {self.visibility})'
+        return f'Menu({self.name},{self.description}, {self.menuItems}, {self.visibility}, {self.timestamp}, {self.styling})'
+
+#Text
+class Text(ViewComponent):
+    """Represents a text component.
+
+    Args:
+        name (str): The name of the text component.
+        content (str): The content of the text component.
+        description (str): The description of the text component.
+        visibility (str): The visibility of the text component.
+        timestamp (int): The timestamp of the text component.
+        styling (Styling): The styling of the text component.
+
+    Attributes:
+        name (str): The name of the text component.
+        content (str): The content of the text component.
+        description (str): The description of the text component.
+        visibility (str): The visibility of the text component.
+        timestamp (int): The timestamp of the text component.
+        styling (Styling): The styling of the text component.
+    """
+
+    def __init__(self, name: str, content: str, description: str = "", visibility: str = "public",
+                 timestamp: int = None, styling: Styling = None):
+        super().__init__(name, description, visibility, timestamp, styling=styling)
+        self.content = content
+
+    @property
+    def content(self) -> str:
+        """str: Get the content of the text component."""
+        return self.__content
+
+    @content.setter
+    def content(self, content: str):
+        """str: Set the content of the text component."""
+        self.__content = content
+
+    def __repr__(self):
+        return (f'Text({self.name}, {self.content}, {self.description}, '
+                f'{self.visibility}, {self.timestamp}, {self.styling})')
 
 #GUIModel
 class GUIModel(Model):
-    """It is a subclass of the NamedElement class and encapsulates the properties and behavior
-       of the GUI part of an application, including its name,
+    """It is a subclass of the NamedElement class and encapsulates the properties and behavior of the GUI part of an application, including its name,
        package, version code, version name, modules, description, and screen compatibility.
 
     Args:
         name (str): The name of the model.
+        timestamp (datetime): Object creation datetime (default is current time).
         package (str): The package of the model.
         versionCode (str): The version code of the model.
         versionName (str): The version name of the model.
@@ -738,6 +779,7 @@ class GUIModel(Model):
 
     Attributes:
         name (str): The name of the model.
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         package (str): The package of the model.
         versionCode (str): The version code of the model.
         versionName (str): The version name of the model.
@@ -745,9 +787,9 @@ class GUIModel(Model):
         description (str): The description of the model.
         screenCompatibility (bool): Indicates whether the model has screen compatibility.
     """
-    def __init__(self, name: str, package: str, versionCode: str, versionName: str,
-                 modules: set[Module], description: str, screenCompatibility: bool = False):
-        super().__init__(name)
+    def __init__(self, name: str, package: str, versionCode: str, versionName: str, modules: set[Module],
+                 description: str, timestamp: int = None, screenCompatibility: bool = False):
+        super().__init__(name, timestamp)
         self.package: str = package
         self.versionCode: str = versionCode
         self.versionName: str = versionName
@@ -819,10 +861,5 @@ class GUIModel(Model):
                 raise ValueError("An app cannot have two modules with the same name")
         self.__modules = modules
 
-
     def __repr__(self):
-        return (
-        f"GUIModel({self.name}, {self.package}, {self.versionCode}, "
-        f"{self.versionName}, {self.description}, {self.screenCompatibility}, "
-        f"{self.modules})"
-    )
+        return f'GUIModel({self.name}, {self.package}, {self.versionCode}, {self.versionName},{self.description},{self.timestamp}, {self.screenCompatibility}, {self.modules})'

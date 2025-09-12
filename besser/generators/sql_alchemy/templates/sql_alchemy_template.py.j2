@@ -1,3 +1,4 @@
+{% import "helpers.py.j2" as helper -%}
 import enum
 from typing import List, Optional
 from sqlalchemy import (
@@ -50,35 +51,46 @@ class {{ enum.name }}(enum.Enum):
 {%- for class in classes %}
 class {{ class.name }}(
     {%- if class.parents() -%}
-        {% for parent in class.parents() -%}
+    {% for parent in class.parents() -%}
             {{parent.name}}{{ ", " if not loop.last else "):" }}
-        {% endfor -%}
+    {% endfor -%}
     {% else -%}
         Base):
-    {%- endif %}
+    {% endif -%}
+    {% if class.is_abstract == True -%}
+    __abstract__ = True
+    {%- else -%}
     __tablename__ = "{{class.name.lower()}}"
+    {%- endif %}
     {%- for parent in sort(class.parents()) %}
+    {%- if parent.is_abstract == False %}
     id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
+    {%- endif %}
     {%- endfor %}
-    {%- if (class.parents()|length == 0) and ((not ids.get(class.name)))%}
+    {%- if (class.parents() | rejectattr("is_abstract") | list | length == 0) 
+        and ((not ids.get(class.name))) %}
     id: Mapped[int] = mapped_column(primary_key=True)
     {%- endif %}
-    {%- for attribute in sort(class.attributes) %}
-    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
-    {%- if attribute.is_id or (attribute.name == ids.get(class.name)) %}, primary_key=True{% endif %})
+    {#- Inherit attributes from abstract parents #}
+    {%- for parent in class.parents() if parent.is_abstract %}
+        {{- helper.render_attributes(parent, enumerations, types, ids, sort) }}
     {%- endfor %}
-    {%- if (class.specializations()|length > 0 and class.parents()|length == 0) %}
+    {#- Class attributes #}
+        {{- helper.render_attributes(class, enumerations, types, ids, sort)}}
+    {#- Polymorphic configuration #}
+    {%- if (class.specializations()|length > 0 
+       and (class.parents() | rejectattr("is_abstract") | list | length == 0)) 
+       and not class.is_abstract %}
     type_spec: Mapped[str] = mapped_column(String(50))
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
         "polymorphic_on": "type_spec",
     }
-    {%- endif %}
-    {%- for parent in sort(class.parents()) %}
+    {%- elif class.parents() | rejectattr("is_abstract") | list | length > 0 %}
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
     }
-    {%- endfor %}
+    {%- endif %}
 {% endfor %}
 
 {#- Association Classes #}
@@ -99,6 +111,7 @@ class {{ asso_class.name }}(Base):
     {%- endfor %}
 {% endfor %}
 
+{#- Relationships #}
 {%- for class in classes %}
     {%- set ns = namespace(has_association_class = false, has_relationships = false) %}
     {%- set ns.class_name = class.name %}

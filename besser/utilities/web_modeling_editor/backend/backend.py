@@ -50,6 +50,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
     process_object_diagram,
     json_to_buml_project,
+    process_gui_diagram,
     # BUML to JSON converters
     class_buml_to_json,
     parse_buml_content,
@@ -211,7 +212,7 @@ async def generate_code_output(input_data: DiagramInput):
         HTTPException: If generator is not supported or generation fails
     """
     temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
-    
+
     try:
         json_data = input_data.model_dump()
         generator_type = input_data.generator
@@ -224,16 +225,16 @@ async def generate_code_output(input_data: DiagramInput):
             )
 
         generator_info = get_generator_info(generator_type)
-        
+
         # Handle agent generators (different diagram type)
         if generator_info.category == "ai_agent":
             return await _handle_agent_generation(json_data)
-        
+
         # Handle class diagram based generators
         return await _handle_class_diagram_generation(
             json_data, generator_type, generator_info, input_data.config, temp_dir
         )
-        
+
     except HTTPException as e:
         cleanup_temp_resources(temp_dir)
         raise e
@@ -247,7 +248,7 @@ async def _handle_agent_generation(json_data: dict):
     try:
         agent_model = process_agent_diagram(json_data)
         zip_buffer, file_name = generate_agent_files(agent_model)
-        
+
         return StreamingResponse(
             zip_buffer,
             media_type="application/zip",
@@ -261,28 +262,33 @@ async def _handle_agent_generation(json_data: dict):
 
 
 async def _handle_class_diagram_generation(
-    json_data: dict, 
-    generator_type: str, 
-    generator_info, 
-    config: dict, 
+    json_data: dict,
+    generator_type: str,
+    generator_info,
+    config: dict,
     temp_dir: str
 ):
     """Handle class diagram based generation."""
     # Process the class diagram JSON data
     buml_model = process_class_diagram(json_data)
     generator_class = generator_info.generator_class
-    
+    print("Generator type " + generator_type)
+
     # Generate based on generator type
     if generator_type == "django":
         return await _generate_django(buml_model, generator_class, config, temp_dir)
-    elif generator_type == "sql":
+    if generator_type == "sql":
         return await _generate_sql(buml_model, generator_class, config, temp_dir)
-    elif generator_type == "sqlalchemy":
+    if generator_type == "sqlalchemy":
         return await _generate_sqlalchemy(buml_model, generator_class, config, temp_dir)
-    elif generator_type == "jsonschema":
+    if generator_type == "jsonschema":
         return await _generate_jsonschema(buml_model, generator_class, config, temp_dir)
-    else:
-        return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
+    if generator_type == "react":
+        # Process the GUI diagram JSON data
+        gui_model = process_gui_diagram(json_data, buml_model)
+        return await _generate_react_ts(buml_model, gui_model, generator_class, config, temp_dir)
+
+    return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
 
 
 async def _generate_django(buml_model, generator_class, config: dict, temp_dir: str):
@@ -291,7 +297,7 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
         raise HTTPException(status_code=400, detail="Django configuration is required")
 
     project_dir = os.path.join(temp_dir, config["project_name"])
-    
+
     # Clean up any existing project directory
     if os.path.exists(project_dir):
         shutil.rmtree(project_dir)
@@ -309,7 +315,7 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
             output_dir=temp_dir,
         )
         generator_instance.generate()
-        
+
         # Wait for file system operations
         await asyncio.sleep(1)
 
@@ -328,7 +334,7 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
 
         zip_buffer.seek(0)
         file_name = get_filename_for_generator("django")
-        
+
         return StreamingResponse(
             zip_buffer,
             media_type="application/zip",
@@ -344,12 +350,12 @@ async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str
     dialect = "standard"
     if config and "dialect" in config:
         dialect = config["dialect"]
-    
+
     generator_instance = generator_class(
         buml_model, output_dir=temp_dir, sql_dialect=dialect
     )
     generator_instance.generate()
-    
+
     return _create_file_response(temp_dir, "sql")
 
 
@@ -395,6 +401,11 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
     else:
         return _create_file_response(temp_dir, "jsonschema")
 
+async def _generate_react_ts(buml_model, gui_model, generator_class, config: dict, temp_dir: str):
+    """Generate React TypeScript files."""
+    generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir)
+    generator_instance.generate()
+    return _create_zip_response(temp_dir, "react")
 
 async def _generate_standard(buml_model, generator_class, generator_type: str, generator_info, temp_dir: str):
     """Generate standard files (non-Django, non-SQL)."""

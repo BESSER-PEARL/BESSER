@@ -1,0 +1,120 @@
+import React from "react";
+import LineChartComponent from "./components/LineChartComponent";
+
+const App: React.FC = () => {
+  const CANVAS_WIDTH = 900;
+  const CANVAS_HEIGHT = 1000;
+
+  // General element list: can be "chart", "container" or "text"
+  const elements = [
+{% for element in view_elements %}
+{% if element.__class__.__name__ == "LineChart" %}
+    {
+      type: "line_chart",
+      id: "lc_{{ element.name }}",
+      x: {{ element.styling.position.left }},
+      y: {{ element.styling.position.top }},
+      width: {{ element.styling.size.width }} * CANVAS_WIDTH,
+      height: {{ element.styling.size.height }} * CANVAS_HEIGHT,
+      endpoint: "http://localhost:3001/api/{{ element.x_axis.owner.name | lower }}-data",
+      dataKey: "{{ element.y_axis.name }}",
+      xKey: "{{ element.x_axis.name }}",
+      title: "{{ element.name }}",
+      lineColor: "{{ element.styling.color.line_color }}",
+      axisColor: "{{ element.styling.color.axis_color }}",
+      fontSize: 12,
+      gridColor: "{{ element.styling.color.grid_color }}",
+      lineWidth: 3,
+    },
+{% elif element.__class__.__name__ == "ViewContainer" %}
+    {
+      type: "container",
+      id: "vc_{{ element.name }}",
+      x: {{ element.styling.position.left }},
+      y: {{ element.styling.position.top }},
+      width: {{ element.styling.size.width }} * CANVAS_WIDTH,
+      height: {{ element.styling.size.height }} * CANVAS_HEIGHT,
+      background: "{{ element.styling.color.background_color }}",
+    },
+{% elif element.__class__.__name__ == "Text" %}
+    {
+      type: "text",
+      id: "txt_{{ element.name }}",
+      x: {{ element.styling.position.left }},
+      y: {{ element.styling.position.top }},
+      width: {{ element.styling.size.width }} * CANVAS_WIDTH,
+      height: {{ element.styling.size.height }} * CANVAS_HEIGHT,
+      content: "{{ element.content }}",
+      text_color: "{{ element.styling.color.text_color }}",
+      font_size: {{ element.styling.size.font_size }},
+    },
+{% endif %}
+{% endfor %}
+  ];
+{% raw %}
+  return (
+    <div
+      style={{
+        position: "relative",
+        width: "100%",
+        aspectRatio: "9 / 10",
+        margin: "0 auto",
+        background: "#f9f9f9",
+        overflow: "hidden",
+      }}
+    >
+      {elements.map((el) => (
+        <div
+          key={el.id}
+          style={{
+            position: "absolute",
+            left: `${(el.x / CANVAS_WIDTH) * 100}%`,
+            top: `${(el.y / CANVAS_HEIGHT) * 100}%`,
+            width: `${(el.width / CANVAS_WIDTH) * 100}%`,
+            height: `${(el.height / CANVAS_HEIGHT) * 100}%`,
+          }}
+        >
+          {el.type === "line_chart" ? (
+            <LineChartComponent
+              endpoint={el.endpoint}
+              dataKey={el.dataKey}
+              xKey={el.xKey}
+              title={el.title}
+              lineColor={el.lineColor}
+              axisColor={el.axisColor}
+              fontSize={el.fontSize}
+              gridColor={el.gridColor}
+              lineWidth={el.lineWidth}
+            />
+          ) : el.type === "text" ? (
+            <div
+              style={{
+                width: "100%",
+                height: "100%",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: el.text_color,
+                fontSize: el.font_size,
+                fontWeight: "bold",
+              }}
+            >
+              {el.content}
+            </div>
+          ) : (
+            <div
+              style={{
+                width: "100%",
+                height: "100%",
+                background: el.background,
+              }}
+            />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+export default App;
+{% endraw %}

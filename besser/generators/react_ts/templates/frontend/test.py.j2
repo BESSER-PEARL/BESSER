@@ -1,0 +1,11 @@
+This is my app {{ model.name }}
+
+{% for module in model.modules %}
+Module: {{ module.name }}
+{% for screen in module.screens %}
+  Screen: {{ screen.name }}
+    {% for element in screen.view_elements %}
+      Element: {{ element.name }}
+    {% endfor %}
+{% endfor %}
+{% endfor %}

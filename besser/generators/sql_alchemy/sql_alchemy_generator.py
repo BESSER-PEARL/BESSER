@@ -52,6 +52,10 @@ class SQLAlchemyGenerator(GeneratorInterface):
         return ids_dict
 
     def get_foreign_keys(self):
+        """
+        Returns a dictionary with the association names as keys and the class names that should hold the foreign
+        keys as values.
+        """
         fkeys = dict()
 
         for association in self.model.associations:
@@ -89,7 +93,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 asso_classes.append(class_item)
             else:
                 classes.append(class_item)
-                
+
         return classes, asso_classes
 
     def generate(self, dbms: str = "sqlite"):

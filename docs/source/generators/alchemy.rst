@@ -56,4 +56,4 @@ looks like this:
   By default, inheritance is implemented using the `Joined Table Inheritance <https://docs.sqlalchemy.org/en/20/orm/inheritance.html#joined-table-inheritance>`_.
   Other strategies like `Concrete Table Inheritance <https://docs.sqlalchemy.org/en/20/orm/inheritance.html#concrete-table-inheritance>`_ is implemented only when you
   mark a parent class as abstract in the B-UML model, but there are limitations in Concrete inheritance, for example: the definition of relationships
-  involving the abstract class is not supported.
+  involving abstract classes are not supported.

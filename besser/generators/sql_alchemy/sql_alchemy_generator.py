@@ -98,13 +98,15 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
     def generate(self, dbms: str = "sqlite"):
         """
-        Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified output directory.
-        If the output directory was not specified, the code generated will be stored in the <current directory>/output
+        Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified 
+        output directory.
+        If the output directory was not specified, the code generated will be stored in the 
+        <current directory>/output
         folder.
 
         Args:
-            dbms (str, optional): The database management system to be used. Values allowed: "sqlite", "postgresql", "mysql",
-            "mssql", or "mariadb". Defaults to "sqlite".
+            dbms (str, optional): The database management system to be used. Values allowed: 
+            "sqlite", "postgresql", "mysql", "mssql", or "mariadb". Defaults to "sqlite".
 
         Returns:
             None, but stores the generated code as a file named sql_alchemy.py 

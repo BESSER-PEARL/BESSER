@@ -4,3 +4,19 @@
     {%- if attribute.is_id or (attribute.name == ids.get(class.name)) %}, primary_key=True{% endif %})
     {%- endfor %}
 {%- endmacro %}
+
+{%- macro render_relationship(class, end, ns, ids, fkeys) %}
+    {%- set other_end = (end.owner.ends | reject('equalto', end) | list)[0] %}
+    {%- set is_many = end.multiplicity.max > 1 %}
+    {%- set is_secondary = other_end.multiplicity.max > 1 %}
+    {%- set fk_needed = end.owner.name in fkeys %}
+    {%- set fk_col = class.name + '.' + end.name + '_id' %}
+    {%- set secondary = end.owner.name.lower() if is_secondary else None %}
+    {%- if is_many -%}
+{{class.name}}.{{end.name}}: Mapped[List["{{end.type.name}}"]] = relationship("{{end.type.name}}"
+        {%- if secondary %}, secondary={{ secondary }}{% endif %}, back_populates="{{other_end.name}}"
+        {%- if fk_needed %}, foreign_keys=[{{end.type.name}}.{{other_end.name}}_id]{% endif %})
+    {%- else -%}
+{{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}"{% if fk_needed %}, foreign_keys=[{{fk_col}}]{% endif %})
+    {%- endif -%}
+{%- endmacro %}

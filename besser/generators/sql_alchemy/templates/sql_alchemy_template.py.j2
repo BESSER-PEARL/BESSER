@@ -196,7 +196,7 @@ class {{ asso_class.name }}(Base):
 DATABASE_URL = "sqlite:///{{model_name}}.db"  # SQLite connection
 {%- elif dbms == "postgresql" %}
 DATABASE_URL = "postgresql+psycopg2://username:password@localhost:5432/db_name"  # PostgreSQL connection
-{%- elif dbms == "mysql" or "mariadb" %}
+{%- elif dbms == "mysql" or dbms == "mariadb" %}
 DATABASE_URL = "mysql+pymysql://username:password@localhost:3306/db_name"  # MySQL or MariaDB connection
 {%- elif dbms == "mssql" %}
 DATABASE_URL = "mssql+pyodbc://username:password@localhost:1433/db_name?driver=SQL+Server" # MSSQL connection

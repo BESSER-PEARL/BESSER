@@ -5,7 +5,9 @@ from sqlalchemy import (
     create_engine, Column, ForeignKey, Table, Text, Boolean, String, Date, 
     Time, DateTime, Float, Integer, Enum
 )
+{%- if classes | selectattr("is_abstract") | list | length > 0 %}
 from sqlalchemy.ext.declarative import AbstractConcreteBase
+{%- endif %}
 from sqlalchemy.orm import (
     column_property, DeclarativeBase, Mapped, mapped_column, relationship
 )

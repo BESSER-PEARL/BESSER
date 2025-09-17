@@ -54,21 +54,21 @@ class BAFGenerator(GeneratorInterface):
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
-        with open(agent_path, mode="w") as f:
+        with open(agent_path, mode="w", encoding="utf-8") as f:
             # todo: how to handle llm variable names that are used in bodies?
             generated_code = agent_template.render(agent=self.model)
             f.write(generated_code)
             print("Agent script generated in the location: " + agent_path)
         config_template = env.get_template('baf_config_template.py.j2')
         config_path = self.build_generation_path(file_name="config.ini")
-        with open(config_path, mode="w") as f:
+        with open(config_path, mode="w", encoding="utf-8") as f:
             properties = sorted(self.model.properties, key=lambda prop: prop.section)
             generated_code = config_template.render(properties=properties)
             f.write(generated_code)
             print("Agent config file generated in the location: " + config_path)        # Generate readme.txt using the Jinja2 template
         readme_template = env.get_template('readme.txt.j2')
         readme_path = self.build_generation_path(file_name="readme.txt")
-        with open(readme_path, mode="w") as f:
+        with open(readme_path, mode="w", encoding="utf-8") as f:
             generated_code = readme_template.render(agent=self.model)
             f.write(generated_code)
             print("Agent readme file generated in the location: " + readme_path)

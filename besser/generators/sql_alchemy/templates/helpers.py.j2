@@ -1,3 +1,4 @@
+{# ---------- Attribute Renderer ---------- #}
 {%- macro render_attributes(class, enumerations, types, ids, sort) %}
     {%- for attribute in sort(class.attributes) %}
     {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
@@ -5,6 +6,7 @@
     {%- endfor %}
 {%- endmacro %}
 
+{# ---------- Relationship Renderer ---------- #}
 {%- macro render_relationship(class, end, ns, ids, fkeys) %}
     {%- set other_end = (end.owner.ends | reject('equalto', end) | list)[0] %}
     {%- set is_many = end.multiplicity.max > 1 %}
@@ -17,6 +19,6 @@
         {%- if secondary %}, secondary={{ secondary }}{% endif %}, back_populates="{{other_end.name}}"
         {%- if fk_needed %}, foreign_keys=[{{end.type.name}}.{{other_end.name}}_id]{% endif %})
     {%- else -%}
-{{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}"{% if fk_needed %}, foreign_keys=[{{fk_col}}]{% endif %})
+{{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}"{% if fk_needed %}, foreign_keys=[{{fkeys[end.owner.name]}}.{% if class.name == fkeys[end.owner.name] %}{{end.name}}_id{% else %}{{other_end.name}}_id{% endif %}]{% endif %})
     {%- endif -%}
 {%- endmacro %}

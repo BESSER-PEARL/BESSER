@@ -58,13 +58,13 @@ class {{ class.name }}(
             {{parent.name}}{{ ", " if not loop.last else "):" }}
     {% endfor -%}
     {% else -%}
-    {% if class.is_abstract == True -%}
+    {% if class.name in concrete_parents -%}
     AbstractConcreteBase, Base):
     {% else -%}
         Base):
     {% endif -%}
     {% endif -%}
-    {%- if class.is_abstract == True -%}
+    {%- if class.name in concrete_parents -%}
     strict_attrs = True
     {%- else -%}
     __tablename__ = "{{class.name.lower()}}"
@@ -74,7 +74,7 @@ class {{ class.name }}(
     id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
     {%- endif %}
     {%- endfor %}
-    {%- if (class.parents() | rejectattr("is_abstract") | list | length == 0) 
+    {%- if (class.parents() | rejectattr("name", "in", concrete_parents) | list | length == 0) 
         and ((not ids.get(class.name))) %}
     id: Mapped[int] = mapped_column(primary_key=True)
     {%- endif %}
@@ -115,18 +115,17 @@ class {{ class.name }}(
 
     {#- Polymorphic configuration #}
     {%- if (class.specializations()|length > 0
-       and class.specializations() | rejectattr("is_abstract") | list | length > 0
-       and not class.is_abstract) %}
+       and class.name not in concrete_parents) %}
     type_spec: Mapped[str] = mapped_column(String(50))
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
         "polymorphic_on": "type_spec",
     }
-    {%- elif class.parents() | rejectattr("is_abstract") | list | length > 0 %}
+    {%- elif (class.parents() | rejectattr("name", "in", concrete_parents) | list | length > 0) %}
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
     }
-    {%- elif class.parents() | selectattr("is_abstract") | list | length > 0 %}
+    {%- elif class.parents() | selectattr("name", "in", concrete_parents) | list | length > 0 %}
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
         "concrete": True,

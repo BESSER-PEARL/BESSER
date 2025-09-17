@@ -52,6 +52,10 @@ class SQLAlchemyGenerator(GeneratorInterface):
         return ids_dict
 
     def get_foreign_keys(self):
+        """
+        Returns a dictionary with the association names as keys and the class names that should hold the foreign
+        keys as values.
+        """
         fkeys = dict()
 
         for association in self.model.associations:
@@ -89,18 +93,33 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 asso_classes.append(class_item)
             else:
                 classes.append(class_item)
-                
+
         return classes, asso_classes
+
+    def get_concrete_table_inheritance(self):
+        """
+        Determines if the model uses concrete table inheritance.
+
+        Returns:
+            list: A list of class parents that use concrete table inheritance.
+        """
+        concrete_parents = []
+        for class_ in self.model.get_classes():
+            if class_.is_abstract and not class_.parents() and not class_.association_ends():
+                concrete_parents.append(class_.name)
+        return concrete_parents
 
     def generate(self, dbms: str = "sqlite"):
         """
-        Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified output directory.
-        If the output directory was not specified, the code generated will be stored in the <current directory>/output
+        Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified 
+        output directory.
+        If the output directory was not specified, the code generated will be stored in the 
+        <current directory>/output
         folder.
 
         Args:
-            dbms (str, optional): The database management system to be used. Values allowed: "sqlite", "postgresql", "mysql",
-            "mssql", or "mariadb". Defaults to "sqlite".
+            dbms (str, optional): The database management system to be used. Values allowed: 
+            "sqlite", "postgresql", "mysql", "mssql", or "mariadb". Defaults to "sqlite".
 
         Returns:
             None, but stores the generated code as a file named sql_alchemy.py 
@@ -109,6 +128,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
             raise ValueError(f"Invalid DBMS. Valid options are {', '.join(self.VALID_DBMS)}.")
 
         classes, asso_classes = self.separate_classes()
+        concrete_parents = self.get_concrete_table_inheritance()
 
         file_path = self.build_generation_path(file_name="sql_alchemy.py")
         templates_path = os.path.join(os.path.dirname(
@@ -126,7 +146,8 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 dbms=dbms,
                 ids=self.get_ids(),
                 fkeys=self.get_foreign_keys(),
-                sort=sort_by_timestamp
+                sort=sort_by_timestamp,
+                concrete_parents=concrete_parents
             )
             f.write(generated_code)
             print("Code generated successfully!")

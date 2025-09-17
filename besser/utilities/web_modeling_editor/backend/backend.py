@@ -248,19 +248,27 @@ async def _handle_agent_generation(json_data: dict):
         # Get languages from config if present
         config = json_data.get('config', {})
         languages = config.get('languages') if config else None
-        if languages and isinstance(languages, list):
+
+        # New format: languages is a dict with 'source' and 'target'
+        if languages and isinstance(languages, dict):
+            source_lang = languages.get('source')
+            target_langs = languages.get('target', None)
+            # If no target languages, fall back to single agent generation
             agent_models = []
+
             # Default agent (no language)
-            # Remove 'languages' from config for default agent
             default_json_data = {**json_data}
             if 'config' in default_json_data and isinstance(default_json_data['config'], dict):
                 default_json_data['config'] = {k: v for k, v in default_json_data['config'].items() if k != 'languages'}
             agent_models.append((process_agent_diagram(default_json_data), 'default'))
-            # Agents for each language
-            for lang in languages:
-                # Preserve all config values and only set 'language'
+
+            # Agents for each target language
+            for lang in target_langs:
                 new_config = dict(config) if config else {}
                 new_config['language'] = lang
+                # Pass source language to process_agent_diagram via config
+                if source_lang:
+                    new_config['source_language'] = source_lang
                 new_json_data = dict(json_data)
                 new_json_data['config'] = new_config
                 agent_models.append((process_agent_diagram(new_json_data), lang))

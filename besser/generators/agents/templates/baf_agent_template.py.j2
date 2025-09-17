@@ -109,7 +109,7 @@ from besser.agent.library.entity.base_entities import {{ entity.name }}
 {% for intent in agent.intents -%}
 {{ intent.name }} = agent.new_intent('{{ intent.name }}', [
     {% for training_sentence in intent.training_sentences -%}
-    '{{ training_sentence }}',
+    '{{ training_sentence | replace('\\', '\\\\') | replace("'", "\\'") }}',
     {% endfor -%}
 ])
 {% for parameter in intent.parameters -%}

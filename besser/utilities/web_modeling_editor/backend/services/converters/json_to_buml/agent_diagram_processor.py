@@ -15,12 +15,14 @@ def process_agent_diagram(json_data):
     config = json_data.get('config', {})
     lang_value = config.get('language')
     language = lang_value.lower() if isinstance(lang_value, str) and lang_value else None
-
-    def translate_text(text, lang):
+    source_language = config.get('source_language')
+    def translate_text(text, lang, src_lang=None):
         # Use deep-translator's GoogleTranslator for free translation
         if not lang or lang == 'none':
             return text
         lang_map = {
+            'none': 'auto',
+            'english': 'en',
             'french': 'fr',
             'german': 'de',
             'spanish': 'es',
@@ -30,8 +32,10 @@ def process_agent_diagram(json_data):
         target_lang = lang_map.get(lang.lower()) if isinstance(lang, str) else None
         if not target_lang:
             return text
+        src_code = lang_map.get(src_lang.lower()) if src_lang and isinstance(src_lang, str) else 'auto'
         try:
-            return GoogleTranslator(source='auto', target=target_lang).translate(text)
+            translated = GoogleTranslator(source=src_code, target=target_lang).translate(text)
+            return translated
         except Exception as e:
             print(f"Translation error: {e}")
             return text
@@ -80,7 +84,7 @@ def process_agent_diagram(json_data):
                 if body_element:
                     training_sentence = sanitize_text(body_element.get("name", ""))
                     if language:
-                        training_sentence = translate_text(training_sentence, language)
+                        training_sentence = translate_text(training_sentence, language, source_language)
                     if training_sentence:
                         training_sentences.append(training_sentence)
 
@@ -126,7 +130,7 @@ def process_agent_diagram(json_data):
                 if body_type == "text":
                     msg = sanitize_text(body_content)
                     if language:
-                        msg = translate_text(msg, language)
+                        msg = translate_text(msg, language, source_language)
                     body_messages.append(msg)
                 elif body_type == "llm":
                     # For LLM replies, we need to use llm.predict(session.event.message)
@@ -188,7 +192,7 @@ def process_agent_diagram(json_data):
                 if fallback_type == "text":
                     message = sanitize_text(fallback_content)
                     if language:
-                        message = translate_text(message, language)
+                        message = translate_text(message, language, source_language)
                     fallback_messages.append(message)
                 elif fallback_type == "llm":
                     # For LLM replies, store as a special LLM message
@@ -258,7 +262,7 @@ def process_agent_diagram(json_data):
                     if body_type == "text":
                         msg = sanitize_text(body_content)
                         if language:
-                            msg = translate_text(msg, language)
+                            msg = translate_text(msg, language, source_language)
                         body_messages.append(msg)
                     elif body_type == "llm":
                         # For LLM replies, we need to use llm.predict(session.event.message)

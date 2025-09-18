@@ -1,0 +1,28 @@
+{# ---------- Attribute Renderer ---------- #}
+{%- macro render_attributes(class, enumerations, types, ids, sort) %}
+    {%- for attribute in sort(class.attributes) %}
+    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {%- if attribute.is_id or (attribute.name == ids.get(class.name)) %}, primary_key=True{% endif %})
+    {%- endfor %}
+{%- endmacro %}
+
+{# ---------- Relationship Renderer ---------- #}
+{%- macro render_relationship(class, end, ns, ids, fkeys) %}
+    {%- set other_end = (end.owner.ends | reject('equalto', end) | list)[0] %}
+    {%- set is_many = end.multiplicity.max > 1 %}
+    {%- set is_secondary = other_end.multiplicity.max > 1 %}
+    {%- set fk_needed = end.owner.name in fkeys %}
+    {%- set secondary = end.owner.name.lower() if is_secondary else None %}
+    {%- if fk_needed %}
+        {%- set fk_expr = fkeys[end.owner.name][0] + "." + fkeys[end.owner.name][1] + "_id" %}
+    {%- else %}
+        {%- set fk_expr = None %}
+    {%- endif %}
+    {%- if is_many -%}
+{{class.name}}.{{end.name}}: Mapped[List["{{end.type.name}}"]] = relationship("{{end.type.name}}"
+        {%- if secondary %}, secondary={{ secondary }}{% endif %}, back_populates="{{other_end.name}}"
+        {%- if fk_needed %}{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% endif %})
+    {%- else -%}
+{{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}"{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %})
+    {%- endif -%}
+{%- endmacro %}

@@ -475,7 +475,9 @@ def agent_model_to_code(model: Agent, file_path: str):
         for intent in model.intents:
             f.write(f"{intent.name} = agent.new_intent('{intent.name}', [\n")
             for sentence in intent.training_sentences:
-                f.write(f"    '{sentence}',\n")
+                # Escape single quotes for Python string literal
+                escaped_sentence = sentence.replace('\\', '\\\\').replace("'", "\\'")
+                f.write(f"    '{escaped_sentence}',\n")
             f.write("])\n")
         f.write("\n")
         

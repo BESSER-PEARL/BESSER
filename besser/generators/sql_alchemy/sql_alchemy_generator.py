@@ -63,16 +63,16 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
             # One-to-one
             if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
-                fkeys[association.name] = ends[0].type.name
+                fkeys[association.name] = [ends[0].type.name, ends[1].name]
                 if ends[1].multiplicity.min == 0:
-                    fkeys[association.name] = ends[1].type.name
+                    fkeys[association.name] = [ends[1].type.name, ends[0].name]
 
             # Many to one
             elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max <= 1:
-                fkeys[association.name] = ends[0].type.name
+                fkeys[association.name] = [ends[0].type.name, ends[1].name]
 
             elif ends[0].multiplicity.max <= 1 and ends[1].multiplicity.max > 1:
-                fkeys[association.name] = ends[1].type.name
+                fkeys[association.name] = [ends[1].type.name, ends[0].name]
 
         return fkeys
 

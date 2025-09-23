@@ -221,21 +221,20 @@ class ViewElement(NamedElement):
         visibility (str, optional): Visibility scope (default: "public").
         styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
 
-
     Attributes:
         name (str): The name of the view element.
         description (str): A brief description of the view element (optional).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         visibility (str): Visibility scope (default: "public").
         styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
-
+        owner (ViewContainer | None): The container that owns this view element (if any).
     """
 
     def __init__(self, name: str, description: str = "", visibility: str = "public", timestamp: int = None, styling: Styling = None):
         super().__init__(name, visibility, timestamp)
         self.description: str = description
         self.styling: Styling = styling
-
+        self._owner: "ViewContainer" = None
 
     @property
     def description(self) -> str:
@@ -257,6 +256,15 @@ class ViewElement(NamedElement):
         """Styling: Set the styling of the view element."""
         self.__styling = styling
 
+    @property
+    def owner(self) -> "ViewContainer":
+        """ViewContainer : Get the owner of the view element."""
+        return self._owner
+
+    @owner.setter
+    def owner(self, owner: "ViewContainer"):
+        """ViewContainer: Internal method for assigning the owner."""
+        self._owner = owner
 
     def __repr__(self):
         return (f"ViewElement(name={self.name}, description={self.description}, visibility={self.visibility}, "
@@ -323,6 +331,8 @@ class ViewContainer(ViewElement):
             names = [view_element.name for view_element in view_elements]
             if len(names) != len(set(names)):
                 raise ValueError("A screen cannot have two elements with the same name.")
+            for view_element in view_elements:
+                view_element.owner = self
         self.__view_elements = view_elements
 
     @property

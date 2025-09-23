@@ -21,14 +21,7 @@ class ReactTSGenerator(GeneratorInterface):
 
     Args:
         model (DomainModel): The B-UML model representing the application's domain.
-        project_name (str): The name of the React project.
-        app_name (str): The name of the React application.
         gui_model (GUIModel): The GUI model instance containing necessary configurations.
-        main_page (Screen): The main page of the web application.
-        containerization (bool, optional): Whether to enable containerization
-        support. Defaults to False.
-        module (Module, optional): Represents a specific module within the application,
-          typically grouping related screens and functionalities.
         output_dir (str, optional): Directory where generated code will be saved. Defaults to None.
     """
 
@@ -42,19 +35,13 @@ class ReactTSGenerator(GeneratorInterface):
 
     def generate(self):
         """
-        Generates RDF vocabulary on the provided B-UML model and saves it to the specified output directory.
-        If the output directory was not specified, the code generated will be stored in the <current directory>/output
-        folder.
+        Generates React TS code based on the provided B-UML and GUI models.
 
         Returns:
             None, but store the generated code as a file named vocabulary.ttl
         """
-        templates_path = os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True, lstrip_blocks=True)
-
-        self._generate_frontend(env)
-        self._generate_server(env)
+        self._generate_frontend(self.env)
+        self._generate_server(self.env)
 
     def _generate_frontend(self, env):
         # Helper function to generate a file from a template
@@ -76,6 +63,8 @@ class ReactTSGenerator(GeneratorInterface):
             ("frontend/src/main.tsx", "frontend/src/main.tsx.j2", None),
             ("frontend/src/components/LineChartComponent.tsx",
              "frontend/src/components/LineChartComponent.tsx.j2", None),
+            ("frontend/src/components/BarChartComponent.tsx",
+             "frontend/src/components/BarChartComponent.tsx.j2", None),
         ]
 
         for file_name, template_name, context in files_to_generate:
@@ -91,7 +80,8 @@ class ReactTSGenerator(GeneratorInterface):
             screen = next(iter(module.screens))
             # Access the view elements
             view_elements = screen.view_elements
-            generated_code = template.render(view_elements=view_elements)
+            generated_code = template.render(view_elements=view_elements,
+                                             px_to_percent=px_to_percent_relative)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)
 
@@ -111,3 +101,24 @@ class ReactTSGenerator(GeneratorInterface):
             generated_code = template.render()
             f.write(generated_code)
             print("Code generated in the location: " + file_path)
+
+def px_to_percent_relative(view_element):
+    """
+    Converts pixel-based position and size of a view element 
+    to percentage-based integer values.
+
+    Args:
+        view_element (ViewElement): The view element to convert.
+
+    Returns:
+        dict: A dictionary containing the percentage-based position and size values (integers).
+    """
+    container_width = view_element.owner.styling.size.width if view_element.owner else 1
+    container_height = view_element.owner.styling.size.height if view_element.owner else 1
+
+    return {
+        "x": int((view_element.styling.position.left / container_width) * 100),
+        "y": int((view_element.styling.position.top / container_height) * 100),
+        "width": int((view_element.styling.size.width / container_width) * 100),
+        "height": int((view_element.styling.size.height / container_height) * 100),
+    }

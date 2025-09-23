@@ -1,0 +1,61 @@
+{% macro render_element(element, px_to_percent) %}
+{% set pos = px_to_percent(element) %}
+    {
+  {% if element.__class__.__name__ == "LineChart" %}
+      type: "line_chart",
+      id: "lc_{{ element.name }}",
+      x: {{ pos.x }},
+      y: {{ pos.y }},
+      width: {{ pos.width }},
+      height: {{ pos.height }},
+      endpoint: "http://localhost:3001/api/{{ element.x_axis.owner.name | lower }}-data",
+      dataKey: "{{ element.y_axis.name }}",
+      xKey: "{{ element.x_axis.name }}",
+      title: "{{ element.name }}",
+      lineColor: "{{ element.styling.color.line_color }}",
+      axisColor: "{{ element.styling.color.axis_color }}",
+      fontSize: {{ element.styling.size.font_size }},
+      gridColor: "{{ element.styling.color.grid_color }}",
+      lineWidth: {{ element.line_width }}
+  {% elif element.__class__.__name__ == "BarChart" %}
+      type: "bar_chart",
+      id: "bc_{{ element.name }}",
+      x: {{ pos.x }},
+      y: {{ pos.y }},
+      width: {{ pos.width }},
+      height: {{ pos.height }},
+      endpoint: "http://localhost:3001/api/{{ element.x_axis.owner.name | lower }}-data",
+      dataKey: "{{ element.y_axis.name }}",
+      xKey: "{{ element.x_axis.name }}",
+      title: "{{ element.name }}",
+      barColor: "{{ element.styling.color.bar_color }}",
+      axisColor: "{{ element.styling.color.axis_color }}",
+      fontSize: {{ element.styling.size.font_size }},
+      gridColor: "{{ element.styling.color.grid_color }}",
+      barWidth: {{ element.bar_width }}
+  {% elif element.__class__.__name__ == "ViewContainer" %}
+      type: "container",
+      id: "vc_{{ element.name }}",
+      x: {{ pos.x }},
+      y: {{ pos.y }},
+      width: {{ pos.width }},
+      height: {{ pos.height }},
+      background: "{{ element.styling.color.background_color }}",
+      children: [
+      {% for child in element.view_elements %}
+        {{ render_element(child, px_to_percent) }}{{ "," if not loop.last }}
+      {% endfor %}
+      ]
+  {% elif element.__class__.__name__ == "Text" %}
+      type: "text",
+      id: "txt_{{ element.name }}",
+      x: {{ pos.x }},
+      y: {{ pos.y }},
+      width: {{ pos.width }},
+      height: {{ pos.height }},
+      content: "{{ element.content }}",
+      text_color: "{{ element.styling.color.text_color }}",
+      font_size: {{ element.styling.size.font_size }}
+  {% endif %}
+    }
+{%- endmacro -%}

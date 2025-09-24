@@ -2,7 +2,7 @@ import re
 from besser.BUML.metamodel.gui import (
     GUIModel, Screen, Module, LineChart, Styling, Size,
     Position, Color, UnitSize, PositionType, ViewContainer,
-    Text, BarChart, PieChart, Alignment
+    Text, BarChart, PieChart, Alignment, RadarChart, RadialBarChart
 )
 
 def process_gui_diagram(json_data, domain_model):
@@ -71,8 +71,12 @@ def parse_element(view_comp, view_elements, class_model, domain_model):
         return parse_bar_chart(view_comp, class_model, domain_model)
     elif resolved_name == 'PieChart':
         return parse_pie_chart(view_comp, class_model, domain_model)
+    elif resolved_name == 'RadarChart':
+        return parse_radar_chart(view_comp, class_model, domain_model)
     elif resolved_name == 'Container':
         return parse_container(view_comp, view_elements, class_model, domain_model)
+    elif resolved_name == 'RadialBarChart':
+        return parse_radial_bar_chart(view_comp, class_model, domain_model)
     return None
 
 
@@ -168,7 +172,7 @@ def parse_line_chart(view_comp, class_model, domain_model):
         width=parse_numeric_value(view_comp.get('props').get('width', 300), 300),
         height=parse_numeric_value(view_comp.get('props').get('height', 200), 200),
         font_size=view_comp.get('props').get('fontSize', 12),
-        unit_size=UnitSize.PERCENTAGE
+        unit_size=UnitSize.PIXELS
     )
     position = Position(
         p_type=PositionType.ABSOLUTE,
@@ -207,7 +211,7 @@ def parse_bar_chart(view_comp, class_model, domain_model):
         width=parse_numeric_value(view_comp.get('props').get('width', 300), 300),
         height=parse_numeric_value(view_comp.get('props').get('height', 200), 200),
         font_size=view_comp.get('props').get('fontSize', 12),
-        unit_size=UnitSize.PERCENTAGE
+        unit_size=UnitSize.PIXELS
     )
     position = Position(
         p_type=PositionType.ABSOLUTE,
@@ -219,7 +223,6 @@ def parse_bar_chart(view_comp, class_model, domain_model):
     return bar_chart
 
 def parse_pie_chart(view_comp, class_model, domain_model):
-
     pie_chart = PieChart(
         name=view_comp.get('custom').get('displayName', 'PieChart'),
         groups=search_attribute(
@@ -238,19 +241,18 @@ def parse_pie_chart(view_comp, class_model, domain_model):
         legend_position=Alignment(view_comp.get('props').get('legendPosition', 'left')),
         show_labels=view_comp.get('props').get('showLabels', True),
         label_position=Alignment(view_comp.get('props').get('labelPosition', 'inside')),
-        inner_radius=view_comp.get('props').get('innerRadius', 10),
-        outer_radius=view_comp.get('props').get('outerRadius', 80),
         padding_angle=view_comp.get('props').get('paddingAngle', 0)
     )
 
     # Styling
     color = Color(
-        label_color=parse_color(view_comp.get('props').get('labelColor', '#8884d8'))
+        label_color=parse_color(view_comp.get('props').get('labelColor', '#8884d8')),
+        color_palette=view_comp.get('props').get('colorPalette', 'default')
     )
     size = Size(
         width=parse_numeric_value(view_comp.get('props').get('width', 300), 200),
         height=parse_numeric_value(view_comp.get('props').get('height', 300), 300),
-        unit_size=UnitSize.PERCENTAGE
+        unit_size=UnitSize.PIXELS
     )
     position = Position(
         p_type=PositionType.ABSOLUTE,
@@ -260,6 +262,45 @@ def parse_pie_chart(view_comp, class_model, domain_model):
     pie_chart.styling = Styling(size=size, position=position, color=color)
 
     return pie_chart
+
+def parse_radar_chart(view_comp, class_model, domain_model):
+    radar_chart = RadarChart(
+        name=view_comp.get('custom').get('displayName', 'RadarChart'),
+        features=search_attribute(
+            class_model,
+            view_comp.get('props').get('class'),
+            view_comp.get('props').get('features'),
+            domain_model
+        ),
+        values=search_attribute(
+            class_model,
+            view_comp.get('props').get('class'),
+            view_comp.get('props').get('values'),
+            domain_model
+        ),
+        show_grid=view_comp.get('props').get('showGrid', True),
+        show_tooltip=view_comp.get('props').get('showTooltip', True),
+        show_radius_axis=view_comp.get('props').get('showRadiusAxis', True)
+    )
+
+    # Styling
+    color = Color(
+        fill_color=parse_color(view_comp.get('props').get('fillColor', '#FFFFFF')),
+        border_color=parse_color(view_comp.get('props').get('borderColor', '#000000'))
+    )
+    size = Size(
+        width=parse_numeric_value(view_comp.get('props').get('width', 350), 350),
+        height=parse_numeric_value(view_comp.get('props').get('height', 350), 350),
+        unit_size=UnitSize.PIXELS
+    )
+    position = Position(
+        p_type=PositionType.ABSOLUTE,
+        top=parse_numeric_value(view_comp.get('props').get('y', 0), 0),
+        left=parse_numeric_value(view_comp.get('props').get('x', 0), 0)
+    )
+    radar_chart.styling = Styling(size=size, position=position, color=color)
+
+    return radar_chart
 
 def parse_text(view_comp):
     text_el = Text(
@@ -320,3 +361,40 @@ def parse_container(view_comp, view_elements, class_model, domain_model):
 
     container.view_elements = children
     return container
+
+def parse_radial_bar_chart(view_comp, class_model, domain_model):
+    radial_bar_chart = RadialBarChart(
+        name=view_comp.get('custom').get('displayName', 'RadialBarChart'),
+        features=search_attribute(
+            class_model,
+            view_comp.get('props').get('class'),
+            view_comp.get('props').get('features'),
+            domain_model
+        ),
+        values=search_attribute(
+            class_model,
+            view_comp.get('props').get('class'),
+            view_comp.get('props').get('values'),
+            domain_model
+        ),
+        start_angle=view_comp.get('props').get('startAngle', 90),
+        end_angle=view_comp.get('props').get('endAngle', 450)
+    )
+
+    # Styling
+    color = Color(
+        color_palette=view_comp.get('props').get('colorPalette', 'default')
+    )
+    size = Size(
+        width=parse_numeric_value(view_comp.get('props').get('width', 350), 350),
+        height=parse_numeric_value(view_comp.get('props').get('height', 350), 350),
+        unit_size=UnitSize.PIXELS
+    )
+    position = Position(
+        p_type=PositionType.ABSOLUTE,
+        top=parse_numeric_value(view_comp.get('props').get('y', 0), 0),
+        left=parse_numeric_value(view_comp.get('props').get('x', 0), 0)
+    )
+    radial_bar_chart.styling = Styling(size=size, position=position, color=color)
+
+    return radial_bar_chart

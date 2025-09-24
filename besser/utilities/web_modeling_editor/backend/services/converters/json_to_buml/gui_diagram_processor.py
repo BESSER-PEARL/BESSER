@@ -2,7 +2,7 @@ import re
 from besser.BUML.metamodel.gui import (
     GUIModel, Screen, Module, LineChart, Styling, Size,
     Position, Color, UnitSize, PositionType, ViewContainer,
-    Text, BarChart
+    Text, BarChart, PieChart, Alignment
 )
 
 def process_gui_diagram(json_data, domain_model):
@@ -69,6 +69,8 @@ def parse_element(view_comp, view_elements, class_model, domain_model):
         return parse_line_chart(view_comp, class_model, domain_model)
     elif resolved_name == 'BarChart':
         return parse_bar_chart(view_comp, class_model, domain_model)
+    elif resolved_name == 'PieChart':
+        return parse_pie_chart(view_comp, class_model, domain_model)
     elif resolved_name == 'Container':
         return parse_container(view_comp, view_elements, class_model, domain_model)
     return None
@@ -163,8 +165,8 @@ def parse_line_chart(view_comp, class_model, domain_model):
         axis_color=parse_color(view_comp.get('props').get('axisColor', '#000FFF'))
     )
     size = Size(
-        width=parse_numeric_value(view_comp.get('props').get('width', 300), 200),
-        height=parse_numeric_value(view_comp.get('props').get('height', 300), 300),
+        width=parse_numeric_value(view_comp.get('props').get('width', 300), 300),
+        height=parse_numeric_value(view_comp.get('props').get('height', 200), 200),
         font_size=view_comp.get('props').get('fontSize', 12),
         unit_size=UnitSize.PERCENTAGE
     )
@@ -202,8 +204,8 @@ def parse_bar_chart(view_comp, class_model, domain_model):
         axis_color=parse_color(view_comp.get('props').get('axisColor', '#000FFF'))
     )
     size = Size(
-        width=parse_numeric_value(view_comp.get('props').get('width', 300), 200),
-        height=parse_numeric_value(view_comp.get('props').get('height', 300), 300),
+        width=parse_numeric_value(view_comp.get('props').get('width', 300), 300),
+        height=parse_numeric_value(view_comp.get('props').get('height', 200), 200),
         font_size=view_comp.get('props').get('fontSize', 12),
         unit_size=UnitSize.PERCENTAGE
     )
@@ -215,6 +217,49 @@ def parse_bar_chart(view_comp, class_model, domain_model):
     bar_chart.styling = Styling(size=size, position=position, color=color)
 
     return bar_chart
+
+def parse_pie_chart(view_comp, class_model, domain_model):
+
+    pie_chart = PieChart(
+        name=view_comp.get('custom').get('displayName', 'PieChart'),
+        groups=search_attribute(
+            class_model,
+            view_comp.get('props').get('class'),
+            view_comp.get('props').get('groups'),
+            domain_model
+        ),
+        values=search_attribute(
+            class_model,
+            view_comp.get('props').get('class'),
+            view_comp.get('props').get('values'),
+            domain_model
+        ),
+        show_legend=view_comp.get('props').get('showLegend', True),
+        legend_position=Alignment(view_comp.get('props').get('legendPosition', 'left')),
+        show_labels=view_comp.get('props').get('showLabels', True),
+        label_position=Alignment(view_comp.get('props').get('labelPosition', 'inside')),
+        inner_radius=view_comp.get('props').get('innerRadius', 10),
+        outer_radius=view_comp.get('props').get('outerRadius', 80),
+        padding_angle=view_comp.get('props').get('paddingAngle', 0)
+    )
+
+    # Styling
+    color = Color(
+        label_color=parse_color(view_comp.get('props').get('labelColor', '#8884d8'))
+    )
+    size = Size(
+        width=parse_numeric_value(view_comp.get('props').get('width', 300), 200),
+        height=parse_numeric_value(view_comp.get('props').get('height', 300), 300),
+        unit_size=UnitSize.PERCENTAGE
+    )
+    position = Position(
+        p_type=PositionType.ABSOLUTE,
+        top=parse_numeric_value(view_comp.get('props').get('y', 0), 0),
+        left=parse_numeric_value(view_comp.get('props').get('x', 0), 0)
+    )
+    pie_chart.styling = Styling(size=size, position=position, color=color)
+
+    return pie_chart
 
 def parse_text(view_comp):
     text_el = Text(

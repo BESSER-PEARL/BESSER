@@ -1,11 +1,11 @@
 {% import "frontend/src/element.tsx.j2" as helper -%}
 import React from "react";
-import LineChartComponent from "./components/LineChartComponent";
-import BarChartComponent from "./components/BarChartComponent";
-import PieChartComponent from "./components/PieChartComponent";
+import LineChartComponent from "./components/LineChart";
+import BarChartComponent from "./components/BarChart";
+import PieChartComponent from "./components/PieChart";
+import RadarChartComponent from "./components/RadarChart";
+import RadialBarChartComponent from "./components/RadialBarChart";
 
-const CANVAS_WIDTH = 900;
-const CANVAS_HEIGHT = 1000;
 {% raw %}
 const renderElement = (el: any) => {
   return (
@@ -24,7 +24,6 @@ const renderElement = (el: any) => {
           endpoint={el.endpoint}
           dataKey={el.dataKey}
           xKey={el.xKey}
-          title={el.title}
           lineColor={el.lineColor}
           axisColor={el.axisColor}
           fontSize={el.fontSize}
@@ -36,7 +35,6 @@ const renderElement = (el: any) => {
           endpoint={el.endpoint}
           dataKey={el.dataKey}
           xKey={el.xKey}
-          title={el.title}
           barColor={el.barColor}
           axisColor={el.axisColor}
           fontSize={el.fontSize}
@@ -74,15 +72,33 @@ const renderElement = (el: any) => {
           endpoint={el.endpoint}
           dataKey={el.dataKey}
           nameKey={el.nameKey}
-          title={el.title}
-          innerRadius={el.innerRadius}
-          outerRadius={el.outerRadius}
           paddingAngle={el.paddingAngle}
           showLabels={el.showLabels}
           labelColor={el.labelColor}
           labelPosition={el.labelPosition}
           showLegend={el.showLegend}
           legendPosition={el.legendPosition}
+          colorPalette={el.colorPalette}
+        />
+      ) : el.type === "radar_chart" ? (
+        <RadarChartComponent
+          endpoint={el.endpoint}
+          featuresKey={el.featuresKey}
+          valuesKey={el.valuesKey}
+          borderColor={el.borderColor}
+          fillColor={el.fillColor}
+          showGrid={el.showGrid}
+          showTooltip={el.showTooltip}
+          showRadiusAxis={el.showRadiusAxis}
+        />
+      ) : el.type === "radial_bar_chart" ? (
+        <RadialBarChartComponent
+          endpoint={el.endpoint}
+          featuresKey={el.featuresKey}
+          valuesKey={el.valuesKey}
+          startAngle={el.startAngle}
+          endAngle={el.endAngle}
+          colorPalette={el.colorPalette}
         />
       ) : null}
     </div>

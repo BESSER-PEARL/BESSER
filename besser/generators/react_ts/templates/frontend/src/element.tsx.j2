@@ -33,6 +33,25 @@
       fontSize: {{ element.styling.size.font_size }},
       gridColor: "{{ element.styling.color.grid_color }}",
       barWidth: {{ element.bar_width }}
+  {% elif element.__class__.__name__ == "PieChart" %}
+      type: "pie_chart",
+      id: "pc_{{ element.name }}",
+      x: {{ pos.x }},
+      y: {{ pos.y }},
+      width: {{ pos.width }},
+      height: {{ pos.height }},
+      endpoint: "http://localhost:3001/api/{{ element.groups.owner.name | lower }}-data",
+      nameKey: "{{ element.groups.name }}",
+      dataKey: "{{ element.values.name }}",
+      title: "{{ element.name }}",
+      innerRadius: {{ element.inner_radius }},
+      outerRadius: {{ element.outer_radius }},
+      paddingAngle: {{ element.padding_angle }},
+      showLabels: {{ "true" if element.show_labels else "false" }},
+      labelColor: "{{ element.label_color }}",
+      labelPosition: "{{ element.label_position.value }}",
+      showLegend: {{ "true" if element.show_legend else "false" }},
+      legendPosition: "{{ element.legend_position.value }}"
   {% elif element.__class__.__name__ == "ViewContainer" %}
       type: "container",
       id: "vc_{{ element.name }}",

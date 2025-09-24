@@ -2,6 +2,7 @@
 import React from "react";
 import LineChartComponent from "./components/LineChartComponent";
 import BarChartComponent from "./components/BarChartComponent";
+import PieChartComponent from "./components/PieChartComponent";
 
 const CANVAS_WIDTH = 900;
 const CANVAS_HEIGHT = 1000;
@@ -68,6 +69,21 @@ const renderElement = (el: any) => {
         >
           {el.children?.map((child: any) => renderElement(child))}
         </div>
+      ) : el.type === "pie_chart" ? (
+        <PieChartComponent
+          endpoint={el.endpoint}
+          dataKey={el.dataKey}
+          nameKey={el.nameKey}
+          title={el.title}
+          innerRadius={el.innerRadius}
+          outerRadius={el.outerRadius}
+          paddingAngle={el.paddingAngle}
+          showLabels={el.showLabels}
+          labelColor={el.labelColor}
+          labelPosition={el.labelPosition}
+          showLegend={el.showLegend}
+          legendPosition={el.legendPosition}
+        />
       ) : null}
     </div>
   );

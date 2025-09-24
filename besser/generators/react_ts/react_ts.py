@@ -11,7 +11,7 @@ from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
 
 ##############################
-#    React TypeScript Generator
+#   React TypeScript Generator
 ##############################
 class ReactTSGenerator(GeneratorInterface):
     """
@@ -65,6 +65,8 @@ class ReactTSGenerator(GeneratorInterface):
              "frontend/src/components/LineChartComponent.tsx.j2", None),
             ("frontend/src/components/BarChartComponent.tsx",
              "frontend/src/components/BarChartComponent.tsx.j2", None),
+            ("frontend/src/components/PieChartComponent.tsx",
+             "frontend/src/components/PieChartComponent.tsx.j2", None),
         ]
 
         for file_name, template_name, context in files_to_generate:

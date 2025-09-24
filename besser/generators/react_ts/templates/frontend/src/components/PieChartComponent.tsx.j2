@@ -1,0 +1,164 @@
+import React, { useEffect, useState } from "react";
+import {
+  PieChart,
+  Pie,
+  Cell,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
+
+interface PieChartComponentProps {
+  endpoint?: string;
+  nameKey?: string;
+  dataKey?: string;
+  title?: string;
+  innerRadius?: number;
+  outerRadius?: number;
+  paddingAngle?: number;
+  showLabels?: boolean;
+  labelColor?: string;
+  labelPosition?: "inside" | "outside";
+  showLegend?: boolean;
+  legendPosition?: "top" | "bottom" | "left" | "right";
+}
+
+{% raw %}
+const PieChartComponent: React.FC<PieChartComponentProps> = ({
+  endpoint = "",
+  nameKey = "name",
+  dataKey = "value",
+  title,
+  innerRadius = 10,
+  outerRadius = 80,
+  paddingAngle = 2,
+  showLabels = true,
+  labelColor = "#000",
+  labelPosition = "outside",
+  showLegend = true,
+  legendPosition = "left",
+}) => {
+  const [data, setData] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetch(endpoint)
+      .then((res) => res.json())
+      .then((json) => {
+        setData(json);
+      });
+  }, [endpoint]);
+
+  // Legend positioning logic
+  let verticalAlign: "top" | "middle" | "bottom" = "middle";
+  let align: "left" | "center" | "right" = "center";
+  let layout: "horizontal" | "vertical" = "horizontal";
+
+  switch (legendPosition) {
+    case "top":
+      verticalAlign = "top";
+      align = "center";
+      layout = "horizontal";
+      break;
+    case "bottom":
+      verticalAlign = "bottom";
+      align = "center";
+      layout = "horizontal";
+      break;
+    case "left":
+      verticalAlign = "middle";
+      align = "left";
+      layout = "vertical";
+      break;
+    case "right":
+      verticalAlign = "middle";
+      align = "right";
+      layout = "vertical";
+      break;
+  }
+
+  // Label rendering logic
+  const RADIAN = Math.PI / 180;
+  const renderCustomizedLabel = (props: any) => {
+    const { cx, cy, midAngle, innerRadius, outerRadius, percent } = props;
+    const radiusFactor = 0.35;
+    const radius = innerRadius + (outerRadius - innerRadius) * radiusFactor;
+    const x = cx + radius * Math.cos(-midAngle * RADIAN);
+    const y = cy + radius * Math.sin(-midAngle * RADIAN);
+
+    return (
+      <text
+        x={x}
+        y={y}
+        fill={labelColor}
+        textAnchor={x > cx ? "start" : "end"}
+        dominantBaseline="central"
+        style={{ pointerEvents: "none" }}
+      >
+        {`${(percent * 100).toFixed(0)}%`}
+      </text>
+    );
+  };
+
+  const pieLabelProps =
+    showLabels && labelPosition === "outside"
+      ? {
+          label: {
+            fill: labelColor,
+            fontSize: 12,
+          },
+        }
+      : showLabels && labelPosition === "inside"
+      ? {
+          label: renderCustomizedLabel,
+        }
+      : {};
+
+  return (
+    <div style={{ width: "100%", height: "100%" }}>
+      <h3
+        style={{
+          textAlign: "center",
+          margin: "4px 0",
+          fontSize: 14,
+          color: labelColor,
+        }}
+      >
+        {title ?? ""}
+      </h3>
+      <ResponsiveContainer width="100%" height="100%">
+        <PieChart>
+          <Tooltip />
+          {showLegend && (
+            <Legend
+              verticalAlign={verticalAlign}
+              align={align}
+              layout={layout}
+              height={36}
+              wrapperStyle={{ padding: 10 }}
+            />
+          )}
+          <Pie
+            data={data}
+            dataKey={dataKey}
+            nameKey={nameKey}
+            innerRadius={innerRadius}
+            outerRadius={outerRadius}
+            paddingAngle={paddingAngle}
+            labelLine={labelPosition === "outside"}
+            {...pieLabelProps}
+          >
+            {data.map((entry, index) => (
+              <Cell
+                key={`cell-${index}`}
+                fill={entry.color || "#8884d8"}
+              />
+            ))}
+          </Pie>
+        </PieChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};
+
+export default PieChartComponent;
+{% endraw %}

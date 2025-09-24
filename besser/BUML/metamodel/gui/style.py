@@ -23,6 +23,22 @@ class JustificationType(Enum):
     SPACE_BETWEEN = "space-between"
     SPACE_AROUND = "space-around"
 
+# Aligment
+class Alignment(Enum):
+    """
+    Defines alignment options
+    """
+    START = "start"
+    END = "end"
+    CENTER = "center"
+    STRETCH = "stretch"
+    LEFT = "left"
+    RIGHT = "right"
+    TOP = "top"
+    BOTTOM = "bottom"
+    INSIDE = "inside"
+    OUTSIDE = "outside"
+
 # UnitSize
 class UnitSize(Enum):
     """
@@ -154,7 +170,7 @@ class Position:
     """
 
     def __init__(self, p_type: PositionType = PositionType.STATIC, top: str = None, left: str = None,
-                 right: str = None, bottom: str = None, alignment: str = None, z_index: int = 0):
+                 right: str = None, bottom: str = None, alignment: Alignment = None, z_index: int = 0):
 
         self.p_type: PositionType = p_type
         self.top: str = top

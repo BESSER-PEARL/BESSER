@@ -1,5 +1,6 @@
 from besser.BUML.metamodel.gui.graphical_ui import ViewComponent
 from besser.BUML.metamodel.structural import Property
+from besser.BUML.metamodel.gui.style import Alignment
 
 class Chart(ViewComponent):
     """Represents a chart component in the dashboard.
@@ -135,13 +136,140 @@ class PieChart(Chart):
 
     Args:
         name (str): The name of the pie chart.
+        groups (Property): The groups property of the pie chart.
+        values (Property): The values property of the pie chart.
+        show_legend (bool): Whether to show the legend in the pie chart.
+        legend_position (Alignment): The position of the legend in the pie chart.
+        show_labels (bool): Whether to show labels in the pie chart.
+        label_position (Alignment): The position of the labels in the pie chart.
+        inner_radius (int): The inner radius of the pie chart.
+        outer_radius (int): The outer radius of the pie chart.
+        padding_angle (int): The padding angle between slices in the pie chart.
 
     Attributes:
         name (str): The name of the pie chart.
+        groups (Property): The groups property of the pie chart.
+        values (Property): The values property of the pie chart.
+        show_legend (bool): Whether to show the legend in the pie chart.
+        legend_position (Alignment): The position of the legend in the pie chart.
+        show_labels (bool): Whether to show labels in the pie chart.
+        label_position (Alignment): The position of the labels in the pie chart.
+        inner_radius (int): The inner radius of the pie chart.
+        outer_radius (int): The outer radius of the pie chart.
+        padding_angle (int): The padding angle between slices in the pie chart.
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, groups: Property, values: Property, show_legend: bool = True,
+                 legend_position: Alignment = Alignment.LEFT, show_labels: bool = True,
+                 label_position: Alignment = Alignment.INSIDE, inner_radius: int = 0,
+                 outer_radius: int = 100, padding_angle: int = 0):
         super().__init__(name)
+        self.groups: Property = groups
+        self.values: Property = values
+        self.show_legend: bool = show_legend
+        self.legend_position: Alignment = legend_position
+        self.show_labels: bool = show_labels
+        self.label_position: Alignment = label_position
+        self.inner_radius: int = inner_radius
+        self.outer_radius: int = outer_radius
+        self.padding_angle: int = padding_angle
+
+    @property
+    def groups(self) -> Property:
+        """Property: Get the groups of the pie chart."""
+        return self._groups
+
+    @groups.setter
+    def groups(self, value: Property):
+        """Property: Set the groups of the pie chart."""
+        self._groups = value
+
+    @property
+    def values(self) -> Property:
+        """Property: Get the values of the pie chart."""
+        return self._values
+
+    @values.setter
+    def values(self, value: Property):
+        """Property: Set the values of the pie chart."""
+        self._values = value
+
+    @property
+    def show_legend(self) -> bool:
+        """Property: Get whether to show the legend of the pie chart."""
+        return self._show_legend
+
+    @show_legend.setter
+    def show_legend(self, value: bool):
+        """Property: Set whether to show the legend of the pie chart."""
+        self._show_legend = value
+
+    @property
+    def legend_position(self) -> Alignment:
+        """Property: Get the legend position of the pie chart."""
+        return self._legend_position
+
+    @legend_position.setter
+    def legend_position(self, value: Alignment):
+        """Property: Set the legend position of the pie chart."""
+        self._legend_position = value
+
+    @property
+    def show_labels(self) -> bool:
+        """Property: Get whether to show the labels of the pie chart."""
+        return self._show_labels
+
+    @show_labels.setter
+    def show_labels(self, value: bool): 
+        """Property: Set whether to show the labels of the pie chart."""
+        self._show_labels = value
+
+    @property
+    def label_position(self) -> Alignment:
+        """Property: Get the label position of the pie chart."""
+        return self._label_position
+
+    @label_position.setter
+    def label_position(self, value: Alignment):
+        """Property: Set the label position of the pie chart."""
+        self._label_position = value
+
+    @property
+    def inner_radius(self) -> int:
+        """Property: Get the inner radius of the pie chart."""
+        return self._inner_radius
+
+    @inner_radius.setter
+    def inner_radius(self, value: int):
+        """Property: Set the inner radius of the pie chart."""
+        self._inner_radius = value
+
+    @property
+    def outer_radius(self) -> int:
+        """Property: Get the outer radius of the pie chart."""
+        return self._outer_radius
+
+    @outer_radius.setter
+    def outer_radius(self, value: int):
+        """Property: Set the outer radius of the pie chart."""
+        self._outer_radius = value
+
+    @property
+    def padding_angle(self) -> int:
+        """Property: Get the padding angle of the pie chart."""
+        return self._padding_angle
+
+    @padding_angle.setter
+    def padding_angle(self, value: int):
+        """Property: Set the padding angle of the pie chart."""
+        self._padding_angle = value
+
+    def __repr__(self):
+        return (
+            f"PieChart(name={self.name}, groups={self.groups.name}, values={self.values.name}, "
+            f"inner_radius={self.inner_radius}, outer_radius={self.outer_radius}, "
+            f"padding_angle={self.padding_angle})"
+        )
 
 class RadarChart(Chart):
     """Represents a radar chart component in the dashboard.

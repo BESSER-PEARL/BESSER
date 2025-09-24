@@ -397,7 +397,7 @@ class RadialBarChart(Chart):
     def __repr__(self):
         return (
             f"RadialBarChart(name={self.name}, features={self.features.name}, values={self.values.name}, "
-            f"start_angle={self.start_angle}, end_angle={self.end_angle}, color_palette={self.color_palette})"
+            f"start_angle={self.start_angle}, end_angle={self.end_angle})"
         )
 
 class Map(ViewComponent):

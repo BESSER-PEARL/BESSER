@@ -142,8 +142,6 @@ class PieChart(Chart):
         legend_position (Alignment): The position of the legend in the pie chart.
         show_labels (bool): Whether to show labels in the pie chart.
         label_position (Alignment): The position of the labels in the pie chart.
-        inner_radius (int): The inner radius of the pie chart.
-        outer_radius (int): The outer radius of the pie chart.
         padding_angle (int): The padding angle between slices in the pie chart.
 
     Attributes:
@@ -154,15 +152,12 @@ class PieChart(Chart):
         legend_position (Alignment): The position of the legend in the pie chart.
         show_labels (bool): Whether to show labels in the pie chart.
         label_position (Alignment): The position of the labels in the pie chart.
-        inner_radius (int): The inner radius of the pie chart.
-        outer_radius (int): The outer radius of the pie chart.
         padding_angle (int): The padding angle between slices in the pie chart.
     """
 
     def __init__(self, name: str, groups: Property, values: Property, show_legend: bool = True,
                  legend_position: Alignment = Alignment.LEFT, show_labels: bool = True,
-                 label_position: Alignment = Alignment.INSIDE, inner_radius: int = 0,
-                 outer_radius: int = 100, padding_angle: int = 0):
+                 label_position: Alignment = Alignment.INSIDE, padding_angle: int = 0):
         super().__init__(name)
         self.groups: Property = groups
         self.values: Property = values
@@ -170,8 +165,6 @@ class PieChart(Chart):
         self.legend_position: Alignment = legend_position
         self.show_labels: bool = show_labels
         self.label_position: Alignment = label_position
-        self.inner_radius: int = inner_radius
-        self.outer_radius: int = outer_radius
         self.padding_angle: int = padding_angle
 
     @property
@@ -235,26 +228,6 @@ class PieChart(Chart):
         self._label_position = value
 
     @property
-    def inner_radius(self) -> int:
-        """Property: Get the inner radius of the pie chart."""
-        return self._inner_radius
-
-    @inner_radius.setter
-    def inner_radius(self, value: int):
-        """Property: Set the inner radius of the pie chart."""
-        self._inner_radius = value
-
-    @property
-    def outer_radius(self) -> int:
-        """Property: Get the outer radius of the pie chart."""
-        return self._outer_radius
-
-    @outer_radius.setter
-    def outer_radius(self, value: int):
-        """Property: Set the outer radius of the pie chart."""
-        self._outer_radius = value
-
-    @property
     def padding_angle(self) -> int:
         """Property: Get the padding angle of the pie chart."""
         return self._padding_angle
@@ -267,7 +240,6 @@ class PieChart(Chart):
     def __repr__(self):
         return (
             f"PieChart(name={self.name}, groups={self.groups.name}, values={self.values.name}, "
-            f"inner_radius={self.inner_radius}, outer_radius={self.outer_radius}, "
             f"padding_angle={self.padding_angle})"
         )
 
@@ -276,27 +248,157 @@ class RadarChart(Chart):
 
     Args:
         name (str): The name of the radar chart.
+        features (Property): The features shown in the radar chart.
+        values (Property): The values shown in the radar chart.
+        show_grid (bool): Whether to show the grid in the radar chart.
+        show_tooltip (bool): Whether to show the tooltip in the radar chart.
+        show_radius_axis (bool): Whether to show the radius axis in the radar chart.
 
     Attributes:
         name (str): The name of the radar chart.
+        features (Property): The features shown in the radar chart.
+        values (Property): The values shown in the radar chart.
+        show_grid (bool): Whether to show the grid in the radar chart.
+        show_tooltip (bool): Whether to show the tooltip in the radar chart.
+        show_radius_axis (bool): Whether to show the radius axis in the radar chart.
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, features: Property, values: Property, show_grid: bool = True,
+                 show_tooltip: bool = True, show_radius_axis: bool = True):
         super().__init__(name)
+        self.features = features
+        self.values = values
+        self.show_grid = show_grid
+        self.show_tooltip = show_tooltip
+        self.show_radius_axis = show_radius_axis
 
+    @property
+    def features(self) -> Property:
+        """Property: Get the features of the radar chart."""
+        return self._features
+
+    @features.setter
+    def features(self, value: Property):
+        """Property: Set the features of the radar chart."""
+        self._features = value
+
+    @property
+    def values(self) -> Property:
+        """Property: Get the values of the radar chart."""
+        return self._values
+
+    @values.setter
+    def values(self, value: Property):
+        """Property: Set the values of the radar chart."""
+        self._values = value
+
+    @property
+    def show_grid(self) -> bool:
+        """Property: Get the show_grid option of the radar chart."""
+        return self._show_grid
+
+    @show_grid.setter
+    def show_grid(self, value: bool):
+        """Property: Set the show_grid option of the radar chart."""
+        self._show_grid = value
+
+    @property
+    def show_tooltip(self) -> bool:
+        """Property: Get the show_tooltip option of the radar chart."""
+        return self._show_tooltip
+
+    @show_tooltip.setter
+    def show_tooltip(self, value: bool):
+        """Property: Set the show_tooltip option of the radar chart."""
+        self._show_tooltip = value
+
+    @property
+    def show_radius_axis(self) -> bool:
+        """Property: Get the show_radius_axis option of the radar chart."""
+        return self._show_radius_axis
+
+    @show_radius_axis.setter
+    def show_radius_axis(self, value: bool):
+        """Property: Set the show_radius_axis option of the radar chart."""
+        self._show_radius_axis = value
+
+    def __repr__(self):
+        return (
+            f"RadarChart(name={self.name}, features={self.features.name}, values={self.values.name}, "
+            f"show_grid={self.show_grid}, show_tooltip={self.show_tooltip}, "
+            f"show_radius_axis={self.show_radius_axis})"
+        )
 
 class RadialBarChart(Chart):
     """Represents a radial bar chart component in the dashboard.
 
     Args:
         name (str): The name of the radial bar chart.
-
+        features (Property): The features shown in the radial bar chart.
+        values (Property): The values shown in the radial bar chart.
+        start_angle (int): The start angle of the radial bar chart.
+        end_angle (int): The end angle of the radial bar chart.
+        
     Attributes:
         name (str): The name of the radial bar chart.
+        features (Property): The features shown in the radial bar chart.
+        values (Property): The values shown in the radial bar chart.
+        start_angle (int): The start angle of the radial bar chart.
+        end_angle (int): The end angle of the radial bar chart.
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, features: Property, values: Property, start_angle: int, end_angle: int):
         super().__init__(name)
+        self.features = features
+        self.values = values
+        self.start_angle = start_angle
+        self.end_angle = end_angle
+
+    @property
+    def features(self) -> Property:
+        """Property: Get the features of the radial bar chart."""
+        return self._features
+
+    @features.setter
+    def features(self, value: Property):
+        """Property: Set the features of the radial bar chart."""
+        self._features = value
+
+    @property
+    def values(self) -> Property:
+        """Property: Get the values of the radial bar chart."""
+        return self._values
+
+    @values.setter
+    def values(self, value: Property):
+        """Property: Set the values of the radial bar chart."""
+        self._values = value
+
+    @property
+    def start_angle(self) -> int:
+        """Property: Get the start angle of the radial bar chart."""
+        return self._start_angle
+
+    @start_angle.setter
+    def start_angle(self, value: int):
+        """Property: Set the start angle of the radial bar chart."""
+        self._start_angle = value
+
+    @property
+    def end_angle(self) -> int:
+        """Property: Get the end angle of the radial bar chart."""
+        return self._end_angle
+
+    @end_angle.setter
+    def end_angle(self, value: int):
+        """Property: Set the end angle of the radial bar chart."""
+        self._end_angle = value
+
+    def __repr__(self):
+        return (
+            f"RadialBarChart(name={self.name}, features={self.features.name}, values={self.values.name}, "
+            f"start_angle={self.start_angle}, end_angle={self.end_angle}, color_palette={self.color_palette})"
+        )
 
 class Map(ViewComponent):
     """Represents a map component in the dashboard.

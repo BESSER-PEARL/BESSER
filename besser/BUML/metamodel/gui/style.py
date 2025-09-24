@@ -269,8 +269,8 @@ class Color:
         grid_color (str): The grid color (#CCCCCC as default).
         axis_color (str): The axis color (#CCCCCC as default).
         bar_color (str): The bar color (#CCCCCC as default).
-        stroke_color (str): The stroke color (#CCCCCC as default).
         fill_color (str): The fill color (#CCCCCC as default).
+        color_palette (str): The color palette used for charts.
 
     Attributes:
         background_color (str): The background color.
@@ -280,15 +280,15 @@ class Color:
         grid_color (str): The grid color.
         axis_color (str): The axis color.
         bar_color (str): The bar color.
-        stroke_color (str): The stroke color.
         fill_color (str): The fill color.
+        color_palette (str): The color palette used for charts.
     """
 
     def __init__(self, background_color: str = "#FFFFFF", text_color: str = "#000000",
                 border_color: str = "#CCCCCC", line_color: str = "#000000",
                 grid_color: str = "#CCCCCC", axis_color: str = "#CCCCCC",
                 bar_color: str = "#CCCCCC", label_color: str = "#CCCCCC",
-                stroke_color: str = "#CCCCCC", fill_color: str = "#CCCCCC"):
+                fill_color: str = "#CCCCCC", color_palette: str = "default"):
         self.background_color: str = background_color
         self.text_color: str = text_color
         self.border_color: str = border_color
@@ -297,8 +297,8 @@ class Color:
         self.axis_color: str = axis_color
         self.bar_color: str = bar_color
         self.label_color: str = label_color
-        self.stroke_color: str = stroke_color
         self.fill_color: str = fill_color
+        self.color_palette: str = color_palette
 
     @property
     def background_color(self) -> str:
@@ -381,16 +381,6 @@ class Color:
         self.__label_color = label
 
     @property
-    def stroke_color(self) -> str:
-        """str: Get the stroke color."""
-        return self.__stroke_color
-
-    @stroke_color.setter
-    def stroke_color(self, stroke: str):
-        """str: Set the stroke color."""
-        self.__stroke_color = stroke
-
-    @property
     def fill_color(self) -> str:
         """str: Get the fill color."""
         return self.__fill_color
@@ -400,12 +390,22 @@ class Color:
         """str: Set the fill color."""
         self.__fill_color = fill
 
+    @property
+    def color_palette(self) -> str:
+        """Property: Get the color palette of the radial bar chart."""
+        return self._color_palette
+
+    @color_palette.setter
+    def color_palette(self, value: str):
+        """Property: Set the color palette of the radial bar chart."""
+        self._color_palette = value
+
     def __repr__(self):
         return (
             f"Color(background={self.background_color}, text={self.text_color}, "
             f"line={self.line_color}, grid={self.grid_color}, axis={self.axis_color}, "
-            f"bar={self.bar_color}, label={self.label_color}, stroke={self.stroke_color}, "
-            f"fill={self.fill_color})"
+            f"bar={self.bar_color}, label={self.label_color}, fill={self.fill_color}, "
+            f"color_palette={self.color_palette})"
         )
 
 # Styling

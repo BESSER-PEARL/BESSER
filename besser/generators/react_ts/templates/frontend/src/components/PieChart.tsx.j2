@@ -1,3 +1,4 @@
+{% raw %}
 import React, { useEffect, useState } from "react";
 import {
   PieChart,
@@ -7,48 +8,62 @@ import {
   Legend,
   ResponsiveContainer,
 } from "recharts";
+import chroma from "chroma-js";
+
+const colorPalettes: Record<string, string[]> = {
+  blues: ['#cce5ff', '#66b3ff', '#3399ff', '#0066cc'],
+  warm: ['#ffcc99', '#ff9966', '#ff6633', '#cc3300'],
+  cool: ['#99ffcc', '#33ff99', '#00cc66', '#00994d'],
+  vibrant: ['#ff0080', '#ff6600', '#ffff00', '#00ff00', '#00ffff', '#8000ff'],
+  greenBlue: ['#1B4F72', '#2E86C1', '#117A65', '#1ABC9C', '#148F77'],
+  warmPro: ['#D35400', '#E67E22', '#F39C12', '#D68910', '#BA4A00'],
+  neutral: ['#34495E', '#5D6D7E', '#85929E', '#AAB7B8', '#CCD1D1'],
+  classic: ['#0088FE', '#00C49F', '#FFBB28', '#FF8042'],
+  default: ['#8884d8', '#82ca9d', '#8B9CC5', '#89B3B2'],
+};
+
+const getColorsFromPalette = (paletteName: string, count: number) => {
+  const palette = colorPalettes[paletteName] || ['#8884d8', '#82ca9d'];
+  if (palette.length >= count) return palette.slice(0, count);
+  return chroma.scale(palette).mode('lab').colors(count);
+};
 
 interface PieChartComponentProps {
   endpoint?: string;
   nameKey?: string;
   dataKey?: string;
-  title?: string;
-  innerRadius?: number;
-  outerRadius?: number;
   paddingAngle?: number;
   showLabels?: boolean;
   labelColor?: string;
   labelPosition?: "inside" | "outside";
   showLegend?: boolean;
   legendPosition?: "top" | "bottom" | "left" | "right";
+  colorPalette?: string;
 }
 
-{% raw %}
 const PieChartComponent: React.FC<PieChartComponentProps> = ({
   endpoint = "",
   nameKey = "name",
   dataKey = "value",
-  title,
-  innerRadius = 10,
-  outerRadius = 80,
   paddingAngle = 2,
   showLabels = true,
   labelColor = "#000",
   labelPosition = "outside",
   showLegend = true,
   legendPosition = "left",
+  colorPalette = "blues",
 }) => {
   const [data, setData] = useState<any[]>([]);
 
   useEffect(() => {
+    if (!endpoint) return;
     fetch(endpoint)
       .then((res) => res.json())
-      .then((json) => {
-        setData(json);
-      });
+      .then((json) => setData(json));
   }, [endpoint]);
 
-  // Legend positioning logic
+  const colors = getColorsFromPalette(colorPalette, data.length);
+
   let verticalAlign: "top" | "middle" | "bottom" = "middle";
   let align: "left" | "center" | "right" = "center";
   let layout: "horizontal" | "vertical" = "horizontal";
@@ -76,7 +91,6 @@ const PieChartComponent: React.FC<PieChartComponentProps> = ({
       break;
   }
 
-  // Label rendering logic
   const RADIAN = Math.PI / 180;
   const renderCustomizedLabel = (props: any) => {
     const { cx, cy, midAngle, innerRadius, outerRadius, percent } = props;
@@ -101,30 +115,13 @@ const PieChartComponent: React.FC<PieChartComponentProps> = ({
 
   const pieLabelProps =
     showLabels && labelPosition === "outside"
-      ? {
-          label: {
-            fill: labelColor,
-            fontSize: 12,
-          },
-        }
+      ? { label: { fill: labelColor, fontSize: 12 } }
       : showLabels && labelPosition === "inside"
-      ? {
-          label: renderCustomizedLabel,
-        }
+      ? { label: renderCustomizedLabel }
       : {};
 
   return (
     <div style={{ width: "100%", height: "100%" }}>
-      <h3
-        style={{
-          textAlign: "center",
-          margin: "4px 0",
-          fontSize: 14,
-          color: labelColor,
-        }}
-      >
-        {title ?? ""}
-      </h3>
       <ResponsiveContainer width="100%" height="100%">
         <PieChart>
           <Tooltip />
@@ -141,17 +138,14 @@ const PieChartComponent: React.FC<PieChartComponentProps> = ({
             data={data}
             dataKey={dataKey}
             nameKey={nameKey}
-            innerRadius={innerRadius}
-            outerRadius={outerRadius}
+            innerRadius="30%"
+            outerRadius="80%"
             paddingAngle={paddingAngle}
             labelLine={labelPosition === "outside"}
             {...pieLabelProps}
           >
             {data.map((entry, index) => (
-              <Cell
-                key={`cell-${index}`}
-                fill={entry.color || "#8884d8"}
-              />
+              <Cell key={`cell-${index}`} fill={colors[index]} />
             ))}
           </Pie>
         </PieChart>

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
-  BarChart,
-  Bar,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
@@ -10,28 +10,26 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-interface BarChartComponentProps {
+interface LineChartComponentProps {
   endpoint?: string;
   xKey?: string;
   dataKey?: string;
-  title?: string;
-  barColor?: string;
+  lineColor?: string;
   axisColor?: string;
   fontSize?: number;
   gridColor?: string;
-  barWidth?: number;
+  lineWidth?: number;
 }
 {% raw %}
-const BarChartComponent: React.FC<BarChartComponentProps> = ({
+const LineChartComponent: React.FC<LineChartComponentProps> = ({
   endpoint = "",
   xKey = "",
   dataKey = "",
-  title,
-  barColor = "#8884d8",
+  lineColor = "#8884d8",
   axisColor = "#333",
   fontSize = 12,
   gridColor = "#ccc",
-  barWidth = 20,
+  lineWidth = 2,
 }) => {
   const [data, setData] = useState<any[]>([]);
 
@@ -53,10 +51,9 @@ const BarChartComponent: React.FC<BarChartComponentProps> = ({
           color: axisColor,
         }}
       >
-        {title ?? ""}
       </h3>
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart
+        <LineChart
           data={data}
           margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
         >
@@ -72,16 +69,18 @@ const BarChartComponent: React.FC<BarChartComponentProps> = ({
           />
           <Tooltip />
           <Legend />
-          <Bar
+          <Line
+            type="monotone"
             dataKey={dataKey}
-            fill={barColor}
-            barSize={barWidth}
+            stroke={lineColor}
+            strokeWidth={lineWidth}
+            activeDot={{ r: 8 }}
           />
-        </BarChart>
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );
 };
 
-export default BarChartComponent;
+export default LineChartComponent;
 {% endraw %}

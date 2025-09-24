@@ -11,7 +11,6 @@
       endpoint: "http://localhost:3001/api/{{ element.x_axis.owner.name | lower }}-data",
       dataKey: "{{ element.y_axis.name }}",
       xKey: "{{ element.x_axis.name }}",
-      title: "{{ element.name }}",
       lineColor: "{{ element.styling.color.line_color }}",
       axisColor: "{{ element.styling.color.axis_color }}",
       fontSize: {{ element.styling.size.font_size }},
@@ -27,7 +26,6 @@
       endpoint: "http://localhost:3001/api/{{ element.x_axis.owner.name | lower }}-data",
       dataKey: "{{ element.y_axis.name }}",
       xKey: "{{ element.x_axis.name }}",
-      title: "{{ element.name }}",
       barColor: "{{ element.styling.color.bar_color }}",
       axisColor: "{{ element.styling.color.axis_color }}",
       fontSize: {{ element.styling.size.font_size }},
@@ -43,15 +41,13 @@
       endpoint: "http://localhost:3001/api/{{ element.groups.owner.name | lower }}-data",
       nameKey: "{{ element.groups.name }}",
       dataKey: "{{ element.values.name }}",
-      title: "{{ element.name }}",
-      innerRadius: {{ element.inner_radius }},
-      outerRadius: {{ element.outer_radius }},
       paddingAngle: {{ element.padding_angle }},
       showLabels: {{ "true" if element.show_labels else "false" }},
-      labelColor: "{{ element.label_color }}",
+      labelColor: "{{ element.styling.color.label_color }}",
       labelPosition: "{{ element.label_position.value }}",
       showLegend: {{ "true" if element.show_legend else "false" }},
-      legendPosition: "{{ element.legend_position.value }}"
+      legendPosition: "{{ element.legend_position.value }}",
+      colorPalette: "{{ element.styling.color.color_palette }}"
   {% elif element.__class__.__name__ == "ViewContainer" %}
       type: "container",
       id: "vc_{{ element.name }}",
@@ -75,6 +71,34 @@
       content: "{{ element.content }}",
       text_color: "{{ element.styling.color.text_color }}",
       font_size: {{ element.styling.size.font_size }}
+  {% elif element.__class__.__name__ == "RadarChart" %}
+      type: "radar_chart",
+      id: "rc_{{ element.name }}",
+      x: {{ pos.x }},
+      y: {{ pos.y }},
+      width: {{ pos.width }},
+      height: {{ pos.height }},
+      endpoint: "http://localhost:3001/api/{{ element.features.owner.name | lower }}-data",
+      featuresKey: "{{ element.features.name }}",
+      valuesKey: "{{ element.values.name }}",
+      borderColor: "{{ element.styling.color.border_color }}",
+      fillColor: "{{ element.styling.color.fill_color }}",
+      showGrid: {{ "true" if element.show_grid else "false" }},
+      showTooltip: {{ "true" if element.show_tooltip else "false" }},
+      showRadiusAxis: {{ "true" if element.show_radius_axis else "false" }}
+  {% elif element.__class__.__name__ == "RadialBarChart" %}
+    type: "radial_bar_chart",
+    id: "rbc_{{ element.name }}",
+    x: {{ pos.x }},
+    y: {{ pos.y }},
+    width: {{ pos.width }},
+    height: {{ pos.height }},
+    endpoint: "http://localhost:3001/api/{{ element.features.owner.name | lower }}-data",
+    featuresKey: "{{ element.features.name }}",
+    valuesKey: "{{ element.values.name }}",
+    startAngle: {{ element.start_angle }},
+    endAngle: {{ element.end_angle }},
+    colorPalette: "{{ element.styling.color.color_palette }}"
   {% endif %}
     }
 {%- endmacro -%}

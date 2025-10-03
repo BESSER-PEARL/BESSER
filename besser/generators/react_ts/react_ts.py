@@ -88,7 +88,8 @@ class ReactTSGenerator(GeneratorInterface):
             # Access the view elements
             view_elements = screen.view_elements
             generated_code = template.render(view_elements=view_elements,
-                                             px_to_percent=px_to_percent_relative)
+                                             px_to_percent=px_to_percent_relative,
+                                             screen=screen)
             f.write(generated_code)
             print("Code generated in the location: " + file_path)
 

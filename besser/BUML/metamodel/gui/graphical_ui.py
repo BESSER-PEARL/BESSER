@@ -1,6 +1,7 @@
 from enum import Enum
 from besser.BUML.metamodel.structural import NamedElement, Class, Property, Model, Element
 from besser.BUML.metamodel.gui.style import Styling, Layout
+from besser.BUML.metamodel.gui.binding import DataBinding
 
 
 # FileSourceType
@@ -230,7 +231,8 @@ class ViewElement(NamedElement):
         owner (ViewContainer | None): The container that owns this view element (if any).
     """
 
-    def __init__(self, name: str, description: str = "", visibility: str = "public", timestamp: int = None, styling: Styling = None):
+    def __init__(self, name: str, description: str = "", visibility: str = "public", timestamp: int = None,
+                 styling: Styling = None):
         super().__init__(name, visibility, timestamp)
         self.description: str = description
         self.styling: Styling = styling
@@ -281,6 +283,7 @@ class ViewComponent(ViewElement):
         timestamp (datetime): Object creation datetime (default is current time).
         visibility (str, optional): The visibility scope (default: "public").
         styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
+        data_binding (DataBinding | None, optional): The data binding configuration for the view component (if any).
 
     Attributes:
         name (str): The name of the view component.
@@ -288,14 +291,29 @@ class ViewComponent(ViewElement):
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         visibility (str): The visibility scope of the component.
         styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
+        data_binding (DataBinding | None): The data binding configuration for the view component (if any).
     """
 
     def __init__(self, name: str, description: str = "", visibility: str = "public",
-                 timestamp: int = None, styling: Styling = None):
+                 timestamp: int = None, styling: Styling = None, data_binding: DataBinding = None):
         super().__init__(name, description, visibility, timestamp, styling)
+        self.data_binding: DataBinding = data_binding
+
+    @property
+    def data_binding(self) -> DataBinding:
+        """DataBinding: Get the data binding of the view component."""
+        return self.__data_binding
+
+    @data_binding.setter
+    def data_binding(self, data_binding: DataBinding):
+        """DataBinding: Set the data binding of the view component."""
+        self.__data_binding = data_binding
 
     def __repr__(self):
-        return f'ViewComponent({self.name}, description={self.description}, visibility={self.visibility}, timestamp={self.timestamp}, styling={self.styling})'
+        return (
+            f'ViewComponent({self.name}, description={self.description}, visibility={self.visibility}, '
+            f'timestamp={self.timestamp}, styling={self.styling}, data_binding={self.data_binding})'
+        )
 
 #ViewContainer
 class ViewContainer(ViewElement):

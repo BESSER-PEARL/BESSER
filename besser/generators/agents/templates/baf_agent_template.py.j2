@@ -12,6 +12,8 @@ from besser.agent.nlp.llm.llm_openai_api import LLMOpenAI
 from besser.agent.nlp.llm.llm_replicate_api import LLMReplicate
 from besser.agent.core.session import Session
 from besser.agent.nlp.intent_classifier.intent_classifier_configuration import LLMIntentClassifierConfiguration, SimpleIntentClassifierConfiguration
+from besser.agent.nlp.speech2text.openai_speech2text import OpenAISpeech2Text
+from besser.agent.nlp.text2speech.openai_text2speech import OpenAIText2Speech
 
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
@@ -20,17 +22,80 @@ logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {messag
 agent = Agent('{{ agent.name }}')
 # Load bot properties stored in a dedicated file
 agent.load_properties('config.ini')
+
 # Define the platform your chatbot will use
 {% for platform in agent.platforms -%}
 {% if platform.__class__.__name__ == 'WebSocketPlatform' -%}
-websocket_platform = agent.use_websocket_platform(use_ui=True)
+platform = agent.use_websocket_platform(use_ui=True)
 {% elif platform.__class__.__name__ == 'TelegramPlatform' -%}
 telegram_platform = agent.use_telegram_platform()
 {% endif -%}
 {% endfor -%}
 
+{% set platform_name = config['agentPlatform'] if config and 'agentPlatform' in config else None %}
+{% if platform_name == 'websocket' %}
+platform = agent.use_websocket_platform()
+{% elif platform_name == 'telegram' %}
+platform = agent.use_telegram_platform()
+{% elif platform_name == 'streamlit' %}
+platform = agent.use_streamlit_platform(use_ui=True)
+{% elif agent.platforms and agent.platforms|length > 0 %}
+    {% set found_platform = false %}
+    {% for platform in agent.platforms -%}
+        {% if not found_platform %}
+            {% if platform.__class__.__name__ == 'WebSocketPlatform' -%}
+platform = agent.use_websocket_platform(use_ui=True)
+                {% set found_platform = true %}
+            {% elif platform.__class__.__name__ == 'TelegramPlatform' -%}
+platform = agent.use_telegram_platform()
+                {% set found_platform = true %}
+            {% elif platform.__class__.__name__ == 'StreamlitPlatform' -%}
+platform = agent.use_streamlit_platform()
+                {% set found_platform = true %}
+            {% endif -%}
+        {% endif -%}
+    {% endfor -%}
+{% else %}
+platform = agent.use_websocket_platform(use_ui=True)
+{% endif %}
 
-websocket_platform = agent.use_websocket_platform(use_ui=True)
+# LLM instantiation based on config['llm']
+{% if config and 'llm' in config and config['llm'] %}
+    {% if config['llm']['provider'] == 'openai' %}
+gpt = LLMOpenAI(
+    agent=agent,
+    name='{{ config['llm']['model'] }}',
+    parameters={}
+)
+    {% elif config['llm']['provider'] == 'huggingface' %}
+hf_llm = LLMHuggingFace(
+    agent=agent,
+    name='{{ config['llm']['model'] }}',
+    parameters={}
+)
+    {% elif config['llm']['provider'] == 'huggingfaceapi' %}
+hf_llm_api = LLMHuggingFaceAPI(
+    agent=agent,
+    name='{{ config['llm']['model'] }}',
+    parameters={}
+)
+    {% elif config['llm']['provider'] == 'replicate' %}
+replicate_llm = LLMReplicate(
+    agent=agent,
+    name='{{ config['llm']['model'] }}',
+    parameters={}
+)
+    {% endif %}
+{% endif %}
+
+
+{% if config and 'inputModalities' in config and 'speech' in config['inputModalities'] %}
+stt = OpenAISpeech2Text(agent=agent, model_name="whisper-1")
+{% endif %}
+
+{% if config and 'outputModalities' in config and 'speech' in config['outputModalities'] %}
+tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
+{% endif %}
 
 {% macro write_ic_config(ic_config) -%}
 {% if is_class(ic_config, 'SimpleIntentClassifierConfiguration') -%}SimpleIntentClassifierConfiguration(
@@ -138,13 +203,31 @@ from besser.agent.library.entity.base_entities import {{ entity.name }}
 # {{ state.name }}
 {% if state.body != None -%}
 {% if state.body.name not in ns.bodies -%}
+
+{% if state.body.actions and is_class(state.body.actions[0], 'ReplyAction') %}
+def {{ state.body.name }}(session: Session):
+    {% for action in state.body.actions -%}
+    session.reply('{{ action.message }}')
+    {% endfor -%}
+{% else %}
 {{ replace_bot_session_with_session_in_signature(state.body) }}
+{% endif %}
 {% set ns.bodies = ns.bodies + [state.body.name] %}
 {% endif -%}
 {{ state.name }}.set_body({{ state.body.name}})
 {% endif %}
 {% if state.fallback_body != None -%}
+{% if state.fallback_body.name not in ns.bodies -%}
+{% if state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'ReplyAction') %}
+def {{ state.fallback_body.name }}(session: Session):
+    {% for action in state.fallback_body.actions %}
+    session.reply('{{ action.message }}')
+    {% endfor %}
+{% else %}
 {{ replace_bot_session_with_session_in_signature(state.fallback_body) }}
+{% endif %}
+{% set ns.bodies = ns.bodies + [state.fallback_body.name] %}
+{% endif -%}
 {{ state.name }}.set_fallback_body({{ state.fallback_body.name}})
 {% endif %}
 {% for transition in state.transitions -%}

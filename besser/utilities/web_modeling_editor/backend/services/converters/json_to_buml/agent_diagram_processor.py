@@ -5,17 +5,20 @@ Agent diagram processing for converting JSON to BUML format.
 import operator
 from deep_translator import GoogleTranslator
 import json as json_lib
-from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty
-from besser.BUML.metamodel.state_machine.agent import Agent, Intent, Auto, IntentMatcher, ReceiveTextEvent
+from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty, CustomCodeAction
+from besser.BUML.metamodel.state_machine.agent import Agent, Intent, Auto, IntentMatcher, ReceiveTextEvent, ReplyAction
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
 
 
 def process_agent_diagram(json_data):
     # Extract language from config if present
     config = json_data.get('config', {})
-    lang_value = config.get('language')
-    language = lang_value.lower() if isinstance(lang_value, str) and lang_value else None
-    source_language = config.get('source_language')
+    lang_value = ""
+    language = None
+    if config is not None and config != {}:
+        lang_value = config.get('language')
+        language = lang_value.lower() if isinstance(lang_value, str) and lang_value else None
+        source_language = config.get('source_language')
     def translate_text(text, lang, src_lang=None):
         # Use deep-translator's GoogleTranslator for free translation
         if not lang or lang == 'none':
@@ -145,7 +148,7 @@ def process_agent_diagram(json_data):
         if body_messages:
             # Check if any of the messages are LLM messages
             has_llm = any(message.startswith("LLM:") for message in body_messages)
-
+            has_code = any(message.startswith("CODE:") for message in body_messages)
             # If we have an LLM message, create a function that uses llm.predict
             if has_llm:
                 f_name = f"{state_name}_body"
@@ -155,7 +158,7 @@ def process_agent_diagram(json_data):
                     return body_function
 
                 body = Body(f_name, create_llm_body_function(f_name))
-            else:
+            elif has_code:
                 # Otherwise, create a regular function with the messages
                 def create_body_function(messages):
                     def body_function(session):
@@ -168,11 +171,15 @@ def process_agent_diagram(json_data):
                                     exec(code_content)
                                 except Exception as e:
                                     print(f"Error executing code: {str(e)}")
-                            else:
-                                session.reply(message)
                     return body_function
 
                 body = Body(f"{state_name}_body", create_body_function(body_messages))
+            else:
+                # Otherwise, create a regular function with the messages
+                body = Body(f"{state_name}_body")
+                for message in body_messages:
+                    body.add_action(ReplyAction(message=message))
+
 
             # Store the messages directly in the Body object for easier extraction
             body.messages = body_messages
@@ -207,7 +214,7 @@ def process_agent_diagram(json_data):
         if fallback_messages:
             # Check if any of the messages are LLM messages
             has_llm = any(message.startswith("LLM:") for message in fallback_messages)
-
+            has_code = any(message.startswith("CODE:") for message in fallback_messages)
             # If we have an LLM message, create a function that uses llm.predict
             if has_llm:
                 f_name = f"{state_name}_fallback_body"
@@ -217,7 +224,7 @@ def process_agent_diagram(json_data):
                     return fallback_function
 
                 fallback_body = Body(f_name, create_llm_fallback_function(f_name))
-            else:
+            elif has_code:
                 # Otherwise, create a regular function with the messages
                 def create_fallback_function(messages):
                     def fallback_function(session):
@@ -229,11 +236,13 @@ def process_agent_diagram(json_data):
                                     exec(code_content)
                                 except Exception as e:
                                     print(f"Error executing code: {str(e)}")
-                            else:
-                                session.reply(message)
                     return fallback_function
 
                 fallback_body = Body(f"{state_name}_fallback_body", create_fallback_function(fallback_messages))
+            else:
+                fallback_body = Body(f"{state_name}_fallback_body")
+                for message in fallback_messages:
+                    fallback_body.add_action(ReplyAction(message=message))
 
             # Store the messages directly in the Body object for easier extraction
             fallback_body.messages = fallback_messages
@@ -277,7 +286,7 @@ def process_agent_diagram(json_data):
             if body_messages:
                 # Check if any of the messages are LLM messages
                 has_llm = any(message.startswith("LLM:") for message in body_messages)
-
+                has_code = any(message.startswith("CODE:") for message in body_messages)
                 # If we have an LLM message, create a function that uses llm.predict
                 if has_llm:
                     f_name = f"{state_name}_body"
@@ -287,7 +296,7 @@ def process_agent_diagram(json_data):
                         return body_function
 
                     body = Body(f_name, create_llm_body_function(f_name))
-                else:
+                elif has_code:
                     # Otherwise, create a regular function with the messages
                     def create_body_function(messages):
                         def body_function(session):
@@ -300,12 +309,16 @@ def process_agent_diagram(json_data):
                                         exec(code_content)
                                     except Exception as e:
                                         print(f"Error executing code: {str(e)}")
-                                else:
-                                    session.reply(message)
                         return body_function
 
                     body = Body(f"{state_name}_body", create_body_function(body_messages))
-
+                else:
+                    # Otherwise, create a regular function with the messages
+                    body = Body(f"{state_name}_body")
+                    for message in body_messages:
+                        body.add_action(ReplyAction(message=message))
+                
+                    # replace this by using action
                 # Store the messages directly in the Body object for easier extraction
                 body.messages = body_messages
                 agent_state.set_body(body)
@@ -340,7 +353,7 @@ def process_agent_diagram(json_data):
             if fallback_messages:
                 # Check if any of the messages are LLM messages
                 has_llm = any(message.startswith("LLM:") for message in fallback_messages)
-
+                has_code = any(message.startswith("CODE:") for message in fallback_messages)
                 # If we have an LLM message, create a function that uses llm.predict
                 if has_llm:
                     f_name = f"{state_name}_fallback_body"
@@ -350,7 +363,7 @@ def process_agent_diagram(json_data):
                         return fallback_function
 
                     fallback_body = Body(f_name, create_llm_fallback_function(f_name))
-                else:
+                elif has_code:
                     # Otherwise, create a regular function with the messages
                     def create_fallback_function(messages):
                         def fallback_function(session):
@@ -362,11 +375,13 @@ def process_agent_diagram(json_data):
                                         exec(code_content)
                                     except Exception as e:
                                         print(f"Error executing code: {str(e)}")
-                                else:
-                                    session.reply(message)
                         return fallback_function
 
                     fallback_body = Body(f"{state_name}_fallback_body", create_fallback_function(fallback_messages))
+                else:
+                    fallback_body = Body(f"{state_name}_fallback_body")
+                    for message in fallback_messages:
+                        fallback_body.add_action(ReplyAction(message=message))
 
                 # Store the messages directly in the Body object for easier extraction
                 fallback_body.messages = fallback_messages
@@ -456,5 +471,4 @@ def process_agent_diagram(json_data):
                     # Default to no_intent_matched if no condition specified
                     source_state.when_no_intent_matched().go_to(target_state)
                     transition_count += 1
-
     return agent

@@ -6,7 +6,7 @@ from besser.BUML.metamodel.structural.structural import DomainModel, Association
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine
-from besser.BUML.metamodel.state_machine.agent import Agent, Intent
+from besser.BUML.metamodel.state_machine.agent import Agent, Intent, ReplyAction
 from besser.BUML.metamodel.state_machine.state_machine import Body
 from besser.utilities import sort_by_timestamp as sort
 
@@ -459,7 +459,7 @@ def agent_model_to_code(model: Agent, file_path: str):
         f.write("###############\n")
         f.write("import datetime\n")
         f.write("from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty\n")
-        f.write("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate\n")
+        f.write("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, ReplyAction, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate\n")
         f.write("import operator\n\n")
 
         # Create agent
@@ -550,17 +550,17 @@ def agent_model_to_code(model: Agent, file_path: str):
                             # Generate a function that uses llm.predict
                             f.write(f"def {state.name}_body(session: AgentSession):\n")
                             f.write(f"    session.reply(llm.predict(session.event.message))\n\n")
+                            f.write(f"{state.name}.set_body(Body('{state.name}_body', {state.name}_body))\n")
                         else:
                             # Write a function that outputs all messages
-                            f.write(f"def {state.name}_body(session: AgentSession):\n")
-                            for message in state.body.messages:
-                                # Escape single quotes and backslashes
-                                escaped_message = message.replace('\\', '\\\\').replace("'", "\\'")
-                                f.write(f"    session.reply('{escaped_message}')\n")
+                            f.write(f"{state.name}_body = Body('{state.name}_body')\n")
+
+                            for action in state.body.actions:
+                                f.write(f"{state.name}_body.add_action(ReplyAction('{action.message}'))\n")
                             f.write("\n")
-                        
+                            f.write(f"{state.name}.set_body({state.name}_body)\n")
                         # Set the body on the state
-                        f.write(f"{state.name}.set_body(Body('{state.name}_body', {state.name}_body))\n")
+                        
                 
             # Write fallback body function if it exists
             if state.fallback_body:
@@ -598,17 +598,17 @@ def agent_model_to_code(model: Agent, file_path: str):
                             # Generate a function that uses llm.predict
                             f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
                             f.write(f"    session.reply(llm.predict(session.event.message))\n\n")
+                            f.write(f"{state.name}.set_fallback_body(Body('{state.name}_fallback_body', {state.name}_fallback_body))\n")
                         else:
                             # Write a function that outputs all messages
-                            f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
-                            for message in state.fallback_body.messages:
-                                # Escape single quotes and backslashes
-                                escaped_message = message.replace('\\', '\\\\').replace("'", "\\'")
-                                f.write(f"    session.reply('{escaped_message}')\n")
+                            f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
+
+                            for action in state.fallback_body.actions:
+                                f.write(f"{state.name}_fallback_body.add_action(ReplyAction('{action.message}'))\n")
                             f.write("\n")
                         
                         # Set the fallback body on the state
-                        f.write(f"{state.name}.set_fallback_body(Body('{state.name}_fallback_body', {state.name}_fallback_body))\n")
+                            f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
             
             # Write transitions
             for transition in state.transitions:

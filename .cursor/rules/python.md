@@ -1,0 +1,14 @@
+## Python Code Style
+- Follow PEP 8 for code style.
+- Use PEP 484 type hints.
+- Use 4 spaces per indentation level.
+- Limit lines to 120 characters.
+- Use docstrings for all public modules, classes, and functions (PEP 257).
+- Use f-strings for string formatting.
+- Import standard libraries first, then third-party, then local modules.
+- Avoid wildcard imports.
+- Use explicit relative imports within packages.
+- Naming:
+  - `snake_case` → variables & functions
+  - `PascalCase` → classes
+  - `UPPER_CASE` → constants

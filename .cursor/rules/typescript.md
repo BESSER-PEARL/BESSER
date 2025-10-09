@@ -1,0 +1,14 @@
+## TypeScript Best Practices
+- Use strict mode and all recommended compiler options.
+- Prefer `interface` over `type` for object shapes.
+- Use `readonly` for immutable properties.
+- Specify explicit return types for all functions.
+- Avoid using `any`; prefer specific or generic types.
+- Use `const` for non-reassigned variables.
+- Prefer arrow functions for callbacks.
+- Use single quotes and template literals.
+- Organize imports: external → internal.
+- Use consistent file and folder naming (`kebab-case` or `camelCase`).
+- Write JSDoc comments for all exported members.
+- Avoid side effects; prefer pure functions.
+- Use ESLint and Prettier for linting and formatting.

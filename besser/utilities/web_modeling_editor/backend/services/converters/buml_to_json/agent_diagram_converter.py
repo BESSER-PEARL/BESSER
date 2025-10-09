@@ -101,6 +101,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
     Returns:
         Dictionary representing the agent diagram in JSON format
     """
+    # Initialize structures
     elements = {}
     relationships = {}
 
@@ -193,7 +194,25 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "node": node,
                     "source": function_source,
                 }
-        
+                
+        # Third pass collect all actions
+        print("DEBUG: Collecting actions...")
+        actions = {}
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Expr) and
+                isinstance(node.value, ast.Call) and
+                isinstance(node.value.func, ast.Attribute) and
+                node.value.func.attr == 'add_action' and
+                isinstance(node.value.func.value, ast.Name) and
+                len(node.value.args) == 1 and
+                isinstance(node.value.args[0], ast.Call) and
+                isinstance(node.value.args[0].func, ast.Name) and
+                node.value.args[0].func.id == 'ReplyAction' and
+                len(node.value.args[0].args) == 1 and
+                isinstance(node.value.args[0].args[0], ast.Constant) and
+                isinstance(node.value.args[0].args[0].value, str)
+                ):
+                actions[node.value.func.value.id] = node.value.args[0].args[0].value
         # Create initial node
         initial_node_id = str(uuid.uuid4())
         elements[initial_node_id] = {
@@ -498,18 +517,20 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 # Handle set_body
                 elif node.value.func.attr == "set_body":
                     try:
-                        # Extract function name from Body('function_name', function_name) pattern
-                        body_args = node.value.args[0].args
                         function_name = None
-                        if len(body_args) >= 2:
-                            if isinstance(body_args[1], ast.Name):
-                                function_name = body_args[1].id
-                            elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
-                                function_name = body_args[0].value
-                                
-                        if not function_name:
-                            continue
-
+                        # Extract function name from Body('function_name', function_name) pattern
+                        if isinstance(node.value.args[0], ast.Name):
+                            function_name = node.value.args[0].id
+                        else:
+                            body_args = node.value.args[0].args
+                            if len(body_args) >= 2:
+                                if isinstance(body_args[1], ast.Name):
+                                    function_name = body_args[1].id
+                                elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
+                                    function_name = body_args[0].value
+                            if not function_name:
+                                continue
+                            
                         state_name = node.value.func.value.id
                         if state_name not in states:
                             continue
@@ -567,6 +588,23 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     "replyType": "code"
                                 }
                                 elements[state["id"]]["bodies"].append(body_id)
+                        elif function_name in actions:
+                            body_id = str(uuid.uuid4())
+                            elements[body_id] = {
+                                "id": body_id,
+                                "name": actions[function_name],
+                                "type": "AgentStateBody",
+                                "owner": state["id"],
+                                "bounds": {
+                                    "x": elements[state["id"]]["bounds"]["x"],
+                                    "y": elements[state["id"]]["bounds"]["y"],
+                                    "width": 159,
+                                    "height": 30,
+                                },
+                                "replyType": "text"
+                            }
+                            elements[state["id"]]["bodies"].append(body_id)
+                        
                         else:
                             # Fallback if function not found
                             body_id = str(uuid.uuid4())
@@ -583,6 +621,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 },
                             }
                             elements[state["id"]]["bodies"].append(body_id)
+                        
                     except Exception as e:
                         continue
 
@@ -590,16 +629,22 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 elif node.value.func.attr == "set_fallback_body":
                     try:
                         # Extract function name from Body('function_name', function_name) pattern
-                        body_args = node.value.args[0].args
+                        
                         function_name = None
-                        if len(body_args) >= 2:
-                            if isinstance(body_args[1], ast.Name):
-                                function_name = body_args[1].id
-                            elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
-                                function_name = body_args[0].value
-                                
-                        if not function_name:
-                            continue
+                        # Extract function name from Body('function_name', function_name) pattern
+                        if isinstance(node.value.args[0], ast.Name):
+                            function_name = node.value.args[0].id
+                        else:
+                            body_args = node.value.args[0].args
+                            if len(body_args) >= 2:
+                                if isinstance(body_args[1], ast.Name):
+                                    function_name = body_args[1].id
+                                elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
+                                    function_name = body_args[0].value
+
+                            if not function_name:
+                                continue
+                    
 
                         state_name = node.value.func.value.id
                         if state_name not in states:
@@ -658,6 +703,24 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     "replyType": "code"
                                 }
                                 elements[state["id"]]["fallbackBodies"].append(body_id)
+                        
+                        elif function_name in actions:
+                            body_id = str(uuid.uuid4())
+                            elements[body_id] = {
+                                "id": body_id,
+                                "name": actions[function_name],
+                                "type": "AgentStateFallbackBody",
+                                "owner": state["id"],
+                                "bounds": {
+                                    "x": elements[state["id"]]["bounds"]["x"],
+                                    "y": elements[state["id"]]["bounds"]["y"],
+                                    "width": 159,
+                                    "height": 30,
+                                },
+                                "replyType": "text"
+                            }
+                            elements[state["id"]]["fallbackBodies"].append(body_id)
+                        
                         else:
                             # Fallback if function not found
                             body_id = str(uuid.uuid4())

@@ -78,6 +78,12 @@ If you are contributing **code**, please follow these **repository-specific guid
 - These define formatting, naming, and AI-assisted coding conventions.
 - All code contributions **must comply** with these rules for acceptance.
 
+### 5. Contributing to the Web Modeling Editor
+- The **Web Modeling Editor** is managed in a separate repository:  
+  👉 [BESSER_WME_standalone](https://github.com/BESSER-PEARL/BESSER_WME_standalone)
+- If you wish to contribute to the editor (UI, modeling features, web integration, etc.), please visit that repository and follow its specific **contribution guidelines**.
+- Any changes related to the editor should be made there, **not in this main BESSER repository**.
+
 ---
 
 ## 🔀 Creating Pull Requests

@@ -2,6 +2,8 @@ import os
 import textwrap
 
 from jinja2 import Environment, FileSystemLoader
+import json
+import re
 
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.structural import Method

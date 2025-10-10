@@ -33,7 +33,7 @@ class File:
         self.base64: str = file_base64
 
 
-class ReplyAction(Action):
+class AgentReply(Action):
     """Primitive action that represents sending a reply message.
 
     Args:
@@ -47,8 +47,21 @@ class ReplyAction(Action):
         self.message: str = message
 
     def __repr__(self):
-        return f"ReplyAction(message={self.message!r})"
+        return f"AgentReply(message={self.message!r})"
 
+
+class LLMReply(Action):
+    """Primitive action that represents sending a reply using an LLM.
+
+    This action does not contain any attributes, as it always uses:
+    session.reply(llm.predict(session.event.message))
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def __repr__(self):
+        return "LLMReply()"
 
 
 class IntentClassifierConfiguration(ABC):

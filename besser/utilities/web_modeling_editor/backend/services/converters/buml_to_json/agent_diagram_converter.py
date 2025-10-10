@@ -119,7 +119,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
     functions = {}  # name -> function_node mapping
     intents = {}  # name -> intent_id mapping
     state_machine_name = "Generated_State_Machine"
-    
+
     try:
         # First pass: collect all intents
         for node in ast.walk(tree):
@@ -144,7 +144,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     sentence_id = str(uuid.uuid4())
                                     elements[sentence_id] = {
                                         "id": sentence_id,
-                                        "name": elt.value,
+                                        "name": elt.value.replace("\\'", "'"),
                                         "type": "AgentIntentBody",
                                         "owner": intent_id,
                                         "bounds": {
@@ -194,25 +194,51 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "node": node,
                     "source": function_source,
                 }
-                
+        custom_code_actions = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                var_name = node.targets[0].id
+                if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == 'CustomCodeAction':
+                    # Check for 'callable' keyword argument
+                    callable_name = None
+                    for kw in node.value.keywords:
+                        if kw.arg == 'callable' and isinstance(kw.value, ast.Name):
+                            callable_name = kw.value.id
+                    if callable_name:
+                        custom_code_actions[var_name] = callable_name  # e.g., 'CustomCodeAction_initial' -> 'action_name'
+        
         # Third pass collect all actions
         print("DEBUG: Collecting actions...")
         actions = {}
         for node in ast.walk(tree):
-            if (isinstance(node, ast.Expr) and
+            if (
+                isinstance(node, ast.Expr) and
                 isinstance(node.value, ast.Call) and
                 isinstance(node.value.func, ast.Attribute) and
                 node.value.func.attr == 'add_action' and
                 isinstance(node.value.func.value, ast.Name) and
-                len(node.value.args) == 1 and
-                isinstance(node.value.args[0], ast.Call) and
-                isinstance(node.value.args[0].func, ast.Name) and
-                node.value.args[0].func.id == 'AgentReply' and
-                len(node.value.args[0].args) == 1 and
-                isinstance(node.value.args[0].args[0], ast.Constant) and
-                isinstance(node.value.args[0].args[0].value, str)
+                len(node.value.args) == 1
                 ):
-                actions[node.value.func.value.id] = node.value.args[0].args[0].value
+                body_var = node.value.func.value.id  # e.g., 'initial_body'
+                if (
+                    isinstance(node.value.args[0], ast.Call) and
+                    isinstance(node.value.args[0].func, ast.Name)
+                    ):
+                    if (node.value.args[0].func.id == 'AgentReply' and
+                        len(node.value.args[0].args) == 1 and
+                        isinstance(node.value.args[0].args[0], ast.Constant) and
+                        isinstance(node.value.args[0].args[0].value, str)
+                        ):
+                        actions[body_var] = node.value.args[0].args[0].value
+                    elif node.value.args[0].func.id == 'LLMReply':
+                        actions[body_var] = 'LLMReply'
+                elif isinstance(node.value.args[0], ast.Name):
+                    # Handle references to CustomCodeAction variables
+                    action_var = node.value.args[0].id  # e.g., 'CustomCodeAction_initial'
+                    if action_var in custom_code_actions:
+                        function_name = custom_code_actions[action_var]  # e.g., 'action_name'
+                        actions[body_var] = function_name  # Store the resolved function name
+        
         # Create initial node
         initial_node_id = str(uuid.uuid4())
         elements[initial_node_id] = {
@@ -537,8 +563,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             
                         state = states[state_name]
                         
-                        if function_name in functions:
+                        if function_name in functions or actions[function_name] in functions:
+                            if actions.get(function_name) in functions:
+                                function_name = actions[function_name]
                             result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
+                            
                             if result["replyType"] == "text":
                                 for reply in result["replies"]:
                                     body_id = str(uuid.uuid4())
@@ -589,22 +618,41 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 }
                                 elements[state["id"]]["bodies"].append(body_id)
                         elif function_name in actions:
-                            body_id = str(uuid.uuid4())
-                            elements[body_id] = {
-                                "id": body_id,
-                                "name": actions[function_name],
-                                "type": "AgentStateBody",
-                                "owner": state["id"],
-                                "bounds": {
-                                    "x": elements[state["id"]]["bounds"]["x"],
-                                    "y": elements[state["id"]]["bounds"]["y"],
-                                    "width": 159,
-                                    "height": 30,
-                                },
-                                "replyType": "text"
-                            }
-                            elements[state["id"]]["bodies"].append(body_id)
+                            if actions[function_name] == 'LLMReply':
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
+                                    "name": "AI response 🪄",
+                                    "type": "AgentStateBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                    "replyType": "llm"
+                                }
+                                elements[state["id"]]["bodies"].append(body_id)
+                                
+                            else:
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
+                                    "name": actions[function_name].replace("\\'", "'"),
+                                    "type": "AgentStateBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                    "replyType": "text"
+                                }
+                                elements[state["id"]]["bodies"].append(body_id)
                         
+
                         else:
                             # Fallback if function not found
                             body_id = str(uuid.uuid4())
@@ -652,7 +700,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             
                         state = states[state_name]
                         
-                        if function_name in functions:
+                        if function_name in functions or actions[function_name] in functions:
+                            if actions[function_name] in functions:
+                                function_name = actions[function_name]
                             result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
                             if result["replyType"] == "text":
                                 for reply in result["replies"]:
@@ -705,21 +755,38 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 elements[state["id"]]["fallbackBodies"].append(body_id)
                         
                         elif function_name in actions:
-                            body_id = str(uuid.uuid4())
-                            elements[body_id] = {
-                                "id": body_id,
-                                "name": actions[function_name],
-                                "type": "AgentStateFallbackBody",
-                                "owner": state["id"],
-                                "bounds": {
-                                    "x": elements[state["id"]]["bounds"]["x"],
-                                    "y": elements[state["id"]]["bounds"]["y"],
-                                    "width": 159,
-                                    "height": 30,
-                                },
-                                "replyType": "text"
-                            }
-                            elements[state["id"]]["fallbackBodies"].append(body_id)
+                            if actions[function_name] == 'LLMReply':
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
+                                    "name": "AI response 🪄",
+                                    "type": "AgentStateFallbackBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                    "replyType": "llm"
+                                }
+                                elements[state["id"]]["fallbackBodies"].append(body_id)
+                            else:
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
+                                    "name": actions[function_name].replace("\\'", "'"),
+                                    "type": "AgentStateFallbackBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                    "replyType": "text"
+                                }
+                                elements[state["id"]]["fallbackBodies"].append(body_id)
                         
                         else:
                             # Fallback if function not found

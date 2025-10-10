@@ -64,15 +64,15 @@ class CustomCodeAction(Action):
     def __init__(self, source: str = None, callable: Callable = None):
         if callable is not None:
             src = inspect.getsource(callable)
-            self.source = textwrap.dedent(src)
+            self.code = textwrap.dedent(src)
         else:
-            self.source = textwrap.dedent(source) if source else ""
+            self.code = textwrap.dedent(source) if source else ""
 
-    def to_source(self) -> str:
-        return self.source
+    def to_code(self) -> str:
+        return self.code
 
     def __repr__(self):
-        return f"CustomCodeAction(source='{self.source[:50]}...')"
+        return f"CustomCodeAction(source='{self.code[:50]}...')"
 
 
 class Body(Method):
@@ -121,7 +121,7 @@ class Body(Method):
         """Extract code from CustomCodeAction if present, otherwise return empty string."""
         for action in self.actions:
             if isinstance(action, CustomCodeAction):
-                return action.to_source()
+                return action.to_code()
         return ""
 
     def add_action(self, action: Action) -> 'Body':
@@ -135,9 +135,9 @@ class Body(Method):
         """
         self.actions.append(action)
         
-        # Update code: if new action is CustomCodeAction, set code to its source, otherwise set to ""
+        # Update code: if new action is CustomCodeAction, set code to its code, otherwise set to ""
         if isinstance(action, CustomCodeAction):
-            self.code = action.to_source()
+            self.code = action.to_code()
         else:
             self.code = ""
         

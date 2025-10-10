@@ -42,7 +42,12 @@ class BAFGenerator(GeneratorInterface):
 
         def replace_agent_session_with_session_in_signature(func: Method) -> str:
             if func:
+                # Replace 'AgentSession' with 'Session' in the code
                 code = func.code.replace('AgentSession', 'Session')
+                # Extract function name using regex
+                match = re.search(r'def\s+(\w+)\s*\(.*session\s*:\s*Session.*\)', code)
+                if match:
+                    code = code + "\n" + f"{func.name} = {match.group(1)}\n"
                 return textwrap.dedent(code)
             else:
                 return None

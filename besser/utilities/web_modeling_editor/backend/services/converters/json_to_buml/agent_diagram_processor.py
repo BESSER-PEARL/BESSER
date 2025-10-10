@@ -6,7 +6,7 @@ import operator
 from deep_translator import GoogleTranslator
 import json as json_lib
 from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty, CustomCodeAction
-from besser.BUML.metamodel.state_machine.agent import Agent, Intent, Auto, IntentMatcher, ReceiveTextEvent, ReplyAction
+from besser.BUML.metamodel.state_machine.agent import Agent, Intent, Auto, IntentMatcher, ReceiveTextEvent, AgentReply, LLMReply
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
 
 
@@ -151,38 +151,22 @@ def process_agent_diagram(json_data):
             has_code = any(message.startswith("CODE:") for message in body_messages)
             # If we have an LLM message, create a function that uses llm.predict
             if has_llm:
-                f_name = f"{state_name}_body"
-                def create_llm_body_function(name):
-                    def body_function(session):
-                        session.reply(llm.predict(session.event.message))
-                    return body_function
-
-                body = Body(f_name, create_llm_body_function(f_name))
+                body = Body(f"{state_name}_body")
+                body.add_action(LLMReply())
             elif has_code:
-                # Otherwise, create a regular function with the messages
-                def create_body_function(messages):
-                    def body_function(session):
-                        for message in messages:
-                            if message.startswith("CODE:"):
-                                # This is code to be executed
-                                try:
-                                    # Just store the code for later execution
-                                    code_content = message[5:]
-                                    exec(code_content)
-                                except Exception as e:
-                                    print(f"Error executing code: {str(e)}")
-                    return body_function
-
-                body = Body(f"{state_name}_body", create_body_function(body_messages))
+                # Use CustomCodeAction for code bodies
+                code_contents = [message[5:] for message in body_messages if message.startswith("CODE:")]
+                body = Body(f"{state_name}_body")
+                for code_content in code_contents:
+                    body.add_action(CustomCodeAction(source=code_content))
             else:
                 # Otherwise, create a regular function with the messages
                 body = Body(f"{state_name}_body")
                 for message in body_messages:
-                    body.add_action(ReplyAction(message=message))
+                    body.add_action(AgentReply(message=message))
 
 
             # Store the messages directly in the Body object for easier extraction
-            body.messages = body_messages
             agent_state.set_body(body)
 
         # Process fallback bodies
@@ -217,35 +201,20 @@ def process_agent_diagram(json_data):
             has_code = any(message.startswith("CODE:") for message in fallback_messages)
             # If we have an LLM message, create a function that uses llm.predict
             if has_llm:
-                f_name = f"{state_name}_fallback_body"
-                def create_llm_fallback_function(name):
-                    def fallback_function(session):
-                        session.reply(llm.predict(session.event.message))
-                    return fallback_function
-
-                fallback_body = Body(f_name, create_llm_fallback_function(f_name))
+                fallback_body = Body(f"{state_name}_fallback_body")
+                fallback_body.add_action(LLMReply())
             elif has_code:
-                # Otherwise, create a regular function with the messages
-                def create_fallback_function(messages):
-                    def fallback_function(session):
-                        for message in messages:
-                            if message.startswith("CODE:"):
-                                # This is code to be executed
-                                try:
-                                    code_content = message[5:]
-                                    exec(code_content)
-                                except Exception as e:
-                                    print(f"Error executing code: {str(e)}")
-                    return fallback_function
-
-                fallback_body = Body(f"{state_name}_fallback_body", create_fallback_function(fallback_messages))
+                # Use CustomCodeAction for code bodies
+                code_contents = [message[5:] for message in fallback_messages if message.startswith("CODE:")]
+                fallback_body = Body(f"{state_name}_fallback_body")
+                for code_content in code_contents:
+                    fallback_body.add_action(CustomCodeAction(source=code_content))
             else:
                 fallback_body = Body(f"{state_name}_fallback_body")
                 for message in fallback_messages:
-                    fallback_body.add_action(ReplyAction(message=message))
+                    fallback_body.add_action(AgentReply(message=message))
 
-            # Store the messages directly in the Body object for easier extraction
-            fallback_body.messages = fallback_messages
+
             agent_state.set_fallback_body(fallback_body)
 
     # Now process the rest of the states
@@ -289,38 +258,21 @@ def process_agent_diagram(json_data):
                 has_code = any(message.startswith("CODE:") for message in body_messages)
                 # If we have an LLM message, create a function that uses llm.predict
                 if has_llm:
-                    f_name = f"{state_name}_body"
-                    def create_llm_body_function(name):
-                        def body_function(session):
-                            session.reply(llm.predict(session.event.message))
-                        return body_function
-
-                    body = Body(f_name, create_llm_body_function(f_name))
+                    body = Body(f"{state_name}_body")
+                    body.add_action(LLMReply())
                 elif has_code:
-                    # Otherwise, create a regular function with the messages
-                    def create_body_function(messages):
-                        def body_function(session):
-                            for message in messages:
-                                if message.startswith("CODE:"):
-                                    # This is code to be executed
-                                    try:
-                                        # Just store the code for later execution
-                                        code_content = message[5:]
-                                        exec(code_content)
-                                    except Exception as e:
-                                        print(f"Error executing code: {str(e)}")
-                        return body_function
-
-                    body = Body(f"{state_name}_body", create_body_function(body_messages))
+                    # Use CustomCodeAction for code bodies
+                    code_contents = [message[5:] for message in body_messages if message.startswith("CODE:")]
+                    body = Body(f"{state_name}_body")
+                    for code_content in code_contents:
+                        body.add_action(CustomCodeAction(source=code_content))
                 else:
                     # Otherwise, create a regular function with the messages
                     body = Body(f"{state_name}_body")
                     for message in body_messages:
-                        body.add_action(ReplyAction(message=message))
+                        body.add_action(AgentReply(message=message))
                 
                     # replace this by using action
-                # Store the messages directly in the Body object for easier extraction
-                body.messages = body_messages
                 agent_state.set_body(body)
 
             # Process fallback bodies
@@ -356,35 +308,19 @@ def process_agent_diagram(json_data):
                 has_code = any(message.startswith("CODE:") for message in fallback_messages)
                 # If we have an LLM message, create a function that uses llm.predict
                 if has_llm:
-                    f_name = f"{state_name}_fallback_body"
-                    def create_llm_fallback_function(name):
-                        def fallback_function(session):
-                            session.reply(llm.predict(session.event.message))
-                        return fallback_function
-
-                    fallback_body = Body(f_name, create_llm_fallback_function(f_name))
+                    fallback_body = Body(f"{state_name}_fallback_body")
+                    fallback_body.add_action(LLMReply())
                 elif has_code:
-                    # Otherwise, create a regular function with the messages
-                    def create_fallback_function(messages):
-                        def fallback_function(session):
-                            for message in messages:
-                                if message.startswith("CODE:"):
-                                    # This is code to be executed
-                                    try:
-                                        code_content = message[5:]
-                                        exec(code_content)
-                                    except Exception as e:
-                                        print(f"Error executing code: {str(e)}")
-                        return fallback_function
-
-                    fallback_body = Body(f"{state_name}_fallback_body", create_fallback_function(fallback_messages))
+                    # Use CustomCodeAction for code bodies
+                    code_contents = [message[5:] for message in fallback_messages if message.startswith("CODE:")]
+                    fallback_body = Body(f"{state_name}_fallback_body")
+                    for code_content in code_contents:
+                        fallback_body.add_action(CustomCodeAction(source=code_content))
                 else:
                     fallback_body = Body(f"{state_name}_fallback_body")
                     for message in fallback_messages:
-                        fallback_body.add_action(ReplyAction(message=message))
+                        fallback_body.add_action(AgentReply(message=message))
 
-                # Store the messages directly in the Body object for easier extraction
-                fallback_body.messages = fallback_messages
                 agent_state.set_fallback_body(fallback_body)
 
     # Third pass: Process transitions

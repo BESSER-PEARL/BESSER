@@ -207,7 +207,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 len(node.value.args) == 1 and
                 isinstance(node.value.args[0], ast.Call) and
                 isinstance(node.value.args[0].func, ast.Name) and
-                node.value.args[0].func.id == 'ReplyAction' and
+                node.value.args[0].func.id == 'AgentReply' and
                 len(node.value.args[0].args) == 1 and
                 isinstance(node.value.args[0].args[0], ast.Constant) and
                 isinstance(node.value.args[0].args[0].value, str)

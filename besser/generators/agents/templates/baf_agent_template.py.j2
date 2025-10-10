@@ -204,11 +204,15 @@ from besser.agent.library.entity.base_entities import {{ entity.name }}
 {% if state.body != None -%}
 {% if state.body.name not in ns.bodies -%}
 
-{% if state.body.actions and is_class(state.body.actions[0], 'ReplyAction') %}
+{% if state.body.actions and is_class(state.body.actions[0], 'AgentReply') %}
 def {{ state.body.name }}(session: Session):
     {% for action in state.body.actions -%}
     session.reply('{{ action.message }}')
     {% endfor -%}
+{% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
+def {{ state.body.name }}(session: Session):
+    message = llm.predict(session.event.message)
+    session.reply(message)
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.body) }}
 {% endif %}
@@ -218,11 +222,15 @@ def {{ state.body.name }}(session: Session):
 {% endif %}
 {% if state.fallback_body != None -%}
 {% if state.fallback_body.name not in ns.bodies -%}
-{% if state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'ReplyAction') %}
+{% if state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'AgentReply') %}
 def {{ state.fallback_body.name }}(session: Session):
-    {% for action in state.fallback_body.actions %}
+    {% for action in state.fallback_body.actions -%}
     session.reply('{{ action.message }}')
     {% endfor %}
+{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}
+def {{ state.fallback_body.name }}(session: Session):
+    message = llm.predict(session.event.message)
+    session.reply(message)
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.fallback_body) }}
 {% endif %}

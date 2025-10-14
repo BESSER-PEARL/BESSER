@@ -197,6 +197,63 @@ def generate_agent_files(agent_model):
         cleanup_temp_resources(temp_dir)
 
 
+@app.post("/besser_api/generate-output-from-project")
+async def generate_code_output_from_project(input_data: ProjectInput):
+    """
+    Generate code output from a complete project.
+    This endpoint handles generators that require multiple diagrams (e.g., React).
+    """
+    try:
+        generator_type = input_data.settings.get("generator") if input_data.settings else None
+        
+        if not generator_type:
+            raise HTTPException(
+                status_code=400, 
+                detail="Generator type is required in project settings"
+            )
+        
+        # Validate generator
+        generator_info = validate_generator(generator_type)
+        if not generator_info:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported generator type: {generator_type}"
+            )
+        
+        # Get configuration from project settings
+        config = input_data.settings.get("config", {}) if input_data.settings else {}
+        
+        # Handle React generator (requires both ClassDiagram and GUINoCodeDiagram)
+        if generator_type == "react":
+            return await _handle_react_project_generation(input_data, generator_info, config)
+        
+        # For other generators, use the current diagram
+        current_diagram = input_data.diagrams.get(input_data.currentDiagramType)
+        if not current_diagram:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No diagram found for type: {input_data.currentDiagramType}"
+            )
+        
+        # Convert to DiagramInput and use existing logic
+        diagram_input = DiagramInput(
+            id=current_diagram.id,
+            title=current_diagram.title,
+            model=current_diagram.model,
+            lastUpdate=current_diagram.lastUpdate,
+            generator=generator_type,
+            config=config,
+            referenceDiagramData=current_diagram.referenceDiagramData
+        )
+        
+        return await generate_code_output(diagram_input)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/besser_api/generate-output")
 async def generate_code_output(input_data: DiagramInput):
     """
@@ -241,6 +298,47 @@ async def generate_code_output(input_data: DiagramInput):
     except Exception as e:
         cleanup_temp_resources(temp_dir)
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+
+async def _handle_react_project_generation(input_data: ProjectInput, generator_info, config: dict):
+    """Handle React generation from a complete project with both ClassDiagram and GUINoCodeDiagram."""
+    try:
+        # Extract ClassDiagram
+        class_diagram = input_data.diagrams.get("ClassDiagram")
+        if not class_diagram:
+            raise HTTPException(
+                status_code=400,
+                detail="ClassDiagram is required for React generator"
+            )
+        
+        # Extract GUINoCodeDiagram
+        gui_diagram = input_data.diagrams.get("GUINoCodeDiagram")
+        if not gui_diagram:
+            raise HTTPException(
+                status_code=400,
+                detail="GUINoCodeDiagram is required for React generator"
+            )
+        
+        temp_dir = tempfile.mkdtemp(prefix=TEMP_DIR_PREFIX)
+        
+        # Process class diagram to BUML
+        buml_model = process_class_diagram(class_diagram.model)
+        
+        # Process GUI diagram to BUML (needs both GUI data and class model)
+        json_data_with_gui = {
+            "referenceDiagramData": gui_diagram.model,
+            "model": class_diagram.model
+        }
+        gui_model = process_gui_diagram(json_data_with_gui, buml_model)
+        
+        # Generate React TypeScript project
+        generator_class = generator_info.generator_class
+        return await _generate_react_ts(buml_model, gui_model, generator_class, config, temp_dir)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"React generation failed: {str(e)}")
 
 
 async def _handle_agent_generation(json_data: dict):
@@ -618,21 +716,22 @@ async def export_buml(input_data: DiagramInput):
             )
 
         elif elements_data.get("type") == "ObjectDiagram":
+            # Old referencing without project
             # Handle object diagram - need both class model and object model in one file
-            reference_data = elements_data.get("referenceDiagramData", {})
-            if not reference_data:
-                raise ValueError("Object diagram requires reference class diagram data")
+            # reference_data = elements_data.get("referenceDiagramData", {})
+            # if not reference_data:
+            #     raise ValueError("Object diagram requires reference class diagram data")
 
             # Process the reference class diagram first
-            reference_json = {"elements": reference_data, "diagramTitle": reference_data.get("title", "Reference Classes")}
-            domain_model = process_class_diagram(reference_json)
+            # reference_json = {"elements": reference_data, "diagramTitle": reference_data.get("title", "Reference Classes")}
+            # domain_model = process_class_diagram(reference_json)
 
             # Process the object diagram with the domain model
-            object_model = process_object_diagram(json_data, domain_model)
+            object_model = process_object_diagram(json_data, buml_model)
 
             # Generate a single file with both domain model and object model
             output_file_path = os.path.join(temp_dir, "complete_model.py")
-            domain_model_to_code(model=domain_model, file_path=output_file_path, objectmodel=object_model)
+            domain_model_to_code(model=buml_model, file_path=output_file_path, objectmodel=object_model)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
             shutil.rmtree(temp_dir, ignore_errors=True)

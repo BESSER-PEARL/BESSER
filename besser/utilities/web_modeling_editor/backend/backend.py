@@ -213,12 +213,13 @@ async def generate_code_output_from_project(input_data: ProjectInput):
             )
         
         # Validate generator
-        generator_info = validate_generator(generator_type)
-        if not generator_info:
+        if not is_generator_supported(generator_type):
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported generator type: {generator_type}"
+                detail=f"Unsupported generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
             )
+        
+        generator_info = get_generator_info(generator_type)
         
         # Get configuration from project settings
         config = input_data.settings.get("config", {}) if input_data.settings else {}

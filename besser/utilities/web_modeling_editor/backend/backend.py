@@ -205,29 +205,29 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     """
     try:
         generator_type = input_data.settings.get("generator") if input_data.settings else None
-        
+
         if not generator_type:
             raise HTTPException(
                 status_code=400, 
                 detail="Generator type is required in project settings"
             )
-        
+
         # Validate generator
         if not is_generator_supported(generator_type):
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
             )
-        
+
         generator_info = get_generator_info(generator_type)
-        
+
         # Get configuration from project settings
         config = input_data.settings.get("config", {}) if input_data.settings else {}
-        
+
         # Handle React generator (requires both ClassDiagram and GUINoCodeDiagram)
         if generator_type == "react":
             return await _handle_react_project_generation(input_data, generator_info, config)
-        
+
         # For other generators, use the current diagram
         current_diagram = input_data.diagrams.get(input_data.currentDiagramType)
         if not current_diagram:
@@ -235,7 +235,7 @@ async def generate_code_output_from_project(input_data: ProjectInput):
                 status_code=400,
                 detail=f"No diagram found for type: {input_data.currentDiagramType}"
             )
-        
+
         # Convert to DiagramInput and use existing logic
         diagram_input = DiagramInput(
             id=current_diagram.id,
@@ -246,9 +246,9 @@ async def generate_code_output_from_project(input_data: ProjectInput):
             config=config,
             referenceDiagramData=current_diagram.referenceDiagramData
         )
-        
+
         return await generate_code_output(diagram_input)
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -311,7 +311,7 @@ async def _handle_react_project_generation(input_data: ProjectInput, generator_i
                 status_code=400,
                 detail="ClassDiagram is required for React generator"
             )
-        
+
         # Extract GUINoCodeDiagram
         gui_diagram = input_data.diagrams.get("GUINoCodeDiagram")
         if not gui_diagram:
@@ -319,23 +319,18 @@ async def _handle_react_project_generation(input_data: ProjectInput, generator_i
                 status_code=400,
                 detail="GUINoCodeDiagram is required for React generator"
             )
-        
+
         temp_dir = tempfile.mkdtemp(prefix=TEMP_DIR_PREFIX)
-        
+
         # Process class diagram to BUML
         buml_model = process_class_diagram(class_diagram.model)
-        
-        # Process GUI diagram to BUML (needs both GUI data and class model)
-        json_data_with_gui = {
-            "referenceDiagramData": gui_diagram.model,
-            "model": class_diagram.model
-        }
-        gui_model = process_gui_diagram(json_data_with_gui, buml_model)
-        
+
+        gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
+
         # Generate React TypeScript project
         generator_class = generator_info.generator_class
         return await _generate_react_ts(buml_model, gui_model, generator_class, config, temp_dir)
-        
+
     except HTTPException:
         raise
     except Exception as e:
@@ -382,10 +377,6 @@ async def _handle_class_diagram_generation(
         return await _generate_sqlalchemy(buml_model, generator_class, config, temp_dir)
     if generator_type == "jsonschema":
         return await _generate_jsonschema(buml_model, generator_class, config, temp_dir)
-    if generator_type == "react":
-        # Process the GUI diagram JSON data
-        gui_model = process_gui_diagram(json_data, buml_model)
-        return await _generate_react_ts(buml_model, gui_model, generator_class, config, temp_dir)
 
     return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
 

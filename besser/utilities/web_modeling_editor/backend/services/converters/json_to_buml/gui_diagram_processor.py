@@ -16,7 +16,14 @@ def get_element_by_id(class_model, element_id):
     if not class_model or not element_id:
         return None
     if isinstance(class_model, dict):
-        return class_model.get(element_id)
+        if element_id in class_model:
+            return class_model[element_id]
+
+        # If this is a full diagram dict, look under 'elements'
+        if 'elements' in class_model and isinstance(class_model['elements'], dict):
+            if element_id in class_model['elements']:
+                return class_model['elements'][element_id]
+
     for el in class_model:
         if el.get('id') == element_id:
             return el
@@ -38,18 +45,50 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         json.dump(gui_diagram, f, ensure_ascii=False, indent=2)
 
     # --- Style mapping ---
-    gui_model_json = gui_diagram.get('guiModel', {})
+    gui_model_json = gui_diagram
     style_map = {}
     for style_entry in gui_model_json.get('styles', []):
         selectors = style_entry.get('selectors', [])
         style = style_entry.get('style', {})
+
+        # Build Styling object from style dict
+        # Size
+        width = style.get('width', 'auto')
+        height = style.get('min-height', style.get('height', 'auto'))
+        padding = style.get('padding', '0')
+        margin = style.get('margin', '0')
+        font_size = style.get('font-size', None)
+        unit_size = UnitSize.PERCENTAGE if isinstance(width, str) and '%' in width else UnitSize.PIXELS
+        size = Size(width=width, height=height, padding=padding, margin=margin, font_size=font_size, unit_size=unit_size)
+
+        # Color
+        color_val = style.get('color', None)
+        background_color = style.get('background', style.get('background-color', '#FFFFFF'))
+        border_color = style.get('border-color', '#000000')
+        color = Color(background_color=background_color, text_color=color_val or '#000000', border_color=border_color)
+
+        # Position
+        pos_type = style.get('position', None)
+        if pos_type:
+            pos_type_enum = PositionType.RELATIVE if pos_type == 'relative' else PositionType.ABSOLUTE if pos_type == 'absolute' else PositionType.STATIC
+        else:
+            pos_type_enum = PositionType.STATIC
+        top = style.get('top', 'auto')
+        left = style.get('left', 'auto')
+        right = style.get('right', 'auto')
+        bottom = style.get('bottom', 'auto')
+        alignment = style.get('text-align', None)
+        position = Position(p_type=pos_type_enum, top=top, left=left, right=right, bottom=bottom, alignment=alignment)
+
+        styling = Styling(size=size, position=position, color=color)
+
         for selector in selectors:
             if isinstance(selector, dict):
                 key = selector.get('name')
                 if key:
-                    style_map[key] = style
+                    style_map[key] = styling
             elif isinstance(selector, str):
-                style_map[selector] = style
+                style_map[selector] = styling
 
     def get_style_for_component(component):
         """
@@ -69,14 +108,19 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         comp_type = component.get('type')
         if comp_type and comp_type in style_map:
             return style_map[comp_type]
-        return None
+
+        size = Size()
+        position = Position()
+        color = Color()
+        styling = Styling(size=size, position=position, color=color)
+        return styling
 
     def sanitize_name(name):
         if not isinstance(name, str):
             return name
         return name.replace(' ', '_')
 
-    title = gui_diagram.get('title', '')
+    title = gui_diagram.get('title', 'GUI')
     title = sanitize_name(title)
 
     gui_model = GUIModel(
@@ -99,18 +143,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         """
         elements = set()
         for c in components:
-            #children = c.get('components', [])
-            #parsed_children = parse_components(children, class_model) if children else set()
-            c_style = get_style_for_component(c) or {"width": "100%", "min-height": "400px"}
-            # Build Styling
-            c_color = Color(background_color=c_style.get('background', '#FFFFFF'))
-            c_size = Size(
-                width=c_style.get('width', '100%'),
-                height=c_style.get('min-height', '400px'),
-                unit_size=UnitSize.PERCENTAGE if '%' in c_style.get('width', '100%') else UnitSize.PIXELS
-            )
-            c_position = Position(p_type=PositionType.RELATIVE)
-            styling = Styling(size=c_size, position=c_position, color=c_color)
+            # Get Styling object
+            styling = get_style_for_component(c)
 
             # Dispatch to real element parsers
             c_type = c.get('type', '').lower()
@@ -133,8 +167,6 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             elif c_type == 'radial-bar-chart':
                 el = parse_radial_bar_chart(c, class_model, domain_model)
                 el.styling = styling
-            #elif parsed_children:
-            #    el = ViewContainer(name=c.get('type', 'Container'), description="", view_elements=parsed_children, styling=styling)
             else:
                 el = ViewComponent(name=c.get('type', 'Component'), styling=styling)
             if el:
@@ -154,15 +186,14 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 is_main_page=True,
             )
             # Screen styling (from style or default)
-            style = get_style_for_component(comp) or {"width": "100%", "min-height": "400px"}
-            color = Color(background_color=style.get('background', '#FFFFFF'))
-            size = Size(
-                width=style.get('width', '100%'),
-                height=style.get('min-height', '400px'),
-                unit_size=UnitSize.PERCENTAGE if '%' in style.get('width', '100%') else UnitSize.PIXELS
-            )
-            position = Position(p_type=PositionType.RELATIVE)
-            screen.styling = Styling(size=size, position=position, color=color)
+
+            styling = get_style_for_component(comp)
+            if styling is None:
+                color = Color(background_color="#FFFFFF")
+                size = Size(width="100%", height="400px", unit_size=UnitSize.PERCENTAGE)
+                position = Position(p_type=PositionType.RELATIVE)
+                styling = Styling(size=size, position=position, color=color)
+            screen.styling = styling
 
             children = comp.get('components', [])
             screen.view_elements = parse_components(children, class_model)
@@ -450,30 +481,8 @@ def parse_text(view_comp, get_style_for_component):
         content=content
     )
 
-    # --- Styling: get color from style_map (by id or type), fallback to black ---
-    style = get_style_for_component(view_comp)
-    text_color = None
-    if style and 'color' in style:
-        text_color = parse_color(style['color'])
-    else:
-        props = view_comp.get('props') or {}
-        text_color = parse_color(props.get('color', '#000000'))
-
-    color = Color(text_color=text_color)
-    props = view_comp.get('props') or {}
-    size = Size(
-        width=parse_numeric_value(props.get('width', 100), 100),
-        height=parse_numeric_value(props.get('height', 50), 50),
-        font_size=props.get('fontSize', 12),
-        unit_size=UnitSize.PERCENTAGE
-    )
-    position = Position(
-        p_type=PositionType.ABSOLUTE,
-        top=parse_numeric_value(props.get('y', 0), 0),
-        left=parse_numeric_value(props.get('x', 0), 0)
-    )
-    text_el.styling = Styling(size=size, position=position, color=color)
-
+    #styling = get_style_for_component(view_comp)
+    #text_el.styling = styling
     return text_el
 
 

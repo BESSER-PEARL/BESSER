@@ -7,6 +7,7 @@ import sys
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSourceElement
 from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
+from besser.generators.backend import BackendGenerator
 from besser.generators import GeneratorInterface
 from besser.utilities import sort_by_timestamp
 
@@ -40,8 +41,8 @@ class ReactTSGenerator(GeneratorInterface):
         Returns:
             None, but store the generated code as a file named vocabulary.ttl
         """
-        self._generate_frontend(self.env)
-        self._generate_server(self.env)
+        #self._generate_frontend(self.env)
+        self._generate_backend(self.env)
 
     def _generate_frontend(self, env):
         # Helper function to generate a file from a template
@@ -81,52 +82,33 @@ class ReactTSGenerator(GeneratorInterface):
         file_path = self.build_generation_path(file_name="frontend/src/App.tsx")
         template = env.get_template('frontend/src/App.tsx.j2')
         with open(file_path, mode="w", encoding="utf-8") as f:
-            # Get the module of the GUI model
             module = next(iter(self.gui_model.modules))
-            # Get the dashboard screen of that module
             screen = next(iter(module.screens))
-            # Access the view elements
             view_elements = screen.view_elements
-            generated_code = template.render(view_elements=view_elements,
-                                             px_to_percent=px_to_percent_relative,
-                                             screen=screen)
+            generated_code = template.render(
+                view_elements=view_elements,
+                screen=screen
+            )
             f.write(generated_code)
             print("Code generated in the location: " + file_path)
 
-    def _generate_server(self, env):
-        file_path = self.build_generation_path(file_name="server/server.js")
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        template = env.get_template('server/server.js.j2')
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render(data_model=self.model)
-            f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+    def _generate_backend(self, env):
+        backend_gen = BackendGenerator(self.model, output_dir=self.output_dir)
+        backend_gen.generate()
 
-        file_path = self.build_generation_path(file_name="server/package.json")
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        template = env.get_template('server/package.json.j2')
-        with open(file_path, mode="w", encoding="utf-8") as f:
-            generated_code = template.render()
-            f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+        # file_path = self.build_generation_path(file_name="server/server.js")
+        # os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        # template = env.get_template('server/server.js.j2')
+        # with open(file_path, mode="w", encoding="utf-8") as f:
+        #     generated_code = template.render(data_model=self.model)
+        #     f.write(generated_code)
+        #     print("Code generated in the location: " + file_path)
 
-def px_to_percent_relative(view_element):
-    """
-    Converts pixel-based position and size of a view element 
-    to percentage-based integer values.
+        # file_path = self.build_generation_path(file_name="server/package.json")
+        # os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        # template = env.get_template('server/package.json.j2')
+        # with open(file_path, mode="w", encoding="utf-8") as f:
+        #     generated_code = template.render()
+        #     f.write(generated_code)
+        #     print("Code generated in the location: " + file_path)
 
-    Args:
-        view_element (ViewElement): The view element to convert.
-
-    Returns:
-        dict: A dictionary containing the percentage-based position and size values (integers).
-    """
-    container_width = view_element.owner.styling.size.width if view_element.owner else 1
-    container_height = view_element.owner.styling.size.height if view_element.owner else 1
-
-    return {
-        "x": int((view_element.styling.position.left / container_width) * 100),
-        "y": int((view_element.styling.position.top / container_height) * 100),
-        "width": int((view_element.styling.size.width / container_width) * 100),
-        "height": int((view_element.styling.size.height / container_height) * 100),
-    }

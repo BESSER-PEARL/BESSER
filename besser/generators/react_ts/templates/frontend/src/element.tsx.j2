@@ -1,47 +1,34 @@
-{% macro render_element(element, px_to_percent) %}
-{% set pos = px_to_percent(element) %}
+{% macro render_element(element, get_style_dict) %}
     {
   {% if element.__class__.__name__ == "LineChart" %}
       type: "line_chart",
       id: "lc_{{ element.name }}",
-      x: {{ pos.x }},
-      y: {{ pos.y }},
-      width: {{ pos.width }},
-      height: {{ pos.height }},
       endpoint: "http://localhost:3001/api/{{ element.x_axis.owner.name | lower }}-data",
       dataKey: "{{ element.y_axis.name }}",
       xKey: "{{ element.x_axis.name }}",
       lineColor: "{{ element.styling.color.line_color }}",
       axisColor: "{{ element.styling.color.axis_color }}",
-      fontSize: {{ element.styling.size.font_size }},
+      fontSize: {{ element.styling.size.font_size | tojson }},
       gridColor: "{{ element.styling.color.grid_color }}",
-      lineWidth: {{ element.line_width }}
+      lineWidth: {{ element.line_width | tojson }}
   {% elif element.__class__.__name__ == "BarChart" %}
       type: "bar_chart",
       id: "bc_{{ element.name }}",
-      x: {{ pos.x }},
-      y: {{ pos.y }},
-      width: {{ pos.width }},
-      height: {{ pos.height }},
       endpoint: "http://localhost:3001/api/{{ element.x_axis.owner.name | lower }}-data",
       dataKey: "{{ element.y_axis.name }}",
       xKey: "{{ element.x_axis.name }}",
       barColor: "{{ element.styling.color.bar_color }}",
       axisColor: "{{ element.styling.color.axis_color }}",
-      fontSize: {{ element.styling.size.font_size }},
+      fontSize: {{ element.styling.size.font_size | tojson }},
       gridColor: "{{ element.styling.color.grid_color }}",
-      barWidth: {{ element.bar_width }}
+      barWidth: {{ element.bar_width | tojson }}
   {% elif element.__class__.__name__ == "PieChart" %}
       type: "pie_chart",
       id: "pc_{{ element.name }}",
-      x: {{ pos.x }},
-      y: {{ pos.y }},
-      width: {{ pos.width }},
-      height: {{ pos.height }},
       endpoint: "http://localhost:3001/api/{{ element.groups.owner.name | lower }}-data",
       nameKey: "{{ element.groups.name }}",
       dataKey: "{{ element.values.name }}",
-      paddingAngle: {{ element.padding_angle }},
+      paddingAngle: {{ element.padding_angle | tojson }},
       showLabels: {{ "true" if element.show_labels else "false" }},
       labelColor: "{{ element.styling.color.label_color }}",
       labelPosition: "{{ element.label_position.value }}",
@@ -51,33 +38,18 @@
   {% elif element.__class__.__name__ == "ViewContainer" %}
       type: "container",
       id: "vc_{{ element.name }}",
-      x: {{ pos.x }},
-      y: {{ pos.y }},
-      width: {{ pos.width }},
-      height: {{ pos.height }},
-      background: "{{ element.styling.color.background_color }}",
       children: [
       {% for child in element.view_elements %}
-        {{ render_element(child, px_to_percent) }}{{ "," if not loop.last }}
+        {{ render_element(child, get_style_dict) }}{{ "," if not loop.last }}
       {% endfor %}
       ]
   {% elif element.__class__.__name__ == "Text" %}
       type: "text",
       id: "txt_{{ element.name }}",
-      x: {{ pos.x }},
-      y: {{ pos.y }},
-      width: {{ pos.width }},
-      height: {{ pos.height }},
-      content: "{{ element.content }}",
-      text_color: "{{ element.styling.color.text_color }}",
-      font_size: {{ element.styling.size.font_size }}
+      content: "{{ element.content }}"
   {% elif element.__class__.__name__ == "RadarChart" %}
       type: "radar_chart",
       id: "rc_{{ element.name }}",
-      x: {{ pos.x }},
-      y: {{ pos.y }},
-      width: {{ pos.width }},
-      height: {{ pos.height }},
       endpoint: "http://localhost:3001/api/{{ element.features.owner.name | lower }}-data",
       featuresKey: "{{ element.features.name }}",
       valuesKey: "{{ element.values.name }}",
@@ -87,18 +59,14 @@
       showTooltip: {{ "true" if element.show_tooltip else "false" }},
       showRadiusAxis: {{ "true" if element.show_radius_axis else "false" }}
   {% elif element.__class__.__name__ == "RadialBarChart" %}
-    type: "radial_bar_chart",
-    id: "rbc_{{ element.name }}",
-    x: {{ pos.x }},
-    y: {{ pos.y }},
-    width: {{ pos.width }},
-    height: {{ pos.height }},
-    endpoint: "http://localhost:3001/api/{{ element.features.owner.name | lower }}-data",
-    featuresKey: "{{ element.features.name }}",
-    valuesKey: "{{ element.values.name }}",
-    startAngle: {{ element.start_angle }},
-    endAngle: {{ element.end_angle }},
-    colorPalette: "{{ element.styling.color.color_palette }}"
+      type: "radial_bar_chart",
+      id: "rbc_{{ element.name }}",
+      endpoint: "http://localhost:3001/api/{{ element.features.owner.name | lower }}-data",
+      featuresKey: "{{ element.features.name }}",
+      valuesKey: "{{ element.values.name }}",
+      startAngle: {{ element.start_angle | tojson }},
+      endAngle: {{ element.end_angle | tojson }},
+      colorPalette: "{{ element.styling.color.color_palette }}"
   {% endif %}
     }
 {%- endmacro -%}

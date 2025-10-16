@@ -323,12 +323,19 @@ async def _handle_react_project_generation(input_data: ProjectInput, generator_i
         temp_dir = tempfile.mkdtemp(prefix=TEMP_DIR_PREFIX)
 
         # Process class diagram to BUML
-        buml_model = process_class_diagram(class_diagram.model)
+        buml_model = process_class_diagram(class_diagram.model_dump())
 
         gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
 
         # Generate React TypeScript project
         generator_class = generator_info.generator_class
+
+        from besser.utilities import ModelSerializer
+        # Create an instance of ModelSerializer
+        serializer: ModelSerializer = ModelSerializer()
+        # test_model serialization
+        serializer.dump(model=gui_model)
+
         return await _generate_react_ts(buml_model, gui_model, generator_class, config, temp_dir)
 
     except HTTPException:

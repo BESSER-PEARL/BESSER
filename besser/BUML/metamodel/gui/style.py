@@ -169,8 +169,9 @@ class Position:
         z_index (int): Determines the stacking order; higher values appear above lower ones.
     """
 
-    def __init__(self, p_type: PositionType = PositionType.STATIC, top: str = None, left: str = None,
-                 right: str = None, bottom: str = None, alignment: Alignment = None, z_index: int = 0):
+    def __init__(self, p_type: PositionType = PositionType.STATIC, top: str = "auto", left: str = "auto",
+                 right: str = "auto", bottom: str = "auto", alignment: Alignment = Alignment.LEFT,
+                 z_index: int = 0):
 
         self.p_type: PositionType = p_type
         self.top: str = top

@@ -1,5 +1,4 @@
 from besser.BUML.metamodel.gui.graphical_ui import ViewComponent
-from besser.BUML.metamodel.structural import Property
 from besser.BUML.metamodel.gui.style import Alignment
 
 class Chart(ViewComponent):

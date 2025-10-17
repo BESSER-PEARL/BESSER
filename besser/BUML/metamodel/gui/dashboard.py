@@ -20,15 +20,43 @@ class LineChart(Chart):
     Args:
         name (str): The name of the line chart.
         line_width (int): The width of the line in the chart.
+        show_grid (bool): Whether to show the grid in the chart.
+        show_legend (bool): Whether to show the legend in the chart.
+        show_tooltip (bool): Whether to show tooltips.
+        curve_type (str): The curve type ('linear', 'monotone', 'step').
+        animate (bool): Whether to animate the chart.
+        legend_position (str): Position of the legend ('top', 'right', 'bottom', 'left').
+        grid_color (str): Color of the grid lines.
+        dot_size (int): Size of the data point dots.
 
     Attributes:
         name (str): The name of the line chart.
         line_width (int): The width of the line in the chart.
+        show_grid (bool): Whether to show the grid.
+        show_legend (bool): Whether to show the legend.
+        show_tooltip (bool): Whether to show tooltips.
+        curve_type (str): The curve type.
+        animate (bool): Whether to animate the chart.
+        legend_position (str): Position of the legend.
+        grid_color (str): Color of the grid lines.
+        dot_size (int): Size of the data point dots.
     """
 
-    def __init__(self, name: str, line_width: int = 2):
+    def __init__(self, name: str, line_width: int = 2, show_grid: bool = True, 
+                 show_legend: bool = True, show_tooltip: bool = True, 
+                 curve_type: str = 'monotone', animate: bool = True,
+                 legend_position: str = 'top', grid_color: str = '#e0e0e0', 
+                 dot_size: int = 5):
         super().__init__(name)
         self.line_width = line_width
+        self.show_grid = show_grid
+        self.show_legend = show_legend
+        self.show_tooltip = show_tooltip
+        self.curve_type = curve_type
+        self.animate = animate
+        self.legend_position = legend_position
+        self.grid_color = grid_color
+        self.dot_size = dot_size
 
     @property
     def line_width(self) -> int:
@@ -40,9 +68,91 @@ class LineChart(Chart):
         """Property: Set the line width of the line chart."""
         self._line_width = value
 
+    @property
+    def show_grid(self) -> bool:
+        """Property: Get whether to show grid."""
+        return self._show_grid
+
+    @show_grid.setter
+    def show_grid(self, value: bool):
+        """Property: Set whether to show grid."""
+        self._show_grid = value
+
+    @property
+    def show_legend(self) -> bool:
+        """Property: Get whether to show legend."""
+        return self._show_legend
+
+    @show_legend.setter
+    def show_legend(self, value: bool):
+        """Property: Set whether to show legend."""
+        self._show_legend = value
+
+    @property
+    def show_tooltip(self) -> bool:
+        """Property: Get whether to show tooltip."""
+        return self._show_tooltip
+
+    @show_tooltip.setter
+    def show_tooltip(self, value: bool):
+        """Property: Set whether to show tooltip."""
+        self._show_tooltip = value
+
+    @property
+    def curve_type(self) -> str:
+        """Property: Get the curve type."""
+        return self._curve_type
+
+    @curve_type.setter
+    def curve_type(self, value: str):
+        """Property: Set the curve type."""
+        self._curve_type = value
+
+    @property
+    def animate(self) -> bool:
+        """Property: Get whether to animate."""
+        return self._animate
+
+    @animate.setter
+    def animate(self, value: bool):
+        """Property: Set whether to animate."""
+        self._animate = value
+
+    @property
+    def legend_position(self) -> str:
+        """Property: Get legend position."""
+        return self._legend_position
+
+    @legend_position.setter
+    def legend_position(self, value: str):
+        """Property: Set legend position."""
+        self._legend_position = value
+
+    @property
+    def grid_color(self) -> str:
+        """Property: Get grid color."""
+        return self._grid_color
+
+    @grid_color.setter
+    def grid_color(self, value: str):
+        """Property: Set grid color."""
+        self._grid_color = value
+
+    @property
+    def dot_size(self) -> int:
+        """Property: Get dot size."""
+        return self._dot_size
+
+    @dot_size.setter
+    def dot_size(self, value: int):
+        """Property: Set dot size."""
+        self._dot_size = value
+
     def __repr__(self):
         return (
-            f"LineChart(name={self.name}, line_width={self.line_width})"
+            f"LineChart(name={self.name}, line_width={self.line_width}, "
+            f"show_grid={self.show_grid}, show_legend={self.show_legend}, "
+            f"curve_type={self.curve_type})"
         )
 
 class BarChart(Chart):
@@ -51,15 +161,46 @@ class BarChart(Chart):
     Args:
         name (str): The name of the bar chart.
         bar_width (int): The width of the bars in the chart.
+        orientation (str): Orientation of bars ('vertical' or 'horizontal').
+        show_grid (bool): Whether to show the grid.
+        show_legend (bool): Whether to show the legend.
+        show_tooltip (bool): Whether to show tooltips.
+        stacked (bool): Whether to stack bars.
+        animate (bool): Whether to animate the chart.
+        legend_position (str): Position of the legend.
+        grid_color (str): Color of the grid lines.
+        bar_gap (int): Gap between bars.
 
     Attributes:
         name (str): The name of the bar chart.
         bar_width (int): The width of the bars in the chart.
+        orientation (str): Orientation of bars.
+        show_grid (bool): Whether to show the grid.
+        show_legend (bool): Whether to show the legend.
+        show_tooltip (bool): Whether to show tooltips.
+        stacked (bool): Whether to stack bars.
+        animate (bool): Whether to animate.
+        legend_position (str): Position of the legend.
+        grid_color (str): Color of the grid.
+        bar_gap (int): Gap between bars.
     """
 
-    def __init__(self, name: str, bar_width: int = 30):
+    def __init__(self, name: str, bar_width: int = 30, orientation: str = 'vertical',
+                 show_grid: bool = True, show_legend: bool = True, 
+                 show_tooltip: bool = True, stacked: bool = False,
+                 animate: bool = True, legend_position: str = 'top',
+                 grid_color: str = '#e0e0e0', bar_gap: int = 4):
         super().__init__(name)
         self.bar_width = bar_width
+        self.orientation = orientation
+        self.show_grid = show_grid
+        self.show_legend = show_legend
+        self.show_tooltip = show_tooltip
+        self.stacked = stacked
+        self.animate = animate
+        self.legend_position = legend_position
+        self.grid_color = grid_color
+        self.bar_gap = bar_gap
 
     @property
     def bar_width(self) -> int:
@@ -71,9 +212,100 @@ class BarChart(Chart):
         """Property: Set the bar width of the bar chart."""
         self._bar_width = value
 
+    @property
+    def orientation(self) -> str:
+        """Property: Get orientation."""
+        return self._orientation
+
+    @orientation.setter
+    def orientation(self, value: str):
+        """Property: Set orientation."""
+        self._orientation = value
+
+    @property
+    def show_grid(self) -> bool:
+        """Property: Get whether to show grid."""
+        return self._show_grid
+
+    @show_grid.setter
+    def show_grid(self, value: bool):
+        """Property: Set whether to show grid."""
+        self._show_grid = value
+
+    @property
+    def show_legend(self) -> bool:
+        """Property: Get whether to show legend."""
+        return self._show_legend
+
+    @show_legend.setter
+    def show_legend(self, value: bool):
+        """Property: Set whether to show legend."""
+        self._show_legend = value
+
+    @property
+    def show_tooltip(self) -> bool:
+        """Property: Get whether to show tooltip."""
+        return self._show_tooltip
+
+    @show_tooltip.setter
+    def show_tooltip(self, value: bool):
+        """Property: Set whether to show tooltip."""
+        self._show_tooltip = value
+
+    @property
+    def stacked(self) -> bool:
+        """Property: Get whether bars are stacked."""
+        return self._stacked
+
+    @stacked.setter
+    def stacked(self, value: bool):
+        """Property: Set whether bars are stacked."""
+        self._stacked = value
+
+    @property
+    def animate(self) -> bool:
+        """Property: Get whether to animate."""
+        return self._animate
+
+    @animate.setter
+    def animate(self, value: bool):
+        """Property: Set whether to animate."""
+        self._animate = value
+
+    @property
+    def legend_position(self) -> str:
+        """Property: Get legend position."""
+        return self._legend_position
+
+    @legend_position.setter
+    def legend_position(self, value: str):
+        """Property: Set legend position."""
+        self._legend_position = value
+
+    @property
+    def grid_color(self) -> str:
+        """Property: Get grid color."""
+        return self._grid_color
+
+    @grid_color.setter
+    def grid_color(self, value: str):
+        """Property: Set grid color."""
+        self._grid_color = value
+
+    @property
+    def bar_gap(self) -> int:
+        """Property: Get bar gap."""
+        return self._bar_gap
+
+    @bar_gap.setter
+    def bar_gap(self, value: int):
+        """Property: Set bar gap."""
+        self._bar_gap = value
+
     def __repr__(self):
         return (
-            f"BarChart(name={self.name}, bar_width={self.bar_width})"
+            f"BarChart(name={self.name}, bar_width={self.bar_width}, "
+            f"orientation={self.orientation}, stacked={self.stacked})"
         )
 
 class PieChart(Chart):
@@ -86,6 +318,10 @@ class PieChart(Chart):
         show_labels (bool): Whether to show labels in the pie chart.
         label_position (Alignment): The position of the labels in the pie chart.
         padding_angle (int): The padding angle between slices in the pie chart.
+        inner_radius (int): Inner radius for donut charts (0-100).
+        outer_radius (int): Outer radius percentage (0-100).
+        start_angle (int): Start angle in degrees.
+        end_angle (int): End angle in degrees.
 
     Attributes:
         name (str): The name of the pie chart.
@@ -94,17 +330,27 @@ class PieChart(Chart):
         show_labels (bool): Whether to show labels in the pie chart.
         label_position (Alignment): The position of the labels in the pie chart.
         padding_angle (int): The padding angle between slices in the pie chart.
+        inner_radius (int): Inner radius for donut charts.
+        outer_radius (int): Outer radius percentage.
+        start_angle (int): Start angle in degrees.
+        end_angle (int): End angle in degrees.
     """
 
     def __init__(self, name: str, show_legend: bool = True,
                  legend_position: Alignment = Alignment.LEFT, show_labels: bool = True,
-                 label_position: Alignment = Alignment.INSIDE, padding_angle: int = 0):
+                 label_position: Alignment = Alignment.INSIDE, padding_angle: int = 0,
+                 inner_radius: int = 0, outer_radius: int = 80, 
+                 start_angle: int = 0, end_angle: int = 360):
         super().__init__(name)
         self.show_legend: bool = show_legend
         self.legend_position: Alignment = legend_position
         self.show_labels: bool = show_labels
         self.label_position: Alignment = label_position
         self.padding_angle: int = padding_angle
+        self.inner_radius: int = inner_radius
+        self.outer_radius: int = outer_radius
+        self.start_angle: int = start_angle
+        self.end_angle: int = end_angle
 
     @property
     def show_legend(self) -> bool:
@@ -156,6 +402,46 @@ class PieChart(Chart):
         """Property: Set the padding angle of the pie chart."""
         self._padding_angle = value
 
+    @property
+    def inner_radius(self) -> int:
+        """Property: Get the inner radius."""
+        return self._inner_radius
+
+    @inner_radius.setter
+    def inner_radius(self, value: int):
+        """Property: Set the inner radius."""
+        self._inner_radius = value
+
+    @property
+    def outer_radius(self) -> int:
+        """Property: Get the outer radius."""
+        return self._outer_radius
+
+    @outer_radius.setter
+    def outer_radius(self, value: int):
+        """Property: Set the outer radius."""
+        self._outer_radius = value
+
+    @property
+    def start_angle(self) -> int:
+        """Property: Get the start angle."""
+        return self._start_angle
+
+    @start_angle.setter
+    def start_angle(self, value: int):
+        """Property: Set the start angle."""
+        self._start_angle = value
+
+    @property
+    def end_angle(self) -> int:
+        """Property: Get the end angle."""
+        return self._end_angle
+
+    @end_angle.setter
+    def end_angle(self, value: int):
+        """Property: Set the end angle."""
+        self._end_angle = value
+
     def __repr__(self):
         return (
             f"PieChart(name={self.name}, show_legend={self.show_legend}, "
@@ -171,20 +457,37 @@ class RadarChart(Chart):
         show_grid (bool): Whether to show the grid in the radar chart.
         show_tooltip (bool): Whether to show the tooltip in the radar chart.
         show_radius_axis (bool): Whether to show the radius axis in the radar chart.
+        show_legend (bool): Whether to show the legend.
+        legend_position (str): Position of the legend.
+        dot_size (int): Size of data point dots.
+        grid_type (str): Type of grid ('polygon' or 'circle').
+        stroke_width (int): Width of the stroke lines.
 
     Attributes:
         name (str): The name of the radar chart.
         show_grid (bool): Whether to show the grid in the radar chart.
         show_tooltip (bool): Whether to show the tooltip in the radar chart.
         show_radius_axis (bool): Whether to show the radius axis in the radar chart.
+        show_legend (bool): Whether to show the legend.
+        legend_position (str): Position of the legend.
+        dot_size (int): Size of data point dots.
+        grid_type (str): Type of grid.
+        stroke_width (int): Width of the stroke lines.
     """
 
     def __init__(self, name: str, show_grid: bool = True, show_tooltip: bool = True,
-                 show_radius_axis: bool = True):
+                 show_radius_axis: bool = True, show_legend: bool = True,
+                 legend_position: str = 'top', dot_size: int = 3,
+                 grid_type: str = 'polygon', stroke_width: int = 2):
         super().__init__(name)
         self.show_grid = show_grid
         self.show_tooltip = show_tooltip
         self.show_radius_axis = show_radius_axis
+        self.show_legend = show_legend
+        self.legend_position = legend_position
+        self.dot_size = dot_size
+        self.grid_type = grid_type
+        self.stroke_width = stroke_width
 
     @property
     def show_grid(self) -> bool:
@@ -216,10 +519,60 @@ class RadarChart(Chart):
         """Property: Set the show_radius_axis option of the radar chart."""
         self._show_radius_axis = value
 
+    @property
+    def show_legend(self) -> bool:
+        """Property: Get whether to show legend."""
+        return self._show_legend
+
+    @show_legend.setter
+    def show_legend(self, value: bool):
+        """Property: Set whether to show legend."""
+        self._show_legend = value
+
+    @property
+    def legend_position(self) -> str:
+        """Property: Get legend position."""
+        return self._legend_position
+
+    @legend_position.setter
+    def legend_position(self, value: str):
+        """Property: Set legend position."""
+        self._legend_position = value
+
+    @property
+    def dot_size(self) -> int:
+        """Property: Get dot size."""
+        return self._dot_size
+
+    @dot_size.setter
+    def dot_size(self, value: int):
+        """Property: Set dot size."""
+        self._dot_size = value
+
+    @property
+    def grid_type(self) -> str:
+        """Property: Get grid type."""
+        return self._grid_type
+
+    @grid_type.setter
+    def grid_type(self, value: str):
+        """Property: Set grid type."""
+        self._grid_type = value
+
+    @property
+    def stroke_width(self) -> int:
+        """Property: Get stroke width."""
+        return self._stroke_width
+
+    @stroke_width.setter
+    def stroke_width(self, value: int):
+        """Property: Set stroke width."""
+        self._stroke_width = value
+
     def __repr__(self):
         return (
             f"RadarChart(name={self.name}, show_grid={self.show_grid}, show_tooltip={self.show_tooltip}, "
-            f"show_radius_axis={self.show_radius_axis})"
+            f"show_radius_axis={self.show_radius_axis}, grid_type={self.grid_type})"
         )
 
 class RadialBarChart(Chart):
@@ -229,17 +582,35 @@ class RadialBarChart(Chart):
         name (str): The name of the radial bar chart.
         start_angle (int): The start angle of the radial bar chart.
         end_angle (int): The end angle of the radial bar chart.
+        inner_radius (int): Inner radius percentage (0-100).
+        outer_radius (int): Outer radius percentage (0-100).
+        show_legend (bool): Whether to show the legend.
+        legend_position (str): Position of the legend.
+        show_tooltip (bool): Whether to show tooltips.
         
     Attributes:
         name (str): The name of the radial bar chart.
         start_angle (int): The start angle of the radial bar chart.
         end_angle (int): The end angle of the radial bar chart.
+        inner_radius (int): Inner radius percentage.
+        outer_radius (int): Outer radius percentage.
+        show_legend (bool): Whether to show the legend.
+        legend_position (str): Position of the legend.
+        show_tooltip (bool): Whether to show tooltips.
     """
 
-    def __init__(self, name: str, start_angle: int, end_angle: int):
+    def __init__(self, name: str, start_angle: int = 0, end_angle: int = 360,
+                 inner_radius: int = 30, outer_radius: int = 80,
+                 show_legend: bool = True, legend_position: str = 'top',
+                 show_tooltip: bool = True):
         super().__init__(name)
         self.start_angle = start_angle
         self.end_angle = end_angle
+        self.inner_radius = inner_radius
+        self.outer_radius = outer_radius
+        self.show_legend = show_legend
+        self.legend_position = legend_position
+        self.show_tooltip = show_tooltip
 
     @property
     def start_angle(self) -> int:
@@ -261,9 +632,60 @@ class RadialBarChart(Chart):
         """Property: Set the end angle of the radial bar chart."""
         self._end_angle = value
 
+    @property
+    def inner_radius(self) -> int:
+        """Property: Get the inner radius."""
+        return self._inner_radius
+
+    @inner_radius.setter
+    def inner_radius(self, value: int):
+        """Property: Set the inner radius."""
+        self._inner_radius = value
+
+    @property
+    def outer_radius(self) -> int:
+        """Property: Get the outer radius."""
+        return self._outer_radius
+
+    @outer_radius.setter
+    def outer_radius(self, value: int):
+        """Property: Set the outer radius."""
+        self._outer_radius = value
+
+    @property
+    def show_legend(self) -> bool:
+        """Property: Get whether to show legend."""
+        return self._show_legend
+
+    @show_legend.setter
+    def show_legend(self, value: bool):
+        """Property: Set whether to show legend."""
+        self._show_legend = value
+
+    @property
+    def legend_position(self) -> str:
+        """Property: Get legend position."""
+        return self._legend_position
+
+    @legend_position.setter
+    def legend_position(self, value: str):
+        """Property: Set legend position."""
+        self._legend_position = value
+
+    @property
+    def show_tooltip(self) -> bool:
+        """Property: Get whether to show tooltip."""
+        return self._show_tooltip
+
+    @show_tooltip.setter
+    def show_tooltip(self, value: bool):
+        """Property: Set whether to show tooltip."""
+        self._show_tooltip = value
+
     def __repr__(self):
         return (
-            f"RadialBarChart(name={self.name}, start_angle={self.start_angle}, end_angle={self.end_angle})"
+            f"RadialBarChart(name={self.name}, start_angle={self.start_angle}, "
+            f"end_angle={self.end_angle}, inner_radius={self.inner_radius})"
         )
 
 class Map(ViewComponent):

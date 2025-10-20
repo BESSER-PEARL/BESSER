@@ -1,47 +1,56 @@
-# GitHub Copilot Instructions for BESSER Repository
+# GitHub Copilot Instructions for the BESSER Backend Repository
 
-## General Guidelines
+These instructions tailor Copilot suggestions to the structure of the `BESSER`
+repository, which implements the **backend** for the BESSER Web Modeling Editor
+and the core B-UML SDK. The web editor's frontend lives in
+[`BESSER_WME_standalone`](https://github.com/BESSER-PEARL/BESSER_WME_standalone);
+avoid authoring UI code here unless you are touching the embedded submodule
+under `besser/utilities/web_modeling_editor/`.
+
+## Orientation
+- Prioritize changes in the Python packages located in `besser/`:
+  - `BUML/` contains the metamodel, textual/graphical notations, and the validation logic consumed by generators.
+  - `generators/` contains backend code generators (Django, SQLAlchemy, Flutter, etc.).
+  - `utilities/` hosts shared helpers (templating, configuration, CLI tools) that back both the SDK and the editor services.
+- When enhancing the web modeling editor backend, reuse these utilities rather than duplicating logic in ad-hoc modules.
+- Keep documentation in sync—many backend changes require updates under `docs/source/` or in `CONTRIBUTING.md`.
+
+## General Coding Guidelines
 - Write clear, maintainable, and well-documented code.
-- Follow the existing code style and conventions in each submodule.
-- Use descriptive variable, function, and class names.
-- Add or update docstrings for all public classes and methods.
-- Prefer type annotations for all function signatures (Python, TypeScript, etc.).
-- Avoid code duplication; refactor or reuse existing utilities where possible.
-- Write unit tests for new features and bug fixes.
-- Ensure all code passes linting and formatting checks before committing.
+- Follow the conventions already established in the touched package.
+- Use descriptive names and add or update docstrings for public APIs.
+- Prefer type annotations for function signatures where practical.
+- Avoid duplication—promote helpers into `besser.utilities` when multiple generators or services share behavior.
+- Cover new behavior with tests in `tests/`, especially around metamodel semantics and generator output.
+- Ensure all code passes linting, formatting, and pytest before committing.
 
 ## Python Code Style
-- Follow [PEP 8](https://peps.python.org/pep-0008/) for code style.
-- Use [PEP 484](https://peps.python.org/pep-0484/) type hints.
-- Use 4 spaces per indentation level.
-- Limit lines to 120 characters.
-- Use docstrings for all public modules, classes, and functions (PEP 257).
-- Use f-strings for string formatting.
-- Import standard libraries first, then third-party, then local modules.
-- Avoid wildcard imports.
-- Use explicit relative imports within packages.
-- Use snake_case for variables and functions, PascalCase for classes, and UPPER_CASE for constants.
+- Follow [PEP 8](https://peps.python.org/pep-0008/) with 4-space indentation and
+  a 120-character soft line limit.
+- Use [PEP 484](https://peps.python.org/pep-0484/) type hints to clarify
+  interfaces between metamodel elements, generators, and utilities.
+- Organize imports as standard library, third-party, then local modules.
+- Avoid wildcard imports and implicit re-exports.
+- Use f-strings for formatting, snake_case for functions/variables, PascalCase for classes, and UPPER_CASE for module constants.
+- Keep docstrings (PEP 257) up to date, including examples for DSL usage when relevant.
 
-## TypeScript Best Practices
-- Use [TypeScript strict mode](https://www.typescriptlang.org/tsconfig#strict) and enable all recommended compiler options.
-- Prefer `interface` over `type` for object shapes.
-- Use `readonly` for properties that should not be reassigned.
-- Always specify explicit return types for functions and methods.
-- Avoid using `any`; prefer specific types or generics.
-- Use `const` for variables that are not reassigned, otherwise use `let`.
-- Prefer arrow functions for callbacks and function expressions.
-- Use single quotes for strings.
-- Use template literals for string interpolation.
-- Organize imports: external modules first, then internal modules.
-- Use consistent file and folder naming (kebab-case or camelCase).
-- Write JSDoc comments for all exported functions, classes, and interfaces.
-- Avoid side effects in modules; prefer pure functions.
-- Use ESLint and Prettier for linting and formatting.
+## TypeScript / Frontend Touchpoints
+- TypeScript should rarely appear in this repository. If you must edit the editor submodule under `besser/utilities/web_modeling_editor/`, follow the conventions upstream in `BESSER_WME_standalone`:
+  - Enable strict compiler options.
+  - Prefer `interface` for object shapes, `const` for immutable bindings, and explicit return types.
+  - Run the frontend toolchain in that submodule (`npm install`, `npm test`) and keep linting/formatting consistent with its configuration.
+- All other UI changes belong in the dedicated frontend repository.
 
-## Documentation
-- Update or add docstrings and comments for all new or modified code.
-- Update the `README.md` and other relevant documentation when introducing new features or breaking changes.
+## Documentation Expectations
+- Update reStructuredText files under `docs/source/` when backend behavior or
+  contributor workflows change. Build locally with `cd docs && make html`.
+- Keep `README.md`, `CONTRIBUTING.md`, and the contributor/AI-assistant guides
+  aligned with new features or tooling.
+- Document environment setup steps any time dependencies or workflows change
+  (e.g., new generator prerequisites, updated CLI flags).
 
 ---
 
-_These instructions are intended to help maintain a high-quality, consistent codebase and leverage Copilot effectively for this repository._
+_Following these guidelines helps Copilot propose changes that respect the
+architecture of the BESSER backend and keeps human and AI contributions
+consistent._

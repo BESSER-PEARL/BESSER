@@ -18,33 +18,29 @@ services:
     networks:
       - besser_network
 
-  besser_redis:
-    image: redis/redis-stack-server:latest
-    container_name: besser_redis
-    volumes:
-      - apollon_redis_data:/data
-    networks:
-      - besser_network
+  # Commented out - not needed without collaboration features
+  # besser_redis:
+  #   image: redis/redis-stack-server:latest
+  #   container_name: besser_redis
+  #   volumes:
+  #     - apollon_redis_data:/data
+  #   networks:
+  #     - besser_network
 
   besser-wme-frontend:
     image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
     build:
       context: ./besser/utilities/web_modeling_editor/frontend
-      dockerfile: Dockerfile.redis
+      dockerfile: Dockerfile
     container_name: besser-wme-frontend
     environment:
-      - APOLLON_REDIS_URL=redis://besser_redis:6379
-      - APOLLON_REDIS_DIAGRAM_TTL=${APOLLON_REDIS_DIAGRAM_TTL}
-      - APOLLON_REDIS_MIGRATE_FROM_FILE=true
       - DEPLOYMENT_URL=${DEPLOYMENT_URL}
       - BACKEND_URL=${BACKEND_URL}
-    volumes:
-      - ./diagrams:/app/diagrams
     restart: always
     networks:
       - besser_network
     ports:
-      - "8080:8080"
+      - "8080:80"
 
 volumes:
   apollon_redis_data:

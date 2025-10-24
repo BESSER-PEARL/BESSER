@@ -585,26 +585,37 @@ class Button(ViewComponent):
 
 # Image is a type of ViewComponent
 class Image(ViewComponent):
-    """Represents an image component and encapsulates the specific properties of a image, such as its name.
+    """Represents an image component and encapsulates image-specific properties.
 
     Args:
         name (str): The name of the image.
-        description (str): The description of the input field.
+        description (str): The description of the image.
         timestamp (datetime): Object creation datetime (default is current time).
         styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
+        source (str | None): Raw URI/base64 string representing the image source.
 
     Attributes:
         name (str): The name of the image.
-        description (str): The description of the input field.
+        description (str): The description of the image.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
+        source (str | None): Raw URI/base64 string representing the image source.
     """
 
-    def __init__(self, name: str, description: str, timestamp: int = None, styling: Styling =None):
+    def __init__(self, name: str, description: str, timestamp: int = None, styling: Styling = None, source: str | None = None):
         super().__init__(name, description, timestamp, styling)
+        self.source = source
+
+    @property
+    def source(self) -> str | None:
+        return self.__source
+
+    @source.setter
+    def source(self, value: str | None):
+        self.__source = value
 
     def __repr__(self):
-        return f'Image({self.name},{self.description}, {self.timestamp}, {self.styling})'
+        return f'Image({self.name},{self.description}, {self.timestamp}, {self.styling}, source={"set" if self.source else None})'
 
 
 # InputField is a type of ViewComponent

@@ -339,7 +339,11 @@ def parse_image(component: Dict[str, Any], styling, name: str, meta: Dict) -> Im
     if isinstance(attributes, dict) and attributes.get("alt"):
         description = str(attributes.get("alt"))
     
-    image = Image(name=name, description=description, styling=styling)
+    source = None
+    if isinstance(attributes, dict):
+        source = attributes.get("src") or attributes.get("data-src")
+
+    image = Image(name=name, description=description, styling=styling, source=source)
     if meta["tagName"] is None:
         meta["tagName"] = "img"
     return image

@@ -209,7 +209,7 @@ class ReactGenerator(GeneratorInterface):
 
         if isinstance(element, Image):
             node["alt"] = element.description or ""
-            node["src"] = attributes.get("src") or attributes.get("data-src")
+            node["src"] = attributes.get("src") or attributes.get("data-src") or getattr(element, "source", None)
 
         if isinstance(element, Button):
             node["label"] = element.label
@@ -752,4 +752,3 @@ class ReactGenerator(GeneratorInterface):
                 continue
             cleaned[key] = value
         return cleaned
-

@@ -335,7 +335,11 @@ def _write_text(f, var_name, text):
 
 def _write_image(f, var_name, image):
     """Write code for an Image component."""
-    f.write(f'{var_name} = Image(name="{image.name}", description="{image.description or ""}")\n')
+    params = [f'name="{image.name}"', f'description="{image.description or ""}"']
+    image_source = getattr(image, "source", None)
+    if image_source:
+        params.append(f'source="{_escape_string(image_source)}"')
+    f.write(f'{var_name} = Image({", ".join(params)})\n')
 
 
 def _write_input_field(f, var_name, input_field):

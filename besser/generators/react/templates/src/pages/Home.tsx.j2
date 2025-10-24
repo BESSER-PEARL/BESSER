@@ -2,19 +2,31 @@ import React from "react";
 import componentsData from "../data/ui_components.json";
 import stylesData from "../data/ui_styles.json";
 import { Renderer } from "../components/Renderer";
-import { transformStyles } from "../utils/transformStyles";
+import { applyStyle, StyleData } from "../utils/applyStyle";
+
+const mainPageId = "[[ main_page_id or '' ]]";
 
 const Home: React.FC = () => {
-  const page = componentsData.pages.find((p) => p.id === "page_main");
-  if (!page) return <div>Error: page not found.</div>;
+  const pages = componentsData.pages ?? [];
+  const page =
+    pages.find((p: any) => (mainPageId ? p.id === mainPageId : false)) ??
+    pages[0];
 
-  const components = page.components || [];
-  const transformedStyles = transformStyles(stylesData.styles);
+  if (!page) {
+    return <div>No screens defined in the generated GUI model.</div>;
+  }
+
+  const styles = (stylesData.styles ?? []) as StyleData[];
+  const pageStyle = {
+    width: "100%",
+    minHeight: "100vh",
+    ...applyStyle(`#${page.id}`, styles),
+  };
 
   return (
-    <div style={{ width: "100%", minHeight: "100vh", background: "#f8f8f8", padding: "20px" }}>
-      {components.map((component) => (
-        <Renderer key={component.id} component={component} styles={transformedStyles} />
+    <div id={page.id} style={pageStyle}>
+      {(page.components ?? []).map((component: any) => (
+        <Renderer key={component.id} component={component} styles={styles} />
       ))}
     </div>
   );

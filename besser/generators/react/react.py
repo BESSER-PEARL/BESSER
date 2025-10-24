@@ -1,74 +1,755 @@
 """
-This module generates Django code using Jinja2 templates based on BUML models.
+This module generates React code using Jinja2 templates based on BUML models.
 """
-import os
-import subprocess
-import sys
-from jinja2 import Environment, FileSystemLoader
-from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSourceElement
-from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
-from besser.generators import GeneratorInterface
-from besser.utilities import sort_by_timestamp
+from __future__ import annotations
 
-##############################
-#   React Generator
-##############################
+import json
+import os
+from enum import Enum
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+
+from jinja2 import Environment, FileSystemLoader
+
+from besser.BUML.metamodel.gui import (
+    Button,
+    DataList,
+    Form,
+    GUIModel,
+    Image,
+    InputField,
+    Menu,
+    MenuItem,
+    Text,
+    ViewComponent,
+    ViewContainer,
+)
+from besser.BUML.metamodel.gui.dashboard import (
+    BarChart,
+    LineChart,
+    PieChart,
+    RadarChart,
+    RadialBarChart,
+)
+from besser.BUML.metamodel.gui.events_actions import (
+    Create,
+    Delete,
+    Event,
+    Parameter,
+    Read,
+    Transition,
+    Update,
+)
+from besser.BUML.metamodel.structural import DomainModel
+from besser.generators import GeneratorInterface
+
+
 class ReactGenerator(GeneratorInterface):
     """
-    ReactGenerator is responsible for generating React code based on
-    input B-UML and GUI models. It implements the GeneratorInterface and facilitates
-    the creation of a React application structure.
-
-    Args:
-        model (DomainModel): The B-UML model representing the application's domain.
-        gui_model (GUIModel): The GUI model instance containing necessary configurations.
-        output_dir (str, optional): Directory where generated code will be saved. Defaults to None.
+    Generates React code based on BUML and GUI models. It walks all template files and renders
+    them with the serialized GUI metadata so the resulting React project mirrors the modelling editor.
     """
 
     def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
-        # Jinja environment configuration with custom delimiters to avoid React/JSX conflicts
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(
             loader=FileSystemLoader(templates_path),
             trim_blocks=True,
             lstrip_blocks=True,
-            extensions=['jinja2.ext.do'],
-            variable_start_string='[[',
-            variable_end_string=']]',
+            extensions=["jinja2.ext.do"],
+            variable_start_string="[[",
+            variable_end_string="]]",
         )
+        self._style_map: Dict[Tuple[str, ...], Dict[str, Any]] = {}
+        self._raw_style_entries: List[Dict[str, Any]] = list(getattr(self.gui_model, "_style_entries", []))
 
     def generate(self):
         """
-        Generates React TS code based on the provided B-UML and GUI models.
+        Generates React TS code based on the provided BUML and GUI models.
         Generates all files from the templates directory, preserving structure and file names (removing .j2 extension).
         """
-        def generate_file_from_template(template_path, rel_template_path):
-            # Remove .j2 extension for output file
-            if rel_template_path.endswith('.j2'):
+
+        context = self._build_generation_context()
+
+        def generate_file_from_template(rel_template_path: str):
+            if rel_template_path.endswith(".j2"):
                 rel_output_path = rel_template_path[:-3]
             else:
                 rel_output_path = rel_template_path
+
             file_path = self.build_generation_path(file_name=rel_output_path)
             print(f"Generating file: {file_path} from template: {rel_template_path}")
             try:
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 template = self.env.get_template(rel_template_path.replace("\\", "/"))
-                context = {"model": self.gui_model} if "index.html" in rel_output_path else {}
                 generated_code = template.render(**context)
                 with open(file_path, mode="w", encoding="utf-8") as f:
                     f.write(generated_code)
                 print(f"Code generated in the location: {file_path}")
-            except Exception as e:
-                print(f"Error generating {file_path} from {rel_template_path}: {e}")
+            except Exception as exc:
+                print(f"Error generating {file_path} from {rel_template_path}: {exc}")
                 raise
 
-        # Walk through the templates directory and generate all .j2 files
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         for root, _, files in os.walk(templates_path):
-            for file in files:
-                if file.endswith('.j2'):
-                    abs_template_path = os.path.join(root, file)
+            for file_name in files:
+                if file_name.endswith(".j2"):
+                    abs_template_path = os.path.join(root, file_name)
                     rel_template_path = os.path.relpath(abs_template_path, templates_path)
-                    generate_file_from_template(abs_template_path, rel_template_path)
+                    generate_file_from_template(rel_template_path)
+
+    # --------------------------------------------------------------------- #
+    # Context builders
+    # --------------------------------------------------------------------- #
+    def _build_generation_context(self) -> Dict[str, Any]:
+        components_payload, styles_payload, meta = self._serialize_gui_model()
+        return {
+            "model": self.gui_model,
+            "components_json": self._to_pretty_json(components_payload),
+            "styles_json": self._to_pretty_json(styles_payload),
+            "main_page_id": meta.get("main_page_id"),
+            "main_page_name": meta.get("main_page_name"),
+            "pages_meta": meta.get("pages", []),
+            "module_name": meta.get("module_name"),
+        }
+
+    def _serialize_gui_model(self) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+        pages: List[Dict[str, Any]] = []
+        pages_meta: List[Dict[str, str]] = []
+        self._style_map = {}
+
+        modules = self._sorted_by_name(self.gui_model.modules)
+        module_name = modules[0].name if modules else "AppModule"
+        main_page_id: Optional[str] = None
+        main_page_name: Optional[str] = None
+
+        for module in modules:
+            for screen in self._sorted_by_name(module.screens):
+                screen_node = self._serialize_screen(screen)
+                pages.append(screen_node)
+                pages_meta.append(
+                    {
+                        "id": screen_node["id"],
+                        "name": screen_node.get("name") or screen_node["id"],
+                    }
+                )
+                if screen_node.get("is_main") and main_page_id is None:
+                    main_page_id = screen_node["id"]
+                    main_page_name = screen_node.get("name")
+
+        if main_page_id is None and pages:
+            main_page_id = pages[0]["id"]
+            main_page_name = pages[0].get("name")
+
+        # Merge raw style entries from the modelling editor
+        for entry in self._raw_style_entries:
+            selectors = entry.get("selectors") or []
+            style = self._convert_style_keys(entry.get("style") or {})
+            self._add_style_entry(tuple(selectors), style)
+
+        styles_payload = {"styles": list(self._style_map.values())}
+        components_payload = {"pages": pages}
+        meta = {
+            "main_page_id": main_page_id,
+            "main_page_name": main_page_name,
+            "pages": pages_meta,
+            "module_name": module_name,
+        }
+        return components_payload, styles_payload, meta
+
+    # --------------------------------------------------------------------- #
+    # Screen & component serialization
+    # --------------------------------------------------------------------- #
+    def _serialize_screen(self, screen: ViewContainer) -> Dict[str, Any]:
+        screen_id = screen.name
+        node: Dict[str, Any] = {
+            "id": screen_id,
+            "name": screen.description or self._humanize(screen.name),
+            "description": screen.description or "",
+            "is_main": bool(getattr(screen, "is_main_page", False)),
+            "components": [],
+        }
+
+        self._register_component_style(screen_id, screen.styling, getattr(screen, "layout", None))
+
+        for element in self._sorted_by_name(screen.view_elements):
+            node["components"].append(self._serialize_component(element))
+
+        return self._clean_dict(node)
+
+    def _serialize_component(self, element: ViewComponent) -> Dict[str, Any]:
+        meta = getattr(element, "_frontend_meta", {}) or {}
+        attributes = self._sanitize_attributes(meta.get("attributes"))
+        component_id = attributes.get("id") or element.name
+        component_type = self._map_component_type(element)
+
+        node: Dict[str, Any] = {
+            "id": component_id,
+            "type": component_type,
+            "name": self._derive_display_name(element, meta),
+            "description": element.description or "",
+            "tag": meta.get("tagName"),
+            "class_list": self._sanitize_class_list(meta.get("classList")),
+            "attributes": attributes or None,
+        }
+
+        layout = getattr(element, "layout", None)
+        self._register_component_style(component_id, element.styling, layout)
+
+        if isinstance(element, ViewContainer):
+            children = [
+                self._serialize_component(child) for child in self._sorted_by_name(element.view_elements)
+            ]
+            if children:
+                node["children"] = children
+
+        if isinstance(element, Text):
+            node["content"] = element.content
+
+        if isinstance(element, Image):
+            node["alt"] = element.description or ""
+            node["src"] = attributes.get("src") or attributes.get("data-src")
+
+        if isinstance(element, Button):
+            node["label"] = element.label
+            node["button_type"] = self._enum_value(getattr(element, "buttonType", None))
+            node["action_type"] = self._enum_value(getattr(element, "actionType", None))
+            target_screen = getattr(element, "targetScreen", None)
+            if target_screen:
+                node["target_screen"] = getattr(target_screen, "name", None)
+            events = self._serialize_events(element)
+            if events:
+                node["events"] = events
+
+        if isinstance(element, InputField):
+            node["input_type"] = self._enum_value(getattr(element, "field_type", None))
+            node["validation"] = getattr(element, "validationRules", None)
+
+        if isinstance(element, Form):
+            inputs = []
+            for input_field in self._sorted_by_name(getattr(element, "inputFields", [])):
+                inputs.append(
+                    self._clean_dict(
+                        {
+                            "id": getattr(input_field, "name", None),
+                            "label": self._humanize(getattr(input_field, "name", "")),
+                            "type": self._enum_value(getattr(input_field, "field_type", None)),
+                            "validation": getattr(input_field, "validationRules", None),
+                        }
+                    )
+                )
+            if inputs:
+                node["inputs"] = inputs
+
+        if isinstance(element, Menu):
+            items = [item.label for item in self._sorted_menu_items(element.menuItems)]
+            if items:
+                node["items"] = items
+
+        if isinstance(element, DataList):
+            sources = []
+            for source in self._sorted_by_name(element.list_sources):
+                fields = sorted(
+                    [getattr(field, "name", None) for field in getattr(source, "fields", []) if getattr(field, "name", None)]
+                )
+                sources.append(
+                    self._clean_dict(
+                        {
+                            "name": source.name,
+                            "domain": getattr(getattr(source, "dataSourceClass", None), "name", None),
+                            "fields": fields,
+                        }
+                    )
+                )
+            if sources:
+                node["data_sources"] = sources
+
+        if isinstance(element, LineChart):
+            node["title"] = attributes.get("chart-title") or self._humanize(element.name)
+            node["chart"] = self._clean_dict(
+                {
+                    "lineWidth": element.line_width,
+                    "curveType": element.curve_type,
+                    "showGrid": element.show_grid,
+                    "showLegend": element.show_legend,
+                    "showTooltip": element.show_tooltip,
+                    "animate": element.animate,
+                    "legendPosition": element.legend_position,
+                    "gridColor": element.grid_color,
+                    "dotSize": element.dot_size,
+                }
+            )
+            chart_colors = self._extract_chart_colors(element)
+            if chart_colors.get("line"):
+                node["color"] = chart_colors["line"]
+
+        if isinstance(element, BarChart):
+            node["title"] = attributes.get("chart-title") or self._humanize(element.name)
+            node["chart"] = self._clean_dict(
+                {
+                    "barWidth": element.bar_width,
+                    "orientation": element.orientation,
+                    "showGrid": element.show_grid,
+                    "showLegend": element.show_legend,
+                    "showTooltip": element.show_tooltip,
+                    "stacked": element.stacked,
+                    "animate": element.animate,
+                    "legendPosition": element.legend_position,
+                    "gridColor": element.grid_color,
+                    "barGap": element.bar_gap,
+                }
+            )
+            chart_colors = self._extract_chart_colors(element)
+            if chart_colors.get("bar"):
+                node["color"] = chart_colors["bar"]
+
+        if isinstance(element, PieChart):
+            node["title"] = attributes.get("chart-title") or self._humanize(element.name)
+            node["chart"] = self._clean_dict(
+                {
+                    "showLegend": element.show_legend,
+                    "legendPosition": self._enum_value(element.legend_position),
+                    "showLabels": element.show_labels,
+                    "labelPosition": self._enum_value(element.label_position),
+                    "paddingAngle": element.padding_angle,
+                    "innerRadius": element.inner_radius,
+                    "outerRadius": element.outer_radius,
+                    "startAngle": element.start_angle,
+                    "endAngle": element.end_angle,
+                }
+            )
+
+        if isinstance(element, RadarChart):
+            node["title"] = attributes.get("chart-title") or self._humanize(element.name)
+            node["chart"] = self._clean_dict(
+                {
+                    "showGrid": element.show_grid,
+                    "showTooltip": element.show_tooltip,
+                    "showLegend": element.show_legend,
+                    "legendPosition": element.legend_position,
+                    "dotSize": element.dot_size,
+                    "gridType": element.grid_type,
+                    "strokeWidth": element.stroke_width,
+                    "showRadiusAxis": element.show_radius_axis,
+                }
+            )
+
+        if isinstance(element, RadialBarChart):
+            node["title"] = attributes.get("chart-title") or self._humanize(element.name)
+            node["chart"] = self._clean_dict(
+                {
+                    "startAngle": element.start_angle,
+                    "endAngle": element.end_angle,
+                    "innerRadius": element.inner_radius,
+                    "outerRadius": element.outer_radius,
+                    "showLegend": element.show_legend,
+                    "legendPosition": element.legend_position,
+                    "showTooltip": element.show_tooltip,
+                }
+            )
+
+        binding_data = self._serialize_data_binding(getattr(element, "data_binding", None))
+        if binding_data:
+            node["data_binding"] = binding_data
+
+        return self._clean_dict(node)
+
+    def _serialize_events(self, element: Button) -> Optional[List[Dict[str, Any]]]:
+        events = getattr(element, "events", None)
+        if not events:
+            return None
+
+        serialized: List[Dict[str, Any]] = []
+        for event in self._sorted_by_name(events):
+            actions = [
+                action_data
+                for action in self._sorted_by_name(event.actions)
+                if (action_data := self._serialize_action(action))
+            ]
+            event_dict = self._clean_dict(
+                {
+                    "name": event.name,
+                    "type": self._enum_value(getattr(event, "event_type", None)),
+                    "actions": actions,
+                }
+            )
+            if event_dict.get("actions"):
+                serialized.append(event_dict)
+        return serialized or None
+
+    def _serialize_action(self, action) -> Optional[Dict[str, Any]]:
+        if action is None:
+            return None
+
+        data: Dict[str, Any] = {
+            "name": getattr(action, "name", None),
+            "kind": action.__class__.__name__,
+            "description": getattr(action, "description", None),
+        }
+
+        if isinstance(action, Transition):
+            data["target_screen"] = getattr(getattr(action, "target_screen", None), "name", None)
+            data["target_screen_id"] = getattr(action, "_target_screen_id", None)
+
+        if isinstance(action, (Create, Read, Update, Delete)):
+            data["target_class"] = getattr(getattr(action, "target_class", None), "name", None)
+
+        parameters = getattr(action, "parameters", None)
+        if parameters:
+            params_serialized = []
+            for param in sorted(parameters, key=lambda p: getattr(p, "name", "")):
+                params_serialized.append(
+                    self._clean_dict(
+                        {
+                            "name": getattr(param, "name", None),
+                            "type": getattr(param, "param_type", None),
+                            "required": getattr(param, "required", None),
+                            "value": getattr(param, "value", None),
+                        }
+                    )
+                )
+            if params_serialized:
+                data["parameters"] = params_serialized
+
+        return self._clean_dict(data)
+
+    def _serialize_data_binding(self, binding) -> Optional[Dict[str, Any]]:
+        if not binding:
+            return None
+
+        domain = getattr(binding, "domain_concept", None)
+        label_field = getattr(binding, "label_field", None)
+        data_field = getattr(binding, "data_field", None)
+        endpoint = None
+        if domain and getattr(domain, "name", None):
+            endpoint = f"/{domain.name.lower()}/"
+
+        return self._clean_dict(
+            {
+                "entity": getattr(domain, "name", None),
+                "endpoint": endpoint,
+                "label_field": getattr(label_field, "name", None),
+                "data_field": getattr(data_field, "name", None),
+            }
+        )
+
+    # --------------------------------------------------------------------- #
+    # Styling helpers
+    # --------------------------------------------------------------------- #
+    def _register_component_style(self, selector_id: str, styling, layout=None):
+        style = self._style_from_styling(styling, layout)
+        if style:
+            self._add_style_entry((f"#{selector_id}",), style)
+
+    def _style_from_styling(self, styling, layout=None) -> Dict[str, Any]:
+        if not styling:
+            return {}
+
+        style: Dict[str, Any] = {}
+        size = getattr(styling, "size", None)
+        position = getattr(styling, "position", None)
+        color = getattr(styling, "color", None)
+
+        if size:
+            style.update(self._extract_size_style(size))
+        if position:
+            style.update(self._extract_position_style(position))
+        if color:
+            style.update(self._extract_color_style(color))
+
+        if layout is None and hasattr(styling, "layout"):
+            layout = styling.layout
+        if layout:
+            style.update(self._extract_layout_style(layout))
+
+        return self._filter_style(style)
+
+    def _extract_size_style(self, size) -> Dict[str, Any]:
+        style: Dict[str, Any] = {}
+        if getattr(size, "width", None):
+            style["width"] = size.width
+        if getattr(size, "height", None):
+            style["height"] = size.height
+        if getattr(size, "padding", None):
+            style["padding"] = size.padding
+        if getattr(size, "margin", None):
+            style["margin"] = size.margin
+        if getattr(size, "font_size", None):
+            style["fontSize"] = size.font_size
+        if getattr(size, "line_height", None):
+            style["lineHeight"] = size.line_height
+        if getattr(size, "icon_size", None) and "fontSize" not in style:
+            style["fontSize"] = size.icon_size
+        return style
+
+    def _extract_position_style(self, position) -> Dict[str, Any]:
+        style: Dict[str, Any] = {}
+        position_type = getattr(position, "p_type", None)
+        if position_type:
+            style["position"] = self._enum_value(position_type)
+
+        for attr in ("top", "left", "right", "bottom"):
+            value = getattr(position, attr, None)
+            if value not in (None, "auto"):
+                style[attr] = value
+
+        alignment = getattr(position, "alignment", None)
+        if alignment:
+            style["textAlign"] = self._enum_value(alignment) or alignment
+
+        if getattr(position, "z_index", None) is not None:
+            style["zIndex"] = position.z_index
+
+        return style
+
+    def _extract_color_style(self, color) -> Dict[str, Any]:
+        style: Dict[str, Any] = {}
+        if getattr(color, "background_color", None):
+            style["backgroundColor"] = color.background_color
+        if getattr(color, "text_color", None):
+            style["color"] = color.text_color
+        if getattr(color, "border_color", None):
+            style["borderColor"] = color.border_color
+        if getattr(color, "opacity", None) not in (None, ""):
+            style["opacity"] = color.opacity
+        if getattr(color, "box_shadow", None):
+            style["boxShadow"] = color.box_shadow
+        if getattr(color, "gradient", None):
+            style["backgroundImage"] = color.gradient
+        # Preserve chart colors as CSS custom properties for styling fallbacks
+        if getattr(color, "line_color", None):
+            style["--chart-line-color"] = color.line_color
+        if getattr(color, "bar_color", None):
+            style["--chart-bar-color"] = color.bar_color
+        if getattr(color, "color_palette", None):
+            style["--chart-color-palette"] = color.color_palette
+        if getattr(color, "radius", None):
+            style["borderRadius"] = color.radius
+        return style
+
+    def _extract_layout_style(self, layout) -> Dict[str, Any]:
+        style: Dict[str, Any] = {}
+
+        layout_type = self._enum_value(getattr(layout, "layout_type", None))
+        orientation = getattr(layout, "orientation", None)
+
+        if layout_type in {"flex", "row", "column"}:
+            style["display"] = "flex"
+        elif layout_type == "grid":
+            style["display"] = "grid"
+        elif layout_type == "absolute":
+            style["position"] = "absolute"
+
+        flex_direction = getattr(layout, "flex_direction", None)
+        if flex_direction:
+            style["flexDirection"] = flex_direction
+        elif orientation == "horizontal":
+            style.setdefault("flexDirection", "row")
+        elif orientation == "vertical":
+            style.setdefault("flexDirection", "column")
+        elif layout_type == "row":
+            style.setdefault("flexDirection", "row")
+        elif layout_type == "column":
+            style.setdefault("flexDirection", "column")
+
+        if getattr(layout, "justify_content", None):
+            style["justifyContent"] = layout.justify_content
+        elif getattr(layout, "alignment", None):
+            alignment = self._enum_value(layout.alignment)
+            if alignment:
+                style.setdefault("justifyContent", alignment)
+
+        if getattr(layout, "align_items", None):
+            style["alignItems"] = layout.align_items
+
+        if getattr(layout, "flex_wrap", None):
+            style["flexWrap"] = layout.flex_wrap
+        elif getattr(layout, "wrap", None) is not None:
+            style["flexWrap"] = "wrap" if layout.wrap else "nowrap"
+
+        if getattr(layout, "gap", None):
+            style["gap"] = layout.gap
+        if getattr(layout, "grid_template_columns", None):
+            style["gridTemplateColumns"] = layout.grid_template_columns
+        if getattr(layout, "grid_template_rows", None):
+            style["gridTemplateRows"] = layout.grid_template_rows
+        if getattr(layout, "grid_gap", None):
+            style["gridGap"] = layout.grid_gap
+
+        if getattr(layout, "padding", None):
+            style.setdefault("padding", layout.padding)
+        if getattr(layout, "margin", None):
+            style.setdefault("margin", layout.margin)
+
+        return style
+
+    def _extract_chart_colors(self, element: ViewComponent) -> Dict[str, Any]:
+        color = getattr(getattr(element, "styling", None), "color", None)
+        if not color:
+            return {}
+        return {
+            "line": getattr(color, "line_color", None),
+            "bar": getattr(color, "bar_color", None),
+            "palette": getattr(color, "color_palette", None),
+        }
+
+    def _add_style_entry(self, selectors: Sequence[str], style: Dict[str, Any]):
+        normalized_selectors = tuple(sorted({selector for selector in selectors if selector}))
+        if not normalized_selectors or not style:
+            return
+        entry = self._style_map.get(normalized_selectors)
+        if entry:
+            entry["style"].update(style)
+        else:
+            self._style_map[normalized_selectors] = {
+                "selectors": list(normalized_selectors),
+                "style": dict(style),
+            }
+
+    # --------------------------------------------------------------------- #
+    # Utility helpers
+    # --------------------------------------------------------------------- #
+    @staticmethod
+    def _to_pretty_json(payload: Dict[str, Any]) -> str:
+        return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)
+
+    @staticmethod
+    def _sorted_by_name(items: Iterable[Any]) -> List[Any]:
+        if not items:
+            return []
+        return sorted(items, key=lambda item: getattr(item, "name", "").lower())
+
+    @staticmethod
+    def _sorted_menu_items(items: Iterable[MenuItem]) -> List[MenuItem]:
+        if not items:
+            return []
+        return sorted(items, key=lambda item: (item.label or "").lower())
+
+    @staticmethod
+    def _sanitize_class_list(class_list) -> Optional[List[str]]:
+        if not class_list:
+            return None
+        names: List[str] = []
+        for item in class_list:
+            if isinstance(item, dict):
+                name = item.get("name")
+                if name:
+                    names.append(str(name))
+            elif isinstance(item, str):
+                names.append(item)
+        return names or None
+
+    @staticmethod
+    def _sanitize_attributes(attributes) -> Dict[str, Any]:
+        if not isinstance(attributes, dict):
+            return {}
+        safe: Dict[str, Any] = {}
+        for key, value in attributes.items():
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                safe[key] = value
+            else:
+                safe[key] = str(value)
+        return safe
+
+    @staticmethod
+    def _map_component_type(element: ViewComponent) -> str:
+        if isinstance(element, ViewContainer):
+            return "container"
+        if isinstance(element, Text):
+            return "text"
+        if isinstance(element, Image):
+            return "image"
+        if isinstance(element, Button):
+            return "button"
+        if isinstance(element, InputField):
+            return "input"
+        if isinstance(element, Form):
+            return "form"
+        if isinstance(element, Menu):
+            return "menu"
+        if isinstance(element, DataList):
+            return "data-list"
+        if isinstance(element, LineChart):
+            return "line-chart"
+        if isinstance(element, BarChart):
+            return "bar-chart"
+        if isinstance(element, PieChart):
+            return "pie-chart"
+        if isinstance(element, RadarChart):
+            return "radar-chart"
+        if isinstance(element, RadialBarChart):
+            return "radial-bar-chart"
+        return "component"
+
+    @staticmethod
+    def _derive_display_name(element: ViewComponent, meta: Dict[str, Any]) -> str:
+        attributes = meta.get("attributes") or {}
+        for key in ("label", "title", "chart-title", "name", "data-name"):
+            value = attributes.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        if isinstance(element, Text) and getattr(element, "content", ""):
+            content = element.content.strip()
+            if content:
+                return content
+        return ReactGenerator._humanize(element.name)
+
+    @staticmethod
+    def _humanize(value: Optional[str]) -> str:
+        if not value:
+            return ""
+        return value.replace("_", " ").strip()
+
+    @staticmethod
+    def _enum_value(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, Enum):
+            return value.value if hasattr(value, "value") else value.name
+        return str(value)
+
+    @staticmethod
+    def _convert_style_keys(style: Dict[str, Any]) -> Dict[str, Any]:
+        converted: Dict[str, Any] = {}
+        for key, value in style.items():
+            if value in (None, ""):
+                continue
+            converted[ReactGenerator._to_camel_case(key)] = value
+        return converted
+
+    @staticmethod
+    def _to_camel_case(name: str) -> str:
+        if not name:
+            return name
+        parts = name.replace("-", "_").split("_")
+        first, *rest = parts
+        camel = first
+        for part in rest:
+            if part:
+                camel += part[0].upper() + part[1:]
+        return camel
+
+    @staticmethod
+    def _filter_style(style: Dict[str, Any]) -> Dict[str, Any]:
+        filtered: Dict[str, Any] = {}
+        for key, value in style.items():
+            if value is None:
+                continue
+            if isinstance(value, str) and value == "":
+                continue
+            filtered[key] = value
+        return filtered
+
+    @staticmethod
+    def _clean_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+        cleaned: Dict[str, Any] = {}
+        for key, value in data.items():
+            if isinstance(value, bool):
+                cleaned[key] = value
+                continue
+            if value in (None, "", [], {}, ()):
+                continue
+            cleaned[key] = value
+        return cleaned
+

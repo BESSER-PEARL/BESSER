@@ -1,13 +1,22 @@
 export interface StyleData {
   selectors: string[];
-  style: Record<string, string | number>;
+  style: Record<string, string | number | undefined>;
 }
 
-// Optionally pass styleId to match by style_id as well
-export function applyStyle(selector: string, styles: StyleData[], styleId?: string) {
-  let styleObj = styles.find((s) => s.selectors.includes(selector));
-  if (!styleObj && styleId) {
-    styleObj = styles.find((s) => s.selectors.includes(`#${styleId}`));
+export function applyStyle(
+  selector: string,
+  styles: StyleData[]
+): Record<string, string | number> {
+  const match = styles.find((entry) => entry.selectors.includes(selector));
+  if (!match) {
+    return {};
   }
-  return styleObj ? styleObj.style : {};
+
+  const filtered: Record<string, string | number> = {};
+  Object.entries(match.style).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      filtered[key] = value;
+    }
+  });
+  return filtered;
 }

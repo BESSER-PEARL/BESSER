@@ -15,6 +15,19 @@ from besser.BUML.metamodel.gui.dashboard import (
     LineChart, BarChart, PieChart, RadarChart, RadialBarChart
 )
 from besser.BUML.metamodel.gui.events_actions import Event, Transition, Create, Read, Update, Delete
+from besser.utilities.buml_code_builder import domain_model_to_code
+
+
+def _escape_string(value: str | None) -> str:
+    """Escape double quotes in strings for safe code generation."""
+    if not value:
+        return ""
+    return value.replace('"', '\\"')
+
+
+def _get_attr_name(element) -> str | None:
+    """Return the name attribute of a BUML element if present."""
+    return getattr(element, "name", None) if element is not None else None
 
 
 def safe_var_name(name: str) -> str:
@@ -40,24 +53,33 @@ def safe_var_name(name: str) -> str:
     return safe_name.strip('_').lower() or "unnamed"
 
 
-def gui_model_to_code(model: GUIModel, file_path: str):
+def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
     """
     Generates Python code for a BUML GUI model and writes it to a specified file.
     
     Args:
         model (GUIModel): The BUML GUI model containing modules, screens, and components
         file_path (str): The path where the generated code will be saved
-        
+        domain_model (DomainModel, optional): Structural model to emit before the GUI so that
+            data bindings can reference the same `domain_model` variable.
+    
     Outputs:
         A Python file containing the code representation of the BUML GUI model
     """
-    output_dir = os.path.dirname(file_path)
+    output_path = file_path if file_path.endswith('.py') else f"{file_path}.py"
+    output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    if not file_path.endswith('.py'):
-        file_path += '.py'
+    if domain_model is not None:
+        domain_model_to_code(domain_model, output_path)
+        file_mode = 'a'
+    else:
+        file_mode = 'w'
     
-    with open(file_path, 'w', encoding='utf-8') as f:
+    with open(output_path, file_mode, encoding='utf-8') as f:
+        if domain_model is not None:
+            f.write("\n\n")
+
         # Write header
         f.write("###############\n")
         f.write("#  GUI MODEL  #\n")
@@ -367,8 +389,9 @@ def _write_data_list(f, var_name, data_list, created_vars):
         for source_idx, source in enumerate(data_list.list_sources):
             source_var = f"{var_name}_source_{source_idx}"
             created_vars.add(source_var)
-            # TODO: Reference domain class properly
-            f.write(f'{source_var} = DataSourceElement(name="{source.name if hasattr(source, "name") else ""}", domain_concept=None, fields=set())  # TODO: Set domain_concept\n')
+            source_name = _escape_string(getattr(source, "name", ""))
+            f.write(f'{source_var} = DataSourceElement(name="{source_name}", domain_concept=None, fields=set())\n')
+            _update_data_source_element(f, source_var, source)
             source_vars.append(source_var)
     
     sources_str = f'{{{", ".join(source_vars)}}}' if source_vars else '{}'
@@ -401,7 +424,7 @@ def _write_line_chart(f, var_name, chart):
     
     # Write data binding if present
     if hasattr(chart, 'data_binding') and chart.data_binding:
-        f.write(f'# TODO: Set data_binding for {var_name}\n')
+        _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
 def _write_bar_chart(f, var_name, chart):
@@ -429,6 +452,8 @@ def _write_bar_chart(f, var_name, chart):
         params.append(f'bar_gap={chart.bar_gap}')
     
     f.write(f'{var_name} = BarChart({", ".join(params)})\n')
+    if hasattr(chart, 'data_binding') and chart.data_binding:
+        _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
 def _write_pie_chart(f, var_name, chart):
@@ -454,6 +479,8 @@ def _write_pie_chart(f, var_name, chart):
         params.append(f'end_angle={chart.end_angle}')
     
     f.write(f'{var_name} = PieChart({", ".join(params)})\n')
+    if hasattr(chart, 'data_binding') and chart.data_binding:
+        _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
 def _write_radar_chart(f, var_name, chart):
@@ -477,6 +504,8 @@ def _write_radar_chart(f, var_name, chart):
         params.append(f'stroke_width={chart.stroke_width}')
     
     f.write(f'{var_name} = RadarChart({", ".join(params)})\n')
+    if hasattr(chart, 'data_binding') and chart.data_binding:
+        _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
 def _write_radial_bar_chart(f, var_name, chart):
@@ -498,6 +527,8 @@ def _write_radial_bar_chart(f, var_name, chart):
         params.append(f'show_tooltip={chart.show_tooltip}')
     
     f.write(f'{var_name} = RadialBarChart({", ".join(params)})\n')
+    if hasattr(chart, 'data_binding') and chart.data_binding:
+        _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
 def _write_container(f, var_name, container, created_vars):
@@ -614,6 +645,70 @@ def _write_styling(f, component_var, styling, created_vars):
     # Assign styling to component
     f.write(f'{component_var}.styling = {styling_var}\n')
 
+
+def _write_data_binding_assignment(f, var_name, binding):
+    if not binding:
+        return
+    binding_var = f"{var_name}_binding"
+    binding_name = _escape_string(getattr(binding, "name", binding_var))
+    domain_name = _get_attr_name(getattr(binding, "domain_concept", None))
+    label_name = _get_attr_name(getattr(binding, "label_field", None))
+    data_name = _get_attr_name(getattr(binding, "data_field", None))
+
+    f.write(f'{binding_var} = DataBinding(name="{binding_name}")\n')
+    if domain_name:
+        escaped_domain = _escape_string(domain_name)
+        f.write("domain_model_ref = globals().get('domain_model')\n")
+        f.write(f"{binding_var}_domain = None\n")
+        f.write("if domain_model_ref is not None:\n")
+        f.write(f"    {binding_var}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
+        f.write(f"if {binding_var}_domain:\n")
+        f.write(f"    {binding_var}.domain_concept = {binding_var}_domain\n")
+        if label_name:
+            escaped_label = _escape_string(label_name)
+            f.write(f"    {binding_var}.label_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_label}\"), None)\n")
+        if data_name:
+            escaped_data = _escape_string(data_name)
+            f.write(f"    {binding_var}.data_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_data}\"), None)\n")
+        f.write("else:\n")
+        f.write(f"    # Domain class '{escaped_domain}' not resolved; data binding remains partial.\n")
+        f.write("    pass\n")
+    else:
+        if label_name:
+            f.write(f"# Label field '{_escape_string(label_name)}' requires domain context to resolve.\n")
+        if data_name:
+            f.write(f"# Data field '{_escape_string(data_name)}' requires domain context to resolve.\n")
+    f.write(f"{var_name}.data_binding = {binding_var}\n")
+
+
+def _update_data_source_element(f, var_name, source):
+    domain_name = _get_attr_name(getattr(source, "dataSourceClass", None))
+    field_names = sorted(
+        name for name in (
+            _get_attr_name(field) for field in getattr(source, "fields", set())
+        ) if name
+    )
+    source_label = _escape_string(getattr(source, "name", var_name))
+
+    if not domain_name and not field_names:
+        return
+
+    f.write("domain_model_ref = globals().get('domain_model')\n")
+    f.write(f"{var_name}_domain = None\n")
+    if domain_name:
+        escaped_domain = _escape_string(domain_name)
+        f.write("if domain_model_ref is not None:\n")
+        f.write(f"    {var_name}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
+        f.write(f"if {var_name}_domain:\n")
+        f.write(f"    {var_name}.domain_concept = {var_name}_domain\n")
+        if field_names:
+            fields_list = repr(field_names)
+            f.write(f"    {var_name}.fields = set(attr for attr in {var_name}_domain.attributes if attr.name in {fields_list})\n")
+        f.write("else:\n")
+        f.write(f"    # Domain class '{escaped_domain}' not resolved for data source '{source_label}'.\n")
+        f.write("    pass\n")
+    elif field_names:
+        f.write(f"# Fields {repr(field_names)} require domain context to resolve for data source '{source_label}'.\n")
 
 def _write_layout(f, layout, created_vars, layout_var):
     """Write code for Layout object."""

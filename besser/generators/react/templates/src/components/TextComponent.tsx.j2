@@ -1,16 +1,20 @@
 import React from "react";
-import { applyStyle } from "../utils/applyStyle";
+import { applyStyle, StyleData } from "../utils/applyStyle";
 
 interface TextProps {
   id: string;
   content: string;
-  styles: any[];
-  style_id?: string;
+  styles: StyleData[];
+  tag?: React.ElementType;
 }
 
-export const TextComponent: React.FC<TextProps> = ({ id, content, styles, ...props }) => {
-  // Try to get style_id from props if present
-  const styleId = (props as any).style_id;
-  const style = applyStyle(`#${id}`, styles, styleId);
-  return <p id={id} style={style}>{content}</p>;
+export const TextComponent: React.FC<TextProps> = ({
+  id,
+  content,
+  styles,
+  tag,
+}) => {
+  const style = applyStyle(`#${id}`, styles);
+  const Component = tag || "p";
+  return React.createElement(Component, { id, style }, content);
 };

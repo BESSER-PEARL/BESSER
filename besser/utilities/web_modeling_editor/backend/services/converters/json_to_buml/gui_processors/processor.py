@@ -44,6 +44,7 @@ from .component_parsers import (
 from .constants import CONTAINER_TAGS, CONTAINER_TYPES, INPUT_COMPONENT_TYPES, TEXT_TAGS
 from .styling import build_style_map, resolve_component_styling
 from .utils import sanitize_name
+from besser.utilities.gui_code_builder import gui_model_to_code
 
 
 def process_gui_diagram(gui_diagram, class_model, domain_model):
@@ -430,6 +431,5 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     # Store normalized style entries for React generator
     setattr(gui_model, "_style_entries", normalized_styles)
     
-    from besser.utilities.gui_code_builder import gui_model_to_code
-    gui_model_to_code(gui_model, "output/gui_model.py")
+    gui_model_to_code(gui_model, "output/gui_model.py", domain_model)
     return gui_model

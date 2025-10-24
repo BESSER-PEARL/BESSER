@@ -12,7 +12,7 @@ from besser.generators.sql import SQLGenerator
 from besser.generators.backend import BackendGenerator
 from besser.generators.json import JSONSchemaGenerator
 from besser.generators.agents.baf_generator import BAFGenerator
-from besser.generators.react_ts import ReactTSGenerator
+from besser.generators.web_app import WebAppGenerator
 
 
 class GeneratorInfo(NamedTuple):
@@ -64,8 +64,8 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="web_framework",
         requires_class_diagram=True
     ),
-    "react": GeneratorInfo(
-        generator_class=ReactTSGenerator,
+    "web_app": GeneratorInfo(
+        generator_class=WebAppGenerator,
         output_type="zip",
         file_extension=".zip",
         category="web_framework",

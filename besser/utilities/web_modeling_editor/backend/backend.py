@@ -201,7 +201,7 @@ def generate_agent_files(agent_model):
 async def generate_code_output_from_project(input_data: ProjectInput):
     """
     Generate code output from a complete project.
-    This endpoint handles generators that require multiple diagrams (e.g., React).
+    This endpoint handles generators that require multiple diagrams (e.g., Web App).
     """
     try:
         generator_type = input_data.settings.get("generator") if input_data.settings else None
@@ -224,9 +224,9 @@ async def generate_code_output_from_project(input_data: ProjectInput):
         # Get configuration from project settings
         config = input_data.settings.get("config", {}) if input_data.settings else {}
 
-        # Handle React generator (requires both ClassDiagram and GUINoCodeDiagram)
-        if generator_type == "react":
-            return await _handle_react_project_generation(input_data, generator_info, config)
+        # Handle Web App generator (requires both ClassDiagram and GUINoCodeDiagram)
+        if generator_type == "web_app":
+            return await _handle_web_app_project_generation(input_data, generator_info, config)
 
         # For other generators, use the current diagram
         current_diagram = input_data.diagrams.get(input_data.currentDiagramType)
@@ -301,15 +301,15 @@ async def generate_code_output(input_data: DiagramInput):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-async def _handle_react_project_generation(input_data: ProjectInput, generator_info, config: dict):
-    """Handle React generation from a complete project with both ClassDiagram and GUINoCodeDiagram."""
+async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):
+    """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram."""
     try:
         # Extract ClassDiagram
         class_diagram = input_data.diagrams.get("ClassDiagram")
         if not class_diagram:
             raise HTTPException(
                 status_code=400,
-                detail="ClassDiagram is required for React generator"
+                detail="ClassDiagram is required for Web App generator"
             )
 
         # Extract GUINoCodeDiagram
@@ -317,7 +317,7 @@ async def _handle_react_project_generation(input_data: ProjectInput, generator_i
         if not gui_diagram:
             raise HTTPException(
                 status_code=400,
-                detail="GUINoCodeDiagram is required for React generator"
+                detail="GUINoCodeDiagram is required for Web App generator"
             )
 
         temp_dir = tempfile.mkdtemp(prefix=TEMP_DIR_PREFIX)
@@ -327,7 +327,7 @@ async def _handle_react_project_generation(input_data: ProjectInput, generator_i
 
         gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
 
-        # Generate React TypeScript project
+        # Generate Web App TypeScript project
         generator_class = generator_info.generator_class
 
         from besser.utilities import ModelSerializer
@@ -336,12 +336,12 @@ async def _handle_react_project_generation(input_data: ProjectInput, generator_i
         # test_model serialization
         serializer.dump(model=gui_model)
 
-        return await _generate_react_ts(buml_model, gui_model, generator_class, config, temp_dir)
+        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir)
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"React generation failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Web App generation failed: {str(e)}")
 
 
 async def _handle_agent_generation(json_data: dict):
@@ -498,11 +498,11 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
     else:
         return _create_file_response(temp_dir, "jsonschema")
 
-async def _generate_react_ts(buml_model, gui_model, generator_class, config: dict, temp_dir: str):
-    """Generate React TypeScript files."""
+async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str):
+    """Generate web application files."""
     generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir)
     generator_instance.generate()
-    return _create_zip_response(temp_dir, "react")
+    return _create_zip_response(temp_dir, "web_app")
 
 async def _generate_standard(buml_model, generator_class, generator_type: str, generator_info, temp_dir: str):
     """Generate standard files (non-Django, non-SQL)."""

@@ -1,0 +1,28 @@
+import React from "react";
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
+} from "recharts";
+
+interface Props {
+  title: string;
+  color: string;
+  data: any[];
+  labelField: string;
+  dataField: string;
+}
+
+export const BarChartComponent: React.FC<Props> = ({ title, color, data, labelField, dataField }) => (
+  <div style={{ width: "100%", height: 400, marginBottom: "20px" }}>
+    <h3 style={{ textAlign: "center" }}>{title}</h3>
+    <ResponsiveContainer width="100%" height="80%">
+      <BarChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey={labelField} />
+        <YAxis />
+        <Tooltip />
+        <Legend />
+        <Bar dataKey={dataField} fill={color} />
+      </BarChart>
+    </ResponsiveContainer>
+  </div>
+);

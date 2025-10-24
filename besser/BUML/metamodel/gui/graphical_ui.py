@@ -1,4 +1,6 @@
 from enum import Enum
+from typing import List, Optional
+
 from besser.BUML.metamodel.structural import NamedElement, Class, Property, Model, Element
 from besser.BUML.metamodel.gui.style import Styling, Layout
 from besser.BUML.metamodel.gui.binding import DataBinding
@@ -108,30 +110,56 @@ class DataSourceElement(DataSource):
     """Represents a data source associated with a model element.
 
     Args:
-        name (str): The name of the model element data source.
-        dataSourceClass (Class): The class representing the data source.
-        fields: set[Property]: The fields representing the attributes of the model element.
-
-    Attributes:
-        name (str): The name of the model element data source.
-        dataSourceClass (Class): The class representing the data source.
-        fields: set[Property]: The fields representing the attributes of the model element.
+        name (str): Display name of the data source.
+        dataSourceClass (Class | None): Domain class backing the data source.
+        fields (set[Property] | None): Subset of attributes included in the source.
+        label_field (Property | None): Property used as label when rendering.
+        value_field (Property | None): Property used as value when rendering.
+        field_names (list[str] | None): Field names preserved when properties are unresolved.
+        label_field_name (str | None): Label field name preserved when property is unresolved.
+        value_field_name (str | None): Value field name preserved when property is unresolved.
     """
 
-    def __init__(self, name: str, dataSourceClass: Class, fields: set[Property]):
+    def __init__(
+        self,
+        name: str,
+        dataSourceClass: Class | None = None,
+        fields: set[Property] | None = None,
+        label_field: Property | None = None,
+        value_field: Property | None = None,
+        field_names: Optional[List[str]] = None,
+        label_field_name: Optional[str] = None,
+        value_field_name: Optional[str] = None,
+    ):
         super().__init__(name)
-        self.dataSourceClass: Class = dataSourceClass
-        self.fields: set[Property]= fields
+        self.dataSourceClass = dataSourceClass
+        self.fields = fields or set()
+        self.field_names = field_names or []
+        self.label_field = label_field
+        self.value_field = value_field
+        if label_field_name and not self.label_field_name:
+            self.label_field_name = label_field_name
+        if value_field_name and not self.value_field_name:
+            self.value_field_name = value_field_name
 
     @property
-    def dataSourceClass(self) -> Class:
-        """Class: Get the class representing the data source."""
+    def dataSourceClass(self) -> Class | None:
+        """Class | None: Get the class representing the data source."""
         return self.__dataSourceClass
 
     @dataSourceClass.setter
-    def dataSourceClass(self, dataSourceClass: Class):
-        """Class: Set the class representing the data source."""
+    def dataSourceClass(self, dataSourceClass: Class | None):
+        """Assign the backing class for the data source."""
         self.__dataSourceClass = dataSourceClass
+
+    @property
+    def domain_concept(self) -> Class | None:
+        """Alias to maintain backwards compatibility with older generators."""
+        return self.dataSourceClass
+
+    @domain_concept.setter
+    def domain_concept(self, value: Class | None):
+        self.dataSourceClass = value
 
     @property
     def fields(self) -> set[Property]:
@@ -139,16 +167,72 @@ class DataSourceElement(DataSource):
         return self.__fields
 
     @fields.setter
-    def fields(self, fields: set[Property]):
-        """set[Property]: Set the set of properties (fields) of the model element."""
-        if fields is not None:
-            names = [field.name for field in fields]
+    def fields(self, fields: set[Property] | None):
+        """Set the subset of fields included in the data source."""
+        if fields:
+            normalized = set(fields)
+            names = [field.name for field in normalized]
             if len(names) != len(set(names)):
                 raise ValueError("A model element cannot have two fields with the same name.")
-        self.__fields = fields
+            self.__fields = normalized
+            self.__field_names = names
+        else:
+            self.__fields = set()
+            self.__field_names = []
+
+    @property
+    def field_names(self) -> List[str]:
+        """List[str]: Names of fields kept when the domain model is unresolved."""
+        return self.__field_names
+
+    @field_names.setter
+    def field_names(self, names: Optional[List[str]]):
+        self.__field_names = list(names or [])
+
+    @property
+    def label_field(self) -> Property | None:
+        """Property | None: Get the label field property."""
+        return self.__label_field
+
+    @label_field.setter
+    def label_field(self, field: Property | None):
+        self.__label_field = field
+        self.__label_field_name = field.name if field is not None else getattr(self, "__label_field_name", None)
+
+    @property
+    def value_field(self) -> Property | None:
+        """Property | None: Get the value field property."""
+        return self.__value_field
+
+    @value_field.setter
+    def value_field(self, field: Property | None):
+        self.__value_field = field
+        self.__value_field_name = field.name if field is not None else getattr(self, "__value_field_name", None)
+
+    @property
+    def label_field_name(self) -> str | None:
+        """str | None: Get the stored label field name."""
+        return getattr(self, "__label_field_name", None)
+
+    @label_field_name.setter
+    def label_field_name(self, name: Optional[str]):
+        self.__label_field_name = name
+
+    @property
+    def value_field_name(self) -> str | None:
+        """str | None: Get the stored value field name."""
+        return getattr(self, "__value_field_name", None)
+
+    @value_field_name.setter
+    def value_field_name(self, name: Optional[str]):
+        self.__value_field_name = name
 
     def __repr__(self):
-        return f'DataSourceElement({self.name}, {self.dataSourceClass},{self.fields})'
+        return (
+            f'DataSourceElement({self.name}, {self.dataSourceClass}, '
+            f'fields={[field.name for field in self.fields]}, '
+            f'label={self.label_field_name}, value={self.value_field_name})'
+        )
 
 #FileDataSource
 class File(DataSource):
@@ -583,6 +667,100 @@ class Button(ViewComponent):
         )
 
 
+class Link(ViewComponent):
+    """Represents a hyperlink component."""
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        label: str = "",
+        url: Optional[str] = None,
+        target: Optional[str] = None,
+        rel: Optional[str] = None,
+        visibility: str = "public",
+        timestamp: int = None,
+        styling: Styling = None,
+    ):
+        super().__init__(name, description, visibility, timestamp, styling=styling)
+        self.label = label
+        self.url = url
+        self.target = target
+        self.rel = rel
+
+    @property
+    def label(self) -> str:
+        return self.__label
+
+    @label.setter
+    def label(self, value: str):
+        self.__label = value or ""
+
+    @property
+    def url(self) -> Optional[str]:
+        return self.__url
+
+    @url.setter
+    def url(self, value: Optional[str]):
+        self.__url = value
+
+    @property
+    def target(self) -> Optional[str]:
+        return self.__target
+
+    @target.setter
+    def target(self, value: Optional[str]):
+        self.__target = value
+
+    @property
+    def rel(self) -> Optional[str]:
+        return self.__rel
+
+    @rel.setter
+    def rel(self, value: Optional[str]):
+        self.__rel = value
+
+    def __repr__(self):
+        return f'Link({self.name}, label={self.label}, url={self.url}, target={self.target})'
+
+
+class EmbeddedContent(ViewComponent):
+    """Represents embedded content such as iframes or maps."""
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        source: Optional[str] = None,
+        content_type: Optional[str] = None,
+        visibility: str = "public",
+        timestamp: int = None,
+        styling: Styling = None,
+    ):
+        super().__init__(name, description, visibility, timestamp, styling=styling)
+        self.source = source
+        self.content_type = content_type
+
+    @property
+    def source(self) -> Optional[str]:
+        return self.__source
+
+    @source.setter
+    def source(self, value: Optional[str]):
+        self.__source = value
+
+    @property
+    def content_type(self) -> Optional[str]:
+        return self.__content_type
+
+    @content_type.setter
+    def content_type(self, value: Optional[str]):
+        self.__content_type = value
+
+    def __repr__(self):
+        return f'EmbeddedContent({self.name}, source={"set" if self.source else None}, content_type={self.content_type})'
+
+
 # Image is a type of ViewComponent
 class Image(ViewComponent):
     """Represents an image component and encapsulates image-specific properties.
@@ -712,17 +890,20 @@ class MenuItem(Element):
 
     Args:
         label (str): The label of the menu item.
-
-    Attributes:
-        label (str): The label of the menu item.
+        url (str | None): Destination URL associated with the item.
+        target (str | None): Link target behaviour (e.g., "_blank").
+        rel (str | None): Relationship attribute for the link.
     """
 
-    def __init__(self, label: str):
+    def __init__(self, label: str, url: Optional[str] = None, target: Optional[str] = None, rel: Optional[str] = None):
         super().__init__()
         self.label: str = label
+        self.url: Optional[str] = url
+        self.target: Optional[str] = target
+        self.rel: Optional[str] = rel
 
     def __repr__(self):
-        return f'MenuItem({self.label})'
+        return f'MenuItem(label={self.label}, url={self.url}, target={self.target})'
 
 
 # Menu is a type of ViewComponent

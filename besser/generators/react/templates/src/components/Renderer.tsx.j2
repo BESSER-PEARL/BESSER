@@ -170,9 +170,19 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     return (
       <nav id={component.id} style={style}>
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {(component.items ?? []).map((item: string) => (
-            <li key={item}>{item}</li>
-          ))}
+          {(component.items ?? []).map((item: any, index: number) => {
+            const label = item?.label || item?.url || `item-${index}`;
+            if (item?.url) {
+              return (
+                <li key={`${label}-${index}`}>
+                  <a href={item.url} target={item.target || undefined} rel={item.rel || undefined}>
+                    {item.label || item.url}
+                  </a>
+                </li>
+              );
+            }
+            return <li key={`${label}-${index}`}>{label}</li>;
+          })}
         </ul>
       </nav>
     );
@@ -222,6 +232,31 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         style={style}
         src={component.src}
         alt={component.alt || component.name || "Image"}
+      />
+    );
+  }
+
+  if (component.type === "link") {
+    return (
+      <a
+        id={component.id}
+        style={style}
+        href={component.url || "#"}
+        target={component.target || undefined}
+        rel={component.rel || undefined}
+      >
+        {component.label || component.name || component.url || "Link"}
+      </a>
+    );
+  }
+
+  if (component.type === "embedded-content") {
+    return (
+      <iframe
+        id={component.id}
+        style={style}
+        src={component.src}
+        title={component.alt || component.name || "Embedded content"}
       />
     );
   }

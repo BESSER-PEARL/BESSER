@@ -8,8 +8,21 @@ It creates executable Python code that can recreate the GUI model programmatical
 import os
 from besser.BUML.metamodel.gui import GUIModel
 from besser.BUML.metamodel.gui.graphical_ui import (
-    ViewComponent, ViewContainer, Screen, Module,
-    Button, Text, Image, InputField, Form, Menu, MenuItem, DataList
+    ViewComponent,
+    ViewContainer,
+    Screen,
+    Module,
+    Button,
+    Text,
+    Image,
+    InputField,
+    Form,
+    Menu,
+    MenuItem,
+    DataList,
+    Link,
+    EmbeddedContent,
+    DataSourceElement,
 )
 from besser.BUML.metamodel.gui.dashboard import (
     LineChart, BarChart, PieChart, RadarChart, RadialBarChart
@@ -207,6 +220,8 @@ def _write_component(f, component, created_vars, parent_var=""):
         _write_text(f, comp_var, component)
     elif isinstance(component, Image):
         _write_image(f, comp_var, component)
+    elif isinstance(component, Link):
+        _write_link(f, comp_var, component)
     elif isinstance(component, InputField):
         _write_input_field(f, comp_var, component)
     elif isinstance(component, Form):
@@ -215,6 +230,8 @@ def _write_component(f, component, created_vars, parent_var=""):
         _write_menu(f, comp_var, component, created_vars)
     elif isinstance(component, DataList):
         _write_data_list(f, comp_var, component, created_vars)
+    elif isinstance(component, EmbeddedContent):
+        _write_embedded_content(f, comp_var, component)
     elif isinstance(component, LineChart):
         _write_line_chart(f, comp_var, component)
     elif isinstance(component, BarChart):
@@ -342,6 +359,35 @@ def _write_image(f, var_name, image):
     f.write(f'{var_name} = Image({", ".join(params)})\n')
 
 
+def _write_link(f, var_name, link):
+    """Write code for a Link component."""
+    params = [
+        f'name="{link.name}"',
+        f'description="{link.description or ""}"',
+        f'label="{_escape_string(getattr(link, "label", ""))}"',
+    ]
+    if getattr(link, "url", None):
+        params.append(f'url="{_escape_string(link.url)}"')
+    if getattr(link, "target", None):
+        params.append(f'target="{_escape_string(link.target)}"')
+    if getattr(link, "rel", None):
+        params.append(f'rel="{_escape_string(link.rel)}"')
+    f.write(f'{var_name} = Link({", ".join(params)})\n')
+
+
+def _write_embedded_content(f, var_name, embedded):
+    """Write code for embedded content components."""
+    params = [
+        f'name="{embedded.name}"',
+        f'description="{embedded.description or ""}"',
+    ]
+    if getattr(embedded, "source", None):
+        params.append(f'source="{_escape_string(embedded.source)}"')
+    if getattr(embedded, "content_type", None):
+        params.append(f'content_type="{_escape_string(embedded.content_type)}"')
+    f.write(f'{var_name} = EmbeddedContent({", ".join(params)})\n')
+
+
 def _write_input_field(f, var_name, input_field):
     """Write code for an InputField component."""
     params = [f'name="{input_field.name}"']
@@ -378,7 +424,14 @@ def _write_menu(f, var_name, menu, created_vars):
         for item_idx, item in enumerate(menu.menuItems):
             item_var = f"{var_name}_item_{item_idx}"
             created_vars.add(item_var)
-            f.write(f'{item_var} = MenuItem(label="{item.label if hasattr(item, "label") else ""}")\n')
+            params = [f'label="{_escape_string(getattr(item, "label", ""))}"']
+            if getattr(item, "url", None):
+                params.append(f'url="{_escape_string(item.url)}"')
+            if getattr(item, "target", None):
+                params.append(f'target="{_escape_string(item.target)}"')
+            if getattr(item, "rel", None):
+                params.append(f'rel="{_escape_string(item.rel)}"')
+            f.write(f'{item_var} = MenuItem({", ".join(params)})\n')
             item_vars.append(item_var)
     
     items_str = f'{{{", ".join(item_vars)}}}' if item_vars else '{}'
@@ -394,7 +447,7 @@ def _write_data_list(f, var_name, data_list, created_vars):
             source_var = f"{var_name}_source_{source_idx}"
             created_vars.add(source_var)
             source_name = _escape_string(getattr(source, "name", ""))
-            f.write(f'{source_var} = DataSourceElement(name="{source_name}", domain_concept=None, fields=set())\n')
+            f.write(f'{source_var} = DataSourceElement(name="{source_name}")\n')
             _update_data_source_element(f, source_var, source)
             source_vars.append(source_var)
     
@@ -687,14 +740,28 @@ def _write_data_binding_assignment(f, var_name, binding):
 
 def _update_data_source_element(f, var_name, source):
     domain_name = _get_attr_name(getattr(source, "dataSourceClass", None))
-    field_names = sorted(
-        name for name in (
+    field_names = [
+        name
+        for name in (
             _get_attr_name(field) for field in getattr(source, "fields", set())
-        ) if name
-    )
-    source_label = _escape_string(getattr(source, "name", var_name))
+        )
+        if name
+    ]
+    extra_field_names = getattr(source, "field_names", None) or []
+    for name in extra_field_names:
+        if name and name not in field_names:
+            field_names.append(name)
 
-    if not domain_name and not field_names:
+    label_name = (
+        _get_attr_name(getattr(source, "label_field", None))
+        or getattr(source, "label_field_name", None)
+    )
+    value_name = (
+        _get_attr_name(getattr(source, "value_field", None))
+        or getattr(source, "value_field_name", None)
+    )
+
+    if not any([domain_name, field_names, label_name, value_name]):
         return
 
     f.write("domain_model_ref = globals().get('domain_model')\n")
@@ -704,15 +771,34 @@ def _update_data_source_element(f, var_name, source):
         f.write("if domain_model_ref is not None:\n")
         f.write(f"    {var_name}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
         f.write(f"if {var_name}_domain:\n")
-        f.write(f"    {var_name}.domain_concept = {var_name}_domain\n")
+        f.write(f"    {var_name}.dataSourceClass = {var_name}_domain\n")
         if field_names:
             fields_list = repr(field_names)
+            f.write(f"    {var_name}.field_names = {fields_list}\n")
             f.write(f"    {var_name}.fields = set(attr for attr in {var_name}_domain.attributes if attr.name in {fields_list})\n")
+        if label_name:
+            escaped_label = _escape_string(label_name)
+            f.write(f"    {var_name}.label_field = next((attr for attr in {var_name}_domain.attributes if attr.name == \"{escaped_label}\"), None)\n")
+            f.write(f"    {var_name}.label_field_name = \"{escaped_label}\"\n")
+        if value_name:
+            escaped_value = _escape_string(value_name)
+            f.write(f"    {var_name}.value_field = next((attr for attr in {var_name}_domain.attributes if attr.name == \"{escaped_value}\"), None)\n")
+            f.write(f"    {var_name}.value_field_name = \"{escaped_value}\"\n")
         f.write("else:\n")
-        f.write(f"    # Domain class '{escaped_domain}' not resolved for data source '{source_label}'.\n")
-        f.write("    pass\n")
-    elif field_names:
-        f.write(f"# Fields {repr(field_names)} require domain context to resolve for data source '{source_label}'.\n")
+        f.write(f"    # Domain class '{escaped_domain}' not resolved for data source '{_escape_string(getattr(source, 'name', var_name))}'.\n")
+        if field_names:
+            f.write(f"    {var_name}.field_names = {repr(field_names)}\n")
+        if label_name:
+            f.write(f"    {var_name}.label_field_name = \"{_escape_string(label_name)}\"\n")
+        if value_name:
+            f.write(f"    {var_name}.value_field_name = \"{_escape_string(value_name)}\"\n")
+    else:
+        if field_names:
+            f.write(f"{var_name}.field_names = {repr(field_names)}\n")
+        if label_name:
+            f.write(f"{var_name}.label_field_name = \"{_escape_string(label_name)}\"\n")
+        if value_name:
+            f.write(f"{var_name}.value_field_name = \"{_escape_string(value_name)}\"\n")
 
 def _write_layout(f, layout, created_vars, layout_var):
     """Write code for Layout object."""

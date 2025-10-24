@@ -11,10 +11,12 @@ from besser.BUML.metamodel.gui import (
     DataList,
     DataSource,
     DataSourceElement,
+    EmbeddedContent,
     Form,
     Image,
     InputField,
     InputFieldType,
+    Link,
     Menu,
     MenuItem,
     Text,
@@ -39,7 +41,7 @@ from .component_helpers import (
     has_menu_structure,
 )
 from .constants import INPUT_COMPONENT_TYPES, INPUT_TYPE_MAP, BUTTON_ACTION_BY_HTML_TYPE
-from .utils import extract_text_content
+from .utils import extract_text_content, clean_attribute_name
 
 
 def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> Button:
@@ -298,6 +300,71 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict, parse_
     return form
 
 
+def parse_link(component: Dict[str, Any], styling, name: str, meta: Dict) -> Link:
+    """
+    Parse a hyperlink component.
+    """
+    attributes = component.get("attributes") if isinstance(component.get("attributes"), dict) else {}
+    label = extract_text_content(component) or ""
+    if isinstance(attributes, dict) and not label:
+        label = attributes.get("title") or attributes.get("aria-label") or attributes.get("data-label") or ""
+
+    url = attributes.get("href") if isinstance(attributes, dict) else None
+    if isinstance(attributes, dict):
+        url = url or attributes.get("data-href")
+        target = attributes.get("target") or attributes.get("data-target")
+        rel = attributes.get("rel")
+        description = attributes.get("title") or "Link element"
+    else:
+        target = None
+        rel = None
+        description = "Link element"
+
+    link = Link(
+        name=name,
+        description=description,
+        label=label,
+        url=url,
+        target=target,
+        rel=rel,
+        styling=styling,
+    )
+
+    if meta["tagName"] is None:
+        meta["tagName"] = "a"
+
+    return link
+
+
+def parse_embedded_content(component: Dict[str, Any], styling, name: str, meta: Dict) -> EmbeddedContent:
+    """
+    Parse generic embedded content (e.g., maps/iframes).
+    """
+    attributes = component.get("attributes") if isinstance(component.get("attributes"), dict) else {}
+    source = None
+    if isinstance(attributes, dict):
+        source = attributes.get("src") or attributes.get("data-src")
+    source = source or component.get("src")
+
+    description = "Embedded content"
+    if isinstance(attributes, dict):
+        description = attributes.get("title") or attributes.get("aria-label") or description
+    content_type = component.get("type") or component.get("tagName") or (attributes.get("data-content-type") if isinstance(attributes, dict) else None)
+
+    embedded = EmbeddedContent(
+        name=name,
+        description=description,
+        source=source,
+        content_type=content_type,
+        styling=styling,
+    )
+
+    if meta["tagName"] is None:
+        meta["tagName"] = "iframe"
+
+    return embedded
+
+
 def parse_text(component: Dict[str, Any], styling, name: str, meta: Dict) -> Text:
     """
     Parse a text component.
@@ -342,6 +409,8 @@ def parse_image(component: Dict[str, Any], styling, name: str, meta: Dict) -> Im
     source = None
     if isinstance(attributes, dict):
         source = attributes.get("src") or attributes.get("data-src")
+    if not source:
+        source = component.get("src")
 
     image = Image(name=name, description=description, styling=styling, source=source)
     if meta["tagName"] is None:
@@ -366,7 +435,14 @@ def parse_menu(component: Dict[str, Any], styling, name: str, meta: Dict) -> Men
     
     # Extract menu items from links or list items
     for menu_item_data in extract_menu_items(component):
-        menu_items.add(MenuItem(label=menu_item_data['label']))
+        menu_items.add(
+            MenuItem(
+                label=menu_item_data.get('label', "Menu"),
+                url=menu_item_data.get('url'),
+                target=menu_item_data.get('target'),
+                rel=menu_item_data.get('rel'),
+            )
+        )
     
     menu = Menu(
         name=name,
@@ -400,12 +476,64 @@ def parse_data_list(component: Dict[str, Any], styling, name: str, meta: Dict, d
     
     # Extract data sources from attributes
     list_sources = set()
+    raw_fields = []
     if isinstance(attributes, dict):
         data_source_name = attributes.get("data-source") or attributes.get("data-bind")
+        label_field_name = attributes.get("label-field") or attributes.get("data-label-field")
+        value_field_name = attributes.get("data-field") or attributes.get("value-field")
+        raw_fields_value = attributes.get("fields") or attributes.get("data-fields")
+        if isinstance(raw_fields_value, str):
+            raw_fields = [clean_attribute_name(part.strip()) for part in raw_fields_value.split(",") if part.strip()]
+        elif isinstance(raw_fields_value, list):
+            raw_fields = [clean_attribute_name(str(part)) for part in raw_fields_value]
+        else:
+            raw_fields = []
+
         if data_source_name and domain_model:
             domain_class = domain_model.get_class_by_name(data_source_name)
             if domain_class:
-                list_sources.add(DataSourceElement(domain_concept=domain_class))
+                label_field = None
+                value_field = None
+                if label_field_name:
+                    label_field = next(
+                        (attr for attr in getattr(domain_class, "attributes", set()) if attr.name == clean_attribute_name(label_field_name)),
+                        None,
+                    )
+                if value_field_name:
+                    value_field = next(
+                        (attr for attr in getattr(domain_class, "attributes", set()) if attr.name == clean_attribute_name(value_field_name)),
+                        None,
+                    )
+
+                fields = set()
+                if raw_fields:
+                    fields = {
+                        attr
+                        for attr in getattr(domain_class, "attributes", set())
+                        if attr.name in {clean_attribute_name(name) for name in raw_fields}
+                    }
+
+                source = DataSourceElement(
+                    name=data_source_name,
+                    dataSourceClass=domain_class,
+                    fields=fields,
+                    label_field=label_field,
+                    value_field=value_field,
+                    field_names=raw_fields,
+                    label_field_name=clean_attribute_name(label_field_name) if label_field_name else None,
+                    value_field_name=clean_attribute_name(value_field_name) if value_field_name else None,
+                )
+                list_sources.add(source)
+        elif data_source_name:
+            source = DataSourceElement(
+                name=data_source_name,
+                dataSourceClass=None,
+                fields=set(),
+                field_names=raw_fields,
+                label_field_name=clean_attribute_name(label_field_name) if label_field_name else None,
+                value_field_name=clean_attribute_name(value_field_name) if value_field_name else None,
+            )
+            list_sources.add(source)
     
     data_list = DataList(
         name=name,

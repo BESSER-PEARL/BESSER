@@ -2,7 +2,7 @@
 Helper functions for component detection and extraction.
 """
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .constants import TEXT_TAGS
 
@@ -44,7 +44,7 @@ def has_menu_structure(component: Dict[str, Any]) -> bool:
     return has_list or has_links
 
 
-def extract_menu_items(component: Dict[str, Any]) -> List[Dict[str, str]]:
+def extract_menu_items(component: Dict[str, Any]) -> List[Dict[str, Optional[str]]]:
     """
     Extract menu items (labels and links) from a navigation component.
     
@@ -65,8 +65,16 @@ def extract_menu_items(component: Dict[str, Any]) -> List[Dict[str, str]]:
         if not label:
             attrs = link_comp.get("attributes", {})
             if isinstance(attrs, dict):
-                label = attrs.get("title") or attrs.get("aria-label") or "Menu Item"
-        return {"label": label or "Menu Item"}
+                label = attrs.get("title") or attrs.get("aria-label") or attrs.get("data-label")
+        attrs = link_comp.get("attributes", {}) or {}
+        url = None
+        target = None
+        rel = None
+        if isinstance(attrs, dict):
+            url = attrs.get("href") or attrs.get("data-href")
+            target = attrs.get("target") or attrs.get("data-target")
+            rel = attrs.get("rel")
+        return {"label": (label or "Menu Item"), "url": url, "target": target, "rel": rel}
     
     def process_component(comp):
         """Recursively process components to find links."""
@@ -92,7 +100,7 @@ def extract_menu_items(component: Dict[str, Any]) -> List[Dict[str, str]]:
     for comp in components:
         process_component(comp)
     
-    return menu_items if menu_items else [{"label": "Menu"}]
+    return menu_items if menu_items else [{"label": "Menu", "url": None, "target": None, "rel": None}]
 
 
 def has_data_binding(component: Dict[str, Any]) -> bool:

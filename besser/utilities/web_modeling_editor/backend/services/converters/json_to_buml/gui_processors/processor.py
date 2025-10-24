@@ -34,10 +34,12 @@ from .component_parsers import (
     parse_button,
     parse_container,
     parse_data_list,
+    parse_embedded_content,
     parse_form,
     parse_generic_component,
     parse_image,
     parse_input_field,
+    parse_link,
     parse_menu,
     parse_text,
 )
@@ -251,28 +253,18 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             return image
 
         # === LINK PARSER ===
-        if comp_type in {"link", "link-button"}:
+        if comp_type in {"link", "link-button"} or tag == "a":
             name = get_unique_name(component, "Link")
-            link = ViewComponent(
-                name=name,
-                description="Link element",
-                styling=styling,
-            )
-            meta["tagName"] = meta["tagName"] or "a"
+            link = parse_link(component, styling, name, meta)
             attach_meta(link, meta)
             return link
 
-        # === MAP PARSER ===
-        if comp_type == "map":
-            name = get_unique_name(component, "Map")
-            map_component = ViewComponent(
-                name=name,
-                description="Embedded map",
-                styling=styling,
-            )
-            meta["tagName"] = "iframe"
-            attach_meta(map_component, meta)
-            return map_component
+        # === EMBEDDED CONTENT PARSER ===
+        if comp_type == "map" or tag == "iframe":
+            name = get_unique_name(component, "EmbeddedContent")
+            embedded = parse_embedded_content(component, styling, name, meta)
+            attach_meta(embedded, meta)
+            return embedded
 
         # === MENU PARSER ===
         # Check for nav tags or ul/ol with link structure

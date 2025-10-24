@@ -13,10 +13,12 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.gui import (
     Button,
     DataList,
+    EmbeddedContent,
     Form,
     GUIModel,
     Image,
     InputField,
+    Link,
     Menu,
     MenuItem,
     Text,
@@ -79,14 +81,14 @@ class ReactGenerator(GeneratorInterface):
                 rel_output_path = rel_template_path
 
             file_path = self.build_generation_path(file_name=rel_output_path)
-            print(f"Generating file: {file_path} from template: {rel_template_path}")
+            # print(f"Generating file: {file_path} from template: {rel_template_path}")
             try:
                 os.makedirs(os.path.dirname(file_path), exist_ok=True)
                 template = self.env.get_template(rel_template_path.replace("\\", "/"))
                 generated_code = template.render(**context)
                 with open(file_path, mode="w", encoding="utf-8") as f:
                     f.write(generated_code)
-                print(f"Code generated in the location: {file_path}")
+                # print(f"Code generated in the location: {file_path}")
             except Exception as exc:
                 print(f"Error generating {file_path} from {rel_template_path}: {exc}")
                 raise
@@ -211,6 +213,17 @@ class ReactGenerator(GeneratorInterface):
             node["alt"] = element.description or ""
             node["src"] = attributes.get("src") or attributes.get("data-src") or getattr(element, "source", None)
 
+        if isinstance(element, Link):
+            node["label"] = element.label
+            node["url"] = element.url or attributes.get("href") or attributes.get("data-href")
+            node["target"] = element.target or attributes.get("target") or attributes.get("data-target")
+            node["rel"] = element.rel or attributes.get("rel")
+
+        if isinstance(element, EmbeddedContent):
+            node["src"] = element.source or attributes.get("src") or attributes.get("data-src")
+            node["content_type"] = element.content_type or attributes.get("data-content-type") or element.name
+            node["alt"] = element.description or attributes.get("title")
+
         if isinstance(element, Button):
             node["label"] = element.label
             node["button_type"] = self._enum_value(getattr(element, "buttonType", None))
@@ -243,22 +256,40 @@ class ReactGenerator(GeneratorInterface):
                 node["inputs"] = inputs
 
         if isinstance(element, Menu):
-            items = [item.label for item in self._sorted_menu_items(element.menuItems)]
+            items = []
+            for item in self._sorted_menu_items(element.menuItems):
+                items.append(
+                    self._clean_dict(
+                        {
+                            "label": item.label,
+                            "url": getattr(item, "url", None),
+                            "target": getattr(item, "target", None),
+                            "rel": getattr(item, "rel", None),
+                        }
+                    )
+                )
             if items:
                 node["items"] = items
 
         if isinstance(element, DataList):
             sources = []
             for source in self._sorted_by_name(element.list_sources):
+                domain_name = getattr(getattr(source, "dataSourceClass", None), "name", None)
                 fields = sorted(
                     [getattr(field, "name", None) for field in getattr(source, "fields", []) if getattr(field, "name", None)]
                 )
+                if not fields and getattr(source, "field_names", None):
+                    fields = list(getattr(source, "field_names"))
+                label_field_name = getattr(getattr(source, "label_field", None), "name", None) or getattr(source, "label_field_name", None)
+                value_field_name = getattr(getattr(source, "value_field", None), "name", None) or getattr(source, "value_field_name", None)
                 sources.append(
                     self._clean_dict(
                         {
                             "name": source.name,
-                            "domain": getattr(getattr(source, "dataSourceClass", None), "name", None),
-                            "fields": fields,
+                            "domain": domain_name,
+                            "fields": fields or None,
+                            "label_field": label_field_name,
+                            "value_field": value_field_name,
                         }
                     )
                 )
@@ -660,12 +691,16 @@ class ReactGenerator(GeneratorInterface):
             return "text"
         if isinstance(element, Image):
             return "image"
+        if isinstance(element, Link):
+            return "link"
         if isinstance(element, Button):
             return "button"
         if isinstance(element, InputField):
             return "input"
         if isinstance(element, Form):
             return "form"
+        if isinstance(element, EmbeddedContent):
+            return "embedded-content"
         if isinstance(element, Menu):
             return "menu"
         if isinstance(element, DataList):

@@ -20,18 +20,18 @@ Class_ = Class(name="Class")
 # Author class attributes and methods
 Author_name: Property = Property(name="name", type=StringType)
 Author_email: Property = Property(name="email", type=StringType)
-Author.attributes={Author_name, Author_email}
+Author.attributes={Author_email, Author_name}
 
 # Book class attributes and methods
-Book_pages: Property = Property(name="pages", type=IntegerType)
 Book_title: Property = Property(name="title", type=StringType)
 Book_release: Property = Property(name="release", type=DateType)
-Book.attributes={Book_pages, Book_release, Book_title}
+Book_pages: Property = Property(name="pages", type=IntegerType)
+Book.attributes={Book_title, Book_pages, Book_release}
 
 # Library class attributes and methods
 Library_name: Property = Property(name="name", type=StringType)
 Library_address: Property = Property(name="address", type=StringType)
-Library.attributes={Library_name, Library_address}
+Library.attributes={Library_address, Library_name}
 
 # Class class attributes and methods
 Class__attribute: Property = Property(name="attribute", type=StringType)

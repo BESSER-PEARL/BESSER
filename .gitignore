@@ -31,3 +31,6 @@ besser/utilities/web_modeling_editor/backend/output
 
 # pylint
 .pylintrc
+
+TEST_GUI/react_output_test/*
+

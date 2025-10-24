@@ -3,6 +3,8 @@ Test script to regenerate React output from projecteditor.json
 """
 import json
 import sys
+
+from besser.generators.web_app.web_app import WebAppGenerator
 # Prevent bocl import error
 sys.path.insert(0, '.')
 
@@ -19,10 +21,10 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_class_diagram,
     process_gui_diagram
 )
-from besser.generators.react_ts import ReactTSGenerator
+
 
 # Load the project
-with open('output/v2project.json', 'r', encoding='utf-8') as f:
+with open('output/TEST_GUI.json', 'r', encoding='utf-8') as f:
     project_data = json.load(f)
 
 # Extract diagrams
@@ -41,11 +43,9 @@ gui_model = process_gui_diagram(gui_diagram['model'], class_diagram['model'], bu
 # Generate React TypeScript output
 print("Generating React TypeScript output...")
 output_dir = 'react_output_test'
-generator = ReactTSGenerator(buml_model, gui_model, output_dir=output_dir)
+generator = WebAppGenerator(buml_model, gui_model, output_dir=output_dir)
 generator.generate()
 
 print(f"\n✅ Generation complete! Output in: {output_dir}")
 print("\nCheck the generated files:")
-print(f"  - {output_dir}/frontend/src/generated/guiModel.ts")
-print(f"  - {output_dir}/frontend/src/App.tsx")
-print(f"  - {output_dir}/frontend/src/utils/eventHandlers.ts")
+

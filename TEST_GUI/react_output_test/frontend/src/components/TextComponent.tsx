@@ -1,0 +1,16 @@
+import React from "react";
+import { applyStyle } from "../utils/applyStyle";
+
+interface TextProps {
+  id: string;
+  content: string;
+  styles: any[];
+  style_id?: string;
+}
+
+export const TextComponent: React.FC<TextProps> = ({ id, content, styles, ...props }) => {
+  // Try to get style_id from props if present
+  const styleId = (props as any).style_id;
+  const style = applyStyle(`#${id}`, styles, styleId);
+  return <p id={id} style={style}>{content}</p>;
+};

@@ -1,0 +1,99 @@
+import React, { useEffect, useState } from "react";
+import { Wrapper } from "./Wrapper";
+import { TextComponent } from "./TextComponent";
+import { LineChartComponent } from "./charts/LineChartComponent";
+import { BarChartComponent } from "./charts/BarChartComponent";
+
+import { applyStyle } from "../utils/applyStyle";
+import axios from "axios";
+
+interface ComponentData {
+  id: string;
+  type: string;
+  children?: ComponentData[];
+  [key: string]: any;
+}
+
+interface StyleData {
+  selectors: string[];
+  style: Record<string, string | number>;
+}
+
+interface RendererProps {
+  component: ComponentData;
+  styles: StyleData[];
+}
+
+// Dummy data para los charts
+const dummyData = [
+  { name: "Enero", value: 400 },
+  { name: "Febrero", value: 300 },
+  { name: "Marzo", value: 200 },
+  { name: "Abril", value: 278 },
+];
+
+export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
+  // Chart data hooks (always declared, only used for charts)
+  const [chartData, setChartData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (component.type === "line-chart" || component.type === "bar-chart") {
+      if (component.data_source) {
+        setLoading(true);
+        setError(null);
+        const backendBase = "http://localhost:8000";
+        const url = component.data_source.startsWith("/")
+          ? backendBase + component.data_source
+          : component.data_source;
+        axios.get(url)
+          .then((res) => {
+            let data = Array.isArray(res.data) ? res.data : (res.data.measure || res.data.measures || []);
+            if (!Array.isArray(data)) data = [];
+            setChartData(data);
+          })
+          .catch(() => {
+            setError("Error loading data");
+            setChartData([]);
+          })
+          .finally(() => setLoading(false));
+      }
+    }
+    // eslint-disable-next-line
+  }, [component.type, component.data_source]);
+
+  if (component.type === "wrapper") {
+    return <Wrapper id={component.id} components={component.children} styles={styles} />;
+  }
+
+  if (component.type === "text") {
+    return (
+      <TextComponent
+        id={component.id}
+        content={component.content || "Texto vacío"}
+        styles={styles}
+        style_id={component.style_id}
+      />
+    );
+  }
+
+  if (component.type === "line-chart" || component.type === "bar-chart") {
+    if (loading) return <div>Loading data...</div>;
+    if (error) return <div>{error}</div>;
+    const ChartComponent = component.type === "line-chart" ? LineChartComponent : BarChartComponent;
+    return (
+      <ChartComponent
+        title={component["title"] || component["chart-title"]}
+        color={component["color"] || component["chart-color"]}
+        data={chartData}
+        labelField={component.label_field || "day"}
+        dataField={component.data_field || "value"}
+      />
+    );
+  }
+
+  // Default: unknown type
+  const style = applyStyle(`#${component.id}`, styles);
+  return <div id={component.id} style={style}>Unknown type: {component.type}</div>;
+}

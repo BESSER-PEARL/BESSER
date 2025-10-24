@@ -1,0 +1,466 @@
+{
+  "project": {
+    "id": "76898337-471c-422f-9d54-76b8ff50c82e",
+    "type": "Project",
+    "name": "TEST GUI",
+    "description": "New project",
+    "owner": "User",
+    "createdAt": "2025-10-24T12:03:33.012Z",
+    "currentDiagramType": "ClassDiagram",
+    "diagrams": {
+      "ClassDiagram": {
+        "id": "ae43060d-779d-45df-ac21-05b99e21cecb",
+        "title": "Class Diagram",
+        "model": {
+          "version": "3.0.0",
+          "type": "ClassDiagram",
+          "size": {
+            "width": 1260,
+            "height": 780
+          },
+          "interactive": {
+            "elements": {},
+            "relationships": {}
+          },
+          "elements": {
+            "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31": {
+              "id": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
+              "name": "Author",
+              "type": "Class",
+              "owner": null,
+              "bounds": {
+                "x": -610,
+                "y": -370,
+                "width": 160,
+                "height": 100
+              },
+              "attributes": [
+                "ff634794-9146-4be9-aa8c-9e54e4595208",
+                "49061bdb-b617-41ad-b926-dfdc568c2501"
+              ],
+              "methods": []
+            },
+            "ff634794-9146-4be9-aa8c-9e54e4595208": {
+              "id": "ff634794-9146-4be9-aa8c-9e54e4595208",
+              "name": "+ name: str",
+              "type": "ClassAttribute",
+              "owner": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
+              "bounds": {
+                "x": -609.5,
+                "y": -329.5,
+                "width": 159,
+                "height": 30
+              }
+            },
+            "49061bdb-b617-41ad-b926-dfdc568c2501": {
+              "id": "49061bdb-b617-41ad-b926-dfdc568c2501",
+              "name": "+ email: str",
+              "type": "ClassAttribute",
+              "owner": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
+              "bounds": {
+                "x": -609.5,
+                "y": -299.5,
+                "width": 159,
+                "height": 30
+              }
+            },
+            "2997ca04-d773-4288-b4a0-3ea2f2ba0ac8": {
+              "id": "2997ca04-d773-4288-b4a0-3ea2f2ba0ac8",
+              "name": "Book",
+              "type": "Class",
+              "owner": null,
+              "bounds": {
+                "x": -200,
+                "y": -300,
+                "width": 160,
+                "height": 130
+              },
+              "attributes": [
+                "d9542708-d9c0-4325-92f0-90d0e426c441",
+                "dc75094a-7f91-45ff-ab74-a14900df8084",
+                "d8bf5afa-4e73-4ff7-8010-9de687b55906"
+              ],
+              "methods": []
+            },
+            "d9542708-d9c0-4325-92f0-90d0e426c441": {
+              "id": "d9542708-d9c0-4325-92f0-90d0e426c441",
+              "name": "+ pages: int",
+              "type": "ClassAttribute",
+              "owner": "2997ca04-d773-4288-b4a0-3ea2f2ba0ac8",
+              "bounds": {
+                "x": -199.5,
+                "y": -259.5,
+                "width": 159,
+                "height": 30
+              }
+            },
+            "dc75094a-7f91-45ff-ab74-a14900df8084": {
+              "id": "dc75094a-7f91-45ff-ab74-a14900df8084",
+              "name": "+ title: str",
+              "type": "ClassAttribute",
+              "owner": "2997ca04-d773-4288-b4a0-3ea2f2ba0ac8",
+              "bounds": {
+                "x": -199.5,
+                "y": -229.5,
+                "width": 159,
+                "height": 30
+              }
+            },
+            "d8bf5afa-4e73-4ff7-8010-9de687b55906": {
+              "id": "d8bf5afa-4e73-4ff7-8010-9de687b55906",
+              "name": "+ release: date",
+              "type": "ClassAttribute",
+              "owner": "2997ca04-d773-4288-b4a0-3ea2f2ba0ac8",
+              "bounds": {
+                "x": -199.5,
+                "y": -199.5,
+                "width": 159,
+                "height": 30
+              }
+            },
+            "7d5052ba-ac69-4057-93a1-78b970c8bd9b": {
+              "id": "7d5052ba-ac69-4057-93a1-78b970c8bd9b",
+              "name": "Library",
+              "type": "Class",
+              "owner": null,
+              "bounds": {
+                "x": 160,
+                "y": -310,
+                "width": 160,
+                "height": 100
+              },
+              "attributes": [
+                "2db46afc-ee52-48a9-beca-6d44943fa2c6",
+                "4f4a7c18-d39a-4dd5-abb1-0c41e9494c7b"
+              ],
+              "methods": []
+            },
+            "2db46afc-ee52-48a9-beca-6d44943fa2c6": {
+              "id": "2db46afc-ee52-48a9-beca-6d44943fa2c6",
+              "name": "+ name: str",
+              "type": "ClassAttribute",
+              "owner": "7d5052ba-ac69-4057-93a1-78b970c8bd9b",
+              "bounds": {
+                "x": 160.5,
+                "y": -269.5,
+                "width": 159,
+                "height": 30
+              }
+            },
+            "4f4a7c18-d39a-4dd5-abb1-0c41e9494c7b": {
+              "id": "4f4a7c18-d39a-4dd5-abb1-0c41e9494c7b",
+              "name": "+ address: str",
+              "type": "ClassAttribute",
+              "owner": "7d5052ba-ac69-4057-93a1-78b970c8bd9b",
+              "bounds": {
+                "x": 160.5,
+                "y": -239.5,
+                "width": 159,
+                "height": 30
+              }
+            }
+          },
+          "relationships": {
+            "b6e89814-d29a-410e-aa24-ab217dc003e4": {
+              "id": "b6e89814-d29a-410e-aa24-ab217dc003e4",
+              "name": "",
+              "type": "ClassBidirectional",
+              "owner": null,
+              "bounds": {
+                "x": -450,
+                "y": -330,
+                "width": 250,
+                "height": 133
+              },
+              "path": [
+                {
+                  "x": 0,
+                  "y": 10
+                },
+                {
+                  "x": 125,
+                  "y": 10
+                },
+                {
+                  "x": 125,
+                  "y": 95
+                },
+                {
+                  "x": 250,
+                  "y": 95
+                }
+              ],
+              "source": {
+                "direction": "Right",
+                "element": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
+                "multiplicity": "1..*",
+                "role": "writtenBy",
+                "bounds": {
+                  "x": -440,
+                  "y": -250,
+                  "width": 0,
+                  "height": 0
+                }
+              },
+              "target": {
+                "direction": "Left",
+                "element": "2997ca04-d773-4288-b4a0-3ea2f2ba0ac8",
+                "multiplicity": "0..*",
+                "role": "publishes",
+                "bounds": {
+                  "x": -300,
+                  "y": -240,
+                  "width": 0,
+                  "height": 0
+                }
+              },
+              "isManuallyLayouted": false
+            },
+            "da706761-f28c-4ebc-ab9a-6e0a62d83f5a": {
+              "id": "da706761-f28c-4ebc-ab9a-6e0a62d83f5a",
+              "name": "",
+              "type": "ClassBidirectional",
+              "owner": null,
+              "bounds": {
+                "x": -40,
+                "y": -265,
+                "width": 200,
+                "height": 48
+              },
+              "path": [
+                {
+                  "x": 200,
+                  "y": 10
+                },
+                {
+                  "x": 0,
+                  "y": 10
+                }
+              ],
+              "source": {
+                "direction": "Left",
+                "element": "7d5052ba-ac69-4057-93a1-78b970c8bd9b",
+                "multiplicity": "1..1",
+                "role": "locatedIn",
+                "bounds": {
+                  "x": 0,
+                  "y": -250,
+                  "width": 0,
+                  "height": 0
+                }
+              },
+              "target": {
+                "direction": "Right",
+                "element": "2997ca04-d773-4288-b4a0-3ea2f2ba0ac8",
+                "multiplicity": "0..*",
+                "role": "has",
+                "bounds": {
+                  "x": -140,
+                  "y": -240,
+                  "width": 0,
+                  "height": 0
+                }
+              },
+              "isManuallyLayouted": false
+            }
+          },
+          "assessments": {}
+        },
+        "lastUpdate": "2025-10-24T12:03:43.416Z"
+      },
+      "ObjectDiagram": {
+        "id": "8e3c9e2f-102a-4845-8a6e-268c08c157f9",
+        "title": "Object Diagram",
+        "model": {
+          "version": "3.0.0",
+          "type": "ObjectDiagram",
+          "size": {
+            "width": 1400,
+            "height": 740
+          },
+          "elements": {},
+          "relationships": {},
+          "interactive": {
+            "elements": {},
+            "relationships": {}
+          },
+          "assessments": {}
+        },
+        "lastUpdate": "2025-10-24T12:03:33.012Z"
+      },
+      "StateMachineDiagram": {
+        "id": "d9e78a81-4a16-4b91-8188-95e5b22db52a",
+        "title": "State Machine Diagram",
+        "model": {
+          "version": "3.0.0",
+          "type": "StateMachineDiagram",
+          "size": {
+            "width": 1400,
+            "height": 740
+          },
+          "elements": {},
+          "relationships": {},
+          "interactive": {
+            "elements": {},
+            "relationships": {}
+          },
+          "assessments": {}
+        },
+        "lastUpdate": "2025-10-24T12:03:33.012Z"
+      },
+      "AgentDiagram": {
+        "id": "3e2d6ecf-9d6d-4ac4-a8bd-786e479cddf2",
+        "title": "Agent Diagram",
+        "model": {
+          "version": "3.0.0",
+          "type": "AgentDiagram",
+          "size": {
+            "width": 1400,
+            "height": 740
+          },
+          "elements": {},
+          "relationships": {},
+          "interactive": {
+            "elements": {},
+            "relationships": {}
+          },
+          "assessments": {}
+        },
+        "lastUpdate": "2025-10-24T12:03:33.012Z"
+      },
+      "GUINoCodeDiagram": {
+        "id": "19c6de63-68df-4333-9512-7487faf9791b",
+        "title": "GUI Diagram",
+        "model": {
+          "pages": [
+            {
+              "name": "Home",
+              "frames": [
+                {
+                  "component": {
+                    "type": "wrapper",
+                    "stylable": [
+                      "background",
+                      "background-color",
+                      "background-image",
+                      "background-repeat",
+                      "background-attachment",
+                      "background-position",
+                      "background-size"
+                    ],
+                    "attributes": {
+                      "id": "ifai"
+                    },
+                    "components": [
+                      {
+                        "type": "line-chart",
+                        "style": "",
+                        "classes": [
+                          "line-chart-component"
+                        ],
+                        "attributes": {
+                          "chart-color": "#4CAF50",
+                          "chart-title": "Sales Over Time",
+                          "data-source": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
+                          "label-field": "ff634794-9146-4be9-aa8c-9e54e4595208",
+                          "data-field": "49061bdb-b617-41ad-b926-dfdc568c2501",
+                          "line-width": 2,
+                          "show-grid": true,
+                          "show-legend": true,
+                          "show-tooltip": true,
+                          "curve-type": "monotone",
+                          "animate": true,
+                          "id": "i9j9"
+                        },
+                        "chart-color": "#4CAF50",
+                        "chart-title": "Sales Over Time",
+                        "data-source": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
+                        "label-field": "ff634794-9146-4be9-aa8c-9e54e4595208",
+                        "data-field": "49061bdb-b617-41ad-b926-dfdc568c2501",
+                        "line-width": 2,
+                        "show-grid": true,
+                        "show-legend": true,
+                        "show-tooltip": true,
+                        "curve-type": "monotone",
+                        "animate": true
+                      },
+                      {
+                        "type": "bar-chart",
+                        "style": "",
+                        "classes": [
+                          "bar-chart-component"
+                        ],
+                        "attributes": {
+                          "chart-color": "#3498db",
+                          "chart-title": "Revenue by Category",
+                          "data-source": "7d5052ba-ac69-4057-93a1-78b970c8bd9b",
+                          "label-field": "2db46afc-ee52-48a9-beca-6d44943fa2c6",
+                          "data-field": "4f4a7c18-d39a-4dd5-abb1-0c41e9494c7b",
+                          "bar-width": 30,
+                          "orientation": "vertical",
+                          "show-grid": true,
+                          "show-legend": true,
+                          "stacked": false,
+                          "id": "itxi"
+                        },
+                        "chart-color": "#3498db",
+                        "chart-title": "Revenue by Category",
+                        "data-source": "7d5052ba-ac69-4057-93a1-78b970c8bd9b",
+                        "label-field": "2db46afc-ee52-48a9-beca-6d44943fa2c6",
+                        "data-field": "4f4a7c18-d39a-4dd5-abb1-0c41e9494c7b",
+                        "bar-width": 30,
+                        "orientation": "vertical",
+                        "show-grid": true,
+                        "show-legend": true,
+                        "stacked": false
+                      }
+                    ],
+                    "head": {
+                      "type": "head"
+                    },
+                    "docEl": {
+                      "tagName": "html"
+                    }
+                  },
+                  "id": "K51j4FRUfIjFc9fN"
+                }
+              ],
+              "id": "OsrgMFsVuozQZHRj"
+            }
+          ],
+          "styles": [
+            {
+              "selectors": [
+                "#i9j9"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#itxi"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            }
+          ],
+          "assets": [],
+          "symbols": [],
+          "version": "0.21.13"
+        },
+        "lastUpdate": "2025-10-24T12:05:35.006Z"
+      }
+    },
+    "settings": {
+      "defaultDiagramType": "ClassDiagram",
+      "autoSave": true,
+      "collaborationEnabled": false
+    }
+  },
+  "exportedAt": "2025-10-24T12:11:12.085Z",
+  "version": "2.0.0"
+}

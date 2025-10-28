@@ -130,6 +130,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
         comp_type = str(component.get("type", "")).lower()
         tag = str(component.get("tagName", "")).lower()
+        comp_name = str(component.get("name", "")).lower()
 
         # Skip wrapper and textnode
         if comp_type == "wrapper":
@@ -283,7 +284,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             return data_list
 
         # === CONTAINER PARSER ===
-        if comp_type in CONTAINER_TYPES or tag in CONTAINER_TAGS:
+        if comp_type in CONTAINER_TYPES or tag in CONTAINER_TAGS or comp_name in CONTAINER_TYPES:
             name = get_unique_name(component, "Container")
             container = parse_container(component, styling, name, meta, parse_component_list)
             attach_meta(container, meta)

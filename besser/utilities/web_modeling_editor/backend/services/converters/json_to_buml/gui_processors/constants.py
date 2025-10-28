@@ -27,7 +27,7 @@ CONTAINER_TAGS = {
 CONTAINER_TYPES = {
     "container", "default", "row", "column", "wrapper",
     "grid", "list", "flex", "tabs", "tab-container",
-    "tab-contents", "tab-content", "tab", "form",
+    "tab-contents", "tab-content", "tab", "form", "cell"
 }
 
 # Input component types

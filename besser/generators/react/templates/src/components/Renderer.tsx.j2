@@ -3,6 +3,8 @@ import axios from "axios";
 import { applyStyle, StyleData } from "../utils/applyStyle";
 import { BarChartComponent } from "./charts/BarChartComponent";
 import { LineChartComponent } from "./charts/LineChartComponent";
+import { PieChartComponent } from "./charts/PieChartComponent";
+import { RadialBarChartComponent } from "./charts/RadialBarChartComponent";
 
 export interface RendererProps {
   component: any;
@@ -23,7 +25,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (component.type === "bar-chart" || component.type === "line-chart") {
+    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart"].includes(component.type)) {
       const endpoint = component.data_binding?.endpoint;
       if (endpoint) {
         setLoading(true);
@@ -98,6 +100,38 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         id={component.id}
         title={component.title || component.name}
         color={component.color}
+        data={chartData}
+        labelField={component.data_binding?.label_field}
+        dataField={component.data_binding?.data_field}
+        options={component.chart || {}}
+        styles={style}
+      />
+    );
+  }
+
+  if (component.type === "pie-chart") {
+    if (loading) return <div id={component.id}>Loading data...</div>;
+    if (error) return <div id={component.id}>{error}</div>;
+    return (
+      <PieChartComponent
+        id={component.id}
+        title={component.title || component.name}
+        data={chartData}
+        labelField={component.data_binding?.label_field}
+        dataField={component.data_binding?.data_field}
+        options={component.chart || {}}
+        styles={style}
+      />
+    );
+  }
+
+  if (component.type === "radial-bar-chart") {
+    if (loading) return <div id={component.id}>Loading data...</div>;
+    if (error) return <div id={component.id}>{error}</div>;
+    return (
+      <RadialBarChartComponent
+        id={component.id}
+        title={component.title || component.name}
         data={chartData}
         labelField={component.data_binding?.label_field}
         dataField={component.data_binding?.data_field}

@@ -1,0 +1,535 @@
+{
+  "project": {
+    "id": "project_1761648611119_qips1qhfv",
+    "type": "Project",
+    "name": "Statec",
+    "description": "New project",
+    "owner": "BESSER",
+    "createdAt": "2025-10-28T10:50:11.119Z",
+    "currentDiagramType": "ClassDiagram",
+    "diagrams": {
+      "ClassDiagram": {
+        "id": "a58e2d0a-b5f9-4f25-9a5a-c0695a940084",
+        "title": "Class Diagram",
+        "model": {
+          "version": "3.0.0",
+          "type": "ClassDiagram",
+          "size": {
+            "width": 1020,
+            "height": 380
+          },
+          "interactive": {
+            "elements": {},
+            "relationships": {}
+          },
+          "elements": {
+            "8c4ebc1b-0432-43e9-8d84-3e7e3a554479": {
+              "id": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+              "name": "Sensor",
+              "type": "Class",
+              "owner": null,
+              "bounds": {
+                "x": -490,
+                "y": -170,
+                "width": 160,
+                "height": 100
+              },
+              "attributes": [
+                "86560714-c3a9-4d80-a28d-9e6a360f3ae8",
+                "9aa4009c-e0e3-45b0-b405-5ea70309905a"
+              ],
+              "methods": []
+            },
+            "86560714-c3a9-4d80-a28d-9e6a360f3ae8": {
+              "id": "86560714-c3a9-4d80-a28d-9e6a360f3ae8",
+              "name": "+ date: date",
+              "type": "ClassAttribute",
+              "owner": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+              "bounds": {
+                "x": -489.5,
+                "y": -129.5,
+                "width": 159,
+                "height": 30
+              }
+            },
+            "9aa4009c-e0e3-45b0-b405-5ea70309905a": {
+              "id": "9aa4009c-e0e3-45b0-b405-5ea70309905a",
+              "name": "+ value: float",
+              "type": "ClassAttribute",
+              "owner": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+              "bounds": {
+                "x": -489.5,
+                "y": -99.5,
+                "width": 159,
+                "height": 30
+              }
+            }
+          },
+          "relationships": {},
+          "assessments": {}
+        },
+        "lastUpdate": "2025-10-28T14:33:32.103Z"
+      },
+      "ObjectDiagram": {
+        "id": "e568c30e-73df-42cd-ba76-d7f0779ace29",
+        "title": "Object Diagram",
+        "model": {
+          "version": "3.0.0",
+          "type": "ObjectDiagram",
+          "size": {
+            "width": 1400,
+            "height": 740
+          },
+          "elements": {},
+          "relationships": {},
+          "interactive": {
+            "elements": {},
+            "relationships": {}
+          },
+          "assessments": {}
+        },
+        "lastUpdate": "2025-10-28T10:48:25.602Z"
+      },
+      "StateMachineDiagram": {
+        "id": "a3870c1f-34fe-4df0-ad0c-4801d5e249d6",
+        "title": "State Machine Diagram",
+        "model": {
+          "version": "3.0.0",
+          "type": "StateMachineDiagram",
+          "size": {
+            "width": 1400,
+            "height": 740
+          },
+          "elements": {},
+          "relationships": {},
+          "interactive": {
+            "elements": {},
+            "relationships": {}
+          },
+          "assessments": {}
+        },
+        "lastUpdate": "2025-10-28T10:48:25.602Z"
+      },
+      "AgentDiagram": {
+        "id": "70f59452-e298-4d20-8b62-7e9dd1459729",
+        "title": "Agent Diagram",
+        "model": {
+          "version": "3.0.0",
+          "type": "AgentDiagram",
+          "size": {
+            "width": 1400,
+            "height": 740
+          },
+          "elements": {},
+          "relationships": {},
+          "interactive": {
+            "elements": {},
+            "relationships": {}
+          },
+          "assessments": {}
+        },
+        "lastUpdate": "2025-10-28T10:48:25.602Z"
+      },
+      "GUINoCodeDiagram": {
+        "id": "4e7b55f5-5535-4243-9cfc-4e89e5708566",
+        "title": "GUI Diagram",
+        "model": {
+          "pages": [
+            {
+              "name": "Home",
+              "frames": [
+                {
+                  "component": {
+                    "type": "wrapper",
+                    "stylable": [
+                      "background",
+                      "background-color",
+                      "background-image",
+                      "background-repeat",
+                      "background-attachment",
+                      "background-position",
+                      "background-size"
+                    ],
+                    "attributes": {
+                      "id": "icnh"
+                    },
+                    "components": [
+                      {
+                        "type": "text",
+                        "attributes": {
+                          "id": "ijql"
+                        },
+                        "components": [
+                          {
+                            "type": "textnode",
+                            "content": "Statec Hackathon"
+                          }
+                        ]
+                      },
+                      {
+                        "name": "Row",
+                        "droppable": ".gjs-cell",
+                        "resizable": {
+                          "tl": 0,
+                          "tc": 0,
+                          "tr": 0,
+                          "cl": 0,
+                          "cr": 0,
+                          "bl": 0,
+                          "br": 0,
+                          "minDim": 1
+                        },
+                        "classes": [
+                          {
+                            "name": "gjs-row",
+                            "private": 1
+                          }
+                        ],
+                        "attributes": {
+                          "id": "ik6k"
+                        },
+                        "components": [
+                          {
+                            "name": "Cell",
+                            "draggable": ".gjs-row",
+                            "resizable": {
+                              "tl": 0,
+                              "tc": 0,
+                              "tr": 0,
+                              "cl": 0,
+                              "cr": 1,
+                              "bl": 0,
+                              "br": 0,
+                              "minDim": 1,
+                              "bc": 0,
+                              "currentUnit": 1,
+                              "step": 0.2
+                            },
+                            "classes": [
+                              {
+                                "name": "gjs-cell",
+                                "private": 1
+                              }
+                            ],
+                            "components": [
+                              {
+                                "type": "line-chart",
+                                "style": "",
+                                "classes": [
+                                  "line-chart-component"
+                                ],
+                                "attributes": {
+                                  "chart-color": "#4CAF50",
+                                  "chart-title": "Sales Over Time",
+                                  "data-source": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+                                  "label-field": "86560714-c3a9-4d80-a28d-9e6a360f3ae8",
+                                  "data-field": "9aa4009c-e0e3-45b0-b405-5ea70309905a",
+                                  "line-width": 2,
+                                  "show-grid": true,
+                                  "show-legend": true,
+                                  "show-tooltip": true,
+                                  "curve-type": "monotone",
+                                  "animate": true,
+                                  "id": "iuri1"
+                                },
+                                "chart-color": "#4CAF50",
+                                "chart-title": "Sales Over Time",
+                                "data-source": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+                                "label-field": "86560714-c3a9-4d80-a28d-9e6a360f3ae8",
+                                "data-field": "9aa4009c-e0e3-45b0-b405-5ea70309905a",
+                                "line-width": 2,
+                                "show-grid": true,
+                                "show-legend": true,
+                                "show-tooltip": true,
+                                "curve-type": "monotone",
+                                "animate": true
+                              }
+                            ]
+                          },
+                          {
+                            "name": "Cell",
+                            "draggable": ".gjs-row",
+                            "resizable": {
+                              "tl": 0,
+                              "tc": 0,
+                              "tr": 0,
+                              "cl": 0,
+                              "cr": 1,
+                              "bl": 0,
+                              "br": 0,
+                              "minDim": 1,
+                              "bc": 0,
+                              "currentUnit": 1,
+                              "step": 0.2
+                            },
+                            "classes": [
+                              {
+                                "name": "gjs-cell",
+                                "private": 1
+                              }
+                            ],
+                            "components": [
+                              {
+                                "type": "bar-chart",
+                                "style": "",
+                                "classes": [
+                                  "bar-chart-component"
+                                ],
+                                "attributes": {
+                                  "chart-color": "#3498db",
+                                  "chart-title": "Revenue by Category",
+                                  "data-source": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+                                  "label-field": "86560714-c3a9-4d80-a28d-9e6a360f3ae8",
+                                  "data-field": "9aa4009c-e0e3-45b0-b405-5ea70309905a",
+                                  "bar-width": 30,
+                                  "orientation": "vertical",
+                                  "show-grid": true,
+                                  "show-legend": true,
+                                  "stacked": false,
+                                  "id": "i3ja1"
+                                },
+                                "chart-color": "#3498db",
+                                "chart-title": "Revenue by Category",
+                                "data-source": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+                                "label-field": "86560714-c3a9-4d80-a28d-9e6a360f3ae8",
+                                "data-field": "9aa4009c-e0e3-45b0-b405-5ea70309905a",
+                                "bar-width": 30,
+                                "orientation": "vertical",
+                                "show-grid": true,
+                                "show-legend": true,
+                                "stacked": false
+                              }
+                            ]
+                          },
+                          {
+                            "name": "Cell",
+                            "draggable": ".gjs-row",
+                            "resizable": {
+                              "tl": 0,
+                              "tc": 0,
+                              "tr": 0,
+                              "cl": 0,
+                              "cr": 1,
+                              "bl": 0,
+                              "br": 0,
+                              "minDim": 1,
+                              "bc": 0,
+                              "currentUnit": 1,
+                              "step": 0.2
+                            },
+                            "classes": [
+                              {
+                                "name": "gjs-cell",
+                                "private": 1
+                              }
+                            ],
+                            "components": [
+                              {
+                                "type": "line-chart",
+                                "style": "",
+                                "classes": [
+                                  "line-chart-component"
+                                ],
+                                "attributes": {
+                                  "chart-color": "#4CAF50",
+                                  "chart-title": "Sales Over Time",
+                                  "data-source": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+                                  "label-field": "86560714-c3a9-4d80-a28d-9e6a360f3ae8",
+                                  "data-field": "9aa4009c-e0e3-45b0-b405-5ea70309905a",
+                                  "line-width": 2,
+                                  "show-grid": true,
+                                  "show-legend": true,
+                                  "show-tooltip": true,
+                                  "curve-type": "monotone",
+                                  "animate": true,
+                                  "id": "i4yjj"
+                                },
+                                "chart-color": "#4CAF50",
+                                "chart-title": "Sales Over Time",
+                                "data-source": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+                                "label-field": "86560714-c3a9-4d80-a28d-9e6a360f3ae8",
+                                "data-field": "9aa4009c-e0e3-45b0-b405-5ea70309905a",
+                                "line-width": 2,
+                                "show-grid": true,
+                                "show-legend": true,
+                                "show-tooltip": true,
+                                "curve-type": "monotone",
+                                "animate": true
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "type": "bar-chart",
+                        "style": "",
+                        "classes": [
+                          "bar-chart-component"
+                        ],
+                        "attributes": {
+                          "chart-color": "#3498db",
+                          "chart-title": "Revenue by Category",
+                          "data-source": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+                          "label-field": "86560714-c3a9-4d80-a28d-9e6a360f3ae8",
+                          "data-field": "9aa4009c-e0e3-45b0-b405-5ea70309905a",
+                          "bar-width": 30,
+                          "orientation": "vertical",
+                          "show-grid": true,
+                          "show-legend": true,
+                          "stacked": false,
+                          "id": "ie5m"
+                        },
+                        "chart-color": "#3498db",
+                        "chart-title": "Revenue by Category",
+                        "data-source": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479",
+                        "label-field": "86560714-c3a9-4d80-a28d-9e6a360f3ae8",
+                        "data-field": "9aa4009c-e0e3-45b0-b405-5ea70309905a",
+                        "bar-width": 30,
+                        "orientation": "vertical",
+                        "show-grid": true,
+                        "show-legend": true,
+                        "stacked": false
+                      }
+                    ],
+                    "head": {
+                      "type": "head"
+                    },
+                    "docEl": {
+                      "tagName": "html"
+                    }
+                  },
+                  "id": "ngJMFuITgCMze66c"
+                }
+              ],
+              "id": "hgcImJlNFgCDdmkJ"
+            }
+          ],
+          "styles": [
+            {
+              "selectors": [
+                "#ijql"
+              ],
+              "style": {
+                "padding": "10px",
+                "color": "#e23131",
+                "text-align": "center"
+              }
+            },
+            {
+              "selectors": [
+                "#ie5m"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                {
+                  "name": "gjs-row",
+                  "private": 1
+                }
+              ],
+              "style": {
+                "display": "table",
+                "padding-top": "10px",
+                "padding-right": "10px",
+                "padding-bottom": "10px",
+                "padding-left": "10px",
+                "width": "100%"
+              }
+            },
+            {
+              "selectors": [
+                {
+                  "name": "gjs-cell",
+                  "private": 1
+                }
+              ],
+              "style": {
+                "width": "100%",
+                "display": "block"
+              },
+              "mediaText": "(max-width: 768px)",
+              "atRuleType": "media"
+            },
+            {
+              "selectors": [
+                "gjs-cell30"
+              ],
+              "style": {
+                "width": "100%",
+                "display": "block"
+              },
+              "mediaText": "(max-width: 768px)",
+              "atRuleType": "media"
+            },
+            {
+              "selectors": [
+                "gjs-cell70"
+              ],
+              "style": {
+                "width": "100%",
+                "display": "block"
+              },
+              "mediaText": "(max-width: 768px)",
+              "atRuleType": "media"
+            },
+            {
+              "selectors": [
+                {
+                  "name": "gjs-cell",
+                  "private": 1
+                }
+              ],
+              "style": {
+                "width": "8%",
+                "display": "table-cell",
+                "height": "75px"
+              }
+            },
+            {
+              "selectors": [
+                "#iuri1"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#i3ja1"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#i4yjj"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            }
+          ],
+          "assets": [],
+          "symbols": [],
+          "version": "0.21.13"
+        },
+        "lastUpdate": "2025-10-28T14:34:41.686Z"
+      }
+    },
+    "settings": {
+      "defaultDiagramType": "ClassDiagram",
+      "autoSave": true,
+      "collaborationEnabled": false
+    }
+  },
+  "exportedAt": "2025-10-29T14:39:57.313Z",
+  "version": "2.0.0"
+}

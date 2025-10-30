@@ -134,6 +134,7 @@ class ReactGenerator(GeneratorInterface):
                     {
                         "id": screen_node["id"],
                         "name": screen_node.get("name") or screen_node["id"],
+                        "route_path": screen_node.get("route_path"),
                     }
                 )
                 if screen_node.get("is_main") and main_page_id is None:
@@ -170,6 +171,7 @@ class ReactGenerator(GeneratorInterface):
             "name": screen.description or self._humanize(screen.name),
             "description": screen.description or "",
             "is_main": bool(getattr(screen, "is_main_page", False)),
+            "route_path": getattr(screen, "route_path", f"/{screen.name}"),
             "components": [],
         }
 
@@ -181,19 +183,21 @@ class ReactGenerator(GeneratorInterface):
         return self._clean_dict(node)
 
     def _serialize_component(self, element: ViewComponent) -> Dict[str, Any]:
-        meta = getattr(element, "_frontend_meta", {}) or {}
-        attributes = self._sanitize_attributes(meta.get("attributes"))
-        component_id = attributes.get("id") or element.name
         component_type = self._map_component_type(element)
+
+        component_id = element.name or f"{element.__class__.__name__}"
+        tag: Optional[str] = None
+        class_list: Optional[List[str]] = None
+        attributes: Optional[Dict[str, Any]] = None
 
         node: Dict[str, Any] = {
             "id": component_id,
             "type": component_type,
-            "name": self._derive_display_name(element, meta),
+            "name": self._derive_display_name(element),
             "description": element.description or "",
-            "tag": meta.get("tagName"),
-            "class_list": self._sanitize_class_list(meta.get("classList")),
-            "attributes": attributes or None,
+            "tag": tag,
+            "class_list": class_list,
+            "attributes": attributes,
         }
 
         layout = getattr(element, "layout", None)
@@ -211,18 +215,18 @@ class ReactGenerator(GeneratorInterface):
 
         if isinstance(element, Image):
             node["alt"] = element.description or ""
-            node["src"] = attributes.get("src") or attributes.get("data-src") or getattr(element, "source", None)
+            node["src"] = getattr(element, "source", None)
 
         if isinstance(element, Link):
             node["label"] = element.label
-            node["url"] = element.url or attributes.get("href") or attributes.get("data-href")
-            node["target"] = element.target or attributes.get("target") or attributes.get("data-target")
-            node["rel"] = element.rel or attributes.get("rel")
+            node["url"] = element.url
+            node["target"] = element.target
+            node["rel"] = element.rel
 
         if isinstance(element, EmbeddedContent):
-            node["src"] = element.source or attributes.get("src") or attributes.get("data-src")
-            node["content_type"] = element.content_type or attributes.get("data-content-type") or element.name
-            node["alt"] = element.description or attributes.get("title")
+            node["src"] = element.source
+            node["content_type"] = element.content_type or element.name
+            node["extra_props"] = element.extra_props or None
 
         if isinstance(element, Button):
             node["label"] = element.label
@@ -231,6 +235,7 @@ class ReactGenerator(GeneratorInterface):
             target_screen = getattr(element, "targetScreen", None)
             if target_screen:
                 node["target_screen"] = getattr(target_screen, "name", None)
+                node["target_screen_path"] = getattr(target_screen, "route_path", None)
             events = self._serialize_events(element)
             if events:
                 node["events"] = events
@@ -241,7 +246,9 @@ class ReactGenerator(GeneratorInterface):
 
         if isinstance(element, Form):
             inputs = []
-            for input_field in self._sorted_by_name(getattr(element, "inputFields", [])):
+            for input_field in sorted(
+                getattr(element, "inputFields", []), key=lambda f: getattr(f, "name", "").lower()
+            ):
                 inputs.append(
                     self._clean_dict(
                         {
@@ -275,19 +282,26 @@ class ReactGenerator(GeneratorInterface):
             sources = []
             for source in self._sorted_by_name(element.list_sources):
                 domain_name = getattr(getattr(source, "dataSourceClass", None), "name", None)
-                fields = sorted(
-                    [getattr(field, "name", None) for field in getattr(source, "fields", []) if getattr(field, "name", None)]
+                field_names = [
+                    getattr(field, "name", None)
+                    for field in getattr(source, "fields", [])
+                    if getattr(field, "name", None)
+                ]
+                if not field_names and getattr(source, "field_names", None):
+                    field_names = list(getattr(source, "field_names"))
+                fields = sorted(field_names) if field_names else None
+                label_field_name = getattr(getattr(source, "label_field", None), "name", None) or getattr(
+                    source, "label_field_name", None
                 )
-                if not fields and getattr(source, "field_names", None):
-                    fields = list(getattr(source, "field_names"))
-                label_field_name = getattr(getattr(source, "label_field", None), "name", None) or getattr(source, "label_field_name", None)
-                value_field_name = getattr(getattr(source, "value_field", None), "name", None) or getattr(source, "value_field_name", None)
+                value_field_name = getattr(getattr(source, "value_field", None), "name", None) or getattr(
+                    source, "value_field_name", None
+                )
                 sources.append(
                     self._clean_dict(
                         {
                             "name": source.name,
                             "domain": domain_name,
-                            "fields": fields or None,
+                            "fields": fields,
                             "label_field": label_field_name,
                             "value_field": value_field_name,
                         }
@@ -297,7 +311,7 @@ class ReactGenerator(GeneratorInterface):
                 node["data_sources"] = sources
 
         if isinstance(element, LineChart):
-            node["title"] = attributes.get("chart-title") or self._humanize(element.name)
+            node["title"] = element.title or self._humanize(element.name)
             node["chart"] = self._clean_dict(
                 {
                     "lineWidth": element.line_width,
@@ -312,11 +326,10 @@ class ReactGenerator(GeneratorInterface):
                 }
             )
             chart_colors = self._extract_chart_colors(element)
-            if chart_colors.get("line"):
-                node["color"] = chart_colors["line"]
+            node["color"] = element.primary_color or chart_colors.get("line")
 
         if isinstance(element, BarChart):
-            node["title"] = attributes.get("chart-title") or self._humanize(element.name)
+            node["title"] = element.title or self._humanize(element.name)
             node["chart"] = self._clean_dict(
                 {
                     "barWidth": element.bar_width,
@@ -332,11 +345,10 @@ class ReactGenerator(GeneratorInterface):
                 }
             )
             chart_colors = self._extract_chart_colors(element)
-            if chart_colors.get("bar"):
-                node["color"] = chart_colors["bar"]
+            node["color"] = element.primary_color or chart_colors.get("bar")
 
         if isinstance(element, PieChart):
-            node["title"] = attributes.get("chart-title") or self._humanize(element.name)
+            node["title"] = element.title or self._humanize(element.name)
             node["chart"] = self._clean_dict(
                 {
                     "showLegend": element.show_legend,
@@ -350,9 +362,11 @@ class ReactGenerator(GeneratorInterface):
                     "endAngle": element.end_angle,
                 }
             )
+            chart_colors = self._extract_chart_colors(element)
+            node["color"] = element.primary_color or chart_colors.get("palette")
 
         if isinstance(element, RadarChart):
-            node["title"] = attributes.get("chart-title") or self._humanize(element.name)
+            node["title"] = element.title or self._humanize(element.name)
             node["chart"] = self._clean_dict(
                 {
                     "showGrid": element.show_grid,
@@ -365,9 +379,11 @@ class ReactGenerator(GeneratorInterface):
                     "showRadiusAxis": element.show_radius_axis,
                 }
             )
+            chart_colors = self._extract_chart_colors(element)
+            node["color"] = element.primary_color or chart_colors.get("palette")
 
         if isinstance(element, RadialBarChart):
-            node["title"] = attributes.get("chart-title") or self._humanize(element.name)
+            node["title"] = element.title or self._humanize(element.name)
             node["chart"] = self._clean_dict(
                 {
                     "startAngle": element.start_angle,
@@ -379,6 +395,8 @@ class ReactGenerator(GeneratorInterface):
                     "showTooltip": element.show_tooltip,
                 }
             )
+            chart_colors = self._extract_chart_colors(element)
+            node["color"] = element.primary_color or chart_colors.get("palette")
 
         binding_data = self._serialize_data_binding(getattr(element, "data_binding", None))
         if binding_data:
@@ -420,8 +438,10 @@ class ReactGenerator(GeneratorInterface):
         }
 
         if isinstance(action, Transition):
-            data["target_screen"] = getattr(getattr(action, "target_screen", None), "name", None)
+            target_screen = getattr(action, "target_screen", None)
+            data["target_screen"] = getattr(target_screen, "name", None)
             data["target_screen_id"] = getattr(action, "_target_screen_id", None)
+            data["target_screen_path"] = getattr(target_screen, "route_path", None)
 
         if isinstance(action, (Create, Read, Update, Delete)):
             data["target_class"] = getattr(getattr(action, "target_class", None), "name", None)
@@ -718,16 +738,16 @@ class ReactGenerator(GeneratorInterface):
         return "component"
 
     @staticmethod
-    def _derive_display_name(element: ViewComponent, meta: Dict[str, Any]) -> str:
-        attributes = meta.get("attributes") or {}
-        for key in ("label", "title", "chart-title", "name", "data-name"):
-            value = attributes.get(key)
-            if isinstance(value, str) and value.strip():
-                return value.strip()
-        if isinstance(element, Text) and getattr(element, "content", ""):
-            content = element.content.strip()
-            if content:
-                return content
+    def _derive_display_name(element: ViewComponent) -> str:
+        title = getattr(element, "title", None)
+        if isinstance(title, str) and title.strip():
+            return title.strip()
+        if isinstance(element, Text):
+            content = getattr(element, "content", "")
+            if isinstance(content, str):
+                trimmed = content.strip()
+                if trimmed:
+                    return trimmed
         return ReactGenerator._humanize(element.name)
 
     @staticmethod

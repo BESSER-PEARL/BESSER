@@ -251,7 +251,7 @@ def _write_component(f, component, created_vars, parent_var=""):
     # Write styling if present
     if hasattr(component, 'styling') and component.styling:
         _write_styling(f, comp_var, component.styling, created_vars)
-    
+
     return comp_var
 
 

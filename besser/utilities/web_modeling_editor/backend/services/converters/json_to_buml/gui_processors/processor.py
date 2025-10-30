@@ -103,9 +103,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         return register_name(fallback, fallback)
 
     def attach_meta(element: Optional[ViewComponent], meta: Dict[str, Any]) -> None:
-        """Attach frontend metadata to an element for debugging/tracing."""
-        if element is not None:
-            setattr(element, "_frontend_meta", meta)
+        """No-op placeholder kept for compatibility."""
+        return
 
     def parse_component_list(components: Optional[List[Dict[str, Any]]]) -> List[ViewComponent]:
         """Parse a list of GrapesJS components into BUML ViewComponents."""

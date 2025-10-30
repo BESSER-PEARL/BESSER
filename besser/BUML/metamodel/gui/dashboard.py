@@ -1,3 +1,5 @@
+from typing import Optional
+
 from besser.BUML.metamodel.gui.graphical_ui import ViewComponent
 from besser.BUML.metamodel.gui.style import Alignment
 
@@ -6,13 +8,38 @@ class Chart(ViewComponent):
 
     Args:
         name (str): The name of the chart.
-
-    Attributes:
-        name (str): The name of the chart.
+        title (str | None): Optional display title of the chart.
+        primary_color (str | None): Optional primary color used by the chart.
     """
 
-    def __init__(self, name: str):
-        super().__init__(name)
+    def __init__(
+        self,
+        name: str,
+        title: Optional[str] = None,
+        primary_color: Optional[str] = None,
+        **kwargs,
+    ):
+        super().__init__(name, **kwargs)
+        self.title = title
+        self.primary_color = primary_color
+
+    @property
+    def title(self) -> Optional[str]:
+        """Optional[str]: Display title for the chart."""
+        return self._title
+
+    @title.setter
+    def title(self, value: Optional[str]):
+        self._title = value
+
+    @property
+    def primary_color(self) -> Optional[str]:
+        """Optional[str]: Main color used by the chart."""
+        return self._primary_color
+
+    @primary_color.setter
+    def primary_color(self, value: Optional[str]):
+        self._primary_color = value
 
 class LineChart(Chart):
     """Represents a line chart component in the dashboard.
@@ -42,12 +69,23 @@ class LineChart(Chart):
         dot_size (int): Size of the data point dots.
     """
 
-    def __init__(self, name: str, line_width: int = 2, show_grid: bool = True, 
-                 show_legend: bool = True, show_tooltip: bool = True, 
-                 curve_type: str = 'monotone', animate: bool = True,
-                 legend_position: str = 'top', grid_color: str = '#e0e0e0', 
-                 dot_size: int = 5):
-        super().__init__(name)
+    def __init__(
+        self,
+        name: str,
+        line_width: int = 2,
+        show_grid: bool = True,
+        show_legend: bool = True,
+        show_tooltip: bool = True,
+        curve_type: str = "monotone",
+        animate: bool = True,
+        legend_position: str = "top",
+        grid_color: str = "#e0e0e0",
+        dot_size: int = 5,
+        title: Optional[str] = None,
+        primary_color: Optional[str] = None,
+        **kwargs,
+    ):
+        super().__init__(name, title=title, primary_color=primary_color, **kwargs)
         self.line_width = line_width
         self.show_grid = show_grid
         self.show_legend = show_legend
@@ -185,12 +223,24 @@ class BarChart(Chart):
         bar_gap (int): Gap between bars.
     """
 
-    def __init__(self, name: str, bar_width: int = 30, orientation: str = 'vertical',
-                 show_grid: bool = True, show_legend: bool = True, 
-                 show_tooltip: bool = True, stacked: bool = False,
-                 animate: bool = True, legend_position: str = 'top',
-                 grid_color: str = '#e0e0e0', bar_gap: int = 4):
-        super().__init__(name)
+    def __init__(
+        self,
+        name: str,
+        bar_width: int = 30,
+        orientation: str = "vertical",
+        show_grid: bool = True,
+        show_legend: bool = True,
+        show_tooltip: bool = True,
+        stacked: bool = False,
+        animate: bool = True,
+        legend_position: str = "top",
+        grid_color: str = "#e0e0e0",
+        bar_gap: int = 4,
+        title: Optional[str] = None,
+        primary_color: Optional[str] = None,
+        **kwargs,
+    ):
+        super().__init__(name, title=title, primary_color=primary_color, **kwargs)
         self.bar_width = bar_width
         self.orientation = orientation
         self.show_grid = show_grid
@@ -336,12 +386,23 @@ class PieChart(Chart):
         end_angle (int): End angle in degrees.
     """
 
-    def __init__(self, name: str, show_legend: bool = True,
-                 legend_position: Alignment = Alignment.LEFT, show_labels: bool = True,
-                 label_position: Alignment = Alignment.INSIDE, padding_angle: int = 0,
-                 inner_radius: int = 0, outer_radius: int = 80, 
-                 start_angle: int = 0, end_angle: int = 360):
-        super().__init__(name)
+    def __init__(
+        self,
+        name: str,
+        show_legend: bool = True,
+        legend_position: Alignment = Alignment.LEFT,
+        show_labels: bool = True,
+        label_position: Alignment = Alignment.INSIDE,
+        padding_angle: int = 0,
+        inner_radius: int = 0,
+        outer_radius: int = 80,
+        start_angle: int = 0,
+        end_angle: int = 360,
+        title: Optional[str] = None,
+        primary_color: Optional[str] = None,
+        **kwargs,
+    ):
+        super().__init__(name, title=title, primary_color=primary_color, **kwargs)
         self.show_legend: bool = show_legend
         self.legend_position: Alignment = legend_position
         self.show_labels: bool = show_labels
@@ -475,11 +536,22 @@ class RadarChart(Chart):
         stroke_width (int): Width of the stroke lines.
     """
 
-    def __init__(self, name: str, show_grid: bool = True, show_tooltip: bool = True,
-                 show_radius_axis: bool = True, show_legend: bool = True,
-                 legend_position: str = 'top', dot_size: int = 3,
-                 grid_type: str = 'polygon', stroke_width: int = 2):
-        super().__init__(name)
+    def __init__(
+        self,
+        name: str,
+        show_grid: bool = True,
+        show_tooltip: bool = True,
+        show_radius_axis: bool = True,
+        show_legend: bool = True,
+        legend_position: str = "top",
+        dot_size: int = 3,
+        grid_type: str = "polygon",
+        stroke_width: int = 2,
+        title: Optional[str] = None,
+        primary_color: Optional[str] = None,
+        **kwargs,
+    ):
+        super().__init__(name, title=title, primary_color=primary_color, **kwargs)
         self.show_grid = show_grid
         self.show_tooltip = show_tooltip
         self.show_radius_axis = show_radius_axis
@@ -599,11 +671,21 @@ class RadialBarChart(Chart):
         show_tooltip (bool): Whether to show tooltips.
     """
 
-    def __init__(self, name: str, start_angle: int = 0, end_angle: int = 360,
-                 inner_radius: int = 30, outer_radius: int = 80,
-                 show_legend: bool = True, legend_position: str = 'top',
-                 show_tooltip: bool = True):
-        super().__init__(name)
+    def __init__(
+        self,
+        name: str,
+        start_angle: int = 0,
+        end_angle: int = 360,
+        inner_radius: int = 30,
+        outer_radius: int = 80,
+        show_legend: bool = True,
+        legend_position: str = "top",
+        show_tooltip: bool = True,
+        title: Optional[str] = None,
+        primary_color: Optional[str] = None,
+        **kwargs,
+    ):
+        super().__init__(name, title=title, primary_color=primary_color, **kwargs)
         self.start_angle = start_angle
         self.end_angle = end_angle
         self.inner_radius = inner_radius

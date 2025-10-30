@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from besser.BUML.metamodel.structural import NamedElement, Class, Property, Model, Element
 from besser.BUML.metamodel.gui.style import Styling, Layout
@@ -315,8 +315,14 @@ class ViewElement(NamedElement):
         owner (ViewContainer | None): The container that owns this view element (if any).
     """
 
-    def __init__(self, name: str, description: str = "", visibility: str = "public", timestamp: int = None,
-                 styling: Styling = None):
+    def __init__(
+        self,
+        name: str,
+        description: str = "",
+        visibility: str = "public",
+        timestamp: int = None,
+        styling: Styling = None,
+    ):
         super().__init__(name, visibility, timestamp)
         self.description: str = description
         self.styling: Styling = styling
@@ -342,6 +348,7 @@ class ViewElement(NamedElement):
         """Styling: Set the styling of the view element."""
         self.__styling = styling
 
+
     @property
     def owner(self) -> "ViewContainer":
         """ViewContainer : Get the owner of the view element."""
@@ -353,8 +360,12 @@ class ViewElement(NamedElement):
         self._owner = owner
 
     def __repr__(self):
-        return (f"ViewElement(name={self.name}, description={self.description}, visibility={self.visibility}, "
-                f"timestamp={self.timestamp}, styling={self.styling})")
+        return (
+            "ViewElement("
+            f"name={self.name}, description={self.description}, visibility={self.visibility}, "
+            f"timestamp={self.timestamp}, styling={self.styling}"
+            ")"
+        )
 
 #ViewComponent
 class ViewComponent(ViewElement):
@@ -378,9 +389,22 @@ class ViewComponent(ViewElement):
         data_binding (DataBinding | None): The data binding configuration for the view component (if any).
     """
 
-    def __init__(self, name: str, description: str = "", visibility: str = "public",
-                 timestamp: int = None, styling: Styling = None, data_binding: DataBinding = None):
-        super().__init__(name, description, visibility, timestamp, styling)
+    def __init__(
+        self,
+        name: str,
+        description: str = "",
+        visibility: str = "public",
+        timestamp: int = None,
+        styling: Styling = None,
+        data_binding: DataBinding = None,
+    ):
+        super().__init__(
+            name,
+            description=description,
+            visibility=visibility,
+            timestamp=timestamp,
+            styling=styling
+        )
         self.data_binding: DataBinding = data_binding
 
     @property
@@ -416,8 +440,21 @@ class ViewContainer(ViewElement):
         layout (Layout | None): The layout settings of the container.
     """
 
-    def __init__(self, name: str, description: str, view_elements: set[ViewElement], timestamp: int = None, layout: Layout=None, styling: Styling=None):
-        super().__init__(name, description, timestamp, styling)
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        view_elements: set[ViewElement],
+        timestamp: int = None,
+        layout: Layout = None,
+        styling: Styling = None,
+    ):
+        super().__init__(
+            name,
+            description=description,
+            timestamp=timestamp,
+            styling=styling
+        )
         self.view_elements: set[ViewElement] = view_elements
         self.layout: Layout | None = layout  # Ensure layout is properly stored
 
@@ -448,7 +485,11 @@ class ViewContainer(ViewElement):
         self.__layout = layout
 
     def __repr__(self):
-        return f'ViewContainer({self.name}, description={self.description}, timestamp={self.timestamp}, view_elements={self.view_elements}, layout={self.layout}, styling={self.styling})'
+        return (
+            f"ViewContainer({self.name}, description={self.description}, timestamp={self.timestamp}, "
+            f"view_elements={self.view_elements}, "
+            f"layout={self.layout}, styling={self.styling})"
+        )
 
 #Screen
 class Screen(ViewContainer):
@@ -477,13 +518,33 @@ class Screen(ViewContainer):
         layout (Layout | None, optional): The layout settings (Defaults to None)
     """
 
-    def __init__(self, name: str, description: str, view_elements: set[ViewElement], x_dpi: str = "", y_dpi: str = "",
-                 screen_size: str = "Medium", timestamp: int = None, is_main_page: bool = False, layout: Layout=None):
-        super().__init__(name, description, view_elements, timestamp, layout)
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        view_elements: set[ViewElement],
+        x_dpi: str = "",
+        y_dpi: str = "",
+        screen_size: str = "Medium",
+        timestamp: int = None,
+        is_main_page: bool = False,
+        layout: Layout = None,
+        styling: Styling = None,
+        route_path: str | None = None,
+    ):
+        super().__init__(
+            name,
+            description,
+            view_elements,
+            timestamp,
+            layout,
+            styling=styling
+        )
         self.x_dpi: str = x_dpi
         self.y_dpi: str = y_dpi
         self.screen_size: str = screen_size
         self.is_main_page: bool = is_main_page
+        self.route_path = route_path or f"/{name}"
 
     @property
     def x_dpi(self) -> str:
@@ -524,6 +585,18 @@ class Screen(ViewContainer):
         self.__screen_size = screen_size
 
     @property
+    def route_path(self) -> str:
+        """str: Get the route path for the screen."""
+        return self.__route_path
+
+    @route_path.setter
+    def route_path(self, route_path: str | None):
+        """str: Set the route path for the screen."""
+        if not route_path:
+            route_path = f"/{self.name}"
+        self.__route_path = route_path
+
+    @property
     def is_main_page(self) -> bool:
         """bool: Get whether the screen is main page."""
         return self.__is_main_page
@@ -534,7 +607,11 @@ class Screen(ViewContainer):
         self.__is_main_page = is_main_page
 
     def __repr__(self):
-        return f'Screen({self.name}, description={self.description}, {self.x_dpi}, {self.y_dpi}, {self.screen_size}, timestamp={self.timestamp}, {self.view_elements}, {self.is_main_page})'
+        return (
+            f"Screen({self.name}, description={self.description}, {self.x_dpi}, {self.y_dpi}, "
+            f"{self.screen_size}, route_path={self.route_path}, timestamp={self.timestamp}, "
+            f"{self.view_elements}, {self.is_main_page})"
+        )
 
 #Module
 class Module(NamedElement):
@@ -736,10 +813,12 @@ class EmbeddedContent(ViewComponent):
         visibility: str = "public",
         timestamp: int = None,
         styling: Styling = None,
+        extra_props: Optional[Dict[str, str]] = None,
     ):
         super().__init__(name, description, visibility, timestamp, styling=styling)
         self.source = source
         self.content_type = content_type
+        self.extra_props = extra_props
 
     @property
     def source(self) -> Optional[str]:
@@ -757,8 +836,19 @@ class EmbeddedContent(ViewComponent):
     def content_type(self, value: Optional[str]):
         self.__content_type = value
 
+    @property
+    def extra_props(self) -> Dict[str, str]:
+        return self.__extra_props
+
+    @extra_props.setter
+    def extra_props(self, props: Optional[Dict[str, str]]):
+        self.__extra_props = {str(k): str(v) for k, v in (props or {}).items() if v is not None}
+
     def __repr__(self):
-        return f'EmbeddedContent({self.name}, source={"set" if self.source else None}, content_type={self.content_type})'
+        return (
+            f'EmbeddedContent({self.name}, source={"set" if self.source else None}, '
+            f"content_type={self.content_type}, extra_props={bool(self.extra_props)})"
+        )
 
 
 # Image is a type of ViewComponent
@@ -780,8 +870,20 @@ class Image(ViewComponent):
         source (str | None): Raw URI/base64 string representing the image source.
     """
 
-    def __init__(self, name: str, description: str, timestamp: int = None, styling: Styling = None, source: str | None = None):
-        super().__init__(name, description, timestamp, styling)
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        timestamp: int = None,
+        styling: Styling = None,
+        source: str | None = None,
+    ):
+        super().__init__(
+            name,
+            description,
+            timestamp=timestamp,
+            styling=styling
+        )
         self.source = source
 
     @property

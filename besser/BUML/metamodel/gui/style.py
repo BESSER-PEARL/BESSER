@@ -453,9 +453,9 @@ class Styling:
         layout (Layout | None): The layout settings for containers.
     """
     def __init__(self, size:Size=None, position: Position=None, color: Color=None, layout=None):
-        self.size: Size=size
+        self.size: Size = size
         self.position: Position = position
-        self.color: Position = color
+        self.color: Color = color
         self.layout = layout
 
     @property

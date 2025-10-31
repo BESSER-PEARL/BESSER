@@ -139,6 +139,8 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
                 screen_params.append(f'description="{screen.description}"' if screen.description else 'description=""')
                 if hasattr(screen, 'is_main_page') and screen.is_main_page:
                     screen_params.append('is_main_page=True')
+                if hasattr(screen, 'route_path') and screen.route_path:
+                    screen_params.append(f'route_path="{_escape_string(screen.route_path)}"')
                 if hasattr(screen, 'x_dpi') and screen.x_dpi:
                     screen_params.append(f'x_dpi="{screen.x_dpi}"')
                 if hasattr(screen, 'y_dpi') and screen.y_dpi:
@@ -259,12 +261,19 @@ def _write_button(f, var_name, button, created_vars):
     """Write code for a Button component."""
     params = [f'name="{button.name}"']
     params.append(f'description="{button.description}"' if button.description else 'description=""')
-    params.append(f'label="{button.label}"' if hasattr(button, 'label') and button.label else 'label=""')
+    params.append(f'label="{_escape_string(button.label)}"' if hasattr(button, 'label') and button.label else 'label=""')
     
     if hasattr(button, 'buttonType') and button.buttonType:
         params.append(f'buttonType=ButtonType.{button.buttonType.name}')
     if hasattr(button, 'actionType') and button.actionType:
         params.append(f'actionType=ButtonActionType.{button.actionType.name}')
+    
+    # Handle targetScreen if present (only set if not handled via events/actions)
+    target_screen_set = False
+    if hasattr(button, 'targetScreen') and button.targetScreen:
+        target_screen_var = safe_var_name(button.targetScreen.name)
+        params.append(f'targetScreen={target_screen_var}')
+        target_screen_set = True
     
     f.write(f'{var_name} = Button({", ".join(params)})\n')
     
@@ -458,6 +467,10 @@ def _write_data_list(f, var_name, data_list, created_vars):
 def _write_line_chart(f, var_name, chart):
     """Write code for a LineChart component."""
     params = [f'name="{chart.name}"']
+    if hasattr(chart, 'title') and chart.title:
+        params.append(f'title="{_escape_string(chart.title)}"')
+    if hasattr(chart, 'primary_color') and chart.primary_color:
+        params.append(f'primary_color="{_escape_string(chart.primary_color)}"')
     if hasattr(chart, 'line_width'):
         params.append(f'line_width={chart.line_width}')
     if hasattr(chart, 'show_grid'):
@@ -487,6 +500,10 @@ def _write_line_chart(f, var_name, chart):
 def _write_bar_chart(f, var_name, chart):
     """Write code for a BarChart component."""
     params = [f'name="{chart.name}"']
+    if hasattr(chart, 'title') and chart.title:
+        params.append(f'title="{_escape_string(chart.title)}"')
+    if hasattr(chart, 'primary_color') and chart.primary_color:
+        params.append(f'primary_color="{_escape_string(chart.primary_color)}"')
     if hasattr(chart, 'bar_width'):
         params.append(f'bar_width={chart.bar_width}')
     if hasattr(chart, 'orientation'):
@@ -516,6 +533,10 @@ def _write_bar_chart(f, var_name, chart):
 def _write_pie_chart(f, var_name, chart):
     """Write code for a PieChart component."""
     params = [f'name="{chart.name}"']
+    if hasattr(chart, 'title') and chart.title:
+        params.append(f'title="{_escape_string(chart.title)}"')
+    if hasattr(chart, 'primary_color') and chart.primary_color:
+        params.append(f'primary_color="{_escape_string(chart.primary_color)}"')
     if hasattr(chart, 'show_legend'):
         params.append(f'show_legend={chart.show_legend}')
     if hasattr(chart, 'legend_position'):
@@ -543,6 +564,10 @@ def _write_pie_chart(f, var_name, chart):
 def _write_radar_chart(f, var_name, chart):
     """Write code for a RadarChart component."""
     params = [f'name="{chart.name}"']
+    if hasattr(chart, 'title') and chart.title:
+        params.append(f'title="{_escape_string(chart.title)}"')
+    if hasattr(chart, 'primary_color') and chart.primary_color:
+        params.append(f'primary_color="{_escape_string(chart.primary_color)}"')
     if hasattr(chart, 'show_grid'):
         params.append(f'show_grid={chart.show_grid}')
     if hasattr(chart, 'show_tooltip'):
@@ -568,6 +593,10 @@ def _write_radar_chart(f, var_name, chart):
 def _write_radial_bar_chart(f, var_name, chart):
     """Write code for a RadialBarChart component."""
     params = [f'name="{chart.name}"']
+    if hasattr(chart, 'title') and chart.title:
+        params.append(f'title="{_escape_string(chart.title)}"')
+    if hasattr(chart, 'primary_color') and chart.primary_color:
+        params.append(f'primary_color="{_escape_string(chart.primary_color)}"')
     if hasattr(chart, 'start_angle'):
         params.append(f'start_angle={chart.start_angle}')
     if hasattr(chart, 'end_angle'):

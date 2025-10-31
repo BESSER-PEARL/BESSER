@@ -73,9 +73,16 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
         data_field=data_field
     )
 
+    chart_title_attr = attrs.get('chart-title', 'LineChart')
+    chart_title = chart_title_attr.replace(' ', '_') if isinstance(chart_title_attr, str) else chart_title_attr
+    display_title = chart_title_attr if isinstance(chart_title_attr, str) else None
+    primary_color = attrs.get('chart-color') or attrs.get('color')
+
     # Parse enhanced line chart properties
     line_chart = LineChart(
         name=chart_title,
+        title=display_title,
+        primary_color=primary_color,
         line_width=int(attrs.get('line-width', 2)),
         show_grid=parse_bool(attrs.get('show-grid'), True),
         show_legend=parse_bool(attrs.get('show-legend'), True),
@@ -139,12 +146,16 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
         data_field=data_field
     )
 
-    chart_title = attrs.get('chart-title', 'BarChart')
-    chart_title = chart_title.replace(' ', '_') if isinstance(chart_title, str) else chart_title
+    chart_title_attr = attrs.get('chart-title', 'BarChart')
+    chart_title = chart_title_attr.replace(' ', '_') if isinstance(chart_title_attr, str) else chart_title_attr
+    display_title = chart_title_attr if isinstance(chart_title_attr, str) else None
+    primary_color = attrs.get('chart-color') or attrs.get('color')
 
     # Parse enhanced bar chart properties
     bar_chart = BarChart(
         name=chart_title,
+        title=display_title,
+        primary_color=primary_color,
         bar_width=int(attrs.get('bar-width', 30)),
         orientation=attrs.get('orientation', 'vertical'),
         show_grid=parse_bool(attrs.get('show-grid'), True),
@@ -207,8 +218,10 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
         data_field=data_field
     )
 
-    chart_title = attrs.get('chart-title', 'PieChart')
-    chart_title = chart_title.replace(' ', '_') if isinstance(chart_title, str) else chart_title
+    chart_title_attr = attrs.get('chart-title', 'PieChart')
+    chart_title = chart_title_attr.replace(' ', '_') if isinstance(chart_title_attr, str) else chart_title_attr
+    display_title = chart_title_attr if isinstance(chart_title_attr, str) else None
+    primary_color = attrs.get('chart-color') or attrs.get('color')
 
     # Parse enhanced pie chart properties
     show_legend = parse_bool(attrs.get('show-legend'), True)
@@ -234,6 +247,8 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
 
     pie_chart = PieChart(
         name=chart_title,
+        title=display_title,
+        primary_color=primary_color,
         show_legend=show_legend,
         legend_position=legend_position,
         show_labels=show_labels,
@@ -284,12 +299,16 @@ def parse_radar_chart(view_comp: Dict[str, Any], _, domain_model) -> RadarChart:
         data_field=data_field
     )
 
-    chart_title = attrs.get('chart-title', 'RadarChart')
-    chart_title = chart_title.replace(' ', '_') if isinstance(chart_title, str) else chart_title
+    chart_title_attr = attrs.get('chart-title', 'RadarChart')
+    chart_title = chart_title_attr.replace(' ', '_') if isinstance(chart_title_attr, str) else chart_title_attr
+    display_title = chart_title_attr if isinstance(chart_title_attr, str) else None
+    primary_color = attrs.get('chart-color') or attrs.get('color')
 
     # Parse enhanced radar chart properties
     radar_chart = RadarChart(
         name=chart_title,
+        title=display_title,
+        primary_color=primary_color,
         show_grid=parse_bool(attrs.get('show-grid'), True),
         show_tooltip=parse_bool(attrs.get('show-tooltip'), True),
         show_radius_axis=parse_bool(attrs.get('show-radius-axis'), True),
@@ -350,12 +369,16 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
         data_field=data_field
     )
 
-    chart_title = attrs.get('chart-title', 'RadialBarChart')
-    chart_title = chart_title.replace(' ', '_') if isinstance(chart_title, str) else chart_title
+    chart_title_attr = attrs.get('chart-title', 'RadialBarChart')
+    chart_title = chart_title_attr.replace(' ', '_') if isinstance(chart_title_attr, str) else chart_title_attr
+    display_title = chart_title_attr if isinstance(chart_title_attr, str) else None
+    primary_color = attrs.get('chart-color') or attrs.get('color')
 
     # Parse enhanced radial bar chart properties
     radial_bar_chart = RadialBarChart(
         name=chart_title,
+        title=display_title,
+        primary_color=primary_color,
         start_angle=int(attrs.get('start-angle', 0)),
         end_angle=int(attrs.get('end-angle', 360)),
         inner_radius=int(attrs.get('inner-radius', 30)),

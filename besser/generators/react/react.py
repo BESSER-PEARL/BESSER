@@ -191,6 +191,7 @@ class ReactGenerator(GeneratorInterface):
         tag = getattr(element, 'tag_name', None)
         class_list = getattr(element, 'css_classes', None)
         attributes = getattr(element, 'custom_attributes', None)
+        display_order = getattr(element, 'display_order', 999999)
 
         node: Dict[str, Any] = {
             "id": component_id,
@@ -200,6 +201,7 @@ class ReactGenerator(GeneratorInterface):
             "tag": tag,
             "class_list": class_list,
             "attributes": attributes,
+            "display_order": display_order,
         }
 
         layout = getattr(element, "layout", None)
@@ -328,7 +330,7 @@ class ReactGenerator(GeneratorInterface):
                 }
             )
             chart_colors = self._extract_chart_colors(element)
-            node["color"] = element.primary_color or chart_colors.get("line")
+            node["color"] = element.primary_color or chart_colors.get("line") or "#4CAF50"
 
         if isinstance(element, BarChart):
             node["title"] = element.title or self._humanize(element.name)
@@ -347,7 +349,7 @@ class ReactGenerator(GeneratorInterface):
                 }
             )
             chart_colors = self._extract_chart_colors(element)
-            node["color"] = element.primary_color or chart_colors.get("bar")
+            node["color"] = element.primary_color or chart_colors.get("bar") or "#3498db"
 
         if isinstance(element, PieChart):
             node["title"] = element.title or self._humanize(element.name)
@@ -365,7 +367,7 @@ class ReactGenerator(GeneratorInterface):
                 }
             )
             chart_colors = self._extract_chart_colors(element)
-            node["color"] = element.primary_color or chart_colors.get("palette")
+            node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
 
         if isinstance(element, RadarChart):
             node["title"] = element.title or self._humanize(element.name)
@@ -382,7 +384,7 @@ class ReactGenerator(GeneratorInterface):
                 }
             )
             chart_colors = self._extract_chart_colors(element)
-            node["color"] = element.primary_color or chart_colors.get("palette")
+            node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
 
         if isinstance(element, RadialBarChart):
             node["title"] = element.title or self._humanize(element.name)
@@ -398,7 +400,7 @@ class ReactGenerator(GeneratorInterface):
                 }
             )
             chart_colors = self._extract_chart_colors(element)
-            node["color"] = element.primary_color or chart_colors.get("palette")
+            node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
 
         binding_data = self._serialize_data_binding(getattr(element, "data_binding", None))
         if binding_data:

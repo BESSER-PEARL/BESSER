@@ -9,7 +9,7 @@ from besser.BUML.metamodel.gui import (
     Color, Position, Size, Styling,
 )
 from .styling import ensure_styling_parts
-from .utils import clean_attribute_name, get_element_by_id, parse_bool
+from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
 
 
 def _attach_chart_metadata(chart, component: Dict[str, Any]) -> None:
@@ -71,12 +71,12 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
     name_seed = raw_title if isinstance(raw_title, str) else 'LineChart'
-    chart_title = name_seed.replace(' ', '_') if isinstance(name_seed, str) else name_seed
+    # Use sanitize_name for proper name handling (removes special chars, handles typos)
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('LineChart')
+    if not chart_title:
+        chart_title = 'LineChart'
     if not title_value:
-        if isinstance(chart_title, str):
-            title_value = chart_title.replace('_', ' ')
-        else:
-            title_value = str(chart_title)
+        title_value = chart_title.replace('_', ' ').title()
 
     primary_color = attrs.get('chart-color')
     if not isinstance(primary_color, str) or not primary_color.strip():
@@ -152,12 +152,12 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
     name_seed = raw_title if isinstance(raw_title, str) else 'BarChart'
-    chart_title = name_seed.replace(' ', '_') if isinstance(name_seed, str) else name_seed
+    # Use sanitize_name for proper name handling (removes special chars, handles typos)
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('BarChart')
+    if not chart_title:
+        chart_title = 'BarChart'
     if not title_value:
-        if isinstance(chart_title, str):
-            title_value = chart_title.replace('_', ' ')
-        else:
-            title_value = str(chart_title)
+        title_value = chart_title.replace('_', ' ').title()
 
     primary_color = attrs.get('chart-color')
     if not isinstance(primary_color, str) or not primary_color.strip():
@@ -234,12 +234,12 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
     name_seed = raw_title if isinstance(raw_title, str) else 'PieChart'
-    chart_title = name_seed.replace(' ', '_') if isinstance(name_seed, str) else name_seed
+    # Use sanitize_name for proper name handling (removes special chars, handles typos)
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('PieChart')
+    if not chart_title:
+        chart_title = 'PieChart'
     if not title_value:
-        if isinstance(chart_title, str):
-            title_value = chart_title.replace('_', ' ')
-        else:
-            title_value = str(chart_title)
+        title_value = chart_title.replace('_', ' ').title()
 
     primary_color = attrs.get('chart-color')
     if not isinstance(primary_color, str) or not primary_color.strip():
@@ -294,12 +294,13 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
     return pie_chart
 
 
-def parse_radar_chart(view_comp: Dict[str, Any], _, domain_model) -> RadarChart:
+def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> RadarChart:
     """
-    Parses a radar chart component, resolving data binding from domain_model.
+    Parses a radar chart component, resolving data binding from class_model and domain_model.
     
     Args:
         view_comp: Component dict from GrapesJS
+        class_model: Class model for object resolution
         domain_model: Domain metamodel for object resolution
         
     Returns:
@@ -307,9 +308,19 @@ def parse_radar_chart(view_comp: Dict[str, Any], _, domain_model) -> RadarChart:
     """
     attrs = view_comp.get('attributes', {})
 
-    data_source_name = attrs.get('data-source')
-    label_field_name = attrs.get('label-field')
-    data_field_name = attrs.get('data-field')
+    # Resolve data binding elements
+    data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
+    label_field_el = get_element_by_id(class_model, attrs.get('label-field'))
+    data_field_el = get_element_by_id(class_model, attrs.get('data-field'))
+
+    data_source_name = data_source_el.get('name') if data_source_el else None
+    label_field_name = label_field_el.get('name') if label_field_el else None
+    data_field_name = data_field_el.get('name') if data_field_el else None
+
+    if label_field_name:
+        label_field_name = clean_attribute_name(label_field_name)
+    if data_field_name:
+        data_field_name = clean_attribute_name(data_field_name)
 
     # Resolve domain class and fields
     domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
@@ -325,12 +336,12 @@ def parse_radar_chart(view_comp: Dict[str, Any], _, domain_model) -> RadarChart:
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
     name_seed = raw_title if isinstance(raw_title, str) else 'RadarChart'
-    chart_title = name_seed.replace(' ', '_') if isinstance(name_seed, str) else name_seed
+    # Use sanitize_name for proper name handling (removes special chars, handles typos)
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('RadarChart')
+    if not chart_title:
+        chart_title = 'RadarChart'
     if not title_value:
-        if isinstance(chart_title, str):
-            title_value = chart_title.replace('_', ' ')
-        else:
-            title_value = str(chart_title)
+        title_value = chart_title.replace('_', ' ').title()
 
     primary_color = attrs.get('chart-color')
     if not isinstance(primary_color, str) or not primary_color.strip():
@@ -405,12 +416,12 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
     name_seed = raw_title if isinstance(raw_title, str) else 'RadialBarChart'
-    chart_title = name_seed.replace(' ', '_') if isinstance(name_seed, str) else name_seed
+    # Use sanitize_name for proper name handling (removes special chars, handles typos)
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('RadialBarChart')
+    if not chart_title:
+        chart_title = 'RadialBarChart'
     if not title_value:
-        if isinstance(chart_title, str):
-            title_value = chart_title.replace('_', ' ')
-        else:
-            title_value = str(chart_title)
+        title_value = chart_title.replace('_', ' ').title()
 
     primary_color = attrs.get('chart-color')
     if not isinstance(primary_color, str) or not primary_color.strip():

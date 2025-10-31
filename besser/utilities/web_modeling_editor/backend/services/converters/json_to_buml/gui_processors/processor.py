@@ -133,12 +133,18 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             if not result:
                 continue
             if isinstance(result, list):
-                for item in result:
-                    if hasattr(item, 'display_order'):
-                        item.display_order = index
+                for sub_index, item in enumerate(result):
+                    # Preserve JSON order with display_order
+                    if not hasattr(item, 'display_order'):
+                        setattr(item, 'display_order', index + (sub_index * 0.01))
+                    else:
+                        item.display_order = index + (sub_index * 0.01)
                 parsed_children.extend(result)
             else:
-                if hasattr(result, 'display_order'):
+                # Preserve JSON order with display_order
+                if not hasattr(result, 'display_order'):
+                    setattr(result, 'display_order', index)
+                else:
                     result.display_order = index
                 parsed_children.append(result)
         return parsed_children
@@ -155,10 +161,10 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         tag = str(component.get("tagName", "")).lower()
         comp_name = str(component.get("name", "")).lower()
 
-        # Skip wrapper and textnode
+        # Skip wrapper, textnode, and comment nodes
         if comp_type == "wrapper":
             return parse_component_list(component.get("components"))
-        if comp_type == "textnode":
+        if comp_type in ("textnode", "comment"):
             return None
 
         # Resolve styling
@@ -353,10 +359,11 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
     for page_index, page in enumerate(pages):
         page_id = page.get("id")  # Get the page ID for target-screen resolution
+        page_name = page.get("name", f"Page_{page_index + 1}")
         frames = page.get("frames", [])
         for frame_index, frame in enumerate(frames):
             wrapper = frame.get("component", {}) or {}
-            screen_fallback = page.get("name") or f"Screen_{page_index + 1}"
+            screen_fallback = page_name or f"Screen_{page_index + 1}"
             if len(frames) > 1:
                 screen_fallback = f"{screen_fallback}_{frame_index + 1}"
             screen_name = get_unique_name(wrapper, screen_fallback)

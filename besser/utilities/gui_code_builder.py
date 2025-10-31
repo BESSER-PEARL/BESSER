@@ -280,6 +280,8 @@ def _write_component(f, component, created_vars, parent_var=""):
         _write_styling(f, comp_var, component.styling, created_vars)
     
     # Write metadata properties if present
+    if hasattr(component, 'display_order'):
+        f.write(f'{comp_var}.display_order = {component.display_order}\n')
     if hasattr(component, 'component_id') and component.component_id:
         f.write(f'{comp_var}.component_id = "{_escape_string(component.component_id)}"\n')
     if hasattr(component, 'component_type') and component.component_type:
@@ -287,8 +289,9 @@ def _write_component(f, component, created_vars, parent_var=""):
     if hasattr(component, 'tag_name') and component.tag_name:
         f.write(f'{comp_var}.tag_name = "{_escape_string(component.tag_name)}"\n')
     if hasattr(component, 'css_classes') and component.css_classes:
-        classes_str = '", "'.join(_escape_string(c) for c in component.css_classes)
-        f.write(f'{comp_var}.css_classes = ["{classes_str}"]\n')
+        classes_str = '", "'.join(_escape_string(c) for c in component.css_classes if c)
+        if classes_str:
+            f.write(f'{comp_var}.css_classes = ["{classes_str}"]\n')
     if hasattr(component, 'custom_attributes') and component.custom_attributes:
         # Write custom attributes as a dictionary
         attrs_items = []
@@ -691,6 +694,8 @@ def _write_container(f, var_name, container, created_vars):
         f.write(f'{var_name}.layout = {layout_var}\n')
     
     # Write metadata properties if present
+    if hasattr(container, 'display_order'):
+        f.write(f'{var_name}.display_order = {container.display_order}\n')
     if hasattr(container, 'component_id') and container.component_id:
         f.write(f'{var_name}.component_id = "{_escape_string(container.component_id)}"\n')
     if hasattr(container, 'component_type') and container.component_type:
@@ -698,8 +703,9 @@ def _write_container(f, var_name, container, created_vars):
     if hasattr(container, 'tag_name') and container.tag_name:
         f.write(f'{var_name}.tag_name = "{_escape_string(container.tag_name)}"\n')
     if hasattr(container, 'css_classes') and container.css_classes:
-        classes_str = '", "'.join(_escape_string(c) for c in container.css_classes)
-        f.write(f'{var_name}.css_classes = ["{classes_str}"]\n')
+        classes_str = '", "'.join(_escape_string(c) for c in container.css_classes if c)
+        if classes_str:
+            f.write(f'{var_name}.css_classes = ["{classes_str}"]\n')
     if hasattr(container, 'custom_attributes') and container.custom_attributes:
         # Write custom attributes as a dictionary
         attrs_items = []

@@ -27,6 +27,7 @@ sys.modules["bocl"] = MockBOCL()
 sys.modules["bocl.OCLWrapper"] = MockBOCL
 
 from besser.generators.web_app.web_app import WebAppGenerator
+from besser.utilities.gui_code_builder import gui_model_to_code
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_class_diagram,
     process_gui_diagram,
@@ -34,7 +35,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 
 # Load the project
 BASE_DIR = Path(__file__).resolve().parent
-input_path = BASE_DIR / "output" / "TEST_GUI.json"
+input_path = BASE_DIR / "output" / "five_graphs.json"
 
 with open(input_path, "r", encoding="utf-8") as f:
     project_data = json.load(f)
@@ -55,6 +56,11 @@ gui_model = process_gui_diagram(
     class_diagram["model"],
     buml_model,
 )
+
+# Generate GUI model code
+print("Generating GUI model code...")
+output_path = BASE_DIR / "output" / "gui_model.py"
+gui_model_to_code(gui_model, str(output_path), domain_model=buml_model)
 
 # Generate React TypeScript output
 print("Generating React TypeScript output...")

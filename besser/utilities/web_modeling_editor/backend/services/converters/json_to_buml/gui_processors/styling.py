@@ -6,6 +6,7 @@ import copy
 from typing import Any, Dict
 
 from besser.BUML.metamodel.gui import (
+    Alignment,
     Color,
     Layout,
     LayoutType,
@@ -139,7 +140,14 @@ def merge_styling_with_overrides(styling: Styling, overrides: Dict[str, Any]) ->
         elif lower_key == "opacity":
             color.opacity = css_value
         elif lower_key == "text-align":
-            position.alignment = css_value
+            # Map CSS text-align values to Alignment enum
+            alignment_map = {
+                'left': Alignment.LEFT,
+                'right': Alignment.RIGHT,
+                'center': Alignment.CENTER,
+                'justify': Alignment.LEFT,  # Map justify to LEFT as fallback
+            }
+            position.alignment = alignment_map.get(css_value.lower(), Alignment.LEFT)
         elif lower_key == "top":
             position.top = css_value
         elif lower_key == "left":

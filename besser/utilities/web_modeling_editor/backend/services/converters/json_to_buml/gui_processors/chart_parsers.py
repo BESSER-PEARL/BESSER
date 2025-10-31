@@ -51,16 +51,27 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
         if data_field_name:
             data_field = next((a for a in domain_class.attributes if a.name == data_field_name), None)
 
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'LineChart'
+    chart_title = name_seed.replace(' ', '_') if isinstance(name_seed, str) else name_seed
+    if not title_value:
+        if isinstance(chart_title, str):
+            title_value = chart_title.replace('_', ' ')
+        else:
+            title_value = str(chart_title)
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
     # Create data binding
     data_binding = DataBinding(
-        name=attrs.get('chart-title', 'LineChart') + "DataBinding",
+        name=(title_value or "LineChart") + "DataBinding",
         domain_concept=domain_class,
         label_field=label_field,
         data_field=data_field
     )
-
-    chart_title = attrs.get('chart-title', 'LineChart')
-    chart_title = chart_title.replace(' ', '_') if isinstance(chart_title, str) else chart_title
 
     # Parse enhanced line chart properties
     line_chart = LineChart(
@@ -73,7 +84,9 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
         animate=parse_bool(attrs.get('animate'), True),
         legend_position=attrs.get('legend-position', 'top'),
         grid_color=attrs.get('grid-color', '#e0e0e0'),
-        dot_size=int(attrs.get('dot-size', 5))
+        dot_size=int(attrs.get('dot-size', 5)),
+        title=title_value,
+        primary_color=primary_color
     )
     line_chart.data_binding = data_binding
     return line_chart

@@ -651,7 +651,31 @@ def _write_styling(f, component_var, styling, created_vars):
     if hasattr(styling, 'position') and styling.position:
         pos_params = []
         if hasattr(styling.position, 'alignment') and styling.position.alignment:
-            pos_params.append(f'alignment="{styling.position.alignment}"')
+            # Check if alignment is an Alignment enum or a string
+            alignment_val = styling.position.alignment
+            if hasattr(alignment_val, 'name'):
+                # It's an Alignment enum
+                pos_params.append(f'alignment=Alignment.{alignment_val.name}')
+            elif isinstance(alignment_val, str):
+                # It's already a string - check if it contains "Alignment."
+                if 'Alignment.' in alignment_val:
+                    # Extract enum name and use it properly
+                    enum_name = alignment_val.split('.')[-1]
+                    pos_params.append(f'alignment=Alignment.{enum_name}')
+                else:
+                    # Try to map common alignment strings to enum values
+                    alignment_map = {
+                        'center': 'CENTER',
+                        'left': 'LEFT',
+                        'right': 'RIGHT',
+                        'top': 'TOP',
+                        'bottom': 'BOTTOM'
+                    }
+                    mapped = alignment_map.get(alignment_val.lower())
+                    if mapped:
+                        pos_params.append(f'alignment=Alignment.{mapped}')
+                    else:
+                        pos_params.append(f'alignment="{alignment_val}"')
         if hasattr(styling.position, 'top') and styling.position.top:
             pos_params.append(f'top="{styling.position.top}"')
         if hasattr(styling.position, 'left') and styling.position.left:

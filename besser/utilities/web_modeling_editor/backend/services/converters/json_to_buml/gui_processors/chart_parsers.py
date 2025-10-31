@@ -5,11 +5,28 @@ Chart component parsers for GUI diagrams.
 from typing import Dict, Any
 from besser.BUML.metamodel.gui import (
     Alignment, BarChart, DataBinding, LineChart,
-    PieChart, RadarChart, RadialBarChart,
+    PieChart, RadarChart, RadialBarChart, ViewComponent,
     Color, Position, Size, Styling,
 )
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, get_element_by_id, parse_bool
+
+
+def _attach_chart_metadata(chart, component: Dict[str, Any]) -> None:
+    """Helper to attach GrapesJS metadata to chart component for code generation fidelity."""
+    if not chart:
+        return
+    
+    attributes = component.get("attributes", {})
+    if isinstance(attributes, dict):
+        chart.component_id = attributes.get("id") or component.get("id")
+    else:
+        chart.component_id = component.get("id")
+    
+    chart.component_type = component.get("type")
+    chart.tag_name = component.get("tagName")
+    chart.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in (component.get("classes") or [])]
+    chart.custom_attributes = dict(attributes) if isinstance(attributes, dict) else {}
 
 
 def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> LineChart:
@@ -73,16 +90,9 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
         data_field=data_field
     )
 
-    chart_title_attr = attrs.get('chart-title', 'LineChart')
-    chart_title = chart_title_attr.replace(' ', '_') if isinstance(chart_title_attr, str) else chart_title_attr
-    display_title = chart_title_attr if isinstance(chart_title_attr, str) else None
-    primary_color = attrs.get('chart-color') or attrs.get('color')
-
     # Parse enhanced line chart properties
     line_chart = LineChart(
         name=chart_title,
-        title=display_title,
-        primary_color=primary_color,
         line_width=int(attrs.get('line-width', 2)),
         show_grid=parse_bool(attrs.get('show-grid'), True),
         show_legend=parse_bool(attrs.get('show-legend'), True),
@@ -96,6 +106,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
         primary_color=primary_color
     )
     line_chart.data_binding = data_binding
+    _attach_chart_metadata(line_chart, view_comp)
     return line_chart
 
 
@@ -138,24 +149,31 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
         if data_field_name:
             data_field = next((a for a in domain_class.attributes if a.name == data_field_name), None)
 
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'BarChart'
+    chart_title = name_seed.replace(' ', '_') if isinstance(name_seed, str) else name_seed
+    if not title_value:
+        if isinstance(chart_title, str):
+            title_value = chart_title.replace('_', ' ')
+        else:
+            title_value = str(chart_title)
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
     # Create data binding
     data_binding = DataBinding(
-        name=attrs.get('chart-title', 'BarChart') + "DataBinding",
+        name=(title_value or "BarChart") + "DataBinding",
         domain_concept=domain_class,
         label_field=label_field,
         data_field=data_field
     )
 
-    chart_title_attr = attrs.get('chart-title', 'BarChart')
-    chart_title = chart_title_attr.replace(' ', '_') if isinstance(chart_title_attr, str) else chart_title_attr
-    display_title = chart_title_attr if isinstance(chart_title_attr, str) else None
-    primary_color = attrs.get('chart-color') or attrs.get('color')
-
     # Parse enhanced bar chart properties
     bar_chart = BarChart(
         name=chart_title,
-        title=display_title,
-        primary_color=primary_color,
         bar_width=int(attrs.get('bar-width', 30)),
         orientation=attrs.get('orientation', 'vertical'),
         show_grid=parse_bool(attrs.get('show-grid'), True),
@@ -165,9 +183,12 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
         animate=parse_bool(attrs.get('animate'), True),
         legend_position=attrs.get('legend-position', 'top'),
         grid_color=attrs.get('grid-color', '#e0e0e0'),
-        bar_gap=int(attrs.get('bar-gap', 4))
+        bar_gap=int(attrs.get('bar-gap', 4)),
+        title=title_value,
+        primary_color=primary_color
     )
     bar_chart.data_binding = data_binding
+    _attach_chart_metadata(bar_chart, view_comp)
     return bar_chart
 
 
@@ -210,18 +231,27 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
         if data_field_name:
             data_field = next((a for a in domain_class.attributes if a.name == data_field_name), None)
 
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'PieChart'
+    chart_title = name_seed.replace(' ', '_') if isinstance(name_seed, str) else name_seed
+    if not title_value:
+        if isinstance(chart_title, str):
+            title_value = chart_title.replace('_', ' ')
+        else:
+            title_value = str(chart_title)
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
     # Create data binding
     data_binding = DataBinding(
-        name=attrs.get('chart-title', 'PieChart') + "DataBinding",
+        name=(title_value or "PieChart") + "DataBinding",
         domain_concept=domain_class,
         label_field=label_field,
         data_field=data_field
     )
-
-    chart_title_attr = attrs.get('chart-title', 'PieChart')
-    chart_title = chart_title_attr.replace(' ', '_') if isinstance(chart_title_attr, str) else chart_title_attr
-    display_title = chart_title_attr if isinstance(chart_title_attr, str) else None
-    primary_color = attrs.get('chart-color') or attrs.get('color')
 
     # Parse enhanced pie chart properties
     show_legend = parse_bool(attrs.get('show-legend'), True)
@@ -247,8 +277,6 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
 
     pie_chart = PieChart(
         name=chart_title,
-        title=display_title,
-        primary_color=primary_color,
         show_legend=show_legend,
         legend_position=legend_position,
         show_labels=show_labels,
@@ -257,9 +285,12 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
         inner_radius=int(attrs.get('inner-radius', 0)),
         outer_radius=int(attrs.get('outer-radius', 80)),
         start_angle=int(attrs.get('start-angle', 0)),
-        end_angle=int(attrs.get('end-angle', 360))
+        end_angle=int(attrs.get('end-angle', 360)),
+        title=title_value,
+        primary_color=primary_color
     )
     pie_chart.data_binding = data_binding
+    _attach_chart_metadata(pie_chart, view_comp)
     return pie_chart
 
 
@@ -291,24 +322,31 @@ def parse_radar_chart(view_comp: Dict[str, Any], _, domain_model) -> RadarChart:
         if data_field_name:
             data_field = next((a for a in domain_class.attributes if a.name == data_field_name), None)
 
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'RadarChart'
+    chart_title = name_seed.replace(' ', '_') if isinstance(name_seed, str) else name_seed
+    if not title_value:
+        if isinstance(chart_title, str):
+            title_value = chart_title.replace('_', ' ')
+        else:
+            title_value = str(chart_title)
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
     # Create data binding
     data_binding = DataBinding(
-        name=attrs.get('chart-title', 'RadarChart') + "DataBinding",
+        name=(title_value or "RadarChart") + "DataBinding",
         domain_concept=domain_class,
         label_field=label_field,
         data_field=data_field
     )
 
-    chart_title_attr = attrs.get('chart-title', 'RadarChart')
-    chart_title = chart_title_attr.replace(' ', '_') if isinstance(chart_title_attr, str) else chart_title_attr
-    display_title = chart_title_attr if isinstance(chart_title_attr, str) else None
-    primary_color = attrs.get('chart-color') or attrs.get('color')
-
     # Parse enhanced radar chart properties
     radar_chart = RadarChart(
         name=chart_title,
-        title=display_title,
-        primary_color=primary_color,
         show_grid=parse_bool(attrs.get('show-grid'), True),
         show_tooltip=parse_bool(attrs.get('show-tooltip'), True),
         show_radius_axis=parse_bool(attrs.get('show-radius-axis'), True),
@@ -316,9 +354,12 @@ def parse_radar_chart(view_comp: Dict[str, Any], _, domain_model) -> RadarChart:
         legend_position=attrs.get('legend-position', 'top'),
         dot_size=int(attrs.get('dot-size', 3)),
         grid_type=attrs.get('grid-type', 'polygon'),
-        stroke_width=int(attrs.get('stroke-width', 2))
+        stroke_width=int(attrs.get('stroke-width', 2)),
+        title=title_value,
+        primary_color=primary_color
     )
     radar_chart.data_binding = data_binding
+    _attach_chart_metadata(radar_chart, view_comp)
     return radar_chart
 
 
@@ -361,33 +402,43 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
         if values_name:
             data_field = next((a for a in domain_class.attributes if a.name == values_name), None)
 
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'RadialBarChart'
+    chart_title = name_seed.replace(' ', '_') if isinstance(name_seed, str) else name_seed
+    if not title_value:
+        if isinstance(chart_title, str):
+            title_value = chart_title.replace('_', ' ')
+        else:
+            title_value = str(chart_title)
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
     # Create data binding
     data_binding = DataBinding(
-        name=attrs.get('chart-title', 'RadialBarChart') + "DataBinding",
+        name=(title_value or "RadialBarChart") + "DataBinding",
         domain_concept=domain_class,
         label_field=label_field,
         data_field=data_field
     )
 
-    chart_title_attr = attrs.get('chart-title', 'RadialBarChart')
-    chart_title = chart_title_attr.replace(' ', '_') if isinstance(chart_title_attr, str) else chart_title_attr
-    display_title = chart_title_attr if isinstance(chart_title_attr, str) else None
-    primary_color = attrs.get('chart-color') or attrs.get('color')
-
     # Parse enhanced radial bar chart properties
     radial_bar_chart = RadialBarChart(
         name=chart_title,
-        title=display_title,
-        primary_color=primary_color,
         start_angle=int(attrs.get('start-angle', 0)),
         end_angle=int(attrs.get('end-angle', 360)),
         inner_radius=int(attrs.get('inner-radius', 30)),
         outer_radius=int(attrs.get('outer-radius', 80)),
         show_legend=parse_bool(attrs.get('show-legend'), True),
         legend_position=attrs.get('legend-position', 'top'),
-        show_tooltip=parse_bool(attrs.get('show-tooltip'), True)
+        show_tooltip=parse_bool(attrs.get('show-tooltip'), True),
+        title=title_value,
+        primary_color=primary_color
     )
     radial_bar_chart.data_binding = data_binding
+    _attach_chart_metadata(radial_bar_chart, view_comp)
     return radial_bar_chart
 
 

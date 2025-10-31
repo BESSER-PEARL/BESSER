@@ -162,9 +162,12 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
                         if elem_var:
                             element_vars.append(elem_var)
                 
-                # Assign elements to screen
+                # Assign elements to screen - Screen requires view_elements in __init__ too,
+                # but we set them after creation for code readability
                 if element_vars:
                     f.write(f"{screen_var}.view_elements = {{{', '.join(element_vars)}}}\n")
+                else:
+                    f.write(f"{screen_var}.view_elements = set()\n")
                 
                 # Set screen layout if present
                 if hasattr(screen, 'layout') and screen.layout:
@@ -246,13 +249,54 @@ def _write_component(f, component, created_vars, parent_var=""):
         _write_radial_bar_chart(f, comp_var, component)
     elif isinstance(component, ViewContainer):
         _write_container(f, comp_var, component, created_vars)
+        # Metadata already written by _write_container
+        return comp_var
     else:
-        # Generic ViewComponent
-        f.write(f'{comp_var} = ViewComponent(name="{component.name}", description="{component.description or ""}")\n')
+        # Generic ViewComponent - check if it has children (acts as container)
+        if hasattr(component, 'view_elements') and component.view_elements:
+            # It's a container but not typed as ViewContainer
+            child_vars = []
+            for child in sorted(component.view_elements, key=lambda e: e.name):
+                child_var = _write_component(f, child, created_vars, comp_var)
+                if child_var:
+                    child_vars.append(child_var)
+            
+            children_str = f'{{{", ".join(child_vars)}}}' if child_vars else 'set()'
+            f.write(f'{comp_var} = ViewContainer(name="{component.name}", description="{component.description or ""}", view_elements={children_str})\n')
+            
+            if hasattr(component, 'layout') and component.layout:
+                layout_var = _write_layout(f, component.layout, created_vars, f"{comp_var}_layout")
+                f.write(f'{comp_var}.layout = {layout_var}\n')
+        else:
+            # Simple ViewComponent with no children
+            f.write(f'{comp_var} = ViewComponent(name="{component.name}", description="{component.description or ""}")\n')
     
     # Write styling if present
     if hasattr(component, 'styling') and component.styling:
         _write_styling(f, comp_var, component.styling, created_vars)
+    
+    # Write metadata properties if present
+    if hasattr(component, 'component_id') and component.component_id:
+        f.write(f'{comp_var}.component_id = "{_escape_string(component.component_id)}"\n')
+    if hasattr(component, 'component_type') and component.component_type:
+        f.write(f'{comp_var}.component_type = "{_escape_string(component.component_type)}"\n')
+    if hasattr(component, 'tag_name') and component.tag_name:
+        f.write(f'{comp_var}.tag_name = "{_escape_string(component.tag_name)}"\n')
+    if hasattr(component, 'css_classes') and component.css_classes:
+        classes_str = '", "'.join(_escape_string(c) for c in component.css_classes)
+        f.write(f'{comp_var}.css_classes = ["{classes_str}"]\n')
+    if hasattr(component, 'custom_attributes') and component.custom_attributes:
+        # Write custom attributes as a dictionary
+        attrs_items = []
+        for k, v in component.custom_attributes.items():
+            if isinstance(v, str):
+                attrs_items.append(f'"{_escape_string(k)}": "{_escape_string(v)}"')
+            elif v is None:
+                attrs_items.append(f'"{_escape_string(k)}": None')
+            else:
+                attrs_items.append(f'"{_escape_string(k)}": {repr(v)}')
+        if attrs_items:
+            f.write(f'{comp_var}.custom_attributes = {{{", ".join(attrs_items)}}}\n')
 
     return comp_var
 
@@ -619,9 +663,7 @@ def _write_radial_bar_chart(f, var_name, chart):
 
 def _write_container(f, var_name, container, created_vars):
     """Write code for a ViewContainer component."""
-    f.write(f'{var_name} = ViewContainer(name="{container.name}", description="{container.description or ""}")\n')
-    
-    # Write child elements
+    # Write child elements first
     child_vars = []
     if hasattr(container, 'view_elements') and container.view_elements:
         for child in sorted(container.view_elements, key=lambda e: e.name):
@@ -629,14 +671,41 @@ def _write_container(f, var_name, container, created_vars):
             if child_var:
                 child_vars.append(child_var)
     
-    # Assign children to container
-    if child_vars:
-        f.write(f'{var_name}.view_elements = {{{", ".join(child_vars)}}}\n')
+    # Create ViewContainer with view_elements as required parameter
+    children_str = f'{{{", ".join(child_vars)}}}' if child_vars else 'set()'
+    f.write(f'{var_name} = ViewContainer(name="{container.name}", description="{container.description or ""}", view_elements={children_str})\n')
+    
+    # Write styling if present
+    if hasattr(container, 'styling') and container.styling:
+        _write_styling(f, var_name, container.styling, created_vars)
     
     # Set layout if present
     if hasattr(container, 'layout') and container.layout:
         layout_var = _write_layout(f, container.layout, created_vars, f"{var_name}_layout")
         f.write(f'{var_name}.layout = {layout_var}\n')
+    
+    # Write metadata properties if present
+    if hasattr(container, 'component_id') and container.component_id:
+        f.write(f'{var_name}.component_id = "{_escape_string(container.component_id)}"\n')
+    if hasattr(container, 'component_type') and container.component_type:
+        f.write(f'{var_name}.component_type = "{_escape_string(container.component_type)}"\n')
+    if hasattr(container, 'tag_name') and container.tag_name:
+        f.write(f'{var_name}.tag_name = "{_escape_string(container.tag_name)}"\n')
+    if hasattr(container, 'css_classes') and container.css_classes:
+        classes_str = '", "'.join(_escape_string(c) for c in container.css_classes)
+        f.write(f'{var_name}.css_classes = ["{classes_str}"]\n')
+    if hasattr(container, 'custom_attributes') and container.custom_attributes:
+        # Write custom attributes as a dictionary
+        attrs_items = []
+        for k, v in container.custom_attributes.items():
+            if isinstance(v, str):
+                attrs_items.append(f'"{_escape_string(k)}": "{_escape_string(v)}"')
+            elif v is None:
+                attrs_items.append(f'"{_escape_string(k)}": None')
+            else:
+                attrs_items.append(f'"{_escape_string(k)}": {repr(v)}')
+        if attrs_items:
+            f.write(f'{var_name}.custom_attributes = {{{", ".join(attrs_items)}}}\n')
 
 
 def _write_styling(f, component_var, styling, created_vars):

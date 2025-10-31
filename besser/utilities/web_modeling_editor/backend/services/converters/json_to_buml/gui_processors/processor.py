@@ -108,9 +108,22 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
         return register_name(fallback, fallback)
 
-    def attach_meta(element: Optional[ViewComponent], meta: Dict[str, Any]) -> None:
-        """No-op placeholder kept for compatibility."""
-        return
+    def attach_meta(element, meta: Dict[str, Any]) -> None:
+        """Attach metadata to component for code generation fidelity."""
+        if not element:
+            return
+        
+        # Store component metadata if not already set
+        if not hasattr(element, 'tag_name') or not element.tag_name:
+            element.tag_name = meta.get("tagName")
+        if not hasattr(element, 'css_classes'):
+            element.css_classes = []
+        if meta.get("classList"):
+            element.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in meta["classList"]]
+        if not hasattr(element, 'custom_attributes'):
+            element.custom_attributes = {}
+        if meta.get("attributes"):
+            element.custom_attributes = dict(meta["attributes"]) if isinstance(meta["attributes"], dict) else {}
 
     def parse_component_list(components: Optional[List[Dict[str, Any]]]) -> List[ViewComponent]:
         """Parse a list of GrapesJS components into BUML ViewComponents."""
@@ -303,10 +316,13 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         # Preserve original metadata for React generator fidelity
         if isinstance(generic, ViewComponent):
             attributes = component.get("attributes", {})
-            setattr(generic, "original_id", attributes.get("id") or component.get("id"))
-            setattr(generic, "original_name", attributes.get("name") or component.get("name"))
+            generic.component_id = attributes.get("id") or component.get("id")
+            generic.component_type = component.get("type")
+            generic.tag_name = component.get("tagName") or meta.get("tagName")
+            generic.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in (component.get("classes") or [])]
+            generic.custom_attributes = dict(attributes) if isinstance(attributes, dict) else {}
             # Preserve layout if available
-            if hasattr(styling, "layout") and styling.layout:
+            if hasattr(generic, "layout") and hasattr(styling, "layout") and styling.layout:
                 generic.layout = styling.layout
 
         return generic
@@ -351,6 +367,9 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 x_dpi = str(page_attrs.get("x-dpi") or page_attrs.get("dpi") or "")
                 y_dpi = str(page_attrs.get("y-dpi") or page_attrs.get("dpi") or "")
             
+            # Derive route path from page name or ID
+            route_path = f"/{(page.get('name') or screen_fallback).lower().replace(' ', '-')}"
+            
             screen = Screen(
                 name=screen_name,
                 description=str(page.get("name") or screen_fallback),
@@ -359,8 +378,15 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 x_dpi=x_dpi,
                 y_dpi=y_dpi,
                 screen_size=screen_size,
+                route_path=route_path,
             )
             screen.styling = resolve_component_styling(wrapper, style_map)
+            
+            # Store page metadata for code generation
+            if hasattr(screen, 'component_id'):
+                screen.component_id = page_id
+            else:
+                setattr(screen, 'page_id', page_id)
             
             # Set layout if present in styling
             if screen.styling and hasattr(screen.styling, 'layout') and screen.styling.layout:

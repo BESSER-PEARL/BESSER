@@ -327,6 +327,12 @@ class ViewElement(NamedElement):
         self.description: str = description
         self.styling: Styling = styling
         self._owner: "ViewContainer" = None
+        # Store original component metadata for code generation fidelity
+        self.component_id: str | None = None  # Original GrapesJS component ID
+        self.component_type: str | None = None  # Original GrapesJS component type
+        self.tag_name: str | None = None  # HTML tag name
+        self.css_classes: list[str] = []  # CSS class list
+        self.custom_attributes: dict = {}  # Custom HTML attributes
 
     @property
     def description(self) -> str:

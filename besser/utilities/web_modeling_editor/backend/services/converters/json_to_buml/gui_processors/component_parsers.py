@@ -44,6 +44,23 @@ from .constants import INPUT_COMPONENT_TYPES, INPUT_TYPE_MAP, BUTTON_ACTION_BY_H
 from .utils import extract_text_content, clean_attribute_name
 
 
+def _attach_component_metadata(element, component: Dict[str, Any], meta: Dict[str, Any] = None) -> None:
+    """Helper to attach GrapesJS metadata to BUML component for code generation fidelity."""
+    if not element:
+        return
+    
+    attributes = component.get("attributes", {})
+    if isinstance(attributes, dict):
+        element.component_id = attributes.get("id") or component.get("id")
+    else:
+        element.component_id = component.get("id")
+    
+    element.component_type = component.get("type")
+    element.tag_name = component.get("tagName") or (meta.get("tagName") if meta else None)
+    element.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in (component.get("classes") or [])]
+    element.custom_attributes = dict(attributes) if isinstance(attributes, dict) else {}
+
+
 def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> Button:
     """
     Parse a button component with events and actions.
@@ -191,6 +208,9 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
     if meta["tagName"] is None:
         meta["tagName"] = "button"
     
+    # Attach GrapesJS metadata for code generation
+    _attach_component_metadata(button, component, meta)
+    
     return button
 
 
@@ -246,6 +266,8 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
     if meta["tagName"] is None:
         meta["tagName"] = "input"
     
+    _attach_component_metadata(input_field, component, meta)
+    
     return input_field
 
 
@@ -297,6 +319,7 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict, parse_
                     actions=event.actions
                 ))
     
+    _attach_component_metadata(form, component, meta)
     return form
 
 
@@ -333,6 +356,7 @@ def parse_link(component: Dict[str, Any], styling, name: str, meta: Dict) -> Lin
     if meta["tagName"] is None:
         meta["tagName"] = "a"
 
+    _attach_component_metadata(link, component, meta)
     return link
 
 
@@ -362,6 +386,7 @@ def parse_embedded_content(component: Dict[str, Any], styling, name: str, meta: 
     if meta["tagName"] is None:
         meta["tagName"] = "iframe"
 
+    _attach_component_metadata(embedded, component, meta)
     return embedded
 
 
@@ -385,6 +410,7 @@ def parse_text(component: Dict[str, Any], styling, name: str, meta: Dict) -> Tex
         description="Text element",
         styling=styling,
     )
+    _attach_component_metadata(text_element, component, meta)
     return text_element
 
 
@@ -415,6 +441,7 @@ def parse_image(component: Dict[str, Any], styling, name: str, meta: Dict) -> Im
     image = Image(name=name, description=description, styling=styling, source=source)
     if meta["tagName"] is None:
         meta["tagName"] = "img"
+    _attach_component_metadata(image, component, meta)
     return image
 
 
@@ -454,6 +481,7 @@ def parse_menu(component: Dict[str, Any], styling, name: str, meta: Dict) -> Men
     if meta["tagName"] is None:
         meta["tagName"] = "nav"
     
+    _attach_component_metadata(menu, component, meta)
     return menu
 
 
@@ -545,6 +573,7 @@ def parse_data_list(component: Dict[str, Any], styling, name: str, meta: Dict, d
     if meta["tagName"] is None:
         meta["tagName"] = tag or "ul"
     
+    _attach_component_metadata(data_list, component, meta)
     return data_list
 
 
@@ -579,6 +608,7 @@ def parse_container(component: Dict[str, Any], styling, name: str, meta: Dict, p
     if styling and hasattr(styling, 'layout') and styling.layout:
         container.layout = styling.layout
     
+    _attach_component_metadata(container, component, meta)
     return container
 
 
@@ -620,6 +650,7 @@ def parse_generic_component(component: Dict[str, Any], styling, name: str, meta:
         if styling and hasattr(styling, 'layout') and styling.layout:
             container.layout = styling.layout
         
+        _attach_component_metadata(container, component, meta)
         return container
     
     # Otherwise create a simple ViewComponent
@@ -628,4 +659,5 @@ def parse_generic_component(component: Dict[str, Any], styling, name: str, meta:
         description=f"{tag or comp_type} component",
         styling=styling,
     )
+    _attach_component_metadata(generic, component, meta)
     return generic

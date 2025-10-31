@@ -165,7 +165,8 @@ class ReactGenerator(GeneratorInterface):
     # Screen & component serialization
     # --------------------------------------------------------------------- #
     def _serialize_screen(self, screen: ViewContainer) -> Dict[str, Any]:
-        screen_id = screen.name
+        # Use preserved page_id if available
+        screen_id = getattr(screen, 'page_id', None) or getattr(screen, 'component_id', None) or screen.name
         node: Dict[str, Any] = {
             "id": screen_id,
             "name": screen.description or self._humanize(screen.name),
@@ -185,10 +186,11 @@ class ReactGenerator(GeneratorInterface):
     def _serialize_component(self, element: ViewComponent) -> Dict[str, Any]:
         component_type = self._map_component_type(element)
 
-        component_id = element.name or f"{element.__class__.__name__}"
-        tag: Optional[str] = None
-        class_list: Optional[List[str]] = None
-        attributes: Optional[Dict[str, Any]] = None
+        # Use preserved metadata if available, otherwise fall back to defaults
+        component_id = getattr(element, 'component_id', None) or element.name or f"{element.__class__.__name__}"
+        tag = getattr(element, 'tag_name', None)
+        class_list = getattr(element, 'css_classes', None)
+        attributes = getattr(element, 'custom_attributes', None)
 
         node: Dict[str, Any] = {
             "id": component_id,

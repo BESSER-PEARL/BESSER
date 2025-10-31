@@ -35,7 +35,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 
 # Load the project
 BASE_DIR = Path(__file__).resolve().parent
-input_path = BASE_DIR / "output" / "Statec.json"
+input_path = BASE_DIR / "output" / "five_graphs.json"
 
 with open(input_path, "r", encoding="utf-8") as f:
     project_data = json.load(f)

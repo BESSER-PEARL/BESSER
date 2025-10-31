@@ -120,6 +120,8 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
         
         # Track created variables to avoid duplicates
         created_vars = set()
+        # Track pending button events to write after all screens are defined
+        pending_button_events = []
         
         # Process each module
         for module_idx, module in enumerate(sorted(model.modules, key=lambda m: m.name)):
@@ -160,7 +162,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
                     # Sort by display_order first (JSON order), then by name
                     sorted_elements = sorted(screen.view_elements, key=lambda e: (getattr(e, 'display_order', 999999), e.name))
                     for elem in sorted_elements:
-                        elem_var = _write_component(f, elem, created_vars, screen_var)
+                        elem_var = _write_component(f, elem, created_vars, screen_var, pending_button_events)
                         if elem_var:
                             element_vars.append(elem_var)
                 
@@ -177,6 +179,22 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
                     f.write(f"{screen_var}.layout = {layout_var}\n")
                 
                 f.write("\n")
+            
+            # Write deferred button events after all screens are defined
+            if pending_button_events:
+                f.write("# Button events and transitions (written after all screens defined to avoid forward references)\n")
+                for button_var, button in pending_button_events:
+                    if hasattr(button, 'events') and button.events:
+                        for event_idx, event in enumerate(button.events):
+                            event_var = f"{button_var}_event_{event_idx}"
+                            _write_event(f, event_var, event, created_vars)
+                            if event_idx == 0:
+                                f.write(f"{button_var}.events = {{{event_var}}}\n")
+                            else:
+                                f.write(f"{button_var}.events.add({event_var})\n")
+                f.write("\n")
+                # Clear the pending events for next module
+                pending_button_events.clear()
             
             # Create module with screens
             module_var = safe_var_name(module.name)
@@ -205,13 +223,22 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
     print(f"GUI model code saved to {file_path}")
 
 
-def _write_component(f, component, created_vars, parent_var=""):
+def _write_component(f, component, created_vars, parent_var="", pending_button_events=None):
     """
     Write code for a GUI component.
+    
+    Args:
+        f: File handle
+        component: Component to write
+        created_vars: Set of created variable names
+        parent_var: Parent variable name (optional)
+        pending_button_events: List to collect buttons with events for deferred writing
     
     Returns:
         Variable name of the created component
     """
+    if pending_button_events is None:
+        pending_button_events = []
     comp_var = safe_var_name(component.name)
     base_var = comp_var
     counter = 1
@@ -222,7 +249,7 @@ def _write_component(f, component, created_vars, parent_var=""):
     
     # Determine component type and write creation code
     if isinstance(component, Button):
-        _write_button(f, comp_var, component, created_vars)
+        _write_button(f, comp_var, component, created_vars, pending_button_events)
     elif isinstance(component, Text):
         _write_text(f, comp_var, component)
     elif isinstance(component, Image):
@@ -232,7 +259,7 @@ def _write_component(f, component, created_vars, parent_var=""):
     elif isinstance(component, InputField):
         _write_input_field(f, comp_var, component)
     elif isinstance(component, Form):
-        _write_form(f, comp_var, component, created_vars)
+        _write_form(f, comp_var, component, created_vars, pending_button_events)
     elif isinstance(component, Menu):
         _write_menu(f, comp_var, component, created_vars)
     elif isinstance(component, DataList):
@@ -250,7 +277,7 @@ def _write_component(f, component, created_vars, parent_var=""):
     elif isinstance(component, RadialBarChart):
         _write_radial_bar_chart(f, comp_var, component)
     elif isinstance(component, ViewContainer):
-        _write_container(f, comp_var, component, created_vars)
+        _write_container(f, comp_var, component, created_vars, pending_button_events)
         # Metadata already written by _write_container
         return comp_var
     else:
@@ -261,7 +288,7 @@ def _write_component(f, component, created_vars, parent_var=""):
             # Sort by display_order first (JSON order), then by name
             sorted_children = sorted(component.view_elements, key=lambda e: (getattr(e, 'display_order', 999999), e.name))
             for child in sorted_children:
-                child_var = _write_component(f, child, created_vars, comp_var)
+                child_var = _write_component(f, child, created_vars, comp_var, pending_button_events)
                 if child_var:
                     child_vars.append(child_var)
             
@@ -308,7 +335,7 @@ def _write_component(f, component, created_vars, parent_var=""):
     return comp_var
 
 
-def _write_button(f, var_name, button, created_vars):
+def _write_button(f, var_name, button, created_vars, pending_button_events):
     """Write code for a Button component."""
     params = [f'name="{button.name}"']
     params.append(f'description="{button.description}"' if button.description else 'description=""')
@@ -319,24 +346,14 @@ def _write_button(f, var_name, button, created_vars):
     if hasattr(button, 'actionType') and button.actionType:
         params.append(f'actionType=ButtonActionType.{button.actionType.name}')
     
-    # Handle targetScreen if present (only set if not handled via events/actions)
-    target_screen_set = False
-    if hasattr(button, 'targetScreen') and button.targetScreen:
-        target_screen_var = safe_var_name(button.targetScreen.name)
-        params.append(f'targetScreen={target_screen_var}')
-        target_screen_set = True
+    # Don't write targetScreen here - will be handled via events
+    # This avoids forward reference issues
     
     f.write(f'{var_name} = Button({", ".join(params)})\n')
     
-    # Write events if present
+    # Store button info for later event/action writing (after all screens defined)
     if hasattr(button, 'events') and button.events:
-        for event_idx, event in enumerate(button.events):
-            event_var = f"{var_name}_event_{event_idx}"
-            _write_event(f, event_var, event, created_vars)
-            if event_idx == 0:
-                f.write(f"{var_name}.events = {{{event_var}}}\n")
-            else:
-                f.write(f"{var_name}.events.add({event_var})\n")
+        pending_button_events.append((var_name, button))
 
 
 def _write_event(f, var_name, event, created_vars):
@@ -462,13 +479,13 @@ def _write_input_field(f, var_name, input_field):
     f.write(f'{var_name} = InputField({", ".join(params)})\n')
 
 
-def _write_form(f, var_name, form, created_vars):
+def _write_form(f, var_name, form, created_vars, pending_button_events):
     """Write code for a Form component."""
     # Write input fields first
     field_vars = []
     if hasattr(form, 'inputFields') and form.inputFields:
         for field in form.inputFields:
-            field_var = _write_component(f, field, created_vars, var_name)
+            field_var = _write_component(f, field, created_vars, var_name, pending_button_events)
             if field_var:
                 field_vars.append(field_var)
     
@@ -668,7 +685,7 @@ def _write_radial_bar_chart(f, var_name, chart):
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
-def _write_container(f, var_name, container, created_vars):
+def _write_container(f, var_name, container, created_vars, pending_button_events):
     """Write code for a ViewContainer component."""
     # Write child elements first - preserve original order
     child_vars = []
@@ -676,7 +693,7 @@ def _write_container(f, var_name, container, created_vars):
         # Sort by display_order first (JSON order), then by name
         sorted_children = sorted(container.view_elements, key=lambda e: (getattr(e, 'display_order', 999999), e.name))
         for child in sorted_children:
-            child_var = _write_component(f, child, created_vars, var_name)
+            child_var = _write_component(f, child, created_vars, var_name, pending_button_events)
             if child_var:
                 child_vars.append(child_var)
     

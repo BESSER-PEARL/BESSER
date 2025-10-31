@@ -124,7 +124,7 @@ def get_element_by_id(class_model, element_id):
 def extract_text_content(component: Dict[str, Any]) -> str:
     """
     Collect text content from a GrapesJS component (including nested text nodes).
-    Converts <br> tags to newlines. Preserves nested HTML structure for nested text elements.
+    Converts <br> tags to newlines. Recursively extracts all text content.
     
     Args:
         component: GrapesJS component dict
@@ -139,52 +139,43 @@ def extract_text_content(component: Dict[str, Any]) -> str:
 
     comp_type = str(component.get("type", "")).lower()
     if comp_type == "textnode":
-        return str(component.get("content", "")).strip()
+        text = component.get("content", "")
+        return str(text).strip() if text else ""
 
     content = ""
+    # Direct content if present
     if component.get("content"):
         content += str(component.get("content"))
 
-    # Check if component has nested children
+    # Recursively extract from all nested children
     children = component.get("components", []) or []
-    if children:
-        # Check if any child is a text element (not just textnode)
-        has_text_elements = any(
-            isinstance(child, dict) and (
-                str(child.get("type", "")).lower() in {"text", "textnode"} or
-                str(child.get("tagName", "")).lower() in TEXT_TAGS
-            )
-            for child in children
-        )
+    for child in children:
+        if not isinstance(child, dict):
+            continue
+            
+        child_type = str(child.get("type", "")).lower()
+        child_tag = str(child.get("tagName", "")).lower()
         
-        if has_text_elements:
-            # Build HTML from nested structure
-            for child in children:
-                if not isinstance(child, dict):
-                    continue
-                    
-                child_type = str(child.get("type", "")).lower()
-                child_tag = str(child.get("tagName", "")).lower()
-                
-                if child_type == "textnode":
-                    content += str(child.get("content", ""))
-                elif child_tag == "br":
-                    # Convert <br> to newline
-                    content += "\n"
-                elif child_tag in TEXT_TAGS or child_type == "text":
-                    # Wrap in HTML tag
-                    tag = child_tag if child_tag else "span"
-                    child_content = extract_text_content(child)
-                    content += f"<{tag}>{child_content}</{tag}>"
-                else:
-                    content += extract_text_content(child)
+        if child_type == "textnode":
+            # Direct text node - extract content
+            child_content = child.get("content", "")
+            if child_content:
+                content += str(child_content)
+        elif child_tag == "br":
+            # Convert <br> to newline
+            content += "\n"
         else:
-            # Simple text aggregation for non-text children
-            for child in children:
-                child_tag = str(child.get("tagName", "")).lower() if isinstance(child, dict) else ""
-                if child_tag == "br":
-                    content += "\n"
-                else:
-                    content += extract_text_content(child)
+            # Recursively extract from nested components
+            nested_content = extract_text_content(child)
+            if nested_content:
+                content += nested_content
     
-    return content.strip()
+    # Clean up and return
+    result = content.strip()
+    # Remove excessive whitespace but preserve intentional spacing
+    if result:
+        # Replace multiple spaces with single space, but preserve newlines
+        result = re.sub(r'[ \t]+', ' ', result)
+        result = re.sub(r'\n\s*\n', '\n', result)
+    
+    return result

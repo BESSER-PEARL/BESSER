@@ -167,18 +167,25 @@ class ReactGenerator(GeneratorInterface):
     def _serialize_screen(self, screen: ViewContainer) -> Dict[str, Any]:
         # Use preserved page_id if available
         screen_id = getattr(screen, 'page_id', None) or getattr(screen, 'component_id', None) or screen.name
+        # Use screen name for better identification
+        screen_name = screen.name if hasattr(screen, 'name') else screen.description
+        
         node: Dict[str, Any] = {
             "id": screen_id,
-            "name": screen.description or self._humanize(screen.name),
+            "name": screen.description or self._humanize(screen_name),
             "description": screen.description or "",
             "is_main": bool(getattr(screen, "is_main_page", False)),
-            "route_path": getattr(screen, "route_path", f"/{screen.name}"),
+            "route_path": getattr(screen, "route_path", f"/{screen_name}".lower().replace(' ', '-')),
             "components": [],
         }
 
         self._register_component_style(screen_id, screen.styling, getattr(screen, "layout", None))
 
-        for element in self._sorted_by_name(screen.view_elements):
+        # Sort elements by display_order to preserve JSON ordering
+        elements = list(screen.view_elements)
+        elements.sort(key=lambda e: (getattr(e, 'display_order', 999999), getattr(e, 'name', '')))
+        
+        for element in elements:
             node["components"].append(self._serialize_component(element))
 
         return self._clean_dict(node)
@@ -208,14 +215,22 @@ class ReactGenerator(GeneratorInterface):
         self._register_component_style(component_id, element.styling, layout)
 
         if isinstance(element, ViewContainer):
-            children = [
-                self._serialize_component(child) for child in self._sorted_by_name(element.view_elements)
-            ]
+            # Sort children by display_order to preserve JSON ordering
+            children_list = list(element.view_elements)
+            children_list.sort(key=lambda e: (getattr(e, 'display_order', 999999), getattr(e, 'name', '')))
+            
+            children = [self._serialize_component(child) for child in children_list]
             if children:
                 node["children"] = children
 
         if isinstance(element, Text):
-            node["content"] = element.content
+            # Ensure content is properly extracted and not empty
+            content = element.content
+            # If content is empty but we have a tag like h1, h2, h3, p, try to derive from name
+            if not content and tag and tag.lower() in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'div']:
+                # Use name or description as fallback
+                content = self._derive_display_name(element) or element.description or ""
+            node["content"] = content or ""
 
         if isinstance(element, Image):
             node["alt"] = element.description or ""

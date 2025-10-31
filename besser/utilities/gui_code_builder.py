@@ -154,10 +154,12 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
                 if screen.styling:
                     _write_styling(f, screen_var, screen.styling, created_vars)
                 
-                # Process screen elements
+                # Process screen elements - preserve original order
                 element_vars = []
                 if hasattr(screen, 'view_elements') and screen.view_elements:
-                    for elem in sorted(screen.view_elements, key=lambda e: e.name):
+                    # Sort by display_order first (JSON order), then by name
+                    sorted_elements = sorted(screen.view_elements, key=lambda e: (getattr(e, 'display_order', 999999), e.name))
+                    for elem in sorted_elements:
                         elem_var = _write_component(f, elem, created_vars, screen_var)
                         if elem_var:
                             element_vars.append(elem_var)
@@ -256,7 +258,9 @@ def _write_component(f, component, created_vars, parent_var=""):
         if hasattr(component, 'view_elements') and component.view_elements:
             # It's a container but not typed as ViewContainer
             child_vars = []
-            for child in sorted(component.view_elements, key=lambda e: e.name):
+            # Sort by display_order first (JSON order), then by name
+            sorted_children = sorted(component.view_elements, key=lambda e: (getattr(e, 'display_order', 999999), e.name))
+            for child in sorted_children:
                 child_var = _write_component(f, child, created_vars, comp_var)
                 if child_var:
                     child_vars.append(child_var)
@@ -663,10 +667,12 @@ def _write_radial_bar_chart(f, var_name, chart):
 
 def _write_container(f, var_name, container, created_vars):
     """Write code for a ViewContainer component."""
-    # Write child elements first
+    # Write child elements first - preserve original order
     child_vars = []
     if hasattr(container, 'view_elements') and container.view_elements:
-        for child in sorted(container.view_elements, key=lambda e: e.name):
+        # Sort by display_order first (JSON order), then by name
+        sorted_children = sorted(container.view_elements, key=lambda e: (getattr(e, 'display_order', 999999), e.name))
+        for child in sorted_children:
             child_var = _write_component(f, child, created_vars, var_name)
             if child_var:
                 child_vars.append(child_var)

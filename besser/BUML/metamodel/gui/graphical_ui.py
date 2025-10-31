@@ -313,6 +313,12 @@ class ViewElement(NamedElement):
         visibility (str): Visibility scope (default: "public").
         styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
         owner (ViewContainer | None): The container that owns this view element (if any).
+        component_id (str | None): Original GrapesJS component ID for code generation fidelity.
+        component_type (str | None): Original GrapesJS component type for code generation fidelity.
+        tag_name (str | None): HTML tag name (e.g., "div", "button", "img").
+        css_classes (list[str]): List of CSS class names applied to the component.
+        custom_attributes (dict): Dictionary of custom HTML attributes.
+        display_order (int): Order index from original JSON to preserve component sequence.
     """
 
     def __init__(
@@ -333,6 +339,7 @@ class ViewElement(NamedElement):
         self.tag_name: str | None = None  # HTML tag name
         self.css_classes: list[str] = []  # CSS class list
         self.custom_attributes: dict = {}  # Custom HTML attributes
+        self.display_order: int = 0  # Preserve original order from JSON
 
     @property
     def description(self) -> str:

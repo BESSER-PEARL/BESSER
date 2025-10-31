@@ -128,13 +128,18 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     def parse_component_list(components: Optional[List[Dict[str, Any]]]) -> List[ViewComponent]:
         """Parse a list of GrapesJS components into BUML ViewComponents."""
         parsed_children: List[ViewComponent] = []
-        for child in components or []:
+        for index, child in enumerate(components or []):
             result = parse_component_node(child)
             if not result:
                 continue
             if isinstance(result, list):
+                for item in result:
+                    if hasattr(item, 'display_order'):
+                        item.display_order = index
                 parsed_children.extend(result)
             else:
+                if hasattr(result, 'display_order'):
+                    result.display_order = index
                 parsed_children.append(result)
         return parsed_children
 

@@ -671,7 +671,8 @@ class ReactGenerator(GeneratorInterface):
     def _sorted_by_name(items: Iterable[Any]) -> List[Any]:
         if not items:
             return []
-        return sorted(items, key=lambda item: getattr(item, "name", "").lower())
+        # Sort by display_order if available (preserves JSON order), otherwise by name
+        return sorted(items, key=lambda item: (getattr(item, "display_order", 999999), getattr(item, "name", "").lower()))
 
     @staticmethod
     def _sorted_menu_items(items: Iterable[MenuItem]) -> List[MenuItem]:

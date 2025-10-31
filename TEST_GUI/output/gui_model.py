@@ -17,7 +17,7 @@ Sensor = Class(name="Sensor")
 # Sensor class attributes and methods
 Sensor_date: Property = Property(name="date", type=DateType)
 Sensor_value: Property = Property(name="value", type=FloatType)
-Sensor.attributes={Sensor_value, Sensor_date}
+Sensor.attributes={Sensor_date, Sensor_value}
 
 # Domain Model
 domain_model = DomainModel(
@@ -59,29 +59,6 @@ icnh_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", r
 icnh_styling_color = Color(background_color="#FFFFFF", text_color="#000000", border_color="#CCCCCC")
 icnh_styling = Styling(size=icnh_styling_size, position=icnh_styling_pos, color=icnh_styling_color)
 icnh.styling = icnh_styling
-ie5m = BarChart(name="ie5m", title="Revenue by Category", primary_color="#3498db", bar_width=30, orientation="vertical", show_grid=True, show_legend=True, show_tooltip=True, stacked=False, animate=True, legend_position="top", grid_color="#e0e0e0", bar_gap=4)
-ie5m_binding = DataBinding(name="Revenue by CategoryDataBinding")
-domain_model_ref = globals().get('domain_model')
-ie5m_binding_domain = None
-if domain_model_ref is not None:
-    ie5m_binding_domain = domain_model_ref.get_class_by_name("Sensor")
-if ie5m_binding_domain:
-    ie5m_binding.domain_concept = ie5m_binding_domain
-    ie5m_binding.label_field = next((attr for attr in ie5m_binding_domain.attributes if attr.name == "date"), None)
-    ie5m_binding.data_field = next((attr for attr in ie5m_binding_domain.attributes if attr.name == "value"), None)
-else:
-    # Domain class 'Sensor' not resolved; data binding remains partial.
-    pass
-ie5m.data_binding = ie5m_binding
-ie5m_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-ie5m_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-ie5m_styling_color = Color(background_color="#FFFFFF", text_color="#000000", border_color="#CCCCCC")
-ie5m_styling = Styling(size=ie5m_styling_size, position=ie5m_styling_pos, color=ie5m_styling_color)
-ie5m.styling = ie5m_styling
-ie5m.component_id = "ie5m"
-ie5m.component_type = "bar-chart"
-ie5m.css_classes = ["bar-chart-component"]
-ie5m.custom_attributes = {"chart-color": "#3498db", "chart-title": "Revenue by Category", "data-source": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479", "label-field": "86560714-c3a9-4d80-a28d-9e6a360f3ae8", "data-field": "9aa4009c-e0e3-45b0-b405-5ea70309905a", "bar-width": 30, "orientation": "vertical", "show-grid": True, "show-legend": True, "stacked": False, "id": "ie5m"}
 ijql = Text(name="ijql", content="Statec Hackathon", description="Text element")
 ijql_styling_size = Size(width="auto", height="auto", padding="10px", margin="0", unit_size=UnitSize.PIXELS)
 ijql_styling_pos = Position(alignment=Alignment.CENTER, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
@@ -190,7 +167,30 @@ ik6k.styling = ik6k_styling
 ik6k.component_id = "ik6k"
 ik6k.css_classes = ["gjs-row"]
 ik6k.custom_attributes = {"id": "ik6k"}
-icnh.view_elements = {ie5m, ijql, ik6k}
+ie5m = BarChart(name="ie5m", title="Revenue by Category", primary_color="#3498db", bar_width=30, orientation="vertical", show_grid=True, show_legend=True, show_tooltip=True, stacked=False, animate=True, legend_position="top", grid_color="#e0e0e0", bar_gap=4)
+ie5m_binding = DataBinding(name="Revenue by CategoryDataBinding")
+domain_model_ref = globals().get('domain_model')
+ie5m_binding_domain = None
+if domain_model_ref is not None:
+    ie5m_binding_domain = domain_model_ref.get_class_by_name("Sensor")
+if ie5m_binding_domain:
+    ie5m_binding.domain_concept = ie5m_binding_domain
+    ie5m_binding.label_field = next((attr for attr in ie5m_binding_domain.attributes if attr.name == "date"), None)
+    ie5m_binding.data_field = next((attr for attr in ie5m_binding_domain.attributes if attr.name == "value"), None)
+else:
+    # Domain class 'Sensor' not resolved; data binding remains partial.
+    pass
+ie5m.data_binding = ie5m_binding
+ie5m_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
+ie5m_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+ie5m_styling_color = Color(background_color="#FFFFFF", text_color="#000000", border_color="#CCCCCC")
+ie5m_styling = Styling(size=ie5m_styling_size, position=ie5m_styling_pos, color=ie5m_styling_color)
+ie5m.styling = ie5m_styling
+ie5m.component_id = "ie5m"
+ie5m.component_type = "bar-chart"
+ie5m.css_classes = ["bar-chart-component"]
+ie5m.custom_attributes = {"chart-color": "#3498db", "chart-title": "Revenue by Category", "data-source": "8c4ebc1b-0432-43e9-8d84-3e7e3a554479", "label-field": "86560714-c3a9-4d80-a28d-9e6a360f3ae8", "data-field": "9aa4009c-e0e3-45b0-b405-5ea70309905a", "bar-width": 30, "orientation": "vertical", "show-grid": True, "show-legend": True, "stacked": False, "id": "ie5m"}
+icnh.view_elements = {ijql, ik6k, ie5m}
 
 gui_module = Module(
     name="GUI_Module",

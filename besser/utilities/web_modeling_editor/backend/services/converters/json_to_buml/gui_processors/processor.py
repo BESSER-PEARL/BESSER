@@ -205,7 +205,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         if comp_type == "line-chart":
             element = parse_line_chart(component, class_model, domain_model)
             if element:
-                element.styling = styling
+                if styling:  # Only assign if styling exists
+                    element.styling = styling
                 element.name = get_unique_name(component, element.name or "LineChart")
                 apply_chart_colors(element, attributes)
                 attach_meta(element, meta)
@@ -214,7 +215,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         if comp_type == "bar-chart":
             element = parse_bar_chart(component, class_model, domain_model)
             if element:
-                element.styling = styling
+                if styling:  # Only assign if styling exists
+                    element.styling = styling
                 element.name = get_unique_name(component, element.name or "BarChart")
                 apply_chart_colors(element, attributes)
                 attach_meta(element, meta)
@@ -223,7 +225,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         if comp_type == "pie-chart":
             element = parse_pie_chart(component, class_model, domain_model)
             if element:
-                element.styling = styling
+                if styling:  # Only assign if styling exists
+                    element.styling = styling
                 element.name = get_unique_name(component, element.name or "PieChart")
                 apply_chart_colors(element, attributes)
                 attach_meta(element, meta)
@@ -232,7 +235,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         if comp_type == "radar-chart":
             element = parse_radar_chart(component, class_model, domain_model)
             if element:
-                element.styling = styling
+                if styling:  # Only assign if styling exists
+                    element.styling = styling
                 element.name = get_unique_name(component, element.name or "RadarChart")
                 apply_chart_colors(element, attributes)
                 attach_meta(element, meta)
@@ -241,7 +245,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         if comp_type == "radial-bar-chart":
             element = parse_radial_bar_chart(component, class_model, domain_model)
             if element:
-                element.styling = styling
+                if styling:  # Only assign if styling exists
+                    element.styling = styling
                 element.name = get_unique_name(component, element.name or "RadialBarChart")
                 apply_chart_colors(element, attributes)
                 attach_meta(element, meta)
@@ -392,7 +397,9 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 screen_size=screen_size,
                 route_path=route_path,
             )
-            screen.styling = resolve_component_styling(wrapper, style_map)
+            styling = resolve_component_styling(wrapper, style_map)
+            if styling:  # Only assign if styling exists
+                screen.styling = styling
             
             # Store page metadata for code generation
             if hasattr(screen, 'component_id'):
@@ -401,7 +408,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 setattr(screen, 'page_id', page_id)
             
             # Set layout if present in styling
-            if screen.styling and hasattr(screen.styling, 'layout') and screen.styling.layout:
+            if hasattr(screen, 'styling') and screen.styling and hasattr(screen.styling, 'layout') and screen.styling.layout:
                 screen.layout = screen.styling.layout
             
             children = parse_component_list(wrapper.get("components"))

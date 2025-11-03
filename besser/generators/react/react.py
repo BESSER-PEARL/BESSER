@@ -145,11 +145,30 @@ class ReactGenerator(GeneratorInterface):
             main_page_id = pages[0]["id"]
             main_page_name = pages[0].get("name")
 
-        # Merge raw style entries from the modelling editor
+        # Merge raw style entries from the modelling editor LAST
+        # GrapesJS styles should COMPLETELY override BUML-generated styles
         for entry in self._raw_style_entries:
             selectors = entry.get("selectors") or []
-            style = self._convert_style_keys(entry.get("style") or {})
-            self._add_style_entry(tuple(selectors), style)
+            grapesjs_style = self._convert_style_keys(entry.get("style") or {})
+            if selectors:
+                # Convert tuple for lookup
+                selector_tuple = tuple(selectors)
+                # Check if entry already exists from BUML
+                existing = self._style_map.get(selector_tuple)
+                if existing:
+                    # GrapesJS style should override existing BUML style completely
+                    # Keep only chart custom properties from BUML, replace everything else
+                    buml_chart_props = {k: v for k, v in existing["style"].items() 
+                                       if k.startswith("--chart-")}
+                    # Start with GrapesJS style, then add back chart props if not overridden
+                    merged = dict(grapesjs_style)
+                    for chart_key, chart_val in buml_chart_props.items():
+                        if chart_key not in merged:
+                            merged[chart_key] = chart_val
+                    existing["style"] = merged
+                else:
+                    # New entry - just add it
+                    self._add_style_entry(selector_tuple, grapesjs_style)
 
         styles_payload = {"styles": list(self._style_map.values())}
         components_payload = {"pages": pages}
@@ -509,7 +528,8 @@ class ReactGenerator(GeneratorInterface):
     # --------------------------------------------------------------------- #
     def _register_component_style(self, selector_id: str, styling, layout=None):
         style = self._style_from_styling(styling, layout)
-        if style:
+        # Only register if there are meaningful styles (not just defaults)
+        if style and self._has_meaningful_styles(style):
             self._add_style_entry((f"#{selector_id}",), style)
 
     def _style_from_styling(self, styling, layout=None) -> Dict[str, Any]:
@@ -613,15 +633,17 @@ class ReactGenerator(GeneratorInterface):
 
         flex_direction = getattr(layout, "flex_direction", None)
         if flex_direction:
+            # Only add flexDirection if explicitly set in GrapesJS
             style["flexDirection"] = flex_direction
         elif orientation == "horizontal":
-            style.setdefault("flexDirection", "row")
+            style["flexDirection"] = "row"
         elif orientation == "vertical":
-            style.setdefault("flexDirection", "column")
+            style["flexDirection"] = "column"
         elif layout_type == "row":
-            style.setdefault("flexDirection", "row")
+            style["flexDirection"] = "row"
         elif layout_type == "column":
-            style.setdefault("flexDirection", "column")
+            style["flexDirection"] = "column"
+        # DON'T add default flexDirection - let CSS handle it (default is row anyway)
 
         if getattr(layout, "justify_content", None):
             style["justifyContent"] = layout.justify_content
@@ -676,6 +698,37 @@ class ReactGenerator(GeneratorInterface):
                 "selectors": list(normalized_selectors),
                 "style": dict(style),
             }
+
+    def _has_meaningful_styles(self, style: Dict[str, Any]) -> bool:
+        """Check if the style dict has non-default meaningful values."""
+        # These are default values that don't need to be exported
+        defaults = {
+            "backgroundColor": "#FFFFFF",
+            "color": "#000000",
+            "borderColor": "#CCCCCC",
+            "margin": "0",
+            "padding": "0",
+            "height": "auto",
+            "width": "auto",
+            "position": "static",
+            "textAlign": "left",
+            "zIndex": 0,
+            "--chart-line-color": "#000000",
+            "--chart-bar-color": "#CCCCCC",
+            "--chart-color-palette": "default",
+        }
+        
+        # Check if there's at least one non-default value
+        for key, value in style.items():
+            if key not in defaults:
+                # This is a non-default property
+                return True
+            if defaults.get(key) != value:
+                # This is a default property but with a different value
+                return True
+        
+        # All values are defaults
+        return False
 
     # --------------------------------------------------------------------- #
     # Utility helpers

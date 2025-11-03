@@ -313,8 +313,29 @@ def resolve_component_styling(component: Dict[str, Any], style_map: Dict[str, St
         if type_selector and type_selector in style_map:
             base = copy.deepcopy(style_map[type_selector])
 
-    # Create default if nothing found
+    # DON'T create default styling objects - they pollute the output
+    # Only create styling if we have actual styles from GrapesJS
     if base is None:
+        # Check if component has any inline styles before creating Styling object
+        has_inline = False
+        inline_style = component.get("style")
+        if inline_style:
+            has_inline = True
+        if isinstance(attributes, dict):
+            if attributes.get("style"):
+                has_inline = True
+            # Check for direct style attributes
+            for key in ("width", "height", "min-height", "padding", "margin",
+                       "background", "background-color", "color", "text-align"):
+                if attributes.get(key):
+                    has_inline = True
+                    break
+        
+        if not has_inline:
+            # No styles found - return None to signal "no styling"
+            return None
+        
+        # Has inline styles but no base - create minimal styling
         base = Styling(size=Size(), position=Position(), color=Color())
     else:
         base = ensure_styling_parts(base)

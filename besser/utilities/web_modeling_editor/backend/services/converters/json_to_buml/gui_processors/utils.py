@@ -41,8 +41,21 @@ def parse_style_string(style_string: str) -> Dict[str, str]:
         Dictionary of CSS properties
     """
     properties: Dict[str, str] = {}
+    
+    # Handle non-string inputs (dict, None, etc.)
     if not style_string:
         return properties
+    
+    # If it's already a dict, return it
+    if isinstance(style_string, dict):
+        return {k.strip().lower(): str(v).strip() for k, v in style_string.items()}
+    
+    # If it's not a string, try to convert it
+    if not isinstance(style_string, str):
+        try:
+            style_string = str(style_string)
+        except Exception:
+            return properties
 
     for part in style_string.split(";"):
         if not part.strip():

@@ -31,16 +31,21 @@ export const PieChartComponent: React.FC<Props> = ({
   options,
   styles,
 }) => {
-  const palette =
-    options?.colorPalette ||
-    (styles && (styles as any)["--chart-color-palette"]) ||
-    options?.palette ||
-    defaultPalette;
+  // When color is "default", we should use our defaultPalette for multiple colors
+  const shouldUseDefaultPalette = !color || color === "default";
+  
+  // If we're using default palette, ignore config palette and use our default colors
+  const pieColors = shouldUseDefaultPalette 
+    ? defaultPalette 
+    : [color]; // Use single color if specific color provided
+  
+  console.log('Color selection:', {
+    inputColor: color,
+    isDefault: shouldUseDefaultPalette,
+    usingColors: pieColors
+  });
 
-  const pieColors = Array.isArray(palette) ? palette : [palette];
-  if (color && pieColors.length === 1) {
-    pieColors[0] = color;
-  }
+  console.log('Final colors to use:', pieColors);
 
   const showLegend = options?.showLegend ?? true;
   const showTooltip = options?.showTooltip ?? true;
@@ -70,12 +75,16 @@ export const PieChartComponent: React.FC<Props> = ({
             label={showLabels}
             labelLine={showLabels}
           >
-            {data.map((entry, index) => (
-              <Cell
-                key={`${id}-slice-${index}`}
-                fill={pieColors[index % pieColors.length]}
-              />
-            ))}
+            {data.map((entry, index) => {
+              const fillColor = pieColors[index % pieColors.length];
+              console.log(`Slice ${index} color:`, fillColor);
+              return (
+                <Cell
+                  key={`${id}-slice-${index}`}
+                  fill={fillColor}
+                />
+              );
+            })}
           </Pie>
           {showTooltip && <Tooltip />}
           {showLegend && <Legend />}

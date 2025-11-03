@@ -21,6 +21,10 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
 def parse_buml_content(content: str) -> DomainModel:
     """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
+        # If caller already passed a DomainModel instance, return it directly.
+        if isinstance(content, DomainModel):
+            return content
+
         # Create a safe environment for eval without any generators
         safe_globals = {
             "Class": Class,
@@ -39,6 +43,10 @@ def parse_buml_content(content: str) -> DomainModel:
             "IntegerType": PrimitiveDataType("int"),
             "DateType": PrimitiveDataType("date"),
         }
+
+        # Ensure we have a string before preprocessing
+        if not isinstance(content, str):
+            raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
         # Pre-process the content to remove generator-related lines
         cleaned_lines = []

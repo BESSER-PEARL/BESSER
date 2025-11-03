@@ -288,9 +288,8 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "radar-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
-    // SWAP FIELDS: GrapesJS has them backwards
-    const actualLabelField = component.data_binding?.data_field || "name";
-    const actualDataField = component.data_binding?.label_field || "value";
+    const actualLabelField = component.data_binding?.label_field || "name";
+    const actualDataField = component.data_binding?.data_field || "value";
     return (
       <RadarChartComponent
         id={component.id}
@@ -308,9 +307,8 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "bar-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
-    // SWAP FIELDS: GrapesJS has them backwards
-    const actualLabelField = component.data_binding?.data_field || "name";
-    const actualDataField = component.data_binding?.label_field || "value";
+    const actualLabelField = component.data_binding?.label_field || "name";
+    const actualDataField = component.data_binding?.data_field || "value";
     return (
       <BarChartComponent
         id={component.id}
@@ -328,9 +326,8 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "line-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
-    // SWAP FIELDS: GrapesJS has them backwards - label_field should be X-axis (names), data_field should be Y-axis (values)
-    const actualLabelField = component.data_binding?.data_field || "name";
-    const actualDataField = component.data_binding?.label_field || "value";
+    const actualLabelField = component.data_binding?.label_field || "name";
+    const actualDataField = component.data_binding?.data_field || "value";
     return (
       <LineChartComponent
         id={component.id}

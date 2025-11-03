@@ -26,7 +26,9 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   let style = applyStyle(`#${component.id}`, styles) as CSSProperties;
   if (component.class_list && Array.isArray(component.class_list)) {
     component.class_list.forEach((cls: string) => {
-      style = { ...style, ...applyStyle(cls, styles) };
+      // Ensure class selectors have the . prefix for proper CSS matching
+      const classSelector = cls.startsWith('.') ? cls : `.${cls}`;
+      style = { ...style, ...applyStyle(classSelector, styles) };
     });
   }
 
@@ -286,14 +288,17 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "radar-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
+    // SWAP FIELDS: GrapesJS has them backwards
+    const actualLabelField = component.data_binding?.data_field || "name";
+    const actualDataField = component.data_binding?.label_field || "value";
     return (
       <RadarChartComponent
         id={component.id}
         title={component.title || component.name}
         color={component.color}
         data={chartData}
-        labelField={component.data_binding?.label_field}
-        dataField={component.data_binding?.data_field}
+        labelField={actualLabelField}
+        dataField={actualDataField}
         options={component.chart || {}}
         styles={style}
       />
@@ -303,14 +308,17 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "bar-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
+    // SWAP FIELDS: GrapesJS has them backwards
+    const actualLabelField = component.data_binding?.data_field || "name";
+    const actualDataField = component.data_binding?.label_field || "value";
     return (
       <BarChartComponent
         id={component.id}
         title={component.title || component.name}
         color={component.color}
         data={chartData}
-        labelField={component.data_binding?.label_field}
-        dataField={component.data_binding?.data_field}
+        labelField={actualLabelField}
+        dataField={actualDataField}
         options={component.chart || {}}
         styles={style}
       />
@@ -320,14 +328,17 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "line-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
+    // SWAP FIELDS: GrapesJS has them backwards - label_field should be X-axis (names), data_field should be Y-axis (values)
+    const actualLabelField = component.data_binding?.data_field || "name";
+    const actualDataField = component.data_binding?.label_field || "value";
     return (
       <LineChartComponent
         id={component.id}
         title={component.title || component.name}
         color={component.color}
         data={chartData}
-        labelField={component.data_binding?.label_field}
-        dataField={component.data_binding?.data_field}
+        labelField={actualLabelField}
+        dataField={actualDataField}
         options={component.chart || {}}
         styles={style}
       />

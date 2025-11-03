@@ -150,6 +150,32 @@ class ReactGenerator(GeneratorInterface):
         for entry in self._raw_style_entries:
             selectors = entry.get("selectors") or []
             grapesjs_style = self._convert_style_keys(entry.get("style") or {})
+            
+            # MODERNIZE GRAPESJS GRID SYSTEM: Convert table-based grid to flexbox
+            if ".gjs-row" in selectors or "gjs-row" in selectors:
+                # Convert table display to flex for better responsiveness
+                if grapesjs_style.get("display") == "table":
+                    grapesjs_style["display"] = "flex"
+                    grapesjs_style["flexWrap"] = "wrap"  # Allow wrapping for responsive layout
+            
+            if ".gjs-cell" in selectors or "gjs-cell" in selectors:
+                # Convert table-cell to flex item with proper sizing for 3-column responsive layout
+                if grapesjs_style.get("display") in ("table-cell", "block"):
+                    # Don't force display for cells - let them be flex items
+                    if "display" in grapesjs_style:
+                        del grapesjs_style["display"]
+                
+                # Always use flex-basis for gjs-cell to get proper 3-column layout
+                # GrapesJS uses outdated table widths (8%), modernize to flex
+                grapesjs_style["flex"] = "1 1 calc(33.333% - 20px)"  # 3 columns with gap
+                grapesjs_style["minWidth"] = "250px"  # Min width for responsive wrapping
+                # Remove width if present (table-based sizing)
+                if "width" in grapesjs_style:
+                    del grapesjs_style["width"]
+                # Remove height if present (fixed heights break responsiveness)
+                if "height" in grapesjs_style:
+                    del grapesjs_style["height"]
+            
             if selectors:
                 # Convert tuple for lookup
                 selector_tuple = tuple(selectors)

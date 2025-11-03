@@ -462,7 +462,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     gui_model.modules = {dashboard_module}
     
     # Normalize style entries for template compatibility
-    # Convert dictionary selectors to strings (e.g., {"name": "gjs-row"} -> "gjs-row")
+    # Convert dictionary selectors to strings and add proper CSS prefixes
     normalized_styles = []
     for style_entry in gui_model_json.get("styles", []):
         normalized_entry = dict(style_entry)  # Copy the entry
@@ -470,11 +470,15 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         normalized_selectors = []
         for selector in selectors:
             if isinstance(selector, dict):
-                # Extract name from dictionary selector
+                # Extract name from dictionary selector (class names from GrapesJS)
                 name = selector.get("name")
                 if name:
+                    # Add . prefix for class selectors (if not already prefixed)
+                    if not name.startswith(('.', '#', '*', '[')):
+                        name = f".{name}"
                     normalized_selectors.append(name)
             elif isinstance(selector, str):
+                # Preserve as-is (already has #id or .class prefix)
                 normalized_selectors.append(selector)
         normalized_entry["selectors"] = normalized_selectors
         # Only include entries with valid selectors

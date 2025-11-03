@@ -46,7 +46,7 @@ export const LineChartComponent: React.FC<Props> = ({
 }) => {
   const containerStyle: CSSProperties = {
     width: "100%",
-    minHeight: "320px",
+    height: "400px",
     marginBottom: "20px",
     ...styles,
   };
@@ -60,8 +60,8 @@ export const LineChartComponent: React.FC<Props> = ({
 
   return (
     <div id={id} style={containerStyle}>
-      {title && <h3 style={{ textAlign: "center" }}>{title}</h3>}
-      <ResponsiveContainer width="100%" height="80%">
+      {title && <h3 style={{ textAlign: "center", marginBottom: "10px" }}>{title}</h3>}
+      <ResponsiveContainer width="100%" height={360}>
         <LineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
           {showGrid && <CartesianGrid strokeDasharray="3 3" stroke={options?.gridColor} />}
           <XAxis dataKey={labelField} />

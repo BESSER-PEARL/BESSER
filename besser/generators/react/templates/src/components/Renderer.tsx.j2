@@ -45,19 +45,33 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         axios.get(url)
           .then((res) => {
             console.log("API response:", res.data); // Debug log
-            let data = Array.isArray(res.data)
-              ? res.data
-              : (
-                  res.data.sensor ||
-                  res.data.measure ||
-                  res.data.measures ||
-                  res.data.results ||
-                  []
-                );
-            if (!Array.isArray(data)) data = [];
+            let data: any[] = [];
+            
+            // If response is already an array, use it directly
+            if (Array.isArray(res.data)) {
+              data = res.data;
+            } 
+            // If response is an object, try to find the first array property
+            else if (res.data && typeof res.data === 'object') {
+              // Look for common array property names first
+              const commonArrayKeys = ['data', 'results', 'items', 'records', 'list'];
+              let foundKey = commonArrayKeys.find(key => Array.isArray(res.data[key]));
+              
+              // If not found, search for any array property
+              if (!foundKey) {
+                foundKey = Object.keys(res.data).find(key => Array.isArray(res.data[key]));
+              }
+              
+              if (foundKey) {
+                data = res.data[foundKey];
+                console.log(`[Chart Data] Found array in property: ${foundKey}`);
+              }
+            }
+            
             setChartData(data);
           })
-          .catch(() => {
+          .catch((err) => {
+            console.error("[Chart Data] Error loading data:", err);
             setError("Error loading data");
             setChartData([]);
           })
@@ -329,8 +343,35 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "radar-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
-    const actualLabelField = component.data_binding?.label_field || "name";
-    const actualDataField = component.data_binding?.data_field || "value";
+    
+    // Use configured field names from data_binding, with intelligent fallback
+    let actualLabelField = component.data_binding?.label_field || "name";
+    let actualDataField = component.data_binding?.data_field || "value";
+    
+    // If data_binding fields look like UUIDs (contain hyphens and are long), detect from data
+    const isUUID = (str: string) => str && str.length > 20 && str.includes('-');
+    
+    if ((isUUID(actualLabelField) || isUUID(actualDataField)) && chartData && chartData.length > 0) {
+      const firstItem = chartData[0];
+      const keys = Object.keys(firstItem);
+      
+      if (isUUID(actualLabelField)) {
+        actualLabelField = keys.find(k => ['name', 'label', 'attribute'].includes(k.toLowerCase())) || 
+                          keys.find(k => typeof firstItem[k] === 'string') || 
+                          'name';
+      }
+      
+      if (isUUID(actualDataField)) {
+        actualDataField = keys.find(k => ['value', 'count', 'amount'].includes(k.toLowerCase())) || 
+                         keys.find(k => typeof firstItem[k] === 'number') || 
+                         'value';
+      }
+      
+      console.log(`[Radar Chart] Detected fields from data - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    } else {
+      console.log(`[Radar Chart] Using configured fields - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    }
+    
     return (
       <RadarChartComponent
         id={component.id}
@@ -348,8 +389,35 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "bar-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
-    const actualLabelField = component.data_binding?.label_field || "name";
-    const actualDataField = component.data_binding?.data_field || "value";
+    
+    // Use configured field names from data_binding, with intelligent fallback
+    let actualLabelField = component.data_binding?.label_field || "name";
+    let actualDataField = component.data_binding?.data_field || "value";
+    
+    // If data_binding fields look like UUIDs (contain hyphens and are long), detect from data
+    const isUUID = (str: string) => str && str.length > 20 && str.includes('-');
+    
+    if ((isUUID(actualLabelField) || isUUID(actualDataField)) && chartData && chartData.length > 0) {
+      const firstItem = chartData[0];
+      const keys = Object.keys(firstItem);
+      
+      if (isUUID(actualLabelField)) {
+        actualLabelField = keys.find(k => ['name', 'label', 'attribute'].includes(k.toLowerCase())) || 
+                          keys.find(k => typeof firstItem[k] === 'string') || 
+                          'name';
+      }
+      
+      if (isUUID(actualDataField)) {
+        actualDataField = keys.find(k => ['value', 'count', 'amount'].includes(k.toLowerCase())) || 
+                         keys.find(k => typeof firstItem[k] === 'number') || 
+                         'value';
+      }
+      
+      console.log(`[Bar Chart] Detected fields from data - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    } else {
+      console.log(`[Bar Chart] Using configured fields - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    }
+    
     return (
       <BarChartComponent
         id={component.id}
@@ -367,8 +435,35 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "line-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
-    const actualLabelField = component.data_binding?.label_field || "name";
-    const actualDataField = component.data_binding?.data_field || "value";
+    
+    // Use configured field names from data_binding, with intelligent fallback
+    let actualLabelField = component.data_binding?.label_field || "name";
+    let actualDataField = component.data_binding?.data_field || "value";
+    
+    // If data_binding fields look like UUIDs (contain hyphens and are long), detect from data
+    const isUUID = (str: string) => str && str.length > 20 && str.includes('-');
+    
+    if ((isUUID(actualLabelField) || isUUID(actualDataField)) && chartData && chartData.length > 0) {
+      const firstItem = chartData[0];
+      const keys = Object.keys(firstItem);
+      
+      if (isUUID(actualLabelField)) {
+        actualLabelField = keys.find(k => ['name', 'label', 'attribute'].includes(k.toLowerCase())) || 
+                          keys.find(k => typeof firstItem[k] === 'string') || 
+                          'name';
+      }
+      
+      if (isUUID(actualDataField)) {
+        actualDataField = keys.find(k => ['value', 'count', 'amount'].includes(k.toLowerCase())) || 
+                         keys.find(k => typeof firstItem[k] === 'number') || 
+                         'value';
+      }
+      
+      console.log(`[Line Chart] Detected fields from data - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    } else {
+      console.log(`[Line Chart] Using configured fields - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    }
+    
     return (
       <LineChartComponent
         id={component.id}

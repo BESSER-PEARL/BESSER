@@ -1,65 +1,65 @@
 {
   "project": {
-    "id": "project_1762271010927_l1clksf62",
+    "id": "af5eaece-26a6-4c73-84ca-2e67db87ce4a",
     "type": "Project",
-    "name": "zxc",
+    "name": "ss",
     "description": "New project",
     "owner": "User",
-    "createdAt": "2025-11-04T15:43:30.927Z",
+    "createdAt": "2025-11-04T16:34:00.387Z",
     "currentDiagramType": "ClassDiagram",
     "diagrams": {
       "ClassDiagram": {
-        "id": "abef39f8-0370-4f62-9f09-00b846e689d1",
+        "id": "03c771c3-453f-44ee-9cc5-b7d887f5615d",
         "title": "Class Diagram",
         "model": {
           "version": "3.0.0",
           "type": "ClassDiagram",
           "size": {
-            "width": 1080,
-            "height": 1020
+            "width": 500,
+            "height": 720
           },
           "interactive": {
             "elements": {},
             "relationships": {}
           },
           "elements": {
-            "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31": {
-              "id": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
+            "d1dbf7eb-4792-467e-82ce-b36aab94145d": {
+              "id": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
               "name": "Count",
               "type": "Class",
               "owner": null,
               "bounds": {
-                "x": -520,
-                "y": -490,
+                "x": -230,
+                "y": -340,
                 "width": 160,
                 "height": 100
               },
               "attributes": [
-                "ff634794-9146-4be9-aa8c-9e54e4595208",
-                "49061bdb-b617-41ad-b926-dfdc568c2501"
+                "badb769f-ec24-4c30-afdc-79ddae20b58d",
+                "0680976e-c20d-4899-ab11-b1e99385548e"
               ],
               "methods": []
             },
-            "ff634794-9146-4be9-aa8c-9e54e4595208": {
-              "id": "ff634794-9146-4be9-aa8c-9e54e4595208",
-              "name": "+ value: int",
+            "badb769f-ec24-4c30-afdc-79ddae20b58d": {
+              "id": "badb769f-ec24-4c30-afdc-79ddae20b58d",
+              "name": "+ attribute: str",
               "type": "ClassAttribute",
-              "owner": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
+              "owner": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
               "bounds": {
-                "x": -519.5,
-                "y": -449.5,
+                "x": -229.5,
+                "y": -299.5,
                 "width": 159,
                 "height": 30
               }
             },
-            "49061bdb-b617-41ad-b926-dfdc568c2501": {
-              "id": "49061bdb-b617-41ad-b926-dfdc568c2501",
-              "name": "+ name: str",
+            "0680976e-c20d-4899-ab11-b1e99385548e": {
+              "id": "0680976e-c20d-4899-ab11-b1e99385548e",
+              "name": "+ value : int",
               "type": "ClassAttribute",
-              "owner": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
+              "owner": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
               "bounds": {
-                "x": -519.5,
-                "y": -419.5,
+                "x": -229.5,
+                "y": -269.5,
                 "width": 159,
                 "height": 30
               }
@@ -68,10 +68,10 @@
           "relationships": {},
           "assessments": {}
         },
-        "lastUpdate": "2025-11-03T18:31:31.050Z"
+        "lastUpdate": "2025-11-04T16:34:19.378Z"
       },
       "ObjectDiagram": {
-        "id": "c50db3b0-94fa-4ce6-9e84-acac5ffe45ff",
+        "id": "12f59377-c807-44c6-af4c-173e730fe828",
         "title": "Object Diagram",
         "model": {
           "version": "3.0.0",
@@ -88,10 +88,10 @@
           },
           "assessments": {}
         },
-        "lastUpdate": "2025-11-03T17:29:46.319Z"
+        "lastUpdate": "2025-11-04T16:34:00.387Z"
       },
       "StateMachineDiagram": {
-        "id": "d22194ad-7e16-4ae4-b87c-7a6c2755f0be",
+        "id": "881a8440-8084-484e-b389-1ee3da775b32",
         "title": "State Machine Diagram",
         "model": {
           "version": "3.0.0",
@@ -108,10 +108,10 @@
           },
           "assessments": {}
         },
-        "lastUpdate": "2025-11-03T17:29:46.319Z"
+        "lastUpdate": "2025-11-04T16:34:00.387Z"
       },
       "AgentDiagram": {
-        "id": "5715c514-f95c-4b82-b480-e8af48aab5a0",
+        "id": "fdde4495-87c6-4b3c-b871-b3f924dfe303",
         "title": "Agent Diagram",
         "model": {
           "version": "3.0.0",
@@ -128,10 +128,10 @@
           },
           "assessments": {}
         },
-        "lastUpdate": "2025-11-03T17:29:46.319Z"
+        "lastUpdate": "2025-11-04T16:34:00.387Z"
       },
       "GUINoCodeDiagram": {
-        "id": "8898e513-25b5-4ea4-8276-faf66588fce8",
+        "id": "4779d06c-0f01-4983-9433-879ff2ba817f",
         "title": "GUI Diagram",
         "model": {
           "pages": [
@@ -150,116 +150,82 @@
                       "background-position",
                       "background-size"
                     ],
+                    "attributes": {
+                      "id": "i9vb"
+                    },
                     "components": [
                       {
-                        "tagName": "meta",
-                        "void": true,
+                        "tagName": "nav",
                         "attributes": {
-                          "charset": "utf-8"
-                        }
-                      },
-                      {
-                        "tagName": "meta",
-                        "void": true,
-                        "attributes": {
-                          "name": "viewport",
-                          "content": "width=device-width, initial-scale=1"
-                        }
-                      },
-                      {
-                        "classes": [
-                          {
-                            "name": "gjs-row",
-                            "private": 1
-                          }
-                        ],
-                        "attributes": {
-                          "id": "ikdk3"
+                          "id": "i4sm"
                         },
                         "components": [
                           {
-                            "classes": [
-                              {
-                                "name": "gjs-cell",
-                                "private": 1
-                              }
-                            ],
+                            "type": "text",
+                            "attributes": {
+                              "id": "ifh3"
+                            },
                             "components": [
                               {
-                                "tagName": "nav",
+                                "type": "textnode",
+                                "content": "Logo"
+                              }
+                            ]
+                          },
+                          {
+                            "attributes": {
+                              "id": "ijc9"
+                            },
+                            "components": [
+                              {
+                                "type": "link",
                                 "attributes": {
-                                  "id": "i6mjq"
+                                  "href": "/",
+                                  "id": "imub"
                                 },
                                 "components": [
                                   {
-                                    "type": "image",
-                                    "resizable": {
-                                      "ratioDefault": 1
-                                    },
-                                    "attributes": {
-                                      "id": "ijeql",
-                                      "src": "data:image/png;base64,UklGR"
-                                    }
-                                  },
+                                    "type": "textnode",
+                                    "content": "Home"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "link",
+                                "attributes": {
+                                  "href": "/about",
+                                  "id": "ixv3d"
+                                },
+                                "components": [
                                   {
-                                    "attributes": {
-                                      "id": "igykc"
-                                    },
-                                    "components": [
-                                      {
-                                        "type": "link",
-                                        "attributes": {
-                                          "href": "#",
-                                          "id": "izofz"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Home"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "type": "link",
-                                        "attributes": {
-                                          "href": "about",
-                                          "id": "iij6i",
-                                          "target": false
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "About"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "type": "link",
-                                        "attributes": {
-                                          "href": "#",
-                                          "id": "i5owi"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Services"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "type": "link",
-                                        "attributes": {
-                                          "href": "#",
-                                          "id": "ih5tf"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Contact"
-                                          }
-                                        ]
-                                      }
-                                    ]
+                                    "type": "textnode",
+                                    "content": "About"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "link",
+                                "attributes": {
+                                  "href": "#",
+                                  "id": "i6pk5"
+                                },
+                                "components": [
+                                  {
+                                    "type": "textnode",
+                                    "content": "Services"
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "link",
+                                "attributes": {
+                                  "href": "/contact",
+                                  "id": "iz6f6"
+                                },
+                                "components": [
+                                  {
+                                    "type": "textnode",
+                                    "content": "Contact"
                                   }
                                 ]
                               }
@@ -268,6 +234,18 @@
                         ]
                       },
                       {
+                        "name": "Row",
+                        "droppable": ".gjs-cell",
+                        "resizable": {
+                          "tl": 0,
+                          "tc": 0,
+                          "tr": 0,
+                          "cl": 0,
+                          "cr": 0,
+                          "bl": 0,
+                          "br": 0,
+                          "minDim": 1
+                        },
                         "classes": [
                           {
                             "name": "gjs-row",
@@ -275,10 +253,25 @@
                           }
                         ],
                         "attributes": {
-                          "id": "ile3"
+                          "id": "izmfj"
                         },
                         "components": [
                           {
+                            "name": "Cell",
+                            "draggable": ".gjs-row",
+                            "resizable": {
+                              "tl": 0,
+                              "tc": 0,
+                              "tr": 0,
+                              "cl": 0,
+                              "cr": 1,
+                              "bl": 0,
+                              "br": 0,
+                              "minDim": 1,
+                              "bc": 0,
+                              "currentUnit": 1,
+                              "step": 0.2
+                            },
                             "classes": [
                               {
                                 "name": "gjs-cell",
@@ -294,34 +287,49 @@
                                   "has-data-binding"
                                 ],
                                 "attributes": {
-                                  "chart-color": "#af4c4c",
-                                  "chart-title": "Sales Over Time",
-                                  "data-source": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
-                                  "label-field": "49061bdb-b617-41ad-b926-dfdc568c2501",
-                                  "data-field": "ff634794-9146-4be9-aa8c-9e54e4595208",
-                                  "line-width": "2",
-                                  "show-grid": "",
-                                  "show-legend": "",
-                                  "show-tooltip": "",
+                                  "chart-color": "#ff0606",
+                                  "chart-title": "Line Chart Title",
+                                  "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
+                                  "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
+                                  "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
+                                  "line-width": 2,
+                                  "show-grid": true,
+                                  "show-legend": true,
+                                  "show-tooltip": true,
                                   "curve-type": "monotone",
-                                  "animate": "",
-                                  "id": "ixia"
+                                  "animate": true,
+                                  "id": "i7m71"
                                 },
-                                "chart-color": "#af4c4c",
-                                "chart-title": "Sales Over Time",
-                                "data-source": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
-                                "label-field": "49061bdb-b617-41ad-b926-dfdc568c2501",
-                                "data-field": "ff634794-9146-4be9-aa8c-9e54e4595208",
-                                "line-width": "2",
-                                "show-grid": "",
-                                "show-legend": "",
-                                "show-tooltip": "",
+                                "chart-color": "#ff0606",
+                                "chart-title": "Line Chart Title",
+                                "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
+                                "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
+                                "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
+                                "line-width": 2,
+                                "show-grid": true,
+                                "show-legend": true,
+                                "show-tooltip": true,
                                 "curve-type": "monotone",
-                                "animate": ""
+                                "animate": true
                               }
                             ]
                           },
                           {
+                            "name": "Cell",
+                            "draggable": ".gjs-row",
+                            "resizable": {
+                              "tl": 0,
+                              "tc": 0,
+                              "tr": 0,
+                              "cl": 0,
+                              "cr": 1,
+                              "bl": 0,
+                              "br": 0,
+                              "minDim": 1,
+                              "bc": 0,
+                              "currentUnit": 1,
+                              "step": 0.2
+                            },
                             "classes": [
                               {
                                 "name": "gjs-cell",
@@ -337,32 +345,47 @@
                                   "has-data-binding"
                                 ],
                                 "attributes": {
-                                  "chart-color": "#3498db",
-                                  "chart-title": "Revenue by Category",
-                                  "data-source": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
-                                  "label-field": "49061bdb-b617-41ad-b926-dfdc568c2501",
-                                  "data-field": "ff634794-9146-4be9-aa8c-9e54e4595208",
-                                  "bar-width": "30",
+                                  "chart-color": "#db34d2",
+                                  "chart-title": "Bar Chart Title",
+                                  "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
+                                  "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
+                                  "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
+                                  "bar-width": 30,
                                   "orientation": "vertical",
-                                  "show-grid": "",
-                                  "show-legend": "",
+                                  "show-grid": true,
+                                  "show-legend": true,
                                   "stacked": false,
-                                  "id": "isok"
+                                  "id": "iia8n"
                                 },
-                                "chart-color": "#3498db",
-                                "chart-title": "Revenue by Category",
-                                "data-source": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
-                                "label-field": "49061bdb-b617-41ad-b926-dfdc568c2501",
-                                "data-field": "ff634794-9146-4be9-aa8c-9e54e4595208",
-                                "bar-width": "30",
+                                "chart-color": "#db34d2",
+                                "chart-title": "Bar Chart Title",
+                                "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
+                                "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
+                                "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
+                                "bar-width": 30,
                                 "orientation": "vertical",
-                                "show-grid": "",
-                                "show-legend": "",
+                                "show-grid": true,
+                                "show-legend": true,
                                 "stacked": false
                               }
                             ]
                           },
                           {
+                            "name": "Cell",
+                            "draggable": ".gjs-row",
+                            "resizable": {
+                              "tl": 0,
+                              "tc": 0,
+                              "tr": 0,
+                              "cl": 0,
+                              "cr": 1,
+                              "bl": 0,
+                              "br": 0,
+                              "minDim": 1,
+                              "bc": 0,
+                              "currentUnit": 1,
+                              "step": 0.2
+                            },
                             "classes": [
                               {
                                 "name": "gjs-cell",
@@ -379,223 +402,277 @@
                                 ],
                                 "attributes": {
                                   "chart-color": "#8884d8",
-                                  "chart-title": "Performance Metrics",
-                                  "data-source": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
-                                  "label-field": "49061bdb-b617-41ad-b926-dfdc568c2501",
-                                  "data-field": "ff634794-9146-4be9-aa8c-9e54e4595208",
-                                  "show-grid": "",
-                                  "show-tooltip": "",
-                                  "show-radius-axis": "",
-                                  "id": "iqd8w"
+                                  "chart-title": "Radar Chart Title",
+                                  "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
+                                  "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
+                                  "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
+                                  "show-grid": true,
+                                  "show-tooltip": true,
+                                  "show-radius-axis": true,
+                                  "id": "i3d3h"
                                 },
                                 "chart-color": "#8884d8",
-                                "chart-title": "Performance Metrics",
-                                "data-source": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
-                                "label-field": "49061bdb-b617-41ad-b926-dfdc568c2501",
-                                "data-field": "ff634794-9146-4be9-aa8c-9e54e4595208",
-                                "show-grid": "",
-                                "show-tooltip": "",
-                                "show-radius-axis": ""
+                                "chart-title": "Radar Chart Title",
+                                "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
+                                "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
+                                "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
+                                "show-grid": true,
+                                "show-tooltip": true,
+                                "show-radius-axis": true
                               }
                             ]
                           }
                         ]
                       },
                       {
-                        "type": "line-chart",
-                        "style": "",
-                        "classes": [
-                          "line-chart-component",
-                          "has-data-binding"
-                        ],
+                        "tagName": "section",
                         "attributes": {
-                          "chart-color": "#4CAF50",
-                          "chart-title": "Sales Over Time",
-                          "data-source": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
-                          "label-field": "49061bdb-b617-41ad-b926-dfdc568c2501",
-                          "data-field": "ff634794-9146-4be9-aa8c-9e54e4595208",
-                          "line-width": "2",
-                          "show-grid": "",
-                          "show-legend": "",
-                          "show-tooltip": "",
-                          "curve-type": "monotone",
-                          "animate": "",
-                          "id": "ifhxo"
-                        },
-                        "chart-color": "#4CAF50",
-                        "chart-title": "Sales Over Time",
-                        "data-source": "7cb2a7d3-e224-4b6d-8134-5bf644d8bd31",
-                        "label-field": "49061bdb-b617-41ad-b926-dfdc568c2501",
-                        "data-field": "ff634794-9146-4be9-aa8c-9e54e4595208",
-                        "line-width": "2",
-                        "show-grid": "",
-                        "show-legend": "",
-                        "show-tooltip": "",
-                        "curve-type": "monotone",
-                        "animate": ""
-                      },
-                      {
-                        "tagName": "h4",
-                        "type": "text",
-                        "attributes": {
-                          "id": "iuhu4"
-                        },
-                        "components": [
-                          {
-                            "type": "textnode",
-                            "content": "Quick Links"
-                          }
-                        ]
-                      },
-                      {
-                        "tagName": "footer",
-                        "attributes": {
-                          "id": "i9hfm"
+                          "id": "imt5g"
                         },
                         "components": [
                           {
                             "attributes": {
-                              "id": "irlm1"
+                              "id": "ibfd5"
                             },
                             "components": [
                               {
+                                "tagName": "h2",
+                                "type": "text",
+                                "attributes": {
+                                  "id": "irv6i"
+                                },
                                 "components": [
                                   {
-                                    "tagName": "h4",
-                                    "type": "text",
-                                    "attributes": {
-                                      "id": "imwa5"
-                                    },
-                                    "components": [
-                                      {
-                                        "type": "textnode",
-                                        "content": "About Us"
-                                      }
-                                    ]
-                                  },
-                                  {
-                                    "tagName": "p",
-                                    "type": "text",
-                                    "attributes": {
-                                      "id": "ib3zn"
-                                    },
-                                    "components": [
-                                      {
-                                        "type": "textnode",
-                                        "content": "Your company description goes here."
-                                      }
-                                    ]
+                                    "type": "textnode",
+                                    "content": "Ready to Get Started?"
                                   }
                                 ]
                               },
                               {
+                                "tagName": "p",
+                                "type": "text",
+                                "attributes": {
+                                  "id": "iznz9"
+                                },
                                 "components": [
                                   {
-                                    "tagName": "ul",
-                                    "attributes": {
-                                      "id": "isw3k"
-                                    },
-                                    "components": [
-                                      {
-                                        "tagName": "li",
-                                        "attributes": {
-                                          "id": "i58kt"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "link",
-                                            "attributes": {
-                                              "href": "#",
-                                              "id": "i1zaf"
-                                            },
-                                            "components": [
-                                              {
-                                                "type": "textnode",
-                                                "content": "Home"
-                                              }
-                                            ]
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "tagName": "li",
-                                        "attributes": {
-                                          "id": "i2hhl"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "link",
-                                            "attributes": {
-                                              "href": "#",
-                                              "id": "iuw1f"
-                                            },
-                                            "components": [
-                                              {
-                                                "type": "textnode",
-                                                "content": "Services"
-                                              }
-                                            ]
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "tagName": "li",
-                                        "attributes": {
-                                          "id": "iz9b1"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "link",
-                                            "attributes": {
-                                              "href": "#",
-                                              "id": "idqrg"
-                                            },
-                                            "components": [
-                                              {
-                                                "type": "textnode",
-                                                "content": "Contact"
-                                              }
-                                            ]
-                                          }
-                                        ]
-                                      }
-                                    ]
+                                    "type": "textnode",
+                                    "content": "Join thousands of satisfied customers and take your business to the next level."
                                   }
                                 ]
                               },
                               {
+                                "attributes": {
+                                  "id": "i9fuo"
+                                },
                                 "components": [
                                   {
-                                    "tagName": "h4",
-                                    "type": "text",
+                                    "type": "button",
                                     "attributes": {
-                                      "id": "i0cm5"
+                                      "type": "button",
+                                      "id": "i27yo"
                                     },
+                                    "text": "Start Free Trial",
                                     "components": [
                                       {
                                         "type": "textnode",
-                                        "content": "Contact"
+                                        "content": "Start Free Trial"
                                       }
                                     ]
                                   },
                                   {
-                                    "tagName": "p",
-                                    "type": "text",
+                                    "type": "button",
                                     "attributes": {
-                                      "id": "ibh5f"
+                                      "type": "button",
+                                      "id": "ig59s"
                                     },
+                                    "text": "Learssn More",
                                     "components": [
                                       {
                                         "type": "textnode",
-                                        "content": "Email: info@example.com"
+                                        "content": "Learssn More"
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "tagName": "section",
+                        "attributes": {
+                          "id": "ibuph"
+                        },
+                        "components": [
+                          {
+                            "attributes": {
+                              "id": "imbe6"
+                            },
+                            "components": [
+                              {
+                                "tagName": "h2",
+                                "type": "text",
+                                "attributes": {
+                                  "id": "i9ijl"
+                                },
+                                "components": [
+                                  {
+                                    "type": "textnode",
+                                    "content": "Our Features"
+                                  }
+                                ]
+                              },
+                              {
+                                "attributes": {
+                                  "id": "iexvq"
+                                },
+                                "components": [
+                                  {
+                                    "type": "comment",
+                                    "content": " Feature 1 "
+                                  },
+                                  {
+                                    "attributes": {
+                                      "id": "i94zd"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "ijti8"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "🚀"
+                                          }
+                                        ]
                                       },
                                       {
-                                        "tagName": "br",
-                                        "void": true
+                                        "tagName": "h3",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "izgub"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Fast Performance"
+                                          }
+                                        ]
                                       },
                                       {
-                                        "type": "textnode",
-                                        "content": "Phone: (123) 456-7890"
+                                        "tagName": "p",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "iuq7f"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Lightning-fast loading times and smooth interactions for the best user experience."
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "comment",
+                                    "content": " Feature 2 "
+                                  },
+                                  {
+                                    "attributes": {
+                                      "id": "i2pjk"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "isprs"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "🔒"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "h3",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "i97zg"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Secure & Safe"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "p",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "im3io"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Enterprise-grade security to protect your data and ensure privacy."
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "comment",
+                                    "content": " Feature 3 "
+                                  },
+                                  {
+                                    "attributes": {
+                                      "id": "i9z3l"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "i3ee7"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "📱"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "h3",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "itkgh"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Responsive Design"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "p",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "i5pal"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Works perfectly on all devices - desktop, tablet, and mobile."
+                                          }
+                                        ]
                                       }
                                     ]
                                   }
@@ -604,14 +681,185 @@
                             ]
                           },
                           {
-                            "type": "text",
+                            "tagName": "footer",
                             "attributes": {
-                              "id": "ilczb"
+                              "id": "irj9h"
                             },
                             "components": [
                               {
-                                "type": "textnode",
-                                "content": "\n          © 2025 Your Company. All rights reserved.\n        "
+                                "attributes": {
+                                  "id": "i2m8v"
+                                },
+                                "components": [
+                                  {
+                                    "components": [
+                                      {
+                                        "tagName": "h4",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "i28pk"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "About Us"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "p",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "imfbl"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Your company description goes here."
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "components": [
+                                      {
+                                        "tagName": "h4",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "ivkxw"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Quick Links"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "ul",
+                                        "attributes": {
+                                          "id": "iv1e6"
+                                        },
+                                        "components": [
+                                          {
+                                            "tagName": "li",
+                                            "attributes": {
+                                              "id": "ihzg1"
+                                            },
+                                            "components": [
+                                              {
+                                                "type": "link",
+                                                "attributes": {
+                                                  "href": "#",
+                                                  "id": "iwmx6"
+                                                },
+                                                "components": [
+                                                  {
+                                                    "type": "textnode",
+                                                    "content": "Home"
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "tagName": "li",
+                                            "attributes": {
+                                              "id": "i9bhy"
+                                            },
+                                            "components": [
+                                              {
+                                                "type": "link",
+                                                "attributes": {
+                                                  "href": "#",
+                                                  "id": "i2nrg"
+                                                },
+                                                "components": [
+                                                  {
+                                                    "type": "textnode",
+                                                    "content": "Services"
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "tagName": "li",
+                                            "attributes": {
+                                              "id": "ihdhf"
+                                            },
+                                            "components": [
+                                              {
+                                                "type": "link",
+                                                "attributes": {
+                                                  "href": "#",
+                                                  "id": "isffb"
+                                                },
+                                                "components": [
+                                                  {
+                                                    "type": "textnode",
+                                                    "content": "Contact"
+                                                  }
+                                                ]
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "components": [
+                                      {
+                                        "tagName": "h4",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "imt95"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Contact"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "p",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "iimpc"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Email: info@example.com"
+                                          },
+                                          {
+                                            "tagName": "br",
+                                            "void": true
+                                          },
+                                          {
+                                            "type": "textnode",
+                                            "content": "Phone: (123) 456-7890"
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "type": "text",
+                                "attributes": {
+                                  "id": "ibyqn"
+                                },
+                                "components": [
+                                  {
+                                    "type": "textnode",
+                                    "content": "\n          © 2025 Your Company. All rights reserved.\n        "
+                                  }
+                                ]
                               }
                             ]
                           }
@@ -625,13 +873,13 @@
                       "tagName": "html"
                     }
                   },
-                  "id": "AQasYBZd5AAzlDwu"
+                  "id": "gqUXVygnpBbFnDnb"
                 }
               ],
-              "id": "EyJE4gjKEKUGlgx7"
+              "id": "PGkfAwt8hu7jL4s9"
             },
             {
-              "name": "About",
+              "name": "about",
               "frames": [
                 {
                   "component": {
@@ -645,17 +893,20 @@
                       "background-position",
                       "background-size"
                     ],
+                    "attributes": {
+                      "id": "ixlmh"
+                    },
                     "components": [
                       {
                         "tagName": "nav",
                         "attributes": {
-                          "id": "iogy7"
+                          "id": "ifihk"
                         },
                         "components": [
                           {
                             "type": "text",
                             "attributes": {
-                              "id": "ip9iy"
+                              "id": "i9yqn"
                             },
                             "components": [
                               {
@@ -666,14 +917,14 @@
                           },
                           {
                             "attributes": {
-                              "id": "igl9k"
+                              "id": "iuj7h"
                             },
                             "components": [
                               {
                                 "type": "link",
                                 "attributes": {
-                                  "href": "/",
-                                  "id": "ieq84h"
+                                  "href": "#",
+                                  "id": "ieeso"
                                 },
                                 "components": [
                                   {
@@ -686,7 +937,7 @@
                                 "type": "link",
                                 "attributes": {
                                   "href": "#",
-                                  "id": "ixkwwg"
+                                  "id": "iu4wsh"
                                 },
                                 "components": [
                                   {
@@ -698,8 +949,8 @@
                               {
                                 "type": "link",
                                 "attributes": {
-                                  "href": "/",
-                                  "id": "iuol0l"
+                                  "href": "#",
+                                  "id": "i1t83h"
                                 },
                                 "components": [
                                   {
@@ -712,7 +963,7 @@
                                 "type": "link",
                                 "attributes": {
                                   "href": "#",
-                                  "id": "is4p1s"
+                                  "id": "ia0taw"
                                 },
                                 "components": [
                                   {
@@ -726,148 +977,249 @@
                         ]
                       },
                       {
+                        "tagName": "section",
                         "attributes": {
-                          "style": "padding:80px 40px;text-align:center;font-family:Arial, sans-serif;background:#ecf0f1;min-height:100vh;",
-                          "id": "ih61q"
+                          "id": "igf89k"
                         },
                         "components": [
                           {
-                            "tagName": "h1",
-                            "type": "text",
                             "attributes": {
-                              "style": "color:#2c3e50;font-size:48px;margin-bottom:20px;",
-                              "id": "ingmp"
+                              "id": "ip47kp"
                             },
                             "components": [
                               {
-                                "type": "textnode",
-                                "content": "About Us"
-                              }
-                            ]
-                          },
-                          {
-                            "tagName": "p",
-                            "type": "text",
-                            "attributes": {
-                              "style": "color:#34495e;font-size:20px;max-width:800px;margin:0 auto 40px;",
-                              "id": "iyypp"
-                            },
-                            "components": [
-                              {
-                                "type": "textnode",
-                                "content": "\n            This is the About page. You can edit this content and add your own components.\n          "
-                              }
-                            ]
-                          },
-                          {
-                            "attributes": {
-                              "style": "display:grid;grid-template-columns:repeat(auto-fit, minmax(250px, 1fr));gap:30px;max-width:1200px;margin:0 auto;",
-                              "id": "i8esc"
-                            },
-                            "components": [
-                              {
+                                "tagName": "h2",
+                                "type": "text",
                                 "attributes": {
-                                  "style": "padding:30px;background:white;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.1);",
-                                  "id": "ivt8q"
+                                  "id": "iwr92g"
                                 },
                                 "components": [
                                   {
-                                    "tagName": "h3",
-                                    "type": "text",
-                                    "attributes": {
-                                      "style": "color:#3498db;margin-bottom:15px;",
-                                      "id": "i3zwt"
-                                    },
-                                    "components": [
-                                      {
-                                        "type": "textnode",
-                                        "content": "Mission"
-                                      }
-                                    ]
-                                  },
-                                  {
-                                    "tagName": "p",
-                                    "type": "text",
-                                    "attributes": {
-                                      "style": "color:#555;",
-                                      "id": "irehi"
-                                    },
-                                    "components": [
-                                      {
-                                        "type": "textnode",
-                                        "content": "Our mission is to empower creators"
-                                      }
-                                    ]
+                                    "type": "textnode",
+                                    "content": "Our Features"
                                   }
                                 ]
                               },
                               {
                                 "attributes": {
-                                  "style": "padding:30px;background:white;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.1);",
-                                  "id": "iruch"
+                                  "id": "iukzqn"
                                 },
                                 "components": [
                                   {
-                                    "tagName": "h3",
-                                    "type": "text",
+                                    "type": "comment",
+                                    "content": " Feature 1 "
+                                  },
+                                  {
                                     "attributes": {
-                                      "style": "color:#e74c3c;margin-bottom:15px;",
-                                      "id": "ifv18"
+                                      "id": "imb08m"
                                     },
                                     "components": [
                                       {
-                                        "type": "textnode",
-                                        "content": "Vision"
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "iex3vq"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "🚀"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "h3",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "ibcl0g"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Fast Performance"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "p",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "isujzh"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Lightning-fast loading times and smooth interactions for the best user experience."
+                                          }
+                                        ]
                                       }
                                     ]
                                   },
                                   {
-                                    "tagName": "p",
-                                    "type": "text",
-                                    "attributes": {
-                                      "style": "color:#555;",
-                                      "id": "i507r"
-                                    },
-                                    "components": [
-                                      {
-                                        "type": "textnode",
-                                        "content": "Building the future of web design"
-                                      }
-                                    ]
-                                  }
-                                ]
-                              },
-                              {
-                                "attributes": {
-                                  "style": "padding:30px;background:white;border-radius:8px;box-shadow:0 4px 6px rgba(0,0,0,0.1);",
-                                  "id": "iqsia"
-                                },
-                                "components": [
+                                    "type": "comment",
+                                    "content": " Feature 2 "
+                                  },
                                   {
-                                    "tagName": "h3",
-                                    "type": "text",
                                     "attributes": {
-                                      "style": "color:#2ecc71;margin-bottom:15px;",
-                                      "id": "i6p9g"
+                                      "id": "i1xfjc"
                                     },
                                     "components": [
                                       {
-                                        "type": "textnode",
-                                        "content": "Values"
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "iywmg2"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "🔒"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "h3",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "ik41p4"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Secure & Safe"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "p",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "izso6w"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Enterprise-grade security to protect your data and ensure privacy."
+                                          }
+                                        ]
                                       }
                                     ]
                                   },
                                   {
-                                    "tagName": "p",
-                                    "type": "text",
+                                    "type": "comment",
+                                    "content": " Feature 3 "
+                                  },
+                                  {
                                     "attributes": {
-                                      "style": "color:#555;",
-                                      "id": "ixsdb"
+                                      "id": "idixfc"
                                     },
                                     "components": [
                                       {
-                                        "type": "textnode",
-                                        "content": "Innovation, quality, and user experience"
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "ivl41f"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "📱"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "name": "Row",
+                                        "droppable": ".gjs-cell",
+                                        "resizable": {
+                                          "tl": 0,
+                                          "tc": 0,
+                                          "tr": 0,
+                                          "cl": 0,
+                                          "cr": 0,
+                                          "bl": 0,
+                                          "br": 0,
+                                          "minDim": 1
+                                        },
+                                        "classes": [
+                                          {
+                                            "name": "gjs-row",
+                                            "private": 1
+                                          }
+                                        ],
+                                        "attributes": {
+                                          "id": "iuws54"
+                                        },
+                                        "components": [
+                                          {
+                                            "name": "Cell",
+                                            "draggable": ".gjs-row",
+                                            "resizable": {
+                                              "tl": 0,
+                                              "tc": 0,
+                                              "tr": 0,
+                                              "cl": 0,
+                                              "cr": 1,
+                                              "bl": 0,
+                                              "br": 0,
+                                              "minDim": 1,
+                                              "bc": 0,
+                                              "currentUnit": 1,
+                                              "step": 0.2
+                                            },
+                                            "classes": [
+                                              {
+                                                "name": "gjs-cell",
+                                                "private": 1
+                                              }
+                                            ]
+                                          },
+                                          {
+                                            "name": "Cell",
+                                            "draggable": ".gjs-row",
+                                            "resizable": {
+                                              "tl": 0,
+                                              "tc": 0,
+                                              "tr": 0,
+                                              "cl": 0,
+                                              "cr": 1,
+                                              "bl": 0,
+                                              "br": 0,
+                                              "minDim": 1,
+                                              "bc": 0,
+                                              "currentUnit": 1,
+                                              "step": 0.2
+                                            },
+                                            "classes": [
+                                              {
+                                                "name": "gjs-cell",
+                                                "private": 1
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "h3",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "ikruby"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Responsive Design"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "p",
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "ixm63e"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Works perfectly on all devices - desktop, tablet, and mobile."
+                                          }
+                                        ]
                                       }
                                     ]
                                   }
@@ -876,144 +1228,226 @@
                             ]
                           }
                         ]
-                      }
-                    ],
-                    "head": {
-                      "type": "head"
-                    },
-                    "docEl": {
-                      "tagName": "html"
-                    }
-                  },
-                  "id": "tVEeBObDqfqgPwcr"
-                }
-              ],
-              "id": "K65Ks4cuXQO4Aij06"
-            },
-            {
-              "name": "Contact",
-              "frames": [
-                {
-                  "component": {
-                    "type": "wrapper",
-                    "stylable": [
-                      "background",
-                      "background-color",
-                      "background-image",
-                      "background-repeat",
-                      "background-attachment",
-                      "background-position",
-                      "background-size"
-                    ],
-                    "components": [
+                      },
                       {
-                        "style": {
-                          "padding": "80px 40px",
-                          "text-align": "center",
-                          "font-family": "Arial, sans-serif",
-                          "background": "#34495e",
-                          "color": "white",
-                          "min-height": "100vh"
-                        },
+                        "tagName": "section",
                         "attributes": {
-                          "style": "padding:80px 40px;text-align:center;font-family:Arial, sans-serif;background:#34495e;color:white;min-height:100vh;"
+                          "id": "iy4v2q"
                         },
                         "components": [
                           {
-                            "tagName": "h1",
-                            "type": "text",
-                            "style": {
-                              "font-size": "48px",
-                              "margin-bottom": "20px"
-                            },
                             "attributes": {
-                              "style": "font-size:48px;margin-bottom:20px;"
+                              "id": "iq8dag"
                             },
                             "components": [
                               {
-                                "type": "textnode",
-                                "content": "Contact Us"
-                              }
-                            ]
-                          },
-                          {
-                            "tagName": "p",
-                            "type": "text",
-                            "style": {
-                              "font-size": "20px",
-                              "margin-bottom": "40px"
-                            },
-                            "attributes": {
-                              "style": "font-size:20px;margin-bottom:40px;"
-                            },
-                            "components": [
-                              {
-                                "type": "textnode",
-                                "content": "Get in touch with our team"
-                              }
-                            ]
-                          },
-                          {
-                            "style": {
-                              "background": "rgba(255,255,255,0.1)",
-                              "padding": "40px",
-                              "border-radius": "12px",
-                              "max-width": "600px",
-                              "margin": "0 auto",
-                              "backdrop-filter": "blur(10px)"
-                            },
-                            "attributes": {
-                              "style": "background:rgba(255,255,255,0.1);padding:40px;border-radius:12px;max-width:600px;margin:0 auto;backdrop-filter:blur(10px);"
-                            },
-                            "components": [
-                              {
-                                "tagName": "p",
+                                "tagName": "h2",
                                 "type": "text",
-                                "style": {
-                                  "margin": "20px 0",
-                                  "font-size": "18px"
-                                },
                                 "attributes": {
-                                  "style": "margin:20px 0;font-size:18px;"
+                                  "id": "i3naif"
                                 },
                                 "components": [
                                   {
                                     "type": "textnode",
-                                    "content": "📧 Email: hello@example.com"
+                                    "content": "Ready to Get Started?"
                                   }
                                 ]
                               },
                               {
                                 "tagName": "p",
                                 "type": "text",
-                                "style": {
-                                  "margin": "20px 0",
-                                  "font-size": "18px"
-                                },
                                 "attributes": {
-                                  "style": "margin:20px 0;font-size:18px;"
+                                  "id": "i8zt4z"
                                 },
                                 "components": [
                                   {
                                     "type": "textnode",
-                                    "content": "📱 Phone: (555) 123-4567"
+                                    "content": "Join thousands of satisfied customers and take your business to the next level."
                                   }
                                 ]
                               },
                               {
-                                "tagName": "p",
-                                "type": "text",
-                                "style": {
-                                  "margin": "20px 0",
-                                  "font-size": "18px"
-                                },
                                 "attributes": {
-                                  "style": "margin:20px 0;font-size:18px;"
+                                  "id": "idvesc"
                                 },
                                 "components": [
                                   {
-                                    "type": "textnode",
-                                    "content": "📍 Location: New York, NY"
+                                    "type": "button",
+                                    "attributes": {
+                                      "type": "button",
+                                      "id": "idxhhv"
+                                    },
+                                    "text": "Start Free Trial",
+                                    "components": [
+                                      {
+                                        "type": "textnode",
+                                        "content": "Start Free Trial"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "button",
+                                    "attributes": {
+                                      "type": "button",
+                                      "id": "i9x0hm"
+                                    },
+                                    "text": "Learn More",
+                                    "components": [
+                                      {
+                                        "type": "textnode",
+                                        "content": "Learn More"
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "tagName": "section",
+                        "attributes": {
+                          "id": "i4iofq"
+                        },
+                        "components": [
+                          {
+                            "attributes": {
+                              "id": "iqkdfk"
+                            },
+                            "components": [
+                              {
+                                "attributes": {
+                                  "id": "ictm5k"
+                                },
+                                "components": [
+                                  {
+                                    "type": "comment",
+                                    "content": " Stat 1 "
+                                  },
+                                  {
+                                    "components": [
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "i6v43o"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "1000+"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "i2jlwi"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Happy Clients"
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "comment",
+                                    "content": " Stat 2 "
+                                  },
+                                  {
+                                    "components": [
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "i4th7k"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "50+"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "ik4fzf"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Team Members"
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "comment",
+                                    "content": " Stat 3 "
+                                  },
+                                  {
+                                    "components": [
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "iebu3w"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "99%"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "ime059"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Satisfaction Rate"
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "type": "comment",
+                                    "content": " Stat 4 "
+                                  },
+                                  {
+                                    "components": [
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "ivqqqo"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "24/7"
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "type": "text",
+                                        "attributes": {
+                                          "id": "iohofv"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "textnode",
+                                            "content": "Support Available"
+                                          }
+                                        ]
+                                      }
+                                    ]
                                   }
                                 ]
                               }
@@ -1029,28 +1463,78 @@
                       "tagName": "html"
                     }
                   },
-                  "id": "4nUVf7GB1M1eqiPn"
+                  "id": "bSgwmscv1GtUJ4Vd"
                 }
               ],
-              "id": "Ps3wnlsWV7RKBN3QUf"
+              "id": "about"
             }
           ],
           "styles": [
             {
-              "selectors": [],
-              "selectorsAdd": "*",
+              "selectors": [
+                "#i4sm"
+              ],
               "style": {
-                "box-sizing": "border-box"
+                "background": "#333",
+                "color": "white",
+                "padding": "15px 30px",
+                "display": "flex",
+                "justify-content": "space-between",
+                "align-items": "center"
               }
             },
             {
-              "selectors": [],
-              "selectorsAdd": "body",
+              "selectors": [
+                "#ifh3"
+              ],
               "style": {
-                "margin-top": "0px",
-                "margin-right": "0px",
-                "margin-bottom": "0px",
-                "margin-left": "0px"
+                "font-size": "24px",
+                "font-weight": "bold"
+              }
+            },
+            {
+              "selectors": [
+                "#ijc9"
+              ],
+              "style": {
+                "display": "flex",
+                "gap": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#imub"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration": "none"
+              }
+            },
+            {
+              "selectors": [
+                "#ixv3d"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration": "none"
+              }
+            },
+            {
+              "selectors": [
+                "#i6pk5"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration": "none"
+              }
+            },
+            {
+              "selectors": [
+                "#iz6f6"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration": "none"
               }
             },
             {
@@ -1077,347 +1561,15 @@
                 }
               ],
               "style": {
-                "width": "8%",
-                "display": "table-cell",
-                "height": "75px"
-              }
-            },
-            {
-              "selectors": [
-                "#ixia"
-              ],
-              "style": {
                 "width": "100%",
-                "min-height": "400px"
-              }
+                "display": "block"
+              },
+              "mediaText": "(max-width: 768px)",
+              "atRuleType": "media"
             },
             {
               "selectors": [
-                "#isok"
-              ],
-              "style": {
-                "width": "100%",
-                "min-height": "400px"
-              }
-            },
-            {
-              "selectors": [
-                "#iqd8w"
-              ],
-              "style": {
-                "width": "100%",
-                "min-height": "400px"
-              }
-            },
-            {
-              "selectors": [
-                "#ifhxo"
-              ],
-              "style": {
-                "width": "100%",
-                "min-height": "400px"
-              }
-            },
-            {
-              "selectors": [
-                "#i6mjq"
-              ],
-              "style": {
-                "background-position-x": "0%",
-                "background-position-y": "0%",
-                "background-repeat": "repeat",
-                "background-attachment": "scroll",
-                "background-image": "none",
-                "background-size": "auto",
-                "background-origin": "padding-box",
-                "background-clip": "border-box",
-                "color": "white",
-                "padding-top": "15px",
-                "padding-right": "30px",
-                "padding-bottom": "15px",
-                "padding-left": "30px",
-                "display": "flex",
-                "justify-content": "space-between",
-                "align-items": "center",
-                "box-shadow": "black 0px 0px 5px 0px",
-                "background-color": "rgb(202, 202, 202)"
-              }
-            },
-            {
-              "selectors": [
-                "#igykc"
-              ],
-              "style": {
-                "display": "flex",
-                "row-gap": "30px",
-                "column-gap": "30px"
-              }
-            },
-            {
-              "selectors": [
-                "#izofz"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#iij6i"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#i5owi"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#ih5tf"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#ijeql"
-              ],
-              "style": {
-                "color": "black",
-                "width": "170px",
-                "height": "39px"
-              }
-            },
-            {
-              "selectors": [
-                "#i9hfm"
-              ],
-              "style": {
-                "background-color": "rgb(44, 62, 80)",
-                "background-position-x": "0%",
-                "background-position-y": "0%",
-                "background-repeat": "repeat",
-                "background-attachment": "scroll",
-                "background-image": "none",
-                "background-size": "auto",
-                "background-origin": "padding-box",
-                "background-clip": "border-box",
-                "color": "white",
-                "padding-top": "40px",
-                "padding-right": "20px",
-                "padding-bottom": "40px",
-                "padding-left": "20px",
-                "margin-top": "60px"
-              }
-            },
-            {
-              "selectors": [
-                "#irlm1"
-              ],
-              "style": {
-                "max-width": "1200px",
-                "margin-top": "0px",
-                "margin-right": "auto",
-                "margin-bottom": "0px",
-                "margin-left": "auto",
-                "display": "grid",
-                "grid-template-columns": "repeat(auto-fit, minmax(250px, 1fr))",
-                "row-gap": "30px",
-                "column-gap": "30px"
-              }
-            },
-            {
-              "selectors": [
-                "#imwa5"
-              ],
-              "style": {
-                "margin-top": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#ib3zn"
-              ],
-              "style": {
-                "opacity": "0.8",
-                "line-height": "1.6"
-              }
-            },
-            {
-              "selectors": [
-                "#iuhu4"
-              ],
-              "style": {
-                "margin-top": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#isw3k"
-              ],
-              "style": {
-                "list-style-position": "outside",
-                "list-style-image": "none",
-                "list-style-type": "none",
-                "padding-top": "0px",
-                "padding-right": "0px",
-                "padding-bottom": "0px",
-                "padding-left": "0px",
-                "opacity": "0.8"
-              }
-            },
-            {
-              "selectors": [
-                "#i58kt"
-              ],
-              "style": {
-                "margin-top": "8px",
-                "margin-right": "0px",
-                "margin-bottom": "8px",
-                "margin-left": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#i1zaf"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#i2hhl"
-              ],
-              "style": {
-                "margin-top": "8px",
-                "margin-right": "0px",
-                "margin-bottom": "8px",
-                "margin-left": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#iuw1f"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#iz9b1"
-              ],
-              "style": {
-                "margin-top": "8px",
-                "margin-right": "0px",
-                "margin-bottom": "8px",
-                "margin-left": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#idqrg"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#i0cm5"
-              ],
-              "style": {
-                "margin-top": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#ibh5f"
-              ],
-              "style": {
-                "opacity": "0.8"
-              }
-            },
-            {
-              "selectors": [
-                "#ilczb"
-              ],
-              "style": {
-                "text-align": "center",
-                "margin-top": "30px",
-                "padding-top": "20px",
-                "border-top-width": "1px",
-                "border-top-style": "solid",
-                "border-top-color": "rgba(255, 255, 255, 0.1)",
-                "opacity": "0.7"
-              }
-            },
-            {
-              "selectors": [
-                "radar-chart-component"
-              ],
-              "style": {
-                "box-shadow": "black 0px 0px 5px 0px"
-              }
-            },
-            {
-              "selectors": [
-                "bar-chart-component"
-              ],
-              "style": {
-                "box-shadow": "black 0px 0px 5px 0px"
-              }
-            },
-            {
-              "selectors": [
-                "line-chart-component"
-              ],
-              "style": {
-                "box-shadow": "black 0px 0px 5px 0px, black 0px 0px 5px 0px"
-              }
-            },
-            {
-              "selectors": [
-                {
-                  "name": "gjs-cell",
-                  "private": 1
-                }
+                "gjs-cell30"
               ],
               "style": {
                 "width": "100%",
@@ -1428,136 +1580,449 @@
             },
             {
               "selectors": [
-                "#ih61q"
+                "gjs-cell70"
               ],
               "style": {
-                "padding": "80px 40px",
-                "text-align": "center",
-                "font-family": "Arial, sans-serif",
-                "background": "#ecf0f1",
-                "min-height": "100vh"
+                "width": "100%",
+                "display": "block"
+              },
+              "mediaText": "(max-width: 768px)",
+              "atRuleType": "media"
+            },
+            {
+              "selectors": [
+                {
+                  "name": "gjs-cell",
+                  "private": 1
+                }
+              ],
+              "style": {
+                "width": "8%",
+                "display": "table-cell",
+                "height": "75px"
               }
             },
             {
               "selectors": [
-                "#ingmp"
+                "#i7m71"
               ],
               "style": {
-                "color": "#2c3e50",
-                "font-size": "48px",
-                "margin-bottom": "20px"
+                "width": "100%",
+                "min-height": "400px"
               }
             },
             {
               "selectors": [
-                "#iyypp"
+                "#iia8n"
               ],
               "style": {
-                "color": "#34495e",
-                "font-size": "20px",
-                "max-width": "800px",
-                "margin": "0 auto 40px"
+                "width": "100%",
+                "min-height": "400px"
               }
             },
             {
               "selectors": [
-                "#i8esc"
+                "#i3d3h"
               ],
               "style": {
-                "display": "grid",
-                "grid-template-columns": "repeat(auto-fit, minmax(250px, 1fr))",
-                "gap": "30px",
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#ibuph"
+              ],
+              "style": {
+                "padding": "60px 20px"
+              }
+            },
+            {
+              "selectors": [
+                "#imbe6"
+              ],
+              "style": {
                 "max-width": "1200px",
                 "margin": "0 auto"
               }
             },
             {
               "selectors": [
-                "#ivt8q"
+                "#i9ijl"
               ],
               "style": {
-                "padding": "30px",
+                "text-align": "center",
+                "font-size": "36px",
+                "margin-bottom": "50px",
+                "color": "#333"
+              }
+            },
+            {
+              "selectors": [
+                "#iexvq"
+              ],
+              "style": {
+                "display": "grid",
+                "grid-template-columns": "repeat(auto-fit, minmax(300px, 1fr))",
+                "gap": "40px"
+              }
+            },
+            {
+              "selectors": [
+                "#i94zd"
+              ],
+              "style": {
+                "text-align": "center",
+                "padding": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#ijti8"
+              ],
+              "style": {
+                "width": "80px",
+                "height": "80px",
+                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                "border-radius": "50%",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "margin": "0 auto 20px",
+                "font-size": "36px",
+                "color": "white"
+              }
+            },
+            {
+              "selectors": [
+                "#izgub"
+              ],
+              "style": {
+                "color": "#333",
+                "margin": "20px 0 15px"
+              }
+            },
+            {
+              "selectors": [
+                "#iuq7f"
+              ],
+              "style": {
+                "color": "#666",
+                "line-height": "1.6"
+              }
+            },
+            {
+              "selectors": [
+                "#i2pjk"
+              ],
+              "style": {
+                "text-align": "center",
+                "padding": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#isprs"
+              ],
+              "style": {
+                "width": "80px",
+                "height": "80px",
+                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                "border-radius": "50%",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "margin": "0 auto 20px",
+                "font-size": "36px",
+                "color": "white"
+              }
+            },
+            {
+              "selectors": [
+                "#i97zg"
+              ],
+              "style": {
+                "color": "#333",
+                "margin": "20px 0 15px"
+              }
+            },
+            {
+              "selectors": [
+                "#im3io"
+              ],
+              "style": {
+                "color": "#666",
+                "line-height": "1.6"
+              }
+            },
+            {
+              "selectors": [
+                "#i9z3l"
+              ],
+              "style": {
+                "text-align": "center",
+                "padding": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#i3ee7"
+              ],
+              "style": {
+                "width": "80px",
+                "height": "80px",
+                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                "border-radius": "50%",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "margin": "0 auto 20px",
+                "font-size": "36px",
+                "color": "white"
+              }
+            },
+            {
+              "selectors": [
+                "#itkgh"
+              ],
+              "style": {
+                "color": "#333",
+                "margin": "20px 0 15px"
+              }
+            },
+            {
+              "selectors": [
+                "#i5pal"
+              ],
+              "style": {
+                "color": "#666",
+                "line-height": "1.6"
+              }
+            },
+            {
+              "selectors": [
+                "#imt5g"
+              ],
+              "style": {
+                "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                "padding": "80px 20px",
+                "text-align": "center",
+                "color": "white"
+              }
+            },
+            {
+              "selectors": [
+                "#ibfd5"
+              ],
+              "style": {
+                "max-width": "800px",
+                "margin": "0 auto"
+              }
+            },
+            {
+              "selectors": [
+                "#irv6i"
+              ],
+              "style": {
+                "font-size": "42px",
+                "margin-bottom": "20px",
+                "font-weight": "bold"
+              }
+            },
+            {
+              "selectors": [
+                "#iznz9"
+              ],
+              "style": {
+                "font-size": "20px",
+                "margin-bottom": "40px",
+                "opacity": "0.95"
+              }
+            },
+            {
+              "selectors": [
+                "#i9fuo"
+              ],
+              "style": {
+                "display": "flex",
+                "gap": "20px",
+                "justify-content": "center",
+                "flex-wrap": "wrap"
+              }
+            },
+            {
+              "selectors": [
+                "#i27yo"
+              ],
+              "style": {
                 "background": "white",
-                "border-radius": "8px",
-                "box-shadow": "0 4px 6px rgba(0,0,0,0.1)"
+                "color": "#f5576c",
+                "border": "none",
+                "padding": "18px 40px",
+                "font-size": "18px",
+                "border-radius": "50px",
+                "cursor": "pointer",
+                "font-weight": "bold",
+                "box-shadow": "0 4px 20px rgba(0,0,0,0.2)",
+                "transition": "transform 0.2s"
               }
             },
             {
               "selectors": [
-                "#i3zwt"
+                "#ig59s"
               ],
               "style": {
-                "color": "#3498db",
-                "margin-bottom": "15px"
+                "background": "transparent",
+                "color": "white",
+                "border": "2px solid white",
+                "padding": "18px 40px",
+                "font-size": "18px",
+                "border-radius": "50px",
+                "cursor": "pointer",
+                "font-weight": "bold",
+                "transition": "all 0.2s"
               }
             },
             {
               "selectors": [
-                "#irehi"
+                "#irj9h"
               ],
               "style": {
-                "color": "#555"
+                "background": "#2c3e50",
+                "color": "white",
+                "padding": "40px 20px",
+                "margin-top": "60px"
               }
             },
             {
               "selectors": [
-                "#iruch"
+                "#i2m8v"
               ],
               "style": {
-                "padding": "30px",
-                "background": "white",
-                "border-radius": "8px",
-                "box-shadow": "0 4px 6px rgba(0,0,0,0.1)"
+                "max-width": "1200px",
+                "margin": "0 auto",
+                "display": "grid",
+                "grid-template-columns": "repeat(auto-fit, minmax(250px, 1fr))",
+                "gap": "30px"
               }
             },
             {
               "selectors": [
-                "#ifv18"
+                "#i28pk"
               ],
               "style": {
-                "color": "#e74c3c",
-                "margin-bottom": "15px"
+                "margin-top": "0"
               }
             },
             {
               "selectors": [
-                "#i507r"
+                "#imfbl"
               ],
               "style": {
-                "color": "#555"
+                "opacity": "0.8",
+                "line-height": "1.6"
               }
             },
             {
               "selectors": [
-                "#iqsia"
+                "#ivkxw"
               ],
               "style": {
-                "padding": "30px",
-                "background": "white",
-                "border-radius": "8px",
-                "box-shadow": "0 4px 6px rgba(0,0,0,0.1)"
+                "margin-top": "0"
               }
             },
             {
               "selectors": [
-                "#i6p9g"
+                "#iv1e6"
               ],
               "style": {
-                "color": "#2ecc71",
-                "margin-bottom": "15px"
+                "list-style": "none",
+                "padding": "0",
+                "opacity": "0.8"
               }
             },
             {
               "selectors": [
-                "#ixsdb"
+                "#ihzg1"
               ],
               "style": {
-                "color": "#555"
+                "margin": "8px 0"
               }
             },
             {
               "selectors": [
-                "#iogy7"
+                "#iwmx6"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration": "none"
+              }
+            },
+            {
+              "selectors": [
+                "#i9bhy"
+              ],
+              "style": {
+                "margin": "8px 0"
+              }
+            },
+            {
+              "selectors": [
+                "#i2nrg"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration": "none"
+              }
+            },
+            {
+              "selectors": [
+                "#ihdhf"
+              ],
+              "style": {
+                "margin": "8px 0"
+              }
+            },
+            {
+              "selectors": [
+                "#isffb"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration": "none"
+              }
+            },
+            {
+              "selectors": [
+                "#imt95"
+              ],
+              "style": {
+                "margin-top": "0"
+              }
+            },
+            {
+              "selectors": [
+                "#iimpc"
+              ],
+              "style": {
+                "opacity": "0.8"
+              }
+            },
+            {
+              "selectors": [
+                "#ibyqn"
+              ],
+              "style": {
+                "text-align": "center",
+                "margin-top": "30px",
+                "padding-top": "20px",
+                "border-top": "1px solid rgba(255,255,255,0.1)",
+                "opacity": "0.7"
+              }
+            },
+            {
+              "selectors": [
+                "#ifihk"
               ],
               "style": {
                 "background": "#333",
@@ -1570,7 +2035,7 @@
             },
             {
               "selectors": [
-                "#ip9iy"
+                "#i9yqn"
               ],
               "style": {
                 "font-size": "24px",
@@ -1579,7 +2044,7 @@
             },
             {
               "selectors": [
-                "#igl9k"
+                "#iuj7h"
               ],
               "style": {
                 "display": "flex",
@@ -1588,7 +2053,7 @@
             },
             {
               "selectors": [
-                "#ieq84h"
+                "#ieeso"
               ],
               "style": {
                 "color": "white",
@@ -1597,7 +2062,7 @@
             },
             {
               "selectors": [
-                "#ixkwwg"
+                "#iu4wsh"
               ],
               "style": {
                 "color": "white",
@@ -1606,7 +2071,7 @@
             },
             {
               "selectors": [
-                "#iuol0l"
+                "#i1t83h"
               ],
               "style": {
                 "color": "white",
@@ -1615,11 +2080,375 @@
             },
             {
               "selectors": [
-                "#is4p1s"
+                "#ia0taw"
               ],
               "style": {
                 "color": "white",
                 "text-decoration": "none"
+              }
+            },
+            {
+              "selectors": [
+                "#igf89k"
+              ],
+              "style": {
+                "padding": "60px 20px"
+              }
+            },
+            {
+              "selectors": [
+                "#ip47kp"
+              ],
+              "style": {
+                "max-width": "1200px",
+                "margin": "0 auto"
+              }
+            },
+            {
+              "selectors": [
+                "#iwr92g"
+              ],
+              "style": {
+                "text-align": "center",
+                "font-size": "36px",
+                "margin-bottom": "50px",
+                "color": "#333"
+              }
+            },
+            {
+              "selectors": [
+                "#iukzqn"
+              ],
+              "style": {
+                "display": "grid",
+                "grid-template-columns": "repeat(auto-fit, minmax(300px, 1fr))",
+                "gap": "40px"
+              }
+            },
+            {
+              "selectors": [
+                "#imb08m"
+              ],
+              "style": {
+                "text-align": "center",
+                "padding": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#iex3vq"
+              ],
+              "style": {
+                "width": "80px",
+                "height": "80px",
+                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                "border-radius": "50%",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "margin": "0 auto 20px",
+                "font-size": "36px",
+                "color": "white"
+              }
+            },
+            {
+              "selectors": [
+                "#ibcl0g"
+              ],
+              "style": {
+                "color": "#333",
+                "margin": "20px 0 15px"
+              }
+            },
+            {
+              "selectors": [
+                "#isujzh"
+              ],
+              "style": {
+                "color": "#666",
+                "line-height": "1.6"
+              }
+            },
+            {
+              "selectors": [
+                "#i1xfjc"
+              ],
+              "style": {
+                "text-align": "center",
+                "padding": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#iywmg2"
+              ],
+              "style": {
+                "width": "80px",
+                "height": "80px",
+                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                "border-radius": "50%",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "margin": "0 auto 20px",
+                "font-size": "36px",
+                "color": "white"
+              }
+            },
+            {
+              "selectors": [
+                "#ik41p4"
+              ],
+              "style": {
+                "color": "#333",
+                "margin": "20px 0 15px"
+              }
+            },
+            {
+              "selectors": [
+                "#izso6w"
+              ],
+              "style": {
+                "color": "#666",
+                "line-height": "1.6"
+              }
+            },
+            {
+              "selectors": [
+                "#idixfc"
+              ],
+              "style": {
+                "text-align": "center",
+                "padding": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#ivl41f"
+              ],
+              "style": {
+                "width": "80px",
+                "height": "80px",
+                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+                "border-radius": "50%",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "margin": "0 auto 20px",
+                "font-size": "36px",
+                "color": "white"
+              }
+            },
+            {
+              "selectors": [
+                "#ikruby"
+              ],
+              "style": {
+                "color": "#333",
+                "margin": "20px 0 15px"
+              }
+            },
+            {
+              "selectors": [
+                "#ixm63e"
+              ],
+              "style": {
+                "color": "#666",
+                "line-height": "1.6"
+              }
+            },
+            {
+              "selectors": [
+                "#iy4v2q"
+              ],
+              "style": {
+                "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
+                "padding": "80px 20px",
+                "text-align": "center",
+                "color": "white"
+              }
+            },
+            {
+              "selectors": [
+                "#iq8dag"
+              ],
+              "style": {
+                "max-width": "800px",
+                "margin": "0 auto"
+              }
+            },
+            {
+              "selectors": [
+                "#i3naif"
+              ],
+              "style": {
+                "font-size": "42px",
+                "margin-bottom": "20px",
+                "font-weight": "bold"
+              }
+            },
+            {
+              "selectors": [
+                "#i8zt4z"
+              ],
+              "style": {
+                "font-size": "20px",
+                "margin-bottom": "40px",
+                "opacity": "0.95"
+              }
+            },
+            {
+              "selectors": [
+                "#idvesc"
+              ],
+              "style": {
+                "display": "flex",
+                "gap": "20px",
+                "justify-content": "center",
+                "flex-wrap": "wrap"
+              }
+            },
+            {
+              "selectors": [
+                "#idxhhv"
+              ],
+              "style": {
+                "background": "white",
+                "color": "#f5576c",
+                "border": "none",
+                "padding": "18px 40px",
+                "font-size": "18px",
+                "border-radius": "50px",
+                "cursor": "pointer",
+                "font-weight": "bold",
+                "box-shadow": "0 4px 20px rgba(0,0,0,0.2)",
+                "transition": "transform 0.2s"
+              }
+            },
+            {
+              "selectors": [
+                "#i9x0hm"
+              ],
+              "style": {
+                "background": "transparent",
+                "color": "white",
+                "border": "2px solid white",
+                "padding": "18px 40px",
+                "font-size": "18px",
+                "border-radius": "50px",
+                "cursor": "pointer",
+                "font-weight": "bold",
+                "transition": "all 0.2s"
+              }
+            },
+            {
+              "selectors": [
+                "#i4iofq"
+              ],
+              "style": {
+                "padding": "80px 20px",
+                "background": "#2c3e50",
+                "color": "white"
+              }
+            },
+            {
+              "selectors": [
+                "#iqkdfk"
+              ],
+              "style": {
+                "max-width": "1200px",
+                "margin": "0 auto"
+              }
+            },
+            {
+              "selectors": [
+                "#ictm5k"
+              ],
+              "style": {
+                "display": "grid",
+                "grid-template-columns": "repeat(auto-fit, minmax(200px, 1fr))",
+                "gap": "40px",
+                "text-align": "center"
+              }
+            },
+            {
+              "selectors": [
+                "#i6v43o"
+              ],
+              "style": {
+                "font-size": "48px",
+                "font-weight": "bold",
+                "color": "#3498db",
+                "margin-bottom": "10px"
+              }
+            },
+            {
+              "selectors": [
+                "#i2jlwi"
+              ],
+              "style": {
+                "font-size": "18px",
+                "opacity": "0.9"
+              }
+            },
+            {
+              "selectors": [
+                "#i4th7k"
+              ],
+              "style": {
+                "font-size": "48px",
+                "font-weight": "bold",
+                "color": "#2ecc71",
+                "margin-bottom": "10px"
+              }
+            },
+            {
+              "selectors": [
+                "#ik4fzf"
+              ],
+              "style": {
+                "font-size": "18px",
+                "opacity": "0.9"
+              }
+            },
+            {
+              "selectors": [
+                "#iebu3w"
+              ],
+              "style": {
+                "font-size": "48px",
+                "font-weight": "bold",
+                "color": "#e74c3c",
+                "margin-bottom": "10px"
+              }
+            },
+            {
+              "selectors": [
+                "#ime059"
+              ],
+              "style": {
+                "font-size": "18px",
+                "opacity": "0.9"
+              }
+            },
+            {
+              "selectors": [
+                "#ivqqqo"
+              ],
+              "style": {
+                "font-size": "48px",
+                "font-weight": "bold",
+                "color": "#f39c12",
+                "margin-bottom": "10px"
+              }
+            },
+            {
+              "selectors": [
+                "#iohofv"
+              ],
+              "style": {
+                "font-size": "18px",
+                "opacity": "0.9"
               }
             }
           ],
@@ -1627,7 +2456,7 @@
           "symbols": [],
           "version": "0.21.13"
         },
-        "lastUpdate": "2025-11-04T15:44:36.143Z"
+        "lastUpdate": "2025-11-04T16:40:28.315Z"
       }
     },
     "settings": {
@@ -1636,6 +2465,6 @@
       "collaborationEnabled": false
     }
   },
-  "exportedAt": "2025-11-04T15:45:45.281Z",
+  "exportedAt": "2025-11-04T16:41:30.154Z",
   "version": "2.0.0"
 }

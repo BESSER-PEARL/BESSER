@@ -31,17 +31,26 @@ export const PieChartComponent: React.FC<Props> = ({
   options,
   styles,
 }) => {
-  // When color is "default", we should use our defaultPalette for multiple colors
-  const shouldUseDefaultPalette = !color || color === "default";
+  // Extract color from styles if available
+  const styleColorPalette = styles && (styles as any)['--chart-color-palette'];
+  const styleBarColor = styles && (styles as any)['--chart-bar-color'];
   
-  // If we're using default palette, ignore config palette and use our default colors
-  const pieColors = shouldUseDefaultPalette 
-    ? defaultPalette 
-    : [color]; // Use single color if specific color provided
+  // Determine which color palette to use
+  let pieColors: string[];
+  if (color && color !== 'default') {
+    pieColors = [color]; // Use specified color
+  } else if (styleColorPalette === 'default') {
+    pieColors = defaultPalette; // Use default palette
+  } else if (styleBarColor && styleBarColor !== '#CCCCCC') {
+    pieColors = [styleBarColor]; // Use style-defined color
+  } else {
+    pieColors = defaultPalette; // Fallback to default palette
+  }
   
   console.log('Color selection:', {
     inputColor: color,
-    isDefault: shouldUseDefaultPalette,
+    styleColorPalette,
+    styleBarColor,
     usingColors: pieColors
   });
 
@@ -53,23 +62,34 @@ export const PieChartComponent: React.FC<Props> = ({
 
   const containerStyle: CSSProperties = {
     width: "100%",
-    minHeight: "320px",
+    height: "400px", // Set a fixed height
     marginBottom: "20px",
     ...styles,
+    minHeight: styles?.minHeight || "400px", // Ensure minHeight is respected if provided
   };
+
+  // Early return if no data or empty data array
+  if (!data || data.length === 0) {
+    return (
+      <div id={id} style={containerStyle}>
+        {title && <h3 style={{ textAlign: "center" }}>{title}</h3>}
+        <div style={{ textAlign: "center", paddingTop: "160px" }}>No data available</div>
+      </div>
+    );
+  }
 
   return (
     <div id={id} style={containerStyle}>
       {title && <h3 style={{ textAlign: "center" }}>{title}</h3>}
-      <ResponsiveContainer width="100%" height="80%">
-        <PieChart>
+      <ResponsiveContainer width="100%" height={350}>
+        <PieChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
           <Pie
             data={data}
             dataKey={dataField}
             nameKey={labelField}
             innerRadius={options?.innerRadius}
-            outerRadius={options?.outerRadius || 120}
-            paddingAngle={options?.paddingAngle || 0}
+            outerRadius={options?.outerRadius || "70%"}
+            paddingAngle={options?.paddingAngle || 2}
             startAngle={options?.startAngle || 0}
             endAngle={options?.endAngle || 360}
             label={showLabels}

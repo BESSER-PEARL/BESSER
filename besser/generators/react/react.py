@@ -210,17 +210,17 @@ class ReactGenerator(GeneratorInterface):
     # Screen & component serialization
     # --------------------------------------------------------------------- #
     def _serialize_screen(self, screen: ViewContainer) -> Dict[str, Any]:
-        # Use preserved page_id if available
-        screen_id = getattr(screen, 'page_id', None) or getattr(screen, 'component_id', None) or screen.name
-        # Use screen name for better identification
-        screen_name = screen.name if hasattr(screen, 'name') else screen.description
+        # Screens may have page_id (preferred) or component_id, fallback to name
+        # Note: page_id is set by processor.py for GrapesJS pages
+        screen_id = getattr(screen, 'page_id', None) or screen.component_id or screen.name
+        screen_name = screen.name
         
         node: Dict[str, Any] = {
             "id": screen_id,
             "name": screen.description or self._humanize(screen_name),
             "description": screen.description or "",
-            "is_main": bool(getattr(screen, "is_main_page", False)),
-            "route_path": getattr(screen, "route_path", f"/{screen_name}".lower().replace(' ', '-')),
+            "is_main": bool(screen.is_main_page),
+            "route_path": screen.route_path or f"/{screen_name}".lower().replace(' ', '-'),
             "components": [],
         }
 
@@ -228,7 +228,7 @@ class ReactGenerator(GeneratorInterface):
 
         # Sort elements by display_order to preserve JSON ordering
         elements = list(screen.view_elements)
-        elements.sort(key=lambda e: (getattr(e, 'display_order', 999999), getattr(e, 'name', '')))
+        elements.sort(key=lambda e: (e.display_order, e.name))
         
         for element in elements:
             node["components"].append(self._serialize_component(element))
@@ -238,12 +238,13 @@ class ReactGenerator(GeneratorInterface):
     def _serialize_component(self, element: ViewComponent) -> Dict[str, Any]:
         component_type = self._map_component_type(element)
 
-        # Use preserved metadata if available, otherwise fall back to defaults
-        component_id = getattr(element, 'component_id', None) or element.name or f"{element.__class__.__name__}"
-        tag = getattr(element, 'tag_name', None)
-        class_list = getattr(element, 'css_classes', None)
-        attributes = getattr(element, 'custom_attributes', None)
-        display_order = getattr(element, 'display_order', 999999)
+        # Use metadata from BUML metamodel (no getattr needed - these are real attributes!)
+        # Fallback to defaults only if None
+        component_id = element.component_id or element.name or f"{element.__class__.__name__}"
+        tag = element.tag_name
+        class_list = element.css_classes
+        attributes = element.custom_attributes
+        display_order = element.display_order
 
         node: Dict[str, Any] = {
             "id": component_id,
@@ -262,7 +263,7 @@ class ReactGenerator(GeneratorInterface):
         if isinstance(element, ViewContainer):
             # Sort children by display_order to preserve JSON ordering
             children_list = list(element.view_elements)
-            children_list.sort(key=lambda e: (getattr(e, 'display_order', 999999), getattr(e, 'name', '')))
+            children_list.sort(key=lambda e: (e.display_order, e.name))
             
             children = [self._serialize_component(child) for child in children_list]
             if children:

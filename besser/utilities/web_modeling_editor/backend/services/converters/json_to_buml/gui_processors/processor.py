@@ -109,21 +109,54 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         return register_name(fallback, fallback)
 
     def attach_meta(element, meta: Dict[str, Any]) -> None:
-        """Attach metadata to component for code generation fidelity."""
+        """
+        Attach comprehensive metadata to component for code generation fidelity.
+        This function is a SAFETY NET that fills in missing metadata after component parsing.
+        
+        IMPORTANT: This function should NOT overwrite metadata already set by specialized parsers
+        (component_parsers.py). It only fills in gaps for metadata that wasn't set during 
+        component-specific parsing.
+        
+        Design Pattern:
+        1. Specialized parsers (parse_button, parse_text, etc.) set metadata via _attach_component_metadata()
+        2. This function (attach_meta) is called AFTER parsing as a fallback
+        3. Only sets values if they are None or empty (never overwrites existing data)
+        
+        This ensures ALL JSON data is preserved for perfect React regeneration.
+        """
         if not element:
             return
         
-        # Store component metadata if not already set
+        # Store tag name ONLY if not already set
         if not hasattr(element, 'tag_name') or not element.tag_name:
             element.tag_name = meta.get("tagName")
-        if not hasattr(element, 'css_classes'):
+        
+        # Store CSS classes (normalize to list of strings) ONLY if not already set
+        if not hasattr(element, 'css_classes') or not element.css_classes:
             element.css_classes = []
-        if meta.get("classList"):
-            element.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in meta["classList"]]
-        if not hasattr(element, 'custom_attributes'):
+            if meta.get("classList"):
+                element.css_classes = [
+                    cls if isinstance(cls, str) else cls.get("name", "") 
+                    for cls in meta["classList"]
+                ]
+        
+        # Store custom attributes ONLY if not already set
+        if not hasattr(element, 'custom_attributes') or not element.custom_attributes:
             element.custom_attributes = {}
-        if meta.get("attributes"):
-            element.custom_attributes = dict(meta["attributes"]) if isinstance(meta["attributes"], dict) else {}
+            if meta.get("attributes"):
+                element.custom_attributes = dict(meta["attributes"]) if isinstance(meta["attributes"], dict) else {}
+        
+        # Store component_id ONLY if not already set
+        # Check for None explicitly since hasattr returns True even if value is None
+        if not hasattr(element, 'component_id') or element.component_id is None:
+            if meta.get("attributes") and isinstance(meta["attributes"], dict):
+                element.component_id = meta["attributes"].get("id")
+            if not element.component_id and element.custom_attributes:
+                element.component_id = element.custom_attributes.get("id")
+        
+        # Store component_type ONLY if not already set
+        if not hasattr(element, 'component_type') or element.component_type is None:
+            element.component_type = meta.get("type")
 
     def parse_component_list(components: Optional[List[Dict[str, Any]]]) -> List[ViewComponent]:
         """Parse a list of GrapesJS components into BUML ViewComponents."""
@@ -170,10 +203,11 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         # Resolve styling
         styling = resolve_component_styling(component, style_map)
         
-        # Prepare metadata
+        # Prepare metadata - preserve ALL JSON data for fidelity
         attributes = component.get("attributes") if isinstance(component.get("attributes"), dict) else {}
         class_list = component.get("classes") or []
         meta = {
+            "type": component.get("type"),  # Store original component type
             "tagName": component.get("tagName"),
             "classList": class_list,
             "attributes": attributes,
@@ -322,6 +356,12 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             name = get_unique_name(component, "Container")
             container = parse_container(component, styling, name, meta, parse_component_list)
             attach_meta(container, meta)
+            
+            # Ensure ViewContainers have stable IDs even if JSON doesn't provide one
+            if not container.component_id:
+                # Generate stable ID from component name or position
+                container.component_id = f"container_{name.lower()}"
+            
             return container
 
         # === GENERIC COMPONENT ===

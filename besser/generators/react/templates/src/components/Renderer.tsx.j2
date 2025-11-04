@@ -100,13 +100,16 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       ? { ...style, height: 'auto' }
       : style;
 
+    // Filter out 'style' from attributes since we handle it separately as a React object
+    const { style: _, ...safeAttributes } = component.attributes || {};
+
     return React.createElement(
       tagName,
       {
         id: component.id,
         style: adjustedStyle,
         className: component.class_list?.join(' '),
-        ...(component.attributes || {})
+        ...safeAttributes
       },
       (component.children ?? []).map((child: any) => (
         <Renderer key={child.id} component={child} styles={styles} />
@@ -120,13 +123,17 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     const tagName = (component.tag && validTags.includes(component.tag.toLowerCase())) 
       ? component.tag.toLowerCase()
       : "p";
+    
+    // Filter out 'style' from attributes since we handle it separately as a React object
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
     return React.createElement(
       tagName,
       {
         id: component.id,
         style: style,
         className: component.class_list?.join(' '),
-        ...(component.attributes || {})
+        ...safeAttributes
       },
       component.content || ""
     );
@@ -156,6 +163,9 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       }
     };
     
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
     return (
       <button
         id={component.id}
@@ -163,7 +173,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         style={style}
         className={component.class_list?.join(' ')}
         onClick={handleClick}
-        {...(component.attributes || {})}
+        {...safeAttributes}
       >
         {component.label || component.name || "Button"}
       </button>
@@ -180,6 +190,9 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       // Let default link behavior handle external URLs
     };
     
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
     return (
       <a
         id={component.id}
@@ -189,7 +202,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         style={style}
         className={component.class_list?.join(' ')}
         onClick={handleClick}
-        {...(component.attributes || {})}
+        {...safeAttributes}
       >
         {component.label || component.name || ""}
       </a>
@@ -197,6 +210,9 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   }
 
   if (component.type === "image") {
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
     return (
       <img
         id={component.id}
@@ -204,12 +220,15 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         alt={component.alt || component.description || ""}
         style={style}
         className={component.class_list?.join(' ')}
-        {...(component.attributes || {})}
+        {...safeAttributes}
       />
     );
   }
 
   if (component.type === "input") {
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
     return (
       <input
         id={component.id}
@@ -217,7 +236,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         placeholder={component.attributes?.placeholder || ""}
         style={style}
         className={component.class_list?.join(' ')}
-        {...(component.attributes || {})}
+        {...safeAttributes}
       />
     );
   }
@@ -229,13 +248,16 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       console.log("Form submitted:", component.name);
     };
     
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
     return (
       <form
         id={component.id}
         onSubmit={handleSubmit}
         style={style}
         className={component.class_list?.join(' ')}
-        {...(component.attributes || {})}
+        {...safeAttributes}
       >
         {(component.inputs || []).map((input: any) => (
           <div key={input.id} style={{ marginBottom: "10px" }}>
@@ -251,8 +273,11 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   }
 
   if (component.type === "menu") {
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
     return (
-      <nav id={component.id} style={style} className={component.class_list?.join(' ')} {...(component.attributes || {})}>
+      <nav id={component.id} style={style} className={component.class_list?.join(' ')} {...safeAttributes}>
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
           {(component.items || []).map((item: any, index: number) => (
             <li key={index} style={{ display: "inline-block", marginRight: "15px" }}>
@@ -271,8 +296,11 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   }
 
   if (component.type === "data-list") {
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
     return (
-      <div id={component.id} style={style} className={component.class_list?.join(' ')} {...(component.attributes || {})}>
+      <div id={component.id} style={style} className={component.class_list?.join(' ')} {...safeAttributes}>
         <ul>
           {listData.map((item: any, index: number) => (
             <li key={index}>{JSON.stringify(item)}</li>
@@ -283,6 +311,9 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   }
 
   if (component.type === "embedded-content") {
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
     return (
       <iframe
         id={component.id}
@@ -290,7 +321,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         title={component.description || component.name}
         style={style}
         className={component.class_list?.join(' ')}
-        {...(component.attributes || {})}
+        {...safeAttributes}
       />
     );
   }

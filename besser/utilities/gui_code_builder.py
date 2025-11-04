@@ -103,9 +103,9 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
         f.write("    GUIModel, Module, Screen,\n")
         f.write("    ViewComponent, ViewContainer,\n")
         f.write("    Button, ButtonType, ButtonActionType,\n")
-        f.write("    Text, Image, InputField, InputFieldType,\n")
+        f.write("    Text, Image, Link, InputField, InputFieldType,\n")
         f.write("    Form, Menu, MenuItem, DataList,\n")
-        f.write("    DataSource, DataSourceElement,\n")
+        f.write("    DataSource, DataSourceElement, EmbeddedContent,\n")
         f.write("    Styling, Size, Position, Color, Layout, LayoutType,\n")
         f.write("    UnitSize, PositionType, Alignment\n")
         f.write(")\n")
@@ -136,9 +136,10 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
                 
                 f.write(f"\n# Screen: {screen.name}\n")
                 
-                # Create screen
+                # Create screen (view_elements is required, will be set after processing children)
                 screen_params = [f'name="{screen.name}"']
                 screen_params.append(f'description="{screen.description}"' if screen.description else 'description=""')
+                screen_params.append('view_elements=set()')  # Required parameter, will be populated later
                 if hasattr(screen, 'is_main_page') and screen.is_main_page:
                     screen_params.append('is_main_page=True')
                 if hasattr(screen, 'route_path') and screen.route_path:
@@ -155,6 +156,12 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
                 # Write screen styling if present
                 if screen.styling:
                     _write_styling(f, screen_var, screen.styling, created_vars)
+                
+                # Write screen metadata (page_id, component_id for React fidelity)
+                if hasattr(screen, 'page_id') and screen.page_id:
+                    f.write(f"{screen_var}.page_id = \"{_escape_string(screen.page_id)}\"\n")
+                if hasattr(screen, 'component_id') and screen.component_id:
+                    f.write(f"{screen_var}.component_id = \"{_escape_string(screen.component_id)}\"\n")
                 
                 # Process screen elements - preserve original order
                 element_vars = []
@@ -863,7 +870,7 @@ def _write_data_binding_assignment(f, var_name, binding):
     label_name = _get_attr_name(getattr(binding, "label_field", None))
     data_name = _get_attr_name(getattr(binding, "data_field", None))
 
-    f.write(f'{binding_var} = DataBinding(name="{binding_name}")\n')
+    # DataBinding requires domain_concept as first parameter, so we need to handle missing domain
     if domain_name:
         escaped_domain = _escape_string(domain_name)
         f.write("domain_model_ref = globals().get('domain_model')\n")
@@ -871,7 +878,7 @@ def _write_data_binding_assignment(f, var_name, binding):
         f.write("if domain_model_ref is not None:\n")
         f.write(f"    {binding_var}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
         f.write(f"if {binding_var}_domain:\n")
-        f.write(f"    {binding_var}.domain_concept = {binding_var}_domain\n")
+        f.write(f"    {binding_var} = DataBinding(domain_concept={binding_var}_domain)\n")
         if label_name:
             escaped_label = _escape_string(label_name)
             f.write(f"    {binding_var}.label_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_label}\"), None)\n")
@@ -879,14 +886,12 @@ def _write_data_binding_assignment(f, var_name, binding):
             escaped_data = _escape_string(data_name)
             f.write(f"    {binding_var}.data_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_data}\"), None)\n")
         f.write("else:\n")
-        f.write(f"    # Domain class '{escaped_domain}' not resolved; data binding remains partial.\n")
-        f.write("    pass\n")
+        f.write(f"    # Domain class '{escaped_domain}' not resolved; data binding skipped.\n")
+        f.write(f"    {binding_var} = None\n")
+        f.write(f"if {binding_var}:\n")
+        f.write(f"    {var_name}.data_binding = {binding_var}\n")
     else:
-        if label_name:
-            f.write(f"# Label field '{_escape_string(label_name)}' requires domain context to resolve.\n")
-        if data_name:
-            f.write(f"# Data field '{_escape_string(data_name)}' requires domain context to resolve.\n")
-    f.write(f"{var_name}.data_binding = {binding_var}\n")
+        f.write(f"# DataBinding for {var_name} skipped: no domain concept specified.\n")
 
 
 def _update_data_source_element(f, var_name, source):

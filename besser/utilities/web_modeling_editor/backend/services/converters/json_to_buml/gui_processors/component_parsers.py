@@ -45,7 +45,30 @@ from .utils import extract_text_content, clean_attribute_name
 
 
 def _attach_component_metadata(element, component: Dict[str, Any], meta: Dict[str, Any] = None) -> None:
-    """Helper to attach GrapesJS metadata to BUML component for code generation fidelity."""
+    """
+    PRIMARY metadata attachment function for component parsers.
+    
+    This function extracts and attaches metadata directly from the GrapesJS JSON component dict.
+    It should be called by ALL specialized component parsers (parse_button, parse_text, etc.)
+    to ensure metadata is set during component creation.
+    
+    Design Pattern:
+    1. This function sets metadata from JSON FIRST (during parsing)
+    2. attach_meta() in processor.py is called AFTER as a fallback
+    3. attach_meta() will NOT overwrite values set by this function
+    
+    Metadata attached:
+    - component_id: Unique identifier from JSON attributes or component level
+    - component_type: GrapesJS component type (e.g., "text", "button", "image")
+    - tag_name: HTML tag name (e.g., "p", "h1", "div", "button")
+    - css_classes: List of CSS class names
+    - custom_attributes: Dictionary of HTML attributes from JSON
+    
+    Args:
+        element: BUML ViewElement/ViewComponent/ViewContainer to attach metadata to
+        component: GrapesJS JSON component dictionary
+        meta: Optional metadata dict with additional context
+    """
     if not element:
         return
     

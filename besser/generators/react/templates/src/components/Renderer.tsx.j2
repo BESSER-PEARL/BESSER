@@ -90,11 +90,21 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     const tagName = (component.tag && validTags.includes(component.tag.toLowerCase())) 
       ? component.tag.toLowerCase()
       : "div";
+    
+    // Check if this is a cell and has children
+    const isCell = component.class_list?.includes('gjs-cell');
+    const hasChildren = (component.children ?? []).length > 0;
+    
+    // If it's a cell with children, set height to auto
+    const adjustedStyle = isCell && hasChildren
+      ? { ...style, height: 'auto' }
+      : style;
+
     return React.createElement(
       tagName,
       {
         id: component.id,
-        style: style,
+        style: adjustedStyle,
         className: component.class_list?.join(' '),
         ...(component.attributes || {})
       },

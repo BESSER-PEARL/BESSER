@@ -6,10 +6,75 @@ from typing import Dict, Any
 from besser.BUML.metamodel.gui import (
     Alignment, BarChart, DataBinding, LineChart,
     PieChart, RadarChart, RadialBarChart, ViewComponent,
-    Color, Position, Size, Styling,
+    Color, Position, Size, Styling, DataAggregation, MetricCard,
 )
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
+
+# TODO: Uncomment when backend aggregation is ready
+# def _parse_aggregation(aggregation_str: str) -> DataAggregation:
+#     """
+#     Parse aggregation string from JSON attributes to DataAggregation enum.
+    
+#     Args:
+#         aggregation_str: String value like "sum", "average", "count", etc.
+        
+#     Returns:
+#         DataAggregation enum value or None if invalid
+#     """
+#     if not aggregation_str or not isinstance(aggregation_str, str):
+#         return None
+    
+#     aggregation_map = {
+#         'sum': DataAggregation.SUM,
+#         'avg': DataAggregation.AVG,
+#         'average': DataAggregation.AVG,
+#         'count': DataAggregation.COUNT,
+#         'min': DataAggregation.MIN,
+#         'minimum': DataAggregation.MIN,
+#         'max': DataAggregation.MAX,
+#         'maximum': DataAggregation.MAX,
+#         'median': DataAggregation.MEDIAN,
+#         'first': DataAggregation.FIRST,
+#         'last': DataAggregation.LAST,
+#     }
+    
+#     return aggregation_map.get(aggregation_str.lower())
+
+
+def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) -> tuple:
+    """
+    Parse common chart data binding attributes.
+    
+    Returns:
+        Tuple of (domain_class, label_field, data_field, aggregation, group_by_field)
+    """
+    # Resolve data binding elements
+    data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
+    label_field_el = get_element_by_id(class_model, attrs.get('label-field'))
+    data_field_el = get_element_by_id(class_model, attrs.get('data-field'))
+
+    data_source_name = data_source_el.get('name') if data_source_el else None
+    label_field_name = label_field_el.get('name') if label_field_el else None
+    data_field_name = data_field_el.get('name') if data_field_el else None
+
+    if label_field_name:
+        label_field_name = clean_attribute_name(label_field_name)
+    if data_field_name:
+        data_field_name = clean_attribute_name(data_field_name)
+
+    # Resolve domain class and fields
+    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
+    label_field = None
+    data_field = None
+
+    if domain_class:
+        if label_field_name:
+            label_field = next((a for a in domain_class.attributes if a.name == label_field_name), None)
+        if data_field_name:
+            data_field = next((a for a in domain_class.attributes if a.name == data_field_name), None)
+
+    return domain_class, label_field, data_field
 
 
 def _attach_chart_metadata(chart, component: Dict[str, Any]) -> None:
@@ -43,30 +108,10 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
     """
     attrs = view_comp.get('attributes', {})
 
-    # Resolve data binding elements
-    data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
-    label_field_el = get_element_by_id(class_model, attrs.get('label-field'))
-    data_field_el = get_element_by_id(class_model, attrs.get('data-field'))
-
-    data_source_name = data_source_el.get('name') if data_source_el else None
-    label_field_name = label_field_el.get('name') if label_field_el else None
-    data_field_name = data_field_el.get('name') if data_field_el else None
-
-    if label_field_name:
-        label_field_name = clean_attribute_name(label_field_name)
-    if data_field_name:
-        data_field_name = clean_attribute_name(data_field_name)
-
-    # Resolve domain class and fields
-    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
-    label_field = None
-    data_field = None
-
-    if domain_class:
-        if label_field_name:
-            label_field = next((a for a in domain_class.attributes if a.name == label_field_name), None)
-        if data_field_name:
-            data_field = next((a for a in domain_class.attributes if a.name == data_field_name), None)
+    # Parse common data binding fields
+    domain_class, label_field, data_field = _parse_chart_data_binding(
+        attrs, class_model, domain_model
+    )
 
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
@@ -82,13 +127,14 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Create data binding
-    data_binding = DataBinding(
-        name=(title_value or "LineChart") + "DataBinding",
-        domain_concept=domain_class,
-        label_field=label_field,
-        data_field=data_field
-    )
+    # Create data binding (only if domain_class exists)
+    data_binding = None
+    if domain_class:
+        data_binding = DataBinding(
+            domain_concept=domain_class,
+            label_field=label_field,
+            data_field=data_field
+        )
 
     # Parse enhanced line chart properties
     line_chart = LineChart(
@@ -124,30 +170,10 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
     """
     attrs = view_comp.get('attributes', {})
 
-    # Resolve data binding elements
-    data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
-    label_field_el = get_element_by_id(class_model, attrs.get('label-field'))
-    data_field_el = get_element_by_id(class_model, attrs.get('data-field'))
-
-    data_source_name = data_source_el.get('name') if data_source_el else None
-    label_field_name = label_field_el.get('name') if label_field_el else None
-    data_field_name = data_field_el.get('name') if data_field_el else None
-
-    if label_field_name:
-        label_field_name = clean_attribute_name(label_field_name)
-    if data_field_name:
-        data_field_name = clean_attribute_name(data_field_name)
-
-    # Resolve domain class and fields
-    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
-    label_field = None
-    data_field = None
-
-    if domain_class:
-        if label_field_name:
-            label_field = next((a for a in domain_class.attributes if a.name == label_field_name), None)
-        if data_field_name:
-            data_field = next((a for a in domain_class.attributes if a.name == data_field_name), None)
+    # Parse common data binding fields
+    domain_class, label_field, data_field = _parse_chart_data_binding(
+        attrs, class_model, domain_model
+    )
 
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
@@ -163,13 +189,14 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Create data binding
-    data_binding = DataBinding(
-        name=(title_value or "BarChart") + "DataBinding",
-        domain_concept=domain_class,
-        label_field=label_field,
-        data_field=data_field
-    )
+    # Create data binding (only if domain_class exists)
+    data_binding = None
+    if domain_class:
+        data_binding = DataBinding(
+            domain_concept=domain_class,
+            label_field=label_field,
+            data_field=data_field
+        )
 
     # Parse enhanced bar chart properties
     bar_chart = BarChart(
@@ -206,30 +233,10 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
     """
     attrs = view_comp.get('attributes', {})
 
-    # Resolve data binding elements
-    data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
-    label_field_el = get_element_by_id(class_model, attrs.get('label-field'))
-    data_field_el = get_element_by_id(class_model, attrs.get('data-field'))
-
-    data_source_name = data_source_el.get('name') if data_source_el else None
-    label_field_name = label_field_el.get('name') if label_field_el else None
-    data_field_name = data_field_el.get('name') if data_field_el else None
-
-    if label_field_name:
-        label_field_name = clean_attribute_name(label_field_name)
-    if data_field_name:
-        data_field_name = clean_attribute_name(data_field_name)
-
-    # Resolve domain class and fields
-    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
-    label_field = None
-    data_field = None
-
-    if domain_class:
-        if label_field_name:
-            label_field = next((a for a in domain_class.attributes if a.name == label_field_name), None)
-        if data_field_name:
-            data_field = next((a for a in domain_class.attributes if a.name == data_field_name), None)
+    # Parse common data binding fields
+    domain_class, label_field, data_field = _parse_chart_data_binding(
+        attrs, class_model, domain_model
+    )
 
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
@@ -245,13 +252,14 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Create data binding
-    data_binding = DataBinding(
-        name=(title_value or "PieChart") + "DataBinding",
-        domain_concept=domain_class,
-        label_field=label_field,
-        data_field=data_field
-    )
+    # Create data binding (only if domain_class exists)
+    data_binding = None
+    if domain_class:
+        data_binding = DataBinding(
+            domain_concept=domain_class,
+            label_field=label_field,
+            data_field=data_field
+        )
 
     # Parse enhanced pie chart properties
     show_legend = parse_bool(attrs.get('show-legend'), True)
@@ -308,30 +316,10 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
     """
     attrs = view_comp.get('attributes', {})
 
-    # Resolve data binding elements
-    data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
-    label_field_el = get_element_by_id(class_model, attrs.get('label-field'))
-    data_field_el = get_element_by_id(class_model, attrs.get('data-field'))
-
-    data_source_name = data_source_el.get('name') if data_source_el else None
-    label_field_name = label_field_el.get('name') if label_field_el else None
-    data_field_name = data_field_el.get('name') if data_field_el else None
-
-    if label_field_name:
-        label_field_name = clean_attribute_name(label_field_name)
-    if data_field_name:
-        data_field_name = clean_attribute_name(data_field_name)
-
-    # Resolve domain class and fields
-    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
-    label_field = None
-    data_field = None
-
-    if domain_class:
-        if label_field_name:
-            label_field = next((a for a in domain_class.attributes if a.name == label_field_name), None)
-        if data_field_name:
-            data_field = next((a for a in domain_class.attributes if a.name == data_field_name), None)
+    # Parse common data binding fields
+    domain_class, label_field, data_field = _parse_chart_data_binding(
+        attrs, class_model, domain_model
+    )
 
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
@@ -347,13 +335,14 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Create data binding
-    data_binding = DataBinding(
-        name=(title_value or "RadarChart") + "DataBinding",
-        domain_concept=domain_class,
-        label_field=label_field,
-        data_field=data_field
-    )
+    # Create data binding (only if domain_class exists)
+    data_binding = None
+    if domain_class:
+        data_binding = DataBinding(
+            domain_concept=domain_class,
+            label_field=label_field,
+            data_field=data_field
+        )
 
     # Parse enhanced radar chart properties
     radar_chart = RadarChart(
@@ -388,10 +377,11 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     """
     attrs = view_comp.get('attributes', {})
 
-    # Resolve data binding elements (features = labels, values = data)
+    # For radial bar, parse using special 'features' and 'values' attrs
+    # but also check for standard fields with aggregation support
     data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
-    features_el = get_element_by_id(class_model, attrs.get('features'))
-    values_el = get_element_by_id(class_model, attrs.get('values'))
+    features_el = get_element_by_id(class_model, attrs.get('features')) or get_element_by_id(class_model, attrs.get('label-field'))
+    values_el = get_element_by_id(class_model, attrs.get('values')) or get_element_by_id(class_model, attrs.get('data-field'))
 
     data_source_name = data_source_el.get('name') if data_source_el else None
     features_name = features_el.get('name') if features_el else None
@@ -427,13 +417,14 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Create data binding
-    data_binding = DataBinding(
-        name=(title_value or "RadialBarChart") + "DataBinding",
-        domain_concept=domain_class,
-        label_field=label_field,
-        data_field=data_field
-    )
+    # Create data binding (only if domain_class exists)
+    data_binding = None
+    if domain_class:
+        data_binding = DataBinding(
+            domain_concept=domain_class,
+            label_field=label_field,
+            data_field=data_field
+        )
 
     # Parse enhanced radial bar chart properties
     radial_bar_chart = RadialBarChart(
@@ -482,3 +473,62 @@ def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
         element.styling.color.line_color = color_value
     elif isinstance(element, RadialBarChart):
         element.styling.color.bar_color = color_value
+
+
+def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> MetricCard:
+    """
+    Parse a metric card component from JSON to BUML MetricCard.
+    
+    Args:
+        view_comp: Component dictionary from GrapesJS JSON
+        class_model: Class diagram model
+        domain_model: Domain model containing classes
+        
+    Returns:
+        MetricCard instance with data binding
+    """
+    attrs = view_comp.get("attributes", {})
+    
+    # Parse basic metric card properties
+    metric_title = attrs.get('metric-title', 'Metric Title')
+    format_value = attrs.get('format', 'number')
+    value_color = attrs.get('value-color', '#2c3e50')
+    value_size = int(attrs.get('value-size', 32))
+    show_trend = parse_bool(attrs.get('show-trend'), True)
+    positive_color = attrs.get('positive-color', '#27ae60')
+    negative_color = attrs.get('negative-color', '#e74c3c')
+    
+    # Parse data binding
+    domain_class, _, data_field = _parse_chart_data_binding(attrs, class_model, domain_model)
+    
+    # Create data binding if we have a domain class
+    data_binding = None
+    if domain_class:
+        # Use sanitized name for the DataBinding
+        binding_name = sanitize_name(f"{metric_title}_binding")
+        data_binding = DataBinding(
+            name=binding_name,
+            domain_concept=domain_class,
+            label_field=None,  # Metric cards don't need label field
+            data_field=data_field,
+
+        )
+    
+    # Create metric card
+    metric_card = MetricCard(
+        name=sanitize_name(metric_title),
+        metric_title=metric_title,
+        format=format_value,
+        value_color=value_color,
+        value_size=value_size,
+        show_trend=show_trend,
+        positive_color=positive_color,
+        negative_color=negative_color,
+        title=None,
+        primary_color=value_color
+    )
+    
+    metric_card.data_binding = data_binding
+    _attach_chart_metadata(metric_card, view_comp)
+    
+    return metric_card

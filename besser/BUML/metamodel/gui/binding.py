@@ -1,37 +1,60 @@
+from enum import Enum
 from besser.BUML.metamodel.structural import Class, Property, Constraint
+from besser.BUML.metamodel.structural.structural import Element
 
-class ContentBinding:
-    """
-    Base class for content bindings in GUI elements.
-    """
-    def __init__(self):
-        pass
 
-class DataBinding(ContentBinding):
+class DataAggregation(Enum):
+    """Aggregation types for dashboard metrics and chart data."""
+    SUM = "sum"
+    AVG = "average"
+    COUNT = "count"
+    MIN = "minimum"
+    MAX = "maximum"
+    MEDIAN = "median"
+    FIRST = "first"
+    LAST = "last"
+
+
+class DataBinding(Element):
     """
     DataBinding references a domain concept (Class) to bind data to a GUI element.
     
     Args:
+        name (str, optional): Name of the data binding.
         domain_concept (Class): The domain concept to bind data from.
         visualization_attrs (Property, optional): The attribute of the GUI element to bind data to. Defaults to None.
         label_field (Property, optional): The field in the domain concept to use as a label. Defaults to None.
         data_field (Property, optional): The specific field in the domain concept to bind data from. Defaults to None.
+        data_filter (Constraint, optional): Filter constraint for the data. Defaults to None.
 
     Attributes:
+        name (str): Name of the data binding.
         domain_concept (Class): The domain concept to bind data from.
         visualization_attrs (Property): The attribute of the GUI element to bind data to.
         label_field (Property): The field in the domain concept to use as a label.
         data_field (Property): The specific field in the domain concept to bind data from.
+        data_filter (Constraint): Filter constraint for the data.
     """
-    def __init__(self, domain_concept: Class, visualization_attrs: set[Property] = None,
+    def __init__(self, domain_concept: Class, name: str = None, visualization_attrs: set[Property] = None,
                  label_field: Property = None, data_field: Property = None,
                  data_filter: Constraint = None):
         super().__init__()
+        self.name = name or f"{domain_concept.name if domain_concept else 'Unknown'}DataBinding"
         self.domain_concept = domain_concept
-        self.visualization_attrs = visualization_attrs
+        self.visualization_attrs = visualization_attrs if visualization_attrs is not None else set()
         self.label_field = label_field
         self.data_field = data_field
         self.data_filter = data_filter
+
+    @property
+    def name(self) -> str:
+        """str: Get the name."""
+        return self._name
+
+    @name.setter
+    def name(self, name: str):
+        """str: Set the name."""
+        self._name = name
 
     @property
     def domain_concept(self) -> Class:
@@ -98,4 +121,3 @@ class DataBinding(ContentBinding):
             f"DataBinding(domain_concept={self.domain_concept}, visualization_attrs={self.visualization_attrs},"
             f"label_field={self.label_field}, data_field={self.data_field}, data_filter={self.data_filter})"
         )
-

@@ -25,6 +25,7 @@ from .chart_parsers import (
     apply_chart_colors,
     parse_bar_chart,
     parse_line_chart,
+    parse_metric_card,
     parse_pie_chart,
     parse_radar_chart,
     parse_radial_bar_chart,
@@ -283,6 +284,15 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                     element.styling = styling
                 element.name = get_unique_name(component, element.name or "RadialBarChart")
                 apply_chart_colors(element, attributes)
+                attach_meta(element, meta)
+            return element
+
+        if comp_type == "metric-card":
+            element = parse_metric_card(component, class_model, domain_model)
+            if element:
+                if styling:  # Only assign if styling exists
+                    element.styling = styling
+                element.name = get_unique_name(component, element.name or "MetricCard")
                 attach_meta(element, meta)
             return element
 

@@ -770,6 +770,152 @@ class RadialBarChart(Chart):
             f"end_angle={self.end_angle}, inner_radius={self.inner_radius})"
         )
 
+class MetricCard(ViewComponent):
+    """Represents a metric card / KPI card component in the dashboard.
+    
+    Args:
+        name (str): The name of the metric card.
+        metric_title (str): The title displayed on the metric card.
+        format (str): The format for displaying the value ('number', 'currency', 'percentage', 'time').
+        value_color (str): The color of the value text.
+        value_size (int): The font size of the value text.
+        show_trend (bool): Whether to show the trend indicator.
+        positive_color (str): Color for positive trends.
+        negative_color (str): Color for negative trends.
+        title (str | None): Optional title for the metric card container.
+        primary_color (str | None): Optional primary color.
+    
+    Attributes:
+        metric_title (str): The title displayed on the metric card.
+        format (str): The format for displaying the value.
+        value_color (str): The color of the value text.
+        value_size (int): The font size of the value text.
+        show_trend (bool): Whether to show the trend indicator.
+        positive_color (str): Color for positive trends.
+        negative_color (str): Color for negative trends.
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        metric_title: str = "Metric Title",
+        format: str = "number",
+        value_color: str = "#2c3e50",
+        value_size: int = 32,
+        show_trend: bool = True,
+        positive_color: str = "#27ae60",
+        negative_color: str = "#e74c3c",
+        title: Optional[str] = None,
+        primary_color: Optional[str] = None,
+        **kwargs,
+    ):
+        super().__init__(name, **kwargs)
+        self.metric_title = metric_title
+        self.format = format
+        self.value_color = value_color
+        self.value_size = value_size
+        self.show_trend = show_trend
+        self.positive_color = positive_color
+        self.negative_color = negative_color
+        self.title = title
+        self.primary_color = primary_color
+    
+    @property
+    def metric_title(self) -> str:
+        """Property: Get the metric title."""
+        return self._metric_title
+    
+    @metric_title.setter
+    def metric_title(self, value: str):
+        """Property: Set the metric title."""
+        self._metric_title = value
+    
+    @property
+    def format(self) -> str:
+        """Property: Get the display format."""
+        return self._format
+    
+    @format.setter
+    def format(self, value: str):
+        """Property: Set the display format."""
+        self._format = value
+    
+    @property
+    def value_color(self) -> str:
+        """Property: Get the value color."""
+        return self._value_color
+    
+    @value_color.setter
+    def value_color(self, value: str):
+        """Property: Set the value color."""
+        self._value_color = value
+    
+    @property
+    def value_size(self) -> int:
+        """Property: Get the value font size."""
+        return self._value_size
+    
+    @value_size.setter
+    def value_size(self, value: int):
+        """Property: Set the value font size."""
+        self._value_size = value
+    
+    @property
+    def show_trend(self) -> bool:
+        """Property: Get whether to show trend."""
+        return self._show_trend
+    
+    @show_trend.setter
+    def show_trend(self, value: bool):
+        """Property: Set whether to show trend."""
+        self._show_trend = value
+    
+    @property
+    def positive_color(self) -> str:
+        """Property: Get the positive trend color."""
+        return self._positive_color
+    
+    @positive_color.setter
+    def positive_color(self, value: str):
+        """Property: Set the positive trend color."""
+        self._positive_color = value
+    
+    @property
+    def negative_color(self) -> str:
+        """Property: Get the negative trend color."""
+        return self._negative_color
+    
+    @negative_color.setter
+    def negative_color(self, value: str):
+        """Property: Set the negative trend color."""
+        self._negative_color = value
+    
+    @property
+    def title(self) -> Optional[str]:
+        """Optional[str]: Optional title for the metric card container."""
+        return self._title
+    
+    @title.setter
+    def title(self, value: Optional[str]):
+        """Property: Set the title."""
+        self._title = value
+    
+    @property
+    def primary_color(self) -> Optional[str]:
+        """Optional[str]: Optional primary color."""
+        return self._primary_color
+    
+    @primary_color.setter
+    def primary_color(self, value: Optional[str]):
+        """Property: Set the primary color."""
+        self._primary_color = value
+    
+    def __repr__(self):
+        return (
+            f"MetricCard(name={self.name}, metric_title={self.metric_title}, "
+            f"format={self.format}, show_trend={self.show_trend})"
+        )
+
 class Map(ViewComponent):
     """Represents a map component in the dashboard.
 

@@ -28,6 +28,7 @@ from besser.BUML.metamodel.gui import (
 from besser.BUML.metamodel.gui.dashboard import (
     BarChart,
     LineChart,
+    MetricCard,
     PieChart,
     RadarChart,
     RadialBarChart,
@@ -463,6 +464,21 @@ class ReactGenerator(GeneratorInterface):
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
 
+        if isinstance(element, MetricCard):
+            node["title"] = element.metric_title or self._humanize(element.name)
+            node["metric"] = self._clean_dict(
+                {
+                    "metricTitle": element.metric_title,
+                    "format": element.format,
+                    "valueColor": element.value_color,
+                    "valueSize": element.value_size,
+                    "showTrend": element.show_trend,
+                    "positiveColor": element.positive_color,
+                    "negativeColor": element.negative_color,
+                }
+            )
+            node["color"] = element.primary_color or element.value_color or "#2c3e50"
+
         binding_data = self._serialize_data_binding(getattr(element, "data_binding", None))
         if binding_data:
             node["data_binding"] = binding_data
@@ -537,6 +553,8 @@ class ReactGenerator(GeneratorInterface):
         domain = getattr(binding, "domain_concept", None)
         label_field = getattr(binding, "label_field", None)
         data_field = getattr(binding, "data_field", None)
+        data_filter = getattr(binding, "data_filter", None)
+        
         endpoint = None
         if domain and getattr(domain, "name", None):
             endpoint = f"/{domain.name.lower()}/"
@@ -547,6 +565,7 @@ class ReactGenerator(GeneratorInterface):
                 "endpoint": endpoint,
                 "label_field": getattr(label_field, "name", None),
                 "data_field": getattr(data_field, "name", None),
+                "filter": str(data_filter) if data_filter else None,
             }
         )
 
@@ -839,6 +858,8 @@ class ReactGenerator(GeneratorInterface):
             return "radar-chart"
         if isinstance(element, RadialBarChart):
             return "radial-bar-chart"
+        if isinstance(element, MetricCard):
+            return "metric-card"
         return "component"
 
     @staticmethod

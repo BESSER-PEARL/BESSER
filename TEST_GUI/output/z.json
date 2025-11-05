@@ -1,65 +1,65 @@
 {
   "project": {
-    "id": "af5eaece-26a6-4c73-84ca-2e67db87ce4a",
+    "id": "8cb6c609-23cf-4f96-98af-b5686d2b9c21",
     "type": "Project",
-    "name": "ss",
+    "name": "468",
     "description": "New project",
     "owner": "User",
-    "createdAt": "2025-11-04T16:34:00.387Z",
+    "createdAt": "2025-11-05T13:13:11.108Z",
     "currentDiagramType": "ClassDiagram",
     "diagrams": {
       "ClassDiagram": {
-        "id": "03c771c3-453f-44ee-9cc5-b7d887f5615d",
+        "id": "d487c31c-be76-4f53-870f-5ccfe2f1407a",
         "title": "Class Diagram",
         "model": {
           "version": "3.0.0",
           "type": "ClassDiagram",
           "size": {
-            "width": 500,
-            "height": 720
+            "width": 1080,
+            "height": 620
           },
           "interactive": {
             "elements": {},
             "relationships": {}
           },
           "elements": {
-            "d1dbf7eb-4792-467e-82ce-b36aab94145d": {
-              "id": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
-              "name": "Count",
+            "a87eb810-2e0a-492b-8cd3-62251566f648": {
+              "id": "a87eb810-2e0a-492b-8cd3-62251566f648",
+              "name": "Counter",
               "type": "Class",
               "owner": null,
               "bounds": {
-                "x": -230,
-                "y": -340,
+                "x": -520,
+                "y": -290,
                 "width": 160,
                 "height": 100
               },
               "attributes": [
-                "badb769f-ec24-4c30-afdc-79ddae20b58d",
-                "0680976e-c20d-4899-ab11-b1e99385548e"
+                "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc"
               ],
               "methods": []
             },
-            "badb769f-ec24-4c30-afdc-79ddae20b58d": {
-              "id": "badb769f-ec24-4c30-afdc-79ddae20b58d",
-              "name": "+ attribute: str",
+            "f63380b5-ccf8-448a-bb82-70d62d61442e": {
+              "id": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+              "name": "+ label: str",
               "type": "ClassAttribute",
-              "owner": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
+              "owner": "a87eb810-2e0a-492b-8cd3-62251566f648",
               "bounds": {
-                "x": -229.5,
-                "y": -299.5,
+                "x": -519.5,
+                "y": -249.5,
                 "width": 159,
                 "height": 30
               }
             },
-            "0680976e-c20d-4899-ab11-b1e99385548e": {
-              "id": "0680976e-c20d-4899-ab11-b1e99385548e",
-              "name": "+ value : int",
+            "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc": {
+              "id": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+              "name": "+ value: str",
               "type": "ClassAttribute",
-              "owner": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
+              "owner": "a87eb810-2e0a-492b-8cd3-62251566f648",
               "bounds": {
-                "x": -229.5,
-                "y": -269.5,
+                "x": -519.5,
+                "y": -219.5,
                 "width": 159,
                 "height": 30
               }
@@ -68,10 +68,10 @@
           "relationships": {},
           "assessments": {}
         },
-        "lastUpdate": "2025-11-04T16:34:19.378Z"
+        "lastUpdate": "2025-11-05T13:13:49.787Z"
       },
       "ObjectDiagram": {
-        "id": "12f59377-c807-44c6-af4c-173e730fe828",
+        "id": "42c303fa-87df-4f83-84d7-da04679e0728",
         "title": "Object Diagram",
         "model": {
           "version": "3.0.0",
@@ -88,10 +88,10 @@
           },
           "assessments": {}
         },
-        "lastUpdate": "2025-11-04T16:34:00.387Z"
+        "lastUpdate": "2025-11-05T13:13:11.108Z"
       },
       "StateMachineDiagram": {
-        "id": "881a8440-8084-484e-b389-1ee3da775b32",
+        "id": "7f1be92b-4a2e-4bf6-a33c-0ab30334cb91",
         "title": "State Machine Diagram",
         "model": {
           "version": "3.0.0",
@@ -108,10 +108,10 @@
           },
           "assessments": {}
         },
-        "lastUpdate": "2025-11-04T16:34:00.387Z"
+        "lastUpdate": "2025-11-05T13:13:11.108Z"
       },
       "AgentDiagram": {
-        "id": "fdde4495-87c6-4b3c-b871-b3f924dfe303",
+        "id": "1149a228-9df1-4e14-a63f-1c689d5b2383",
         "title": "Agent Diagram",
         "model": {
           "version": "3.0.0",
@@ -128,10 +128,10 @@
           },
           "assessments": {}
         },
-        "lastUpdate": "2025-11-04T16:34:00.387Z"
+        "lastUpdate": "2025-11-05T13:13:11.108Z"
       },
       "GUINoCodeDiagram": {
-        "id": "4779d06c-0f01-4983-9433-879ff2ba817f",
+        "id": "9c87bc4b-ca63-4d72-a280-3f9fe0a204c0",
         "title": "GUI Diagram",
         "model": {
           "pages": [
@@ -150,38 +150,60 @@
                       "background-position",
                       "background-size"
                     ],
-                    "attributes": {
-                      "id": "i9vb"
-                    },
                     "components": [
+                      {
+                        "tagName": "meta",
+                        "void": true,
+                        "attributes": {
+                          "charset": "utf-8"
+                        }
+                      },
+                      {
+                        "tagName": "meta",
+                        "void": true,
+                        "attributes": {
+                          "name": "viewport",
+                          "content": "width=device-width, initial-scale=1"
+                        }
+                      },
+                      {
+                        "tagName": "title",
+                        "type": "text",
+                        "components": [
+                          {
+                            "type": "textnode",
+                            "content": "BESSER Generated Page"
+                          }
+                        ]
+                      },
                       {
                         "tagName": "nav",
                         "attributes": {
-                          "id": "i4sm"
+                          "id": "i5jh"
                         },
                         "components": [
                           {
                             "type": "text",
                             "attributes": {
-                              "id": "ifh3"
+                              "id": "io07"
                             },
                             "components": [
                               {
                                 "type": "textnode",
-                                "content": "Logo"
+                                "content": "BESSER"
                               }
                             ]
                           },
                           {
                             "attributes": {
-                              "id": "ijc9"
+                              "id": "inp2m"
                             },
                             "components": [
                               {
                                 "type": "link",
                                 "attributes": {
                                   "href": "/",
-                                  "id": "imub"
+                                  "id": "ibtww"
                                 },
                                 "components": [
                                   {
@@ -194,38 +216,12 @@
                                 "type": "link",
                                 "attributes": {
                                   "href": "/about",
-                                  "id": "ixv3d"
+                                  "id": "ild7j"
                                 },
                                 "components": [
                                   {
                                     "type": "textnode",
                                     "content": "About"
-                                  }
-                                ]
-                              },
-                              {
-                                "type": "link",
-                                "attributes": {
-                                  "href": "#",
-                                  "id": "i6pk5"
-                                },
-                                "components": [
-                                  {
-                                    "type": "textnode",
-                                    "content": "Services"
-                                  }
-                                ]
-                              },
-                              {
-                                "type": "link",
-                                "attributes": {
-                                  "href": "/contact",
-                                  "id": "iz6f6"
-                                },
-                                "components": [
-                                  {
-                                    "type": "textnode",
-                                    "content": "Contact"
                                   }
                                 ]
                               }
@@ -234,18 +230,6 @@
                         ]
                       },
                       {
-                        "name": "Row",
-                        "droppable": ".gjs-cell",
-                        "resizable": {
-                          "tl": 0,
-                          "tc": 0,
-                          "tr": 0,
-                          "cl": 0,
-                          "cr": 0,
-                          "bl": 0,
-                          "br": 0,
-                          "minDim": 1
-                        },
                         "classes": [
                           {
                             "name": "gjs-row",
@@ -253,31 +237,19 @@
                           }
                         ],
                         "attributes": {
-                          "id": "izmfj"
+                          "id": "iiqx6"
                         },
                         "components": [
                           {
-                            "name": "Cell",
-                            "draggable": ".gjs-row",
-                            "resizable": {
-                              "tl": 0,
-                              "tc": 0,
-                              "tr": 0,
-                              "cl": 0,
-                              "cr": 1,
-                              "bl": 0,
-                              "br": 0,
-                              "minDim": 1,
-                              "bc": 0,
-                              "currentUnit": 1,
-                              "step": 0.2
-                            },
                             "classes": [
                               {
                                 "name": "gjs-cell",
                                 "private": 1
                               }
                             ],
+                            "attributes": {
+                              "id": "ifczf"
+                            },
                             "components": [
                               {
                                 "type": "line-chart",
@@ -287,105 +259,76 @@
                                   "has-data-binding"
                                 ],
                                 "attributes": {
-                                  "chart-color": "#ff0606",
+                                  "chart-color": "#4CAF50",
                                   "chart-title": "Line Chart Title",
-                                  "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
-                                  "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
-                                  "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
-                                  "line-width": 2,
-                                  "show-grid": true,
-                                  "show-legend": true,
-                                  "show-tooltip": true,
+                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                  "line-width": "2",
+                                  "show-grid": "",
+                                  "show-legend": "",
+                                  "show-tooltip": "",
                                   "curve-type": "monotone",
-                                  "animate": true,
-                                  "id": "i7m71"
+                                  "animate": "",
+                                  "id": "i72zk"
                                 },
-                                "chart-color": "#ff0606",
+                                "chart-color": "#4CAF50",
                                 "chart-title": "Line Chart Title",
-                                "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
-                                "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
-                                "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
-                                "line-width": 2,
-                                "show-grid": true,
-                                "show-legend": true,
-                                "show-tooltip": true,
+                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                "line-width": "2",
+                                "show-grid": "",
+                                "show-legend": "",
+                                "show-tooltip": "",
                                 "curve-type": "monotone",
-                                "animate": true
+                                "animate": ""
                               }
                             ]
                           },
                           {
-                            "name": "Cell",
-                            "draggable": ".gjs-row",
-                            "resizable": {
-                              "tl": 0,
-                              "tc": 0,
-                              "tr": 0,
-                              "cl": 0,
-                              "cr": 1,
-                              "bl": 0,
-                              "br": 0,
-                              "minDim": 1,
-                              "bc": 0,
-                              "currentUnit": 1,
-                              "step": 0.2
-                            },
                             "classes": [
                               {
                                 "name": "gjs-cell",
                                 "private": 1
                               }
                             ],
+                            "attributes": {
+                              "id": "iz1hy"
+                            },
                             "components": [
                               {
-                                "type": "bar-chart",
+                                "type": "pie-chart",
                                 "style": "",
                                 "classes": [
-                                  "bar-chart-component",
+                                  "pie-chart-component",
                                   "has-data-binding"
                                 ],
                                 "attributes": {
-                                  "chart-color": "#db34d2",
-                                  "chart-title": "Bar Chart Title",
-                                  "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
-                                  "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
-                                  "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
-                                  "bar-width": 30,
-                                  "orientation": "vertical",
-                                  "show-grid": true,
-                                  "show-legend": true,
-                                  "stacked": false,
-                                  "id": "iia8n"
+                                  "chart-title": "Pie Chart Title",
+                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                  "show-legend": "",
+                                  "legend-position": "bottom",
+                                  "show-labels": "",
+                                  "label-position": "inside",
+                                  "padding-angle": "0",
+                                  "id": "i8fz6"
                                 },
-                                "chart-color": "#db34d2",
-                                "chart-title": "Bar Chart Title",
-                                "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
-                                "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
-                                "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
-                                "bar-width": 30,
-                                "orientation": "vertical",
-                                "show-grid": true,
-                                "show-legend": true,
-                                "stacked": false
+                                "chart-title": "Pie Chart Title",
+                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                "show-legend": "",
+                                "legend-position": "bottom",
+                                "show-labels": "",
+                                "label-position": "inside",
+                                "padding-angle": "0"
                               }
                             ]
                           },
                           {
-                            "name": "Cell",
-                            "draggable": ".gjs-row",
-                            "resizable": {
-                              "tl": 0,
-                              "tc": 0,
-                              "tr": 0,
-                              "cl": 0,
-                              "cr": 1,
-                              "bl": 0,
-                              "br": 0,
-                              "minDim": 1,
-                              "bc": 0,
-                              "currentUnit": 1,
-                              "step": 0.2
-                            },
                             "classes": [
                               {
                                 "name": "gjs-cell",
@@ -403,276 +346,325 @@
                                 "attributes": {
                                   "chart-color": "#8884d8",
                                   "chart-title": "Radar Chart Title",
-                                  "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
-                                  "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
-                                  "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
-                                  "show-grid": true,
-                                  "show-tooltip": true,
-                                  "show-radius-axis": true,
-                                  "id": "i3d3h"
+                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                  "show-grid": "",
+                                  "show-tooltip": "",
+                                  "show-radius-axis": "",
+                                  "id": "id9ne"
                                 },
                                 "chart-color": "#8884d8",
                                 "chart-title": "Radar Chart Title",
-                                "data-source": "d1dbf7eb-4792-467e-82ce-b36aab94145d",
-                                "label-field": "badb769f-ec24-4c30-afdc-79ddae20b58d",
-                                "data-field": "0680976e-c20d-4899-ab11-b1e99385548e",
-                                "show-grid": true,
-                                "show-tooltip": true,
-                                "show-radius-axis": true
+                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                "show-grid": "",
+                                "show-tooltip": "",
+                                "show-radius-axis": ""
                               }
                             ]
                           }
                         ]
                       },
                       {
-                        "tagName": "section",
+                        "classes": [
+                          {
+                            "name": "gjs-row",
+                            "private": 1
+                          }
+                        ],
                         "attributes": {
-                          "id": "imt5g"
+                          "id": "is6fi"
                         },
                         "components": [
                           {
+                            "classes": [
+                              {
+                                "name": "gjs-cell",
+                                "private": 1
+                              }
+                            ],
                             "attributes": {
-                              "id": "ibfd5"
+                              "id": "i2lt6"
                             },
                             "components": [
                               {
-                                "tagName": "h2",
-                                "type": "text",
+                                "type": "bar-chart",
+                                "style": "",
+                                "classes": [
+                                  "bar-chart-component",
+                                  "has-data-binding"
+                                ],
                                 "attributes": {
-                                  "id": "irv6i"
+                                  "chart-color": "#3498db",
+                                  "chart-title": "Bar Chart Title",
+                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                  "bar-width": "30",
+                                  "orientation": "vertical",
+                                  "show-grid": "",
+                                  "show-legend": "",
+                                  "stacked": false,
+                                  "id": "iy0gc"
                                 },
-                                "components": [
-                                  {
-                                    "type": "textnode",
-                                    "content": "Ready to Get Started?"
-                                  }
-                                ]
-                              },
+                                "chart-color": "#3498db",
+                                "chart-title": "Bar Chart Title",
+                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                "bar-width": "30",
+                                "orientation": "vertical",
+                                "show-grid": "",
+                                "show-legend": "",
+                                "stacked": false
+                              }
+                            ]
+                          },
+                          {
+                            "classes": [
                               {
-                                "tagName": "p",
-                                "type": "text",
-                                "attributes": {
-                                  "id": "iznz9"
-                                },
-                                "components": [
-                                  {
-                                    "type": "textnode",
-                                    "content": "Join thousands of satisfied customers and take your business to the next level."
-                                  }
-                                ]
-                              },
+                                "name": "gjs-cell",
+                                "private": 1
+                              }
+                            ],
+                            "attributes": {
+                              "id": "igud3"
+                            },
+                            "components": [
                               {
+                                "type": "radial-bar-chart",
+                                "style": "",
+                                "classes": [
+                                  "radial-bar-chart-component",
+                                  "has-data-binding"
+                                ],
                                 "attributes": {
-                                  "id": "i9fuo"
+                                  "chart-title": "Radial Bar Chart Title",
+                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                  "start-angle": "90",
+                                  "end-angle": "450",
+                                  "id": "ig59l"
                                 },
-                                "components": [
-                                  {
-                                    "type": "button",
-                                    "attributes": {
-                                      "type": "button",
-                                      "id": "i27yo"
-                                    },
-                                    "text": "Start Free Trial",
-                                    "components": [
-                                      {
-                                        "type": "textnode",
-                                        "content": "Start Free Trial"
-                                      }
-                                    ]
-                                  },
-                                  {
-                                    "type": "button",
-                                    "attributes": {
-                                      "type": "button",
-                                      "id": "ig59s"
-                                    },
-                                    "text": "Learssn More",
-                                    "components": [
-                                      {
-                                        "type": "textnode",
-                                        "content": "Learssn More"
-                                      }
-                                    ]
-                                  }
-                                ]
+                                "chart-title": "Radial Bar Chart Title",
+                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                "start-angle": "90",
+                                "end-angle": "450"
+                              }
+                            ]
+                          },
+                          {
+                            "classes": [
+                              {
+                                "name": "gjs-cell",
+                                "private": 1
+                              }
+                            ],
+                            "components": [
+                              {
+                                "type": "line-chart",
+                                "style": "",
+                                "classes": [
+                                  "line-chart-component",
+                                  "has-data-binding"
+                                ],
+                                "attributes": {
+                                  "chart-color": "#4CAF50",
+                                  "chart-title": "Line Chart Title",
+                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                  "line-width": "2",
+                                  "show-grid": "",
+                                  "show-legend": "",
+                                  "show-tooltip": "",
+                                  "curve-type": "monotone",
+                                  "animate": "",
+                                  "id": "i4f21"
+                                },
+                                "chart-color": "#4CAF50",
+                                "chart-title": "Line Chart Title",
+                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
+                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
+                                "line-width": "2",
+                                "show-grid": "",
+                                "show-legend": "",
+                                "show-tooltip": "",
+                                "curve-type": "monotone",
+                                "animate": ""
                               }
                             ]
                           }
                         ]
                       },
                       {
-                        "tagName": "section",
+                        "tagName": "footer",
                         "attributes": {
-                          "id": "ibuph"
+                          "id": "ictst"
                         },
                         "components": [
                           {
                             "attributes": {
-                              "id": "imbe6"
+                              "id": "i8uhg"
                             },
                             "components": [
                               {
-                                "tagName": "h2",
-                                "type": "text",
-                                "attributes": {
-                                  "id": "i9ijl"
-                                },
                                 "components": [
                                   {
-                                    "type": "textnode",
-                                    "content": "Our Features"
+                                    "tagName": "h4",
+                                    "type": "text",
+                                    "attributes": {
+                                      "id": "i3p8x"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "textnode",
+                                        "content": "About BESSER"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "tagName": "p",
+                                    "type": "text",
+                                    "attributes": {
+                                      "id": "i9x6g"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "textnode",
+                                        "content": "BESSER is a low-code platform for building smarter software faster. Empower your development with our dashboard generator and modeling tools."
+                                      }
+                                    ]
                                   }
                                 ]
                               },
                               {
-                                "attributes": {
-                                  "id": "iexvq"
-                                },
                                 "components": [
                                   {
-                                    "type": "comment",
-                                    "content": " Feature 1 "
-                                  },
-                                  {
+                                    "tagName": "h4",
+                                    "type": "text",
                                     "attributes": {
-                                      "id": "i94zd"
+                                      "id": "iybmm"
                                     },
                                     "components": [
                                       {
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "ijti8"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "🚀"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "tagName": "h3",
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "izgub"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Fast Performance"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "tagName": "p",
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "iuq7f"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Lightning-fast loading times and smooth interactions for the best user experience."
-                                          }
-                                        ]
+                                        "type": "textnode",
+                                        "content": "Quick Links"
                                       }
                                     ]
                                   },
                                   {
-                                    "type": "comment",
-                                    "content": " Feature 2 "
-                                  },
-                                  {
+                                    "tagName": "ul",
                                     "attributes": {
-                                      "id": "i2pjk"
+                                      "id": "im0xi"
                                     },
                                     "components": [
                                       {
-                                        "type": "text",
+                                        "tagName": "li",
                                         "attributes": {
-                                          "id": "isprs"
+                                          "id": "ichrl"
                                         },
                                         "components": [
                                           {
-                                            "type": "textnode",
-                                            "content": "🔒"
+                                            "type": "link",
+                                            "attributes": {
+                                              "href": "#",
+                                              "id": "i0wq2"
+                                            },
+                                            "components": [
+                                              {
+                                                "type": "textnode",
+                                                "content": "Dashboard Generator"
+                                              }
+                                            ]
                                           }
                                         ]
                                       },
                                       {
-                                        "tagName": "h3",
-                                        "type": "text",
+                                        "tagName": "li",
                                         "attributes": {
-                                          "id": "i97zg"
+                                          "id": "ixtnt"
                                         },
                                         "components": [
                                           {
-                                            "type": "textnode",
-                                            "content": "Secure & Safe"
+                                            "type": "link",
+                                            "attributes": {
+                                              "href": "#",
+                                              "id": "i2f1j"
+                                            },
+                                            "components": [
+                                              {
+                                                "type": "textnode",
+                                                "content": "API Reference"
+                                              }
+                                            ]
                                           }
                                         ]
                                       },
                                       {
-                                        "tagName": "p",
-                                        "type": "text",
+                                        "tagName": "li",
                                         "attributes": {
-                                          "id": "im3io"
+                                          "id": "irxsn"
                                         },
                                         "components": [
                                           {
-                                            "type": "textnode",
-                                            "content": "Enterprise-grade security to protect your data and ensure privacy."
+                                            "type": "link",
+                                            "attributes": {
+                                              "href": "#",
+                                              "id": "inu9a"
+                                            },
+                                            "components": [
+                                              {
+                                                "type": "textnode",
+                                                "content": "Support"
+                                              }
+                                            ]
                                           }
                                         ]
                                       }
                                     ]
-                                  },
+                                  }
+                                ]
+                              },
+                              {
+                                "components": [
                                   {
-                                    "type": "comment",
-                                    "content": " Feature 3 "
-                                  },
-                                  {
+                                    "tagName": "h4",
+                                    "type": "text",
                                     "attributes": {
-                                      "id": "i9z3l"
+                                      "id": "igd5a"
                                     },
                                     "components": [
                                       {
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "i3ee7"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "📱"
-                                          }
-                                        ]
+                                        "type": "textnode",
+                                        "content": "Contact"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "tagName": "p",
+                                    "type": "text",
+                                    "attributes": {
+                                      "id": "itmu2"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "textnode",
+                                        "content": "Email: info@besser-pearl.org"
                                       },
                                       {
-                                        "tagName": "h3",
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "itkgh"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Responsive Design"
-                                          }
-                                        ]
+                                        "tagName": "br",
+                                        "void": true
                                       },
                                       {
-                                        "tagName": "p",
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "i5pal"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Works perfectly on all devices - desktop, tablet, and mobile."
-                                          }
-                                        ]
+                                        "type": "textnode",
+                                        "content": "Phone: (123) 456-7890"
                                       }
                                     ]
                                   }
@@ -681,185 +673,14 @@
                             ]
                           },
                           {
-                            "tagName": "footer",
+                            "type": "text",
                             "attributes": {
-                              "id": "irj9h"
+                              "id": "iph4d"
                             },
                             "components": [
                               {
-                                "attributes": {
-                                  "id": "i2m8v"
-                                },
-                                "components": [
-                                  {
-                                    "components": [
-                                      {
-                                        "tagName": "h4",
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "i28pk"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "About Us"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "tagName": "p",
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "imfbl"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Your company description goes here."
-                                          }
-                                        ]
-                                      }
-                                    ]
-                                  },
-                                  {
-                                    "components": [
-                                      {
-                                        "tagName": "h4",
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "ivkxw"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Quick Links"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "tagName": "ul",
-                                        "attributes": {
-                                          "id": "iv1e6"
-                                        },
-                                        "components": [
-                                          {
-                                            "tagName": "li",
-                                            "attributes": {
-                                              "id": "ihzg1"
-                                            },
-                                            "components": [
-                                              {
-                                                "type": "link",
-                                                "attributes": {
-                                                  "href": "#",
-                                                  "id": "iwmx6"
-                                                },
-                                                "components": [
-                                                  {
-                                                    "type": "textnode",
-                                                    "content": "Home"
-                                                  }
-                                                ]
-                                              }
-                                            ]
-                                          },
-                                          {
-                                            "tagName": "li",
-                                            "attributes": {
-                                              "id": "i9bhy"
-                                            },
-                                            "components": [
-                                              {
-                                                "type": "link",
-                                                "attributes": {
-                                                  "href": "#",
-                                                  "id": "i2nrg"
-                                                },
-                                                "components": [
-                                                  {
-                                                    "type": "textnode",
-                                                    "content": "Services"
-                                                  }
-                                                ]
-                                              }
-                                            ]
-                                          },
-                                          {
-                                            "tagName": "li",
-                                            "attributes": {
-                                              "id": "ihdhf"
-                                            },
-                                            "components": [
-                                              {
-                                                "type": "link",
-                                                "attributes": {
-                                                  "href": "#",
-                                                  "id": "isffb"
-                                                },
-                                                "components": [
-                                                  {
-                                                    "type": "textnode",
-                                                    "content": "Contact"
-                                                  }
-                                                ]
-                                              }
-                                            ]
-                                          }
-                                        ]
-                                      }
-                                    ]
-                                  },
-                                  {
-                                    "components": [
-                                      {
-                                        "tagName": "h4",
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "imt95"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Contact"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "tagName": "p",
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "iimpc"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Email: info@example.com"
-                                          },
-                                          {
-                                            "tagName": "br",
-                                            "void": true
-                                          },
-                                          {
-                                            "type": "textnode",
-                                            "content": "Phone: (123) 456-7890"
-                                          }
-                                        ]
-                                      }
-                                    ]
-                                  }
-                                ]
-                              },
-                              {
-                                "type": "text",
-                                "attributes": {
-                                  "id": "ibyqn"
-                                },
-                                "components": [
-                                  {
-                                    "type": "textnode",
-                                    "content": "\n          © 2025 Your Company. All rights reserved.\n        "
-                                  }
-                                ]
+                                "type": "textnode",
+                                "content": "\n          © 2025 BESSER. All rights reserved.\n        "
                               }
                             ]
                           }
@@ -873,13 +694,13 @@
                       "tagName": "html"
                     }
                   },
-                  "id": "gqUXVygnpBbFnDnb"
+                  "id": "5NNAwALRgy9L45y5"
                 }
               ],
-              "id": "PGkfAwt8hu7jL4s9"
+              "id": "yXWXAvEmfeStNpkm"
             },
             {
-              "name": "about",
+              "name": "About",
               "frames": [
                 {
                   "component": {
@@ -893,38 +714,65 @@
                       "background-position",
                       "background-size"
                     ],
-                    "attributes": {
-                      "id": "ixlmh"
-                    },
                     "components": [
+                      {
+                        "tagName": "meta",
+                        "void": true,
+                        "attributes": {
+                          "charset": "utf-8"
+                        }
+                      },
+                      {
+                        "tagName": "meta",
+                        "void": true,
+                        "attributes": {
+                          "name": "viewport",
+                          "content": "width=device-width, initial-scale=1"
+                        }
+                      },
+                      {
+                        "tagName": "meta",
+                        "void": true,
+                        "attributes": {
+                          "charset": "utf-8"
+                        }
+                      },
+                      {
+                        "tagName": "meta",
+                        "void": true,
+                        "attributes": {
+                          "name": "viewport",
+                          "content": "width=device-width, initial-scale=1"
+                        }
+                      },
                       {
                         "tagName": "nav",
                         "attributes": {
-                          "id": "ifihk"
+                          "id": "i5jh-2"
                         },
                         "components": [
                           {
                             "type": "text",
                             "attributes": {
-                              "id": "i9yqn"
+                              "id": "io07-2"
                             },
                             "components": [
                               {
                                 "type": "textnode",
-                                "content": "Logo"
+                                "content": "BESSER"
                               }
                             ]
                           },
                           {
                             "attributes": {
-                              "id": "iuj7h"
+                              "id": "inp2m-2"
                             },
                             "components": [
                               {
                                 "type": "link",
                                 "attributes": {
-                                  "href": "#",
-                                  "id": "ieeso"
+                                  "href": "/",
+                                  "id": "ibtww-2"
                                 },
                                 "components": [
                                   {
@@ -936,39 +784,13 @@
                               {
                                 "type": "link",
                                 "attributes": {
-                                  "href": "#",
-                                  "id": "iu4wsh"
+                                  "href": "/about",
+                                  "id": "ild7j-2"
                                 },
                                 "components": [
                                   {
                                     "type": "textnode",
                                     "content": "About"
-                                  }
-                                ]
-                              },
-                              {
-                                "type": "link",
-                                "attributes": {
-                                  "href": "#",
-                                  "id": "i1t83h"
-                                },
-                                "components": [
-                                  {
-                                    "type": "textnode",
-                                    "content": "Services"
-                                  }
-                                ]
-                              },
-                              {
-                                "type": "link",
-                                "attributes": {
-                                  "href": "#",
-                                  "id": "ia0taw"
-                                },
-                                "components": [
-                                  {
-                                    "type": "textnode",
-                                    "content": "Contact"
                                   }
                                 ]
                               }
@@ -979,19 +801,93 @@
                       {
                         "tagName": "section",
                         "attributes": {
-                          "id": "igf89k"
+                          "id": "ihhucw"
                         },
                         "components": [
                           {
                             "attributes": {
-                              "id": "ip47kp"
+                              "id": "izn0d4"
                             },
                             "components": [
                               {
                                 "tagName": "h2",
                                 "type": "text",
                                 "attributes": {
-                                  "id": "iwr92g"
+                                  "id": "iarech"
+                                },
+                                "components": [
+                                  {
+                                    "type": "textnode",
+                                    "content": "Build Smarter Dashboards Faster with BESSER"
+                                  }
+                                ]
+                              },
+                              {
+                                "tagName": "p",
+                                "type": "text",
+                                "attributes": {
+                                  "id": "iznkht"
+                                },
+                                "components": [
+                                  {
+                                    "type": "textnode",
+                                    "content": "Create interactive dashboards effortlessly and streamline your workflow with BESSER's low-code platform."
+                                  }
+                                ]
+                              },
+                              {
+                                "attributes": {
+                                  "id": "i45e9h"
+                                },
+                                "components": [
+                                  {
+                                    "tagName": "button",
+                                    "type": "text",
+                                    "attributes": {
+                                      "id": "i6qufd"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "textnode",
+                                        "content": "Try Dashboard Generator"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "tagName": "button",
+                                    "type": "text",
+                                    "attributes": {
+                                      "id": "ih7y3i"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "textnode",
+                                        "content": "Explore Features"
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      },
+                      {
+                        "tagName": "section",
+                        "attributes": {
+                          "id": "i94ykd"
+                        },
+                        "components": [
+                          {
+                            "attributes": {
+                              "id": "imjpfb"
+                            },
+                            "components": [
+                              {
+                                "tagName": "h2",
+                                "type": "text",
+                                "attributes": {
+                                  "id": "ixhdf8"
                                 },
                                 "components": [
                                   {
@@ -1002,7 +898,7 @@
                               },
                               {
                                 "attributes": {
-                                  "id": "iukzqn"
+                                  "id": "ifzwsk"
                                 },
                                 "components": [
                                   {
@@ -1011,13 +907,13 @@
                                   },
                                   {
                                     "attributes": {
-                                      "id": "imb08m"
+                                      "id": "ilfh9s"
                                     },
                                     "components": [
                                       {
                                         "type": "text",
                                         "attributes": {
-                                          "id": "iex3vq"
+                                          "id": "iwznrk"
                                         },
                                         "components": [
                                           {
@@ -1030,7 +926,7 @@
                                         "tagName": "h3",
                                         "type": "text",
                                         "attributes": {
-                                          "id": "ibcl0g"
+                                          "id": "it8x1g"
                                         },
                                         "components": [
                                           {
@@ -1043,7 +939,7 @@
                                         "tagName": "p",
                                         "type": "text",
                                         "attributes": {
-                                          "id": "isujzh"
+                                          "id": "iccbeg"
                                         },
                                         "components": [
                                           {
@@ -1060,13 +956,13 @@
                                   },
                                   {
                                     "attributes": {
-                                      "id": "i1xfjc"
+                                      "id": "ixjufm"
                                     },
                                     "components": [
                                       {
                                         "type": "text",
                                         "attributes": {
-                                          "id": "iywmg2"
+                                          "id": "i7pg38"
                                         },
                                         "components": [
                                           {
@@ -1079,7 +975,7 @@
                                         "tagName": "h3",
                                         "type": "text",
                                         "attributes": {
-                                          "id": "ik41p4"
+                                          "id": "it7eyx"
                                         },
                                         "components": [
                                           {
@@ -1092,7 +988,7 @@
                                         "tagName": "p",
                                         "type": "text",
                                         "attributes": {
-                                          "id": "izso6w"
+                                          "id": "izcgig"
                                         },
                                         "components": [
                                           {
@@ -1109,13 +1005,13 @@
                                   },
                                   {
                                     "attributes": {
-                                      "id": "idixfc"
+                                      "id": "ie4pxe"
                                     },
                                     "components": [
                                       {
                                         "type": "text",
                                         "attributes": {
-                                          "id": "ivl41f"
+                                          "id": "ih9198"
                                         },
                                         "components": [
                                           {
@@ -1125,81 +1021,10 @@
                                         ]
                                       },
                                       {
-                                        "name": "Row",
-                                        "droppable": ".gjs-cell",
-                                        "resizable": {
-                                          "tl": 0,
-                                          "tc": 0,
-                                          "tr": 0,
-                                          "cl": 0,
-                                          "cr": 0,
-                                          "bl": 0,
-                                          "br": 0,
-                                          "minDim": 1
-                                        },
-                                        "classes": [
-                                          {
-                                            "name": "gjs-row",
-                                            "private": 1
-                                          }
-                                        ],
-                                        "attributes": {
-                                          "id": "iuws54"
-                                        },
-                                        "components": [
-                                          {
-                                            "name": "Cell",
-                                            "draggable": ".gjs-row",
-                                            "resizable": {
-                                              "tl": 0,
-                                              "tc": 0,
-                                              "tr": 0,
-                                              "cl": 0,
-                                              "cr": 1,
-                                              "bl": 0,
-                                              "br": 0,
-                                              "minDim": 1,
-                                              "bc": 0,
-                                              "currentUnit": 1,
-                                              "step": 0.2
-                                            },
-                                            "classes": [
-                                              {
-                                                "name": "gjs-cell",
-                                                "private": 1
-                                              }
-                                            ]
-                                          },
-                                          {
-                                            "name": "Cell",
-                                            "draggable": ".gjs-row",
-                                            "resizable": {
-                                              "tl": 0,
-                                              "tc": 0,
-                                              "tr": 0,
-                                              "cl": 0,
-                                              "cr": 1,
-                                              "bl": 0,
-                                              "br": 0,
-                                              "minDim": 1,
-                                              "bc": 0,
-                                              "currentUnit": 1,
-                                              "step": 0.2
-                                            },
-                                            "classes": [
-                                              {
-                                                "name": "gjs-cell",
-                                                "private": 1
-                                              }
-                                            ]
-                                          }
-                                        ]
-                                      },
-                                      {
                                         "tagName": "h3",
                                         "type": "text",
                                         "attributes": {
-                                          "id": "ikruby"
+                                          "id": "ii2qto"
                                         },
                                         "components": [
                                           {
@@ -1212,7 +1037,7 @@
                                         "tagName": "p",
                                         "type": "text",
                                         "attributes": {
-                                          "id": "ixm63e"
+                                          "id": "itzqqe"
                                         },
                                         "components": [
                                           {
@@ -1230,230 +1055,212 @@
                         ]
                       },
                       {
-                        "tagName": "section",
+                        "tagName": "footer",
                         "attributes": {
-                          "id": "iy4v2q"
+                          "id": "ictst-2"
                         },
                         "components": [
                           {
                             "attributes": {
-                              "id": "iq8dag"
+                              "id": "i8uhg-2"
                             },
                             "components": [
                               {
-                                "tagName": "h2",
-                                "type": "text",
-                                "attributes": {
-                                  "id": "i3naif"
-                                },
                                 "components": [
                                   {
-                                    "type": "textnode",
-                                    "content": "Ready to Get Started?"
-                                  }
-                                ]
-                              },
-                              {
-                                "tagName": "p",
-                                "type": "text",
-                                "attributes": {
-                                  "id": "i8zt4z"
-                                },
-                                "components": [
-                                  {
-                                    "type": "textnode",
-                                    "content": "Join thousands of satisfied customers and take your business to the next level."
-                                  }
-                                ]
-                              },
-                              {
-                                "attributes": {
-                                  "id": "idvesc"
-                                },
-                                "components": [
-                                  {
-                                    "type": "button",
+                                    "tagName": "h4",
+                                    "type": "text",
                                     "attributes": {
-                                      "type": "button",
-                                      "id": "idxhhv"
+                                      "id": "i3p8x-2"
                                     },
-                                    "text": "Start Free Trial",
                                     "components": [
                                       {
                                         "type": "textnode",
-                                        "content": "Start Free Trial"
+                                        "content": "About BESSER"
                                       }
                                     ]
                                   },
                                   {
-                                    "type": "button",
+                                    "tagName": "p",
+                                    "type": "text",
                                     "attributes": {
-                                      "type": "button",
-                                      "id": "i9x0hm"
+                                      "id": "i9x6g-2"
                                     },
-                                    "text": "Learn More",
                                     "components": [
                                       {
                                         "type": "textnode",
-                                        "content": "Learn More"
+                                        "content": "BESSER is a low-code platform for building smarter software faster. Empower your development with our dashboard generator and modeling tools."
                                       }
                                     ]
                                   }
                                 ]
+                              },
+                              {
+                                "components": [
+                                  {
+                                    "tagName": "h4",
+                                    "type": "text",
+                                    "attributes": {
+                                      "id": "iybmm-2"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "textnode",
+                                        "content": "Quick Links"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "tagName": "ul",
+                                    "attributes": {
+                                      "id": "im0xi-2"
+                                    },
+                                    "components": [
+                                      {
+                                        "tagName": "li",
+                                        "attributes": {
+                                          "id": "ichrl-2"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "link",
+                                            "attributes": {
+                                              "href": "#",
+                                              "id": "i0wq2-2"
+                                            },
+                                            "components": [
+                                              {
+                                                "type": "textnode",
+                                                "content": "Dashboard Generator"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "li",
+                                        "attributes": {
+                                          "id": "ixtnt-2"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "link",
+                                            "attributes": {
+                                              "href": "#",
+                                              "id": "i2f1j-2"
+                                            },
+                                            "components": [
+                                              {
+                                                "type": "textnode",
+                                                "content": "API Reference"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      },
+                                      {
+                                        "tagName": "li",
+                                        "attributes": {
+                                          "id": "irxsn-2"
+                                        },
+                                        "components": [
+                                          {
+                                            "type": "link",
+                                            "attributes": {
+                                              "href": "#",
+                                              "id": "inu9a-2"
+                                            },
+                                            "components": [
+                                              {
+                                                "type": "textnode",
+                                                "content": "Support"
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              },
+                              {
+                                "attributes": {
+                                  "id": "iberth"
+                                },
+                                "components": [
+                                  {
+                                    "tagName": "h4",
+                                    "type": "text",
+                                    "attributes": {
+                                      "id": "igd5a-2"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "textnode",
+                                        "content": "Contact"
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "tagName": "p",
+                                    "type": "text",
+                                    "attributes": {
+                                      "id": "itmu2-2"
+                                    },
+                                    "components": [
+                                      {
+                                        "type": "textnode",
+                                        "content": "Email: info@besser-pearl.org"
+                                      },
+                                      {
+                                        "tagName": "br",
+                                        "void": true
+                                      },
+                                      {
+                                        "type": "textnode",
+                                        "content": "Phone: (123) 456-7890"
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          },
+                          {
+                            "type": "text",
+                            "attributes": {
+                              "id": "iph4d-2"
+                            },
+                            "components": [
+                              {
+                                "type": "textnode",
+                                "content": "\n          © 2025 BESSER. All rights reserved.\n        "
                               }
                             ]
                           }
                         ]
                       },
                       {
-                        "tagName": "section",
-                        "attributes": {
-                          "id": "i4iofq"
-                        },
-                        "components": [
+                        "classes": [
                           {
-                            "attributes": {
-                              "id": "iqkdfk"
-                            },
-                            "components": [
-                              {
-                                "attributes": {
-                                  "id": "ictm5k"
-                                },
-                                "components": [
-                                  {
-                                    "type": "comment",
-                                    "content": " Stat 1 "
-                                  },
-                                  {
-                                    "components": [
-                                      {
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "i6v43o"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "1000+"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "i2jlwi"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Happy Clients"
-                                          }
-                                        ]
-                                      }
-                                    ]
-                                  },
-                                  {
-                                    "type": "comment",
-                                    "content": " Stat 2 "
-                                  },
-                                  {
-                                    "components": [
-                                      {
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "i4th7k"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "50+"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "ik4fzf"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Team Members"
-                                          }
-                                        ]
-                                      }
-                                    ]
-                                  },
-                                  {
-                                    "type": "comment",
-                                    "content": " Stat 3 "
-                                  },
-                                  {
-                                    "components": [
-                                      {
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "iebu3w"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "99%"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "ime059"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Satisfaction Rate"
-                                          }
-                                        ]
-                                      }
-                                    ]
-                                  },
-                                  {
-                                    "type": "comment",
-                                    "content": " Stat 4 "
-                                  },
-                                  {
-                                    "components": [
-                                      {
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "ivqqqo"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "24/7"
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "type": "text",
-                                        "attributes": {
-                                          "id": "iohofv"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "textnode",
-                                            "content": "Support Available"
-                                          }
-                                        ]
-                                      }
-                                    ]
-                                  }
-                                ]
-                              }
-                            ]
+                            "name": "gjs-row",
+                            "private": 1
                           }
-                        ]
+                        ],
+                        "attributes": {
+                          "id": "iiqx6-2"
+                        }
+                      },
+                      {
+                        "classes": [
+                          {
+                            "name": "gjs-row",
+                            "private": 1
+                          }
+                        ],
+                        "attributes": {
+                          "id": "is6fi-2"
+                        }
                       }
                     ],
                     "head": {
@@ -1463,78 +1270,28 @@
                       "tagName": "html"
                     }
                   },
-                  "id": "bSgwmscv1GtUJ4Vd"
+                  "id": "lmMooTdRTNYoBrNa"
                 }
               ],
-              "id": "about"
+              "id": "r853I1MU7LvrIvAK"
             }
           ],
           "styles": [
             {
-              "selectors": [
-                "#i4sm"
-              ],
+              "selectors": [],
+              "selectorsAdd": "*",
               "style": {
-                "background": "#333",
-                "color": "white",
-                "padding": "15px 30px",
-                "display": "flex",
-                "justify-content": "space-between",
-                "align-items": "center"
+                "box-sizing": "border-box"
               }
             },
             {
-              "selectors": [
-                "#ifh3"
-              ],
+              "selectors": [],
+              "selectorsAdd": "body",
               "style": {
-                "font-size": "24px",
-                "font-weight": "bold"
-              }
-            },
-            {
-              "selectors": [
-                "#ijc9"
-              ],
-              "style": {
-                "display": "flex",
-                "gap": "30px"
-              }
-            },
-            {
-              "selectors": [
-                "#imub"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration": "none"
-              }
-            },
-            {
-              "selectors": [
-                "#ixv3d"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration": "none"
-              }
-            },
-            {
-              "selectors": [
-                "#i6pk5"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration": "none"
-              }
-            },
-            {
-              "selectors": [
-                "#iz6f6"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration": "none"
+                "margin-top": "0px",
+                "margin-right": "0px",
+                "margin-bottom": "0px",
+                "margin-left": "0px"
               }
             },
             {
@@ -1561,33 +1318,334 @@
                 }
               ],
               "style": {
-                "width": "100%",
-                "display": "block"
-              },
-              "mediaText": "(max-width: 768px)",
-              "atRuleType": "media"
+                "width": "8%",
+                "display": "table-cell",
+                "height": "75px"
+              }
             },
             {
               "selectors": [
-                "gjs-cell30"
+                "#i5jh"
               ],
               "style": {
-                "width": "100%",
-                "display": "block"
-              },
-              "mediaText": "(max-width: 768px)",
-              "atRuleType": "media"
+                "background-color": "rgba(0, 0, 0, 0) !important",
+                "background-position-x": "0% !important",
+                "background-position-y": "0% !important",
+                "background-repeat": "repeat !important",
+                "background-attachment": "scroll !important",
+                "background-image": "linear-gradient(135deg, rgb(75, 60, 130) 0%, rgb(90, 61, 145) 100%) !important",
+                "background-size": "auto !important",
+                "background-origin": "padding-box !important",
+                "background-clip": "border-box !important",
+                "color": "white",
+                "padding-top": "15px",
+                "padding-right": "30px",
+                "padding-bottom": "15px",
+                "padding-left": "30px",
+                "display": "flex",
+                "justify-content": "space-between",
+                "align-items": "center",
+                "font-family": "Arial, sans-serif"
+              }
             },
             {
               "selectors": [
-                "gjs-cell70"
+                "#io07"
+              ],
+              "style": {
+                "font-size": "24px",
+                "font-weight": "bold"
+              }
+            },
+            {
+              "selectors": [
+                "#inp2m"
+              ],
+              "style": {
+                "display": "flex",
+                "row-gap": "30px",
+                "column-gap": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#ibtww"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#ild7j"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#ibczy"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#iyzy5"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#ictst"
+              ],
+              "style": {
+                "background-color": "rgba(0, 0, 0, 0) !important",
+                "background-position-x": "0% !important",
+                "background-position-y": "0% !important",
+                "background-repeat": "repeat !important",
+                "background-attachment": "scroll !important",
+                "background-image": "linear-gradient(135deg, rgb(75, 60, 130) 0%, rgb(90, 61, 145) 100%) !important",
+                "background-size": "auto !important",
+                "background-origin": "padding-box !important",
+                "background-clip": "border-box !important",
+                "color": "white",
+                "padding-top": "40px",
+                "padding-right": "20px",
+                "padding-bottom": "40px",
+                "padding-left": "20px",
+                "margin-top": "60px",
+                "font-family": "Arial, sans-serif"
+              }
+            },
+            {
+              "selectors": [
+                "#i8uhg"
+              ],
+              "style": {
+                "max-width": "1200px",
+                "margin-top": "0px",
+                "margin-right": "auto",
+                "margin-bottom": "0px",
+                "margin-left": "auto",
+                "display": "grid",
+                "grid-template-columns": "repeat(auto-fit, minmax(250px, 1fr))",
+                "row-gap": "30px",
+                "column-gap": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#i3p8x"
+              ],
+              "style": {
+                "margin-top": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#i9x6g"
+              ],
+              "style": {
+                "opacity": "0.8",
+                "line-height": "1.6"
+              }
+            },
+            {
+              "selectors": [
+                "#iybmm"
+              ],
+              "style": {
+                "margin-top": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#im0xi"
+              ],
+              "style": {
+                "list-style-position": "outside",
+                "list-style-image": "none",
+                "list-style-type": "none",
+                "padding-top": "0px",
+                "padding-right": "0px",
+                "padding-bottom": "0px",
+                "padding-left": "0px",
+                "opacity": "0.8"
+              }
+            },
+            {
+              "selectors": [
+                "#ichrl"
+              ],
+              "style": {
+                "margin-top": "8px",
+                "margin-right": "0px",
+                "margin-bottom": "8px",
+                "margin-left": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#i0wq2"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#ixtnt"
+              ],
+              "style": {
+                "margin-top": "8px",
+                "margin-right": "0px",
+                "margin-bottom": "8px",
+                "margin-left": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#i2f1j"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#irxsn"
+              ],
+              "style": {
+                "margin-top": "8px",
+                "margin-right": "0px",
+                "margin-bottom": "8px",
+                "margin-left": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#inu9a"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#igd5a"
+              ],
+              "style": {
+                "margin-top": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#itmu2"
+              ],
+              "style": {
+                "opacity": "0.8"
+              }
+            },
+            {
+              "selectors": [
+                "#iph4d"
+              ],
+              "style": {
+                "text-align": "center",
+                "margin-top": "30px",
+                "padding-top": "20px",
+                "border-top-width": "1px",
+                "border-top-style": "solid",
+                "border-top-color": "rgba(255, 255, 255, 0.1)",
+                "opacity": "0.7"
+              }
+            },
+            {
+              "selectors": [
+                "#i8fz6"
               ],
               "style": {
                 "width": "100%",
-                "display": "block"
-              },
-              "mediaText": "(max-width: 768px)",
-              "atRuleType": "media"
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#id9ne"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#iy0gc"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#ig59l"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#i72zk"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#i4f21"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
             },
             {
               "selectors": [
@@ -1597,445 +1655,40 @@
                 }
               ],
               "style": {
-                "width": "8%",
-                "display": "table-cell",
-                "height": "75px"
-              }
-            },
-            {
-              "selectors": [
-                "#i7m71"
-              ],
-              "style": {
                 "width": "100%",
-                "min-height": "400px"
-              }
+                "display": "block"
+              },
+              "mediaText": "(max-width: 768px)",
+              "atRuleType": "media"
             },
             {
               "selectors": [
-                "#iia8n"
+                "#i5jh-2"
               ],
               "style": {
-                "width": "100%",
-                "min-height": "400px"
-              }
-            },
-            {
-              "selectors": [
-                "#i3d3h"
-              ],
-              "style": {
-                "width": "100%",
-                "min-height": "400px"
-              }
-            },
-            {
-              "selectors": [
-                "#ibuph"
-              ],
-              "style": {
-                "padding": "60px 20px"
-              }
-            },
-            {
-              "selectors": [
-                "#imbe6"
-              ],
-              "style": {
-                "max-width": "1200px",
-                "margin": "0 auto"
-              }
-            },
-            {
-              "selectors": [
-                "#i9ijl"
-              ],
-              "style": {
-                "text-align": "center",
-                "font-size": "36px",
-                "margin-bottom": "50px",
-                "color": "#333"
-              }
-            },
-            {
-              "selectors": [
-                "#iexvq"
-              ],
-              "style": {
-                "display": "grid",
-                "grid-template-columns": "repeat(auto-fit, minmax(300px, 1fr))",
-                "gap": "40px"
-              }
-            },
-            {
-              "selectors": [
-                "#i94zd"
-              ],
-              "style": {
-                "text-align": "center",
-                "padding": "30px"
-              }
-            },
-            {
-              "selectors": [
-                "#ijti8"
-              ],
-              "style": {
-                "width": "80px",
-                "height": "80px",
-                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                "border-radius": "50%",
-                "display": "flex",
-                "align-items": "center",
-                "justify-content": "center",
-                "margin": "0 auto 20px",
-                "font-size": "36px",
-                "color": "white"
-              }
-            },
-            {
-              "selectors": [
-                "#izgub"
-              ],
-              "style": {
-                "color": "#333",
-                "margin": "20px 0 15px"
-              }
-            },
-            {
-              "selectors": [
-                "#iuq7f"
-              ],
-              "style": {
-                "color": "#666",
-                "line-height": "1.6"
-              }
-            },
-            {
-              "selectors": [
-                "#i2pjk"
-              ],
-              "style": {
-                "text-align": "center",
-                "padding": "30px"
-              }
-            },
-            {
-              "selectors": [
-                "#isprs"
-              ],
-              "style": {
-                "width": "80px",
-                "height": "80px",
-                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                "border-radius": "50%",
-                "display": "flex",
-                "align-items": "center",
-                "justify-content": "center",
-                "margin": "0 auto 20px",
-                "font-size": "36px",
-                "color": "white"
-              }
-            },
-            {
-              "selectors": [
-                "#i97zg"
-              ],
-              "style": {
-                "color": "#333",
-                "margin": "20px 0 15px"
-              }
-            },
-            {
-              "selectors": [
-                "#im3io"
-              ],
-              "style": {
-                "color": "#666",
-                "line-height": "1.6"
-              }
-            },
-            {
-              "selectors": [
-                "#i9z3l"
-              ],
-              "style": {
-                "text-align": "center",
-                "padding": "30px"
-              }
-            },
-            {
-              "selectors": [
-                "#i3ee7"
-              ],
-              "style": {
-                "width": "80px",
-                "height": "80px",
-                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                "border-radius": "50%",
-                "display": "flex",
-                "align-items": "center",
-                "justify-content": "center",
-                "margin": "0 auto 20px",
-                "font-size": "36px",
-                "color": "white"
-              }
-            },
-            {
-              "selectors": [
-                "#itkgh"
-              ],
-              "style": {
-                "color": "#333",
-                "margin": "20px 0 15px"
-              }
-            },
-            {
-              "selectors": [
-                "#i5pal"
-              ],
-              "style": {
-                "color": "#666",
-                "line-height": "1.6"
-              }
-            },
-            {
-              "selectors": [
-                "#imt5g"
-              ],
-              "style": {
-                "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
-                "padding": "80px 20px",
-                "text-align": "center",
-                "color": "white"
-              }
-            },
-            {
-              "selectors": [
-                "#ibfd5"
-              ],
-              "style": {
-                "max-width": "800px",
-                "margin": "0 auto"
-              }
-            },
-            {
-              "selectors": [
-                "#irv6i"
-              ],
-              "style": {
-                "font-size": "42px",
-                "margin-bottom": "20px",
-                "font-weight": "bold"
-              }
-            },
-            {
-              "selectors": [
-                "#iznz9"
-              ],
-              "style": {
-                "font-size": "20px",
-                "margin-bottom": "40px",
-                "opacity": "0.95"
-              }
-            },
-            {
-              "selectors": [
-                "#i9fuo"
-              ],
-              "style": {
-                "display": "flex",
-                "gap": "20px",
-                "justify-content": "center",
-                "flex-wrap": "wrap"
-              }
-            },
-            {
-              "selectors": [
-                "#i27yo"
-              ],
-              "style": {
-                "background": "white",
-                "color": "#f5576c",
-                "border": "none",
-                "padding": "18px 40px",
-                "font-size": "18px",
-                "border-radius": "50px",
-                "cursor": "pointer",
-                "font-weight": "bold",
-                "box-shadow": "0 4px 20px rgba(0,0,0,0.2)",
-                "transition": "transform 0.2s"
-              }
-            },
-            {
-              "selectors": [
-                "#ig59s"
-              ],
-              "style": {
-                "background": "transparent",
+                "background-color": "rgba(0, 0, 0, 0) !important",
+                "background-position-x": "0% !important",
+                "background-position-y": "0% !important",
+                "background-repeat": "repeat !important",
+                "background-attachment": "scroll !important",
+                "background-image": "linear-gradient(135deg, rgb(75, 60, 130) 0%, rgb(90, 61, 145) 100%) !important",
+                "background-size": "auto !important",
+                "background-origin": "padding-box !important",
+                "background-clip": "border-box !important",
                 "color": "white",
-                "border": "2px solid white",
-                "padding": "18px 40px",
-                "font-size": "18px",
-                "border-radius": "50px",
-                "cursor": "pointer",
-                "font-weight": "bold",
-                "transition": "all 0.2s"
-              }
-            },
-            {
-              "selectors": [
-                "#irj9h"
-              ],
-              "style": {
-                "background": "#2c3e50",
-                "color": "white",
-                "padding": "40px 20px",
-                "margin-top": "60px"
-              }
-            },
-            {
-              "selectors": [
-                "#i2m8v"
-              ],
-              "style": {
-                "max-width": "1200px",
-                "margin": "0 auto",
-                "display": "grid",
-                "grid-template-columns": "repeat(auto-fit, minmax(250px, 1fr))",
-                "gap": "30px"
-              }
-            },
-            {
-              "selectors": [
-                "#i28pk"
-              ],
-              "style": {
-                "margin-top": "0"
-              }
-            },
-            {
-              "selectors": [
-                "#imfbl"
-              ],
-              "style": {
-                "opacity": "0.8",
-                "line-height": "1.6"
-              }
-            },
-            {
-              "selectors": [
-                "#ivkxw"
-              ],
-              "style": {
-                "margin-top": "0"
-              }
-            },
-            {
-              "selectors": [
-                "#iv1e6"
-              ],
-              "style": {
-                "list-style": "none",
-                "padding": "0",
-                "opacity": "0.8"
-              }
-            },
-            {
-              "selectors": [
-                "#ihzg1"
-              ],
-              "style": {
-                "margin": "8px 0"
-              }
-            },
-            {
-              "selectors": [
-                "#iwmx6"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration": "none"
-              }
-            },
-            {
-              "selectors": [
-                "#i9bhy"
-              ],
-              "style": {
-                "margin": "8px 0"
-              }
-            },
-            {
-              "selectors": [
-                "#i2nrg"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration": "none"
-              }
-            },
-            {
-              "selectors": [
-                "#ihdhf"
-              ],
-              "style": {
-                "margin": "8px 0"
-              }
-            },
-            {
-              "selectors": [
-                "#isffb"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration": "none"
-              }
-            },
-            {
-              "selectors": [
-                "#imt95"
-              ],
-              "style": {
-                "margin-top": "0"
-              }
-            },
-            {
-              "selectors": [
-                "#iimpc"
-              ],
-              "style": {
-                "opacity": "0.8"
-              }
-            },
-            {
-              "selectors": [
-                "#ibyqn"
-              ],
-              "style": {
-                "text-align": "center",
-                "margin-top": "30px",
-                "padding-top": "20px",
-                "border-top": "1px solid rgba(255,255,255,0.1)",
-                "opacity": "0.7"
-              }
-            },
-            {
-              "selectors": [
-                "#ifihk"
-              ],
-              "style": {
-                "background": "#333",
-                "color": "white",
-                "padding": "15px 30px",
+                "padding-top": "15px",
+                "padding-right": "30px",
+                "padding-bottom": "15px",
+                "padding-left": "30px",
                 "display": "flex",
                 "justify-content": "space-between",
-                "align-items": "center"
+                "align-items": "center",
+                "font-family": "Arial, sans-serif"
               }
             },
             {
               "selectors": [
-                "#i9yqn"
+                "#io07-2"
               ],
               "style": {
                 "font-size": "24px",
@@ -2044,242 +1697,278 @@
             },
             {
               "selectors": [
-                "#iuj7h"
+                "#inp2m-2"
               ],
               "style": {
                 "display": "flex",
-                "gap": "30px"
+                "row-gap": "30px",
+                "column-gap": "30px"
               }
             },
             {
               "selectors": [
-                "#ieeso"
+                "#ibtww-2"
               ],
               "style": {
                 "color": "white",
-                "text-decoration": "none"
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
               }
             },
             {
               "selectors": [
-                "#iu4wsh"
+                "#ild7j-2"
               ],
               "style": {
                 "color": "white",
-                "text-decoration": "none"
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
               }
             },
             {
               "selectors": [
-                "#i1t83h"
+                "#ibczy-2"
               ],
               "style": {
                 "color": "white",
-                "text-decoration": "none"
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
               }
             },
             {
               "selectors": [
-                "#ia0taw"
+                "#iyzy5-2"
               ],
               "style": {
                 "color": "white",
-                "text-decoration": "none"
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
               }
             },
             {
               "selectors": [
-                "#igf89k"
+                "#ictst-2"
               ],
               "style": {
-                "padding": "60px 20px"
+                "background-color": "rgba(0, 0, 0, 0) !important",
+                "background-position-x": "0% !important",
+                "background-position-y": "0% !important",
+                "background-repeat": "repeat !important",
+                "background-attachment": "scroll !important",
+                "background-image": "linear-gradient(135deg, rgb(75, 60, 130) 0%, rgb(90, 61, 145) 100%) !important",
+                "background-size": "auto !important",
+                "background-origin": "padding-box !important",
+                "background-clip": "border-box !important",
+                "color": "white",
+                "padding-top": "40px",
+                "padding-right": "20px",
+                "padding-bottom": "40px",
+                "padding-left": "20px",
+                "margin-top": "60px",
+                "font-family": "Arial, sans-serif"
               }
             },
             {
               "selectors": [
-                "#ip47kp"
+                "#i8uhg-2"
               ],
               "style": {
                 "max-width": "1200px",
-                "margin": "0 auto"
-              }
-            },
-            {
-              "selectors": [
-                "#iwr92g"
-              ],
-              "style": {
-                "text-align": "center",
-                "font-size": "36px",
-                "margin-bottom": "50px",
-                "color": "#333"
-              }
-            },
-            {
-              "selectors": [
-                "#iukzqn"
-              ],
-              "style": {
+                "margin-top": "0px",
+                "margin-right": "auto",
+                "margin-bottom": "0px",
+                "margin-left": "auto",
                 "display": "grid",
-                "grid-template-columns": "repeat(auto-fit, minmax(300px, 1fr))",
-                "gap": "40px"
+                "grid-template-columns": "repeat(auto-fit, minmax(250px, 1fr))",
+                "row-gap": "30px",
+                "column-gap": "30px"
               }
             },
             {
               "selectors": [
-                "#imb08m"
+                "#i3p8x-2"
               ],
               "style": {
-                "text-align": "center",
-                "padding": "30px"
+                "margin-top": "0px"
               }
             },
             {
               "selectors": [
-                "#iex3vq"
+                "#i9x6g-2"
               ],
               "style": {
-                "width": "80px",
-                "height": "80px",
-                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                "border-radius": "50%",
-                "display": "flex",
-                "align-items": "center",
-                "justify-content": "center",
-                "margin": "0 auto 20px",
-                "font-size": "36px",
-                "color": "white"
-              }
-            },
-            {
-              "selectors": [
-                "#ibcl0g"
-              ],
-              "style": {
-                "color": "#333",
-                "margin": "20px 0 15px"
-              }
-            },
-            {
-              "selectors": [
-                "#isujzh"
-              ],
-              "style": {
-                "color": "#666",
+                "opacity": "0.8",
                 "line-height": "1.6"
               }
             },
             {
               "selectors": [
-                "#i1xfjc"
+                "#iybmm-2"
+              ],
+              "style": {
+                "margin-top": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#im0xi-2"
+              ],
+              "style": {
+                "list-style-position": "outside",
+                "list-style-image": "none",
+                "list-style-type": "none",
+                "padding-top": "0px",
+                "padding-right": "0px",
+                "padding-bottom": "0px",
+                "padding-left": "0px",
+                "opacity": "0.8"
+              }
+            },
+            {
+              "selectors": [
+                "#ichrl-2"
+              ],
+              "style": {
+                "margin-top": "8px",
+                "margin-right": "0px",
+                "margin-bottom": "8px",
+                "margin-left": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#i0wq2-2"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#ixtnt-2"
+              ],
+              "style": {
+                "margin-top": "8px",
+                "margin-right": "0px",
+                "margin-bottom": "8px",
+                "margin-left": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#i2f1j-2"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#irxsn-2"
+              ],
+              "style": {
+                "margin-top": "8px",
+                "margin-right": "0px",
+                "margin-bottom": "8px",
+                "margin-left": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#inu9a-2"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration-color": "currentcolor",
+                "text-decoration-line": "none",
+                "text-decoration-style": "solid",
+                "text-decoration-thickness": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#igd5a-2"
+              ],
+              "style": {
+                "margin-top": "0px"
+              }
+            },
+            {
+              "selectors": [
+                "#itmu2-2"
+              ],
+              "style": {
+                "opacity": "0.8"
+              }
+            },
+            {
+              "selectors": [
+                "#iph4d-2"
               ],
               "style": {
                 "text-align": "center",
-                "padding": "30px"
+                "margin-top": "30px",
+                "padding-top": "20px",
+                "border-top-width": "1px",
+                "border-top-style": "solid",
+                "border-top-color": "rgba(255, 255, 255, 0.1)",
+                "opacity": "0.7"
               }
             },
             {
               "selectors": [
-                "#iywmg2"
+                "#ihhucw"
               ],
               "style": {
-                "width": "80px",
-                "height": "80px",
-                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                "border-radius": "50%",
-                "display": "flex",
-                "align-items": "center",
-                "justify-content": "center",
-                "margin": "0 auto 20px",
-                "font-size": "36px",
-                "color": "white"
-              }
-            },
-            {
-              "selectors": [
-                "#ik41p4"
-              ],
-              "style": {
-                "color": "#333",
-                "margin": "20px 0 15px"
-              }
-            },
-            {
-              "selectors": [
-                "#izso6w"
-              ],
-              "style": {
-                "color": "#666",
-                "line-height": "1.6"
-              }
-            },
-            {
-              "selectors": [
-                "#idixfc"
-              ],
-              "style": {
+                "background-color": "rgba(0, 0, 0, 0) !important",
+                "background-position-x": "0% !important",
+                "background-position-y": "0% !important",
+                "background-repeat": "repeat !important",
+                "background-attachment": "scroll !important",
+                "background-image": "linear-gradient(135deg, rgb(75, 60, 130) 0%, rgb(90, 61, 145) 100%) !important",
+                "background-size": "auto !important",
+                "background-origin": "padding-box !important",
+                "background-clip": "border-box !important",
+                "padding-top": "80px",
+                "padding-right": "20px",
+                "padding-bottom": "80px",
+                "padding-left": "20px",
                 "text-align": "center",
-                "padding": "30px"
+                "color": "white",
+                "font-family": "Arial, sans-serif"
               }
             },
             {
               "selectors": [
-                "#ivl41f"
-              ],
-              "style": {
-                "width": "80px",
-                "height": "80px",
-                "background": "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
-                "border-radius": "50%",
-                "display": "flex",
-                "align-items": "center",
-                "justify-content": "center",
-                "margin": "0 auto 20px",
-                "font-size": "36px",
-                "color": "white"
-              }
-            },
-            {
-              "selectors": [
-                "#ikruby"
-              ],
-              "style": {
-                "color": "#333",
-                "margin": "20px 0 15px"
-              }
-            },
-            {
-              "selectors": [
-                "#ixm63e"
-              ],
-              "style": {
-                "color": "#666",
-                "line-height": "1.6"
-              }
-            },
-            {
-              "selectors": [
-                "#iy4v2q"
-              ],
-              "style": {
-                "background": "linear-gradient(135deg, #f093fb 0%, #f5576c 100%)",
-                "padding": "80px 20px",
-                "text-align": "center",
-                "color": "white"
-              }
-            },
-            {
-              "selectors": [
-                "#iq8dag"
+                "#izn0d4"
               ],
               "style": {
                 "max-width": "800px",
-                "margin": "0 auto"
+                "margin-top": "0px",
+                "margin-right": "auto",
+                "margin-bottom": "0px",
+                "margin-left": "auto"
               }
             },
             {
               "selectors": [
-                "#i3naif"
+                "#iarech"
               ],
               "style": {
                 "font-size": "42px",
@@ -2289,7 +1978,7 @@
             },
             {
               "selectors": [
-                "#i8zt4z"
+                "#iznkht"
               ],
               "style": {
                 "font-size": "20px",
@@ -2299,156 +1988,352 @@
             },
             {
               "selectors": [
-                "#idvesc"
+                "#i45e9h"
               ],
               "style": {
                 "display": "flex",
-                "gap": "20px",
+                "row-gap": "20px",
+                "column-gap": "20px",
                 "justify-content": "center",
                 "flex-wrap": "wrap"
               }
             },
             {
               "selectors": [
-                "#idxhhv"
+                "#i6qufd"
               ],
               "style": {
-                "background": "white",
-                "color": "#f5576c",
-                "border": "none",
-                "padding": "18px 40px",
+                "background-color": "white",
+                "background-position-x": "0%",
+                "background-position-y": "0%",
+                "background-repeat": "repeat",
+                "background-attachment": "scroll",
+                "background-image": "none",
+                "background-size": "auto",
+                "background-origin": "padding-box",
+                "background-clip": "border-box",
+                "color": "rgb(75, 60, 130)",
+                "border-top-width": "medium",
+                "border-top-style": "none",
+                "border-top-color": "currentcolor",
+                "border-right-width": "medium",
+                "border-right-style": "none",
+                "border-right-color": "currentcolor",
+                "border-bottom-width": "medium",
+                "border-bottom-style": "none",
+                "border-bottom-color": "currentcolor",
+                "border-left-width": "medium",
+                "border-left-style": "none",
+                "border-left-color": "currentcolor",
+                "border-image-outset": "0",
+                "border-image-repeat": "stretch",
+                "border-image-slice": "100%",
+                "border-image-source": "none",
+                "border-image-width": "1",
+                "padding-top": "18px",
+                "padding-right": "40px",
+                "padding-bottom": "18px",
+                "padding-left": "40px",
                 "font-size": "18px",
-                "border-radius": "50px",
+                "border-top-left-radius": "50px",
+                "border-top-right-radius": "50px",
+                "border-bottom-right-radius": "50px",
+                "border-bottom-left-radius": "50px",
                 "cursor": "pointer",
                 "font-weight": "bold",
-                "box-shadow": "0 4px 20px rgba(0,0,0,0.2)",
-                "transition": "transform 0.2s"
+                "box-shadow": "rgba(0, 0, 0, 0.2) 0px 4px 20px",
+                "transition-property": "transform",
+                "transition-duration": "0.2s",
+                "transition-timing-function": "ease",
+                "transition-delay": "0s",
+                "transition-behavior": "normal"
               }
             },
             {
               "selectors": [
-                "#i9x0hm"
+                "#ih7y3i"
               ],
               "style": {
-                "background": "transparent",
+                "background-color": "transparent",
+                "background-position-x": "0%",
+                "background-position-y": "0%",
+                "background-repeat": "repeat",
+                "background-attachment": "scroll",
+                "background-image": "none",
+                "background-size": "auto",
+                "background-origin": "padding-box",
+                "background-clip": "border-box",
                 "color": "white",
-                "border": "2px solid white",
-                "padding": "18px 40px",
+                "border-top-width": "2px",
+                "border-top-style": "solid",
+                "border-top-color": "white",
+                "border-right-width": "2px",
+                "border-right-style": "solid",
+                "border-right-color": "white",
+                "border-bottom-width": "2px",
+                "border-bottom-style": "solid",
+                "border-bottom-color": "white",
+                "border-left-width": "2px",
+                "border-left-style": "solid",
+                "border-left-color": "white",
+                "border-image-outset": "0",
+                "border-image-repeat": "stretch",
+                "border-image-slice": "100%",
+                "border-image-source": "none",
+                "border-image-width": "1",
+                "padding-top": "18px",
+                "padding-right": "40px",
+                "padding-bottom": "18px",
+                "padding-left": "40px",
                 "font-size": "18px",
-                "border-radius": "50px",
+                "border-top-left-radius": "50px",
+                "border-top-right-radius": "50px",
+                "border-bottom-right-radius": "50px",
+                "border-bottom-left-radius": "50px",
                 "cursor": "pointer",
                 "font-weight": "bold",
-                "transition": "all 0.2s"
+                "transition-property": "all",
+                "transition-duration": "0.2s",
+                "transition-timing-function": "ease",
+                "transition-delay": "0s",
+                "transition-behavior": "normal"
               }
             },
             {
               "selectors": [
-                "#i4iofq"
+                "#i94ykd"
               ],
               "style": {
-                "padding": "80px 20px",
-                "background": "#2c3e50",
+                "padding-top": "60px",
+                "padding-right": "20px",
+                "padding-bottom": "60px",
+                "padding-left": "20px"
+              }
+            },
+            {
+              "selectors": [
+                "#imjpfb"
+              ],
+              "style": {
+                "max-width": "1200px",
+                "margin-top": "0px",
+                "margin-right": "auto",
+                "margin-bottom": "0px",
+                "margin-left": "auto"
+              }
+            },
+            {
+              "selectors": [
+                "#ixhdf8"
+              ],
+              "style": {
+                "text-align": "center",
+                "font-size": "36px",
+                "margin-bottom": "50px",
+                "color": "rgb(51, 51, 51)"
+              }
+            },
+            {
+              "selectors": [
+                "#ifzwsk"
+              ],
+              "style": {
+                "display": "grid",
+                "grid-template-columns": "repeat(auto-fit, minmax(300px, 1fr))",
+                "row-gap": "40px",
+                "column-gap": "40px"
+              }
+            },
+            {
+              "selectors": [
+                "#ilfh9s"
+              ],
+              "style": {
+                "text-align": "center",
+                "padding-top": "30px",
+                "padding-right": "30px",
+                "padding-bottom": "30px",
+                "padding-left": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#iwznrk"
+              ],
+              "style": {
+                "width": "80px",
+                "height": "80px",
+                "background-color": "rgba(0, 0, 0, 0)",
+                "background-position-x": "0%",
+                "background-position-y": "0%",
+                "background-repeat": "repeat",
+                "background-attachment": "scroll",
+                "background-image": "linear-gradient(135deg, rgb(102, 126, 234) 0%, rgb(118, 75, 162) 100%)",
+                "background-size": "auto",
+                "background-origin": "padding-box",
+                "background-clip": "border-box",
+                "border-top-left-radius": "50%",
+                "border-top-right-radius": "50%",
+                "border-bottom-right-radius": "50%",
+                "border-bottom-left-radius": "50%",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "margin-top": "0px",
+                "margin-right": "auto",
+                "margin-bottom": "20px",
+                "margin-left": "auto",
+                "font-size": "36px",
                 "color": "white"
               }
             },
             {
               "selectors": [
-                "#iqkdfk"
+                "#it8x1g"
               ],
               "style": {
-                "max-width": "1200px",
-                "margin": "0 auto"
+                "color": "rgb(51, 51, 51)",
+                "margin-top": "20px",
+                "margin-right": "0px",
+                "margin-bottom": "15px",
+                "margin-left": "0px"
               }
             },
             {
               "selectors": [
-                "#ictm5k"
+                "#iccbeg"
               ],
               "style": {
-                "display": "grid",
-                "grid-template-columns": "repeat(auto-fit, minmax(200px, 1fr))",
-                "gap": "40px",
-                "text-align": "center"
+                "color": "rgb(102, 102, 102)",
+                "line-height": "1.6"
               }
             },
             {
               "selectors": [
-                "#i6v43o"
+                "#ixjufm"
               ],
               "style": {
-                "font-size": "48px",
-                "font-weight": "bold",
-                "color": "#3498db",
-                "margin-bottom": "10px"
+                "text-align": "center",
+                "padding-top": "30px",
+                "padding-right": "30px",
+                "padding-bottom": "30px",
+                "padding-left": "30px"
               }
             },
             {
               "selectors": [
-                "#i2jlwi"
+                "#i7pg38"
               ],
               "style": {
-                "font-size": "18px",
-                "opacity": "0.9"
+                "width": "80px",
+                "height": "80px",
+                "background-color": "rgba(0, 0, 0, 0)",
+                "background-position-x": "0%",
+                "background-position-y": "0%",
+                "background-repeat": "repeat",
+                "background-attachment": "scroll",
+                "background-image": "linear-gradient(135deg, rgb(102, 126, 234) 0%, rgb(118, 75, 162) 100%)",
+                "background-size": "auto",
+                "background-origin": "padding-box",
+                "background-clip": "border-box",
+                "border-top-left-radius": "50%",
+                "border-top-right-radius": "50%",
+                "border-bottom-right-radius": "50%",
+                "border-bottom-left-radius": "50%",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "margin-top": "0px",
+                "margin-right": "auto",
+                "margin-bottom": "20px",
+                "margin-left": "auto",
+                "font-size": "36px",
+                "color": "white"
               }
             },
             {
               "selectors": [
-                "#i4th7k"
+                "#it7eyx"
               ],
               "style": {
-                "font-size": "48px",
-                "font-weight": "bold",
-                "color": "#2ecc71",
-                "margin-bottom": "10px"
+                "color": "rgb(51, 51, 51)",
+                "margin-top": "20px",
+                "margin-right": "0px",
+                "margin-bottom": "15px",
+                "margin-left": "0px"
               }
             },
             {
               "selectors": [
-                "#ik4fzf"
+                "#izcgig"
               ],
               "style": {
-                "font-size": "18px",
-                "opacity": "0.9"
+                "color": "rgb(102, 102, 102)",
+                "line-height": "1.6"
               }
             },
             {
               "selectors": [
-                "#iebu3w"
+                "#ie4pxe"
               ],
               "style": {
-                "font-size": "48px",
-                "font-weight": "bold",
-                "color": "#e74c3c",
-                "margin-bottom": "10px"
+                "text-align": "center",
+                "padding-top": "30px",
+                "padding-right": "30px",
+                "padding-bottom": "30px",
+                "padding-left": "30px"
               }
             },
             {
               "selectors": [
-                "#ime059"
+                "#ih9198"
               ],
               "style": {
-                "font-size": "18px",
-                "opacity": "0.9"
+                "width": "80px",
+                "height": "80px",
+                "background-color": "rgba(0, 0, 0, 0)",
+                "background-position-x": "0%",
+                "background-position-y": "0%",
+                "background-repeat": "repeat",
+                "background-attachment": "scroll",
+                "background-image": "linear-gradient(135deg, rgb(102, 126, 234) 0%, rgb(118, 75, 162) 100%)",
+                "background-size": "auto",
+                "background-origin": "padding-box",
+                "background-clip": "border-box",
+                "border-top-left-radius": "50%",
+                "border-top-right-radius": "50%",
+                "border-bottom-right-radius": "50%",
+                "border-bottom-left-radius": "50%",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "margin-top": "0px",
+                "margin-right": "auto",
+                "margin-bottom": "20px",
+                "margin-left": "auto",
+                "font-size": "36px",
+                "color": "white"
               }
             },
             {
               "selectors": [
-                "#ivqqqo"
+                "#ii2qto"
               ],
               "style": {
-                "font-size": "48px",
-                "font-weight": "bold",
-                "color": "#f39c12",
-                "margin-bottom": "10px"
+                "color": "rgb(51, 51, 51)",
+                "margin-top": "20px",
+                "margin-right": "0px",
+                "margin-bottom": "15px",
+                "margin-left": "0px"
               }
             },
             {
               "selectors": [
-                "#iohofv"
+                "#itzqqe"
               ],
               "style": {
-                "font-size": "18px",
-                "opacity": "0.9"
+                "color": "rgb(102, 102, 102)",
+                "line-height": "1.6"
               }
             }
           ],
@@ -2456,7 +2341,7 @@
           "symbols": [],
           "version": "0.21.13"
         },
-        "lastUpdate": "2025-11-04T16:40:28.315Z"
+        "lastUpdate": "2025-11-05T13:14:32.201Z"
       }
     },
     "settings": {
@@ -2465,6 +2350,6 @@
       "collaborationEnabled": false
     }
   },
-  "exportedAt": "2025-11-04T16:41:30.154Z",
+  "exportedAt": "2025-11-05T13:31:38.115Z",
   "version": "2.0.0"
 }

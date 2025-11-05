@@ -300,11 +300,11 @@ class Color:
         color_palette (str): The color palette used for charts.
     """
 
-    def __init__(self, background_color: str = "#FFFFFF", text_color: str = "#000000",
-                border_color: str = "#CCCCCC", line_color: str = "#000000",
-                grid_color: str = "#CCCCCC", axis_color: str = "#CCCCCC",
-                bar_color: str = "#CCCCCC", label_color: str = "#CCCCCC",
-                fill_color: str = "#CCCCCC", opacity: str = None, color_palette: str = "default"):
+    def __init__(self, background_color: str = None, text_color: str = None,
+                border_color: str = None, line_color: str = None,
+                grid_color: str = None, axis_color: str = None,
+                bar_color: str = None, label_color: str = None,
+                fill_color: str = None, opacity: str = None, color_palette: str = "default"):
         self.background_color: str = background_color
         self.text_color: str = text_color
         self.border_color: str = border_color

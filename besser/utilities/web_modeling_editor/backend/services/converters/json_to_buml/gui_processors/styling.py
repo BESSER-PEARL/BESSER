@@ -131,7 +131,7 @@ def merge_styling_with_overrides(styling: Styling, overrides: Dict[str, Any]) ->
             size.font_size = css_value
         elif lower_key == "line-height":
             size.line_height = css_value
-        elif lower_key == "background" or lower_key == "background-color":
+        elif lower_key == "background" or lower_key == "background-color" or lower_key == "background-image":
             color.background_color = css_value
         elif lower_key == "color":
             color.text_color = css_value

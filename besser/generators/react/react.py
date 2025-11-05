@@ -623,11 +623,15 @@ class ReactGenerator(GeneratorInterface):
     def _extract_color_style(self, color) -> Dict[str, Any]:
         style: Dict[str, Any] = {}
         if getattr(color, "background_color", None):
-            style["backgroundColor"] = color.background_color
+            bg_color = str(color.background_color).replace(" !important", "").replace("!important", "").strip()
+            if "linear-gradient" in bg_color or "radial-gradient" in bg_color:
+                style["backgroundImage"] = bg_color
+            else:
+                style["backgroundColor"] = bg_color
         if getattr(color, "text_color", None):
-            style["color"] = color.text_color
+            style["color"] = str(color.text_color).replace(" !important", "").replace("!important", "").strip()
         if getattr(color, "border_color", None):
-            style["borderColor"] = color.border_color
+            style["borderColor"] = str(color.border_color).replace(" !important", "").replace("!important", "").strip()
         if getattr(color, "opacity", None) not in (None, ""):
             style["opacity"] = color.opacity
         if getattr(color, "box_shadow", None):
@@ -870,7 +874,18 @@ class ReactGenerator(GeneratorInterface):
         for key, value in style.items():
             if value in (None, ""):
                 continue
-            converted[ReactGenerator._to_camel_case(key)] = value
+            # Strip !important flags as React inline styles don't support them
+            clean_value = str(value).replace(" !important", "").replace("!important", "").strip() if isinstance(value, str) else value
+            # Handle gradients - they need to go in backgroundImage, not backgroundColor
+            camel_key = ReactGenerator._to_camel_case(key)
+            if camel_key == "backgroundImage" and isinstance(clean_value, str):
+                # Already correct property for gradients
+                converted[camel_key] = clean_value
+            elif camel_key == "backgroundColor" and isinstance(clean_value, str) and ("linear-gradient" in clean_value or "radial-gradient" in clean_value):
+                # Move gradients from backgroundColor to backgroundImage
+                converted["backgroundImage"] = clean_value
+            else:
+                converted[camel_key] = clean_value
         return converted
 
     @staticmethod

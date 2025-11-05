@@ -41,6 +41,7 @@ class WebAppGenerator(GeneratorInterface):
         """
         self._generate_frontend(self.env)
         self._generate_backend(self.env)
+        self._generate_docker_files(self.env)
 
     def _generate_frontend(self, env):
         # Generate frontend code in 'frontend' subfolder
@@ -53,3 +54,30 @@ class WebAppGenerator(GeneratorInterface):
         backend_dir = os.path.join(self.output_dir, "backend") if self.output_dir else "backend"
         backend_gen = BackendGenerator(self.model, output_dir=backend_dir)
         backend_gen.generate()
+
+    def _generate_docker_files(self, env):
+        """
+        Generates Docker-related files for deployment.
+        
+        Args:
+            env: The Jinja2 environment for template rendering.
+        """
+        # Generate docker-compose.yml
+        docker_compose_template = env.get_template('docker-compose.yml.j2')
+        docker_compose_path = os.path.join(self.output_dir, 'docker-compose.yml')
+        with open(docker_compose_path, 'w') as f:
+            f.write(docker_compose_template.render())
+
+        # Generate frontend Dockerfile
+        frontend_dockerfile_template = env.get_template('frontend.Dockerfile.j2')
+        frontend_dockerfile_path = os.path.join(self.output_dir, 'frontend', 'Dockerfile')
+        os.makedirs(os.path.dirname(frontend_dockerfile_path), exist_ok=True)
+        with open(frontend_dockerfile_path, 'w') as f:
+            f.write(frontend_dockerfile_template.render())
+
+        # Generate backend Dockerfile
+        backend_dockerfile_template = env.get_template('backend.Dockerfile.j2')
+        backend_dockerfile_path = os.path.join(self.output_dir, 'backend', 'Dockerfile')
+        os.makedirs(os.path.dirname(backend_dockerfile_path), exist_ok=True)
+        with open(backend_dockerfile_path, 'w') as f:
+            f.write(backend_dockerfile_template.render())

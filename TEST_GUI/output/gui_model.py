@@ -16,7 +16,7 @@ Counter = Class(name="Counter")
 
 # Counter class attributes and methods
 Counter_label: Property = Property(name="label", type=StringType)
-Counter_value: Property = Property(name="value", type=StringType)
+Counter_value: Property = Property(name="value", type=IntegerType)
 Counter.attributes={Counter_label, Counter_value}
 
 # Domain Model
@@ -52,9 +52,309 @@ from besser.BUML.metamodel.gui.binding import DataBinding
 
 # Module: GUI_Module
 
+# Screen: i2bh
+i2bh = Screen(name="i2bh", description="Home", view_elements=set(), is_main_page=True, route_path="/home", screen_size="Medium")
+i2bh.component_id = "7gx6FKvT6NwQwvkM"
+i77yl = Text(name="i77yl", content="BESSER", description="Text element")
+i77yl_styling_size = Size(width="auto", height="auto", padding="0", margin="0", font_size="24px", unit_size=UnitSize.PIXELS)
+i77yl_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+i77yl_styling_color = Color()
+i77yl_styling = Styling(size=i77yl_styling_size, position=i77yl_styling_pos, color=i77yl_styling_color)
+i77yl.styling = i77yl_styling
+i77yl.display_order = 0
+i77yl.component_id = "i77yl"
+i77yl.component_type = "text"
+i77yl.custom_attributes = {"id": "i77yl"}
+iab76 = Link(name="iab76", description="Link element", label="Home", url="/")
+iab76_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
+iab76_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+iab76_styling_color = Color(text_color="white")
+iab76_styling = Styling(size=iab76_styling_size, position=iab76_styling_pos, color=iab76_styling_color)
+iab76.styling = iab76_styling
+iab76.display_order = 0
+iab76.component_id = "iab76"
+iab76.component_type = "link"
+iab76.tag_name = "a"
+iab76.custom_attributes = {"href": "/", "id": "iab76"}
+ilzt5 = Link(name="ilzt5", description="Link element", label="About", url="/about")
+ilzt5_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
+ilzt5_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+ilzt5_styling_color = Color(text_color="white")
+ilzt5_styling = Styling(size=ilzt5_styling_size, position=ilzt5_styling_pos, color=ilzt5_styling_color)
+ilzt5.styling = ilzt5_styling
+ilzt5.display_order = 1
+ilzt5.component_id = "ilzt5"
+ilzt5.component_type = "link"
+ilzt5.tag_name = "a"
+ilzt5.custom_attributes = {"href": "/about", "id": "ilzt5"}
+i4vcj = ViewContainer(name="i4vcj", description=" component", view_elements={iab76, ilzt5})
+i4vcj_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
+i4vcj_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+i4vcj_styling_color = Color()
+i4vcj_styling = Styling(size=i4vcj_styling_size, position=i4vcj_styling_pos, color=i4vcj_styling_color)
+i4vcj_styling_layout = Layout(layout_type=LayoutType.FLEX, gap="30px")
+i4vcj_styling.layout = i4vcj_styling_layout
+i4vcj.styling = i4vcj_styling
+i4vcj_layout = Layout(layout_type=LayoutType.FLEX, gap="30px")
+i4vcj.layout = i4vcj_layout
+i4vcj.display_order = 1
+i4vcj.component_id = "i4vcj"
+i4vcj.custom_attributes = {"id": "i4vcj"}
+irenj = ViewContainer(name="irenj", description="nav container", view_elements={i77yl, i4vcj})
+irenj_styling_size = Size(width="auto", height="auto", padding="15px 30px", margin="0", unit_size=UnitSize.PIXELS)
+irenj_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+irenj_styling_color = Color(background_color="linear-gradient(135deg, #4b3c82 0%, #5a3d91 100%) !important", text_color="white")
+irenj_styling = Styling(size=irenj_styling_size, position=irenj_styling_pos, color=irenj_styling_color)
+irenj_styling_layout = Layout(layout_type=LayoutType.FLEX, justify_content="space-between", align_items="center", gap="16px")
+irenj_styling.layout = irenj_styling_layout
+irenj.styling = irenj_styling
+irenj_layout = Layout(layout_type=LayoutType.FLEX, justify_content="space-between", align_items="center", gap="16px")
+irenj.layout = irenj_layout
+irenj.display_order = 0
+irenj.component_id = "irenj"
+irenj.tag_name = "nav"
+irenj.custom_attributes = {"id": "irenj"}
+i1cekk = LineChart(name="i1cekk", title="Line Chart", primary_color="#4CAF50", line_width=2, show_grid=True, show_legend=True, show_tooltip=True, curve_type="monotone", animate=True, legend_position="top", grid_color="#e0e0e0", dot_size=5)
+domain_model_ref = globals().get('domain_model')
+i1cekk_binding_domain = None
+if domain_model_ref is not None:
+    i1cekk_binding_domain = domain_model_ref.get_class_by_name("Counter")
+if i1cekk_binding_domain:
+    i1cekk_binding = DataBinding(domain_concept=i1cekk_binding_domain)
+    i1cekk_binding.label_field = next((attr for attr in i1cekk_binding_domain.attributes if attr.name == "label"), None)
+    i1cekk_binding.data_field = next((attr for attr in i1cekk_binding_domain.attributes if attr.name == "value"), None)
+else:
+    # Domain class 'Counter' not resolved; data binding skipped.
+    i1cekk_binding = None
+if i1cekk_binding:
+    i1cekk.data_binding = i1cekk_binding
+i1cekk_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
+i1cekk_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+i1cekk_styling_color = Color()
+i1cekk_styling = Styling(size=i1cekk_styling_size, position=i1cekk_styling_pos, color=i1cekk_styling_color)
+i1cekk.styling = i1cekk_styling
+i1cekk.display_order = 0
+i1cekk.component_id = "i1cekk"
+i1cekk.component_type = "line-chart"
+i1cekk.css_classes = ["line-chart-component", "has-data-binding"]
+i1cekk.custom_attributes = {"chart-color": "#4CAF50", "chart-title": "Line Chart", "data-source": "27243302-e707-43dd-8ac8-25c137307452", "label-field": "58afa26d-dae6-410e-8ca3-31f559a6980e", "data-field": "0c365500-e2b6-47d1-9763-70e404bc01af", "line-width": 2, "show-grid": True, "show-legend": True, "show-tooltip": True, "curve-type": "monotone", "animate": True, "id": "i1cekk"}
+cell = ViewContainer(name="Cell", description=" container", view_elements={i1cekk})
+cell_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
+cell_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+cell_styling_color = Color()
+cell_styling = Styling(size=cell_styling_size, position=cell_styling_pos, color=cell_styling_color)
+cell.styling = cell_styling
+cell.display_order = 0
+cell.component_id = "container_cell"
+cell.css_classes = ["gjs-cell"]
+ig71rx = BarChart(name="ig71rx", title="Bar Chart Title", primary_color="#3498db", bar_width=30, orientation="vertical", show_grid=True, show_legend=True, show_tooltip=True, stacked=False, animate=True, legend_position="top", grid_color="#e0e0e0", bar_gap=4)
+domain_model_ref = globals().get('domain_model')
+ig71rx_binding_domain = None
+if domain_model_ref is not None:
+    ig71rx_binding_domain = domain_model_ref.get_class_by_name("Counter")
+if ig71rx_binding_domain:
+    ig71rx_binding = DataBinding(domain_concept=ig71rx_binding_domain)
+    ig71rx_binding.label_field = next((attr for attr in ig71rx_binding_domain.attributes if attr.name == "label"), None)
+    ig71rx_binding.data_field = next((attr for attr in ig71rx_binding_domain.attributes if attr.name == "value"), None)
+else:
+    # Domain class 'Counter' not resolved; data binding skipped.
+    ig71rx_binding = None
+if ig71rx_binding:
+    ig71rx.data_binding = ig71rx_binding
+ig71rx_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
+ig71rx_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+ig71rx_styling_color = Color()
+ig71rx_styling = Styling(size=ig71rx_styling_size, position=ig71rx_styling_pos, color=ig71rx_styling_color)
+ig71rx.styling = ig71rx_styling
+ig71rx.display_order = 0
+ig71rx.component_id = "ig71rx"
+ig71rx.component_type = "bar-chart"
+ig71rx.css_classes = ["bar-chart-component", "has-data-binding"]
+ig71rx.custom_attributes = {"chart-color": "#3498db", "chart-title": "Bar Chart Title", "data-source": "27243302-e707-43dd-8ac8-25c137307452", "label-field": "58afa26d-dae6-410e-8ca3-31f559a6980e", "data-field": "0c365500-e2b6-47d1-9763-70e404bc01af", "bar-width": 30, "orientation": "vertical", "show-grid": True, "show-legend": True, "stacked": False, "id": "ig71rx"}
+iiyfi = ViewContainer(name="iiyfi", description=" container", view_elements={ig71rx})
+iiyfi_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
+iiyfi_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+iiyfi_styling_color = Color()
+iiyfi_styling = Styling(size=iiyfi_styling_size, position=iiyfi_styling_pos, color=iiyfi_styling_color)
+iiyfi.styling = iiyfi_styling
+iiyfi.display_order = 1
+iiyfi.component_id = "iiyfi"
+iiyfi.css_classes = ["gjs-cell"]
+iiyfi.custom_attributes = {"id": "iiyfi"}
+irekdw = RadarChart(name="irekdw", title="Radar Chart", primary_color="#8884d8", show_grid=True, show_tooltip=True, show_radius_axis=True, show_legend=True, legend_position="top", dot_size=3, grid_type="polygon", stroke_width=2)
+domain_model_ref = globals().get('domain_model')
+irekdw_binding_domain = None
+if domain_model_ref is not None:
+    irekdw_binding_domain = domain_model_ref.get_class_by_name("Counter")
+if irekdw_binding_domain:
+    irekdw_binding = DataBinding(domain_concept=irekdw_binding_domain)
+    irekdw_binding.label_field = next((attr for attr in irekdw_binding_domain.attributes if attr.name == "label"), None)
+    irekdw_binding.data_field = next((attr for attr in irekdw_binding_domain.attributes if attr.name == "value"), None)
+else:
+    # Domain class 'Counter' not resolved; data binding skipped.
+    irekdw_binding = None
+if irekdw_binding:
+    irekdw.data_binding = irekdw_binding
+irekdw_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
+irekdw_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+irekdw_styling_color = Color()
+irekdw_styling = Styling(size=irekdw_styling_size, position=irekdw_styling_pos, color=irekdw_styling_color)
+irekdw.styling = irekdw_styling
+irekdw.display_order = 0
+irekdw.component_id = "irekdw"
+irekdw.component_type = "radar-chart"
+irekdw.css_classes = ["radar-chart-component", "has-data-binding"]
+irekdw.custom_attributes = {"chart-color": "#8884d8", "chart-title": "Radar Chart", "data-source": "27243302-e707-43dd-8ac8-25c137307452", "label-field": "58afa26d-dae6-410e-8ca3-31f559a6980e", "data-field": "0c365500-e2b6-47d1-9763-70e404bc01af", "show-grid": True, "show-tooltip": True, "show-radius-axis": True, "id": "irekdw"}
+cell_2 = ViewContainer(name="Cell_2", description=" container", view_elements={irekdw})
+cell_2_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
+cell_2_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+cell_2_styling_color = Color()
+cell_2_styling = Styling(size=cell_2_styling_size, position=cell_2_styling_pos, color=cell_2_styling_color)
+cell_2.styling = cell_2_styling
+cell_2.display_order = 2
+cell_2.component_id = "container_cell_2"
+cell_2.css_classes = ["gjs-cell"]
+iofcf = ViewContainer(name="iofcf", description=" container", view_elements={cell, iiyfi, cell_2})
+iofcf_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
+iofcf_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+iofcf_styling_color = Color()
+iofcf_styling = Styling(size=iofcf_styling_size, position=iofcf_styling_pos, color=iofcf_styling_color)
+iofcf.styling = iofcf_styling
+iofcf.display_order = 1
+iofcf.component_id = "iofcf"
+iofcf.css_classes = ["gjs-row"]
+iofcf.custom_attributes = {"id": "iofcf"}
+if1fqg = Text(name="if1fqg", content="About BESSER", description="Text element")
+if1fqg_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
+if1fqg_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+if1fqg_styling_color = Color()
+if1fqg_styling = Styling(size=if1fqg_styling_size, position=if1fqg_styling_pos, color=if1fqg_styling_color)
+if1fqg.styling = if1fqg_styling
+if1fqg.display_order = 0
+if1fqg.component_id = "if1fqg"
+if1fqg.component_type = "text"
+if1fqg.tag_name = "h4"
+if1fqg.custom_attributes = {"id": "if1fqg"}
+ijr0hh = Text(name="ijr0hh", content="BESSER is a low-code platform for building smarter software faster. Empower your development with our dashboard generator and modeling tools.", description="Text element")
+ijr0hh_styling_size = Size(width="auto", height="auto", padding="0", margin="0", line_height="1.6", unit_size=UnitSize.PIXELS)
+ijr0hh_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+ijr0hh_styling_color = Color(opacity="0.8")
+ijr0hh_styling = Styling(size=ijr0hh_styling_size, position=ijr0hh_styling_pos, color=ijr0hh_styling_color)
+ijr0hh.styling = ijr0hh_styling
+ijr0hh.display_order = 1
+ijr0hh.component_id = "ijr0hh"
+ijr0hh.component_type = "text"
+ijr0hh.tag_name = "p"
+ijr0hh.custom_attributes = {"id": "ijr0hh"}
+component = ViewContainer(name="Component", description=" component", view_elements={if1fqg, ijr0hh})
+component.display_order = 0
+iq3sz9 = Text(name="iq3sz9", content="Quick Links", description="Text element")
+iq3sz9_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
+iq3sz9_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+iq3sz9_styling_color = Color()
+iq3sz9_styling = Styling(size=iq3sz9_styling_size, position=iq3sz9_styling_pos, color=iq3sz9_styling_color)
+iq3sz9.styling = iq3sz9_styling
+iq3sz9.display_order = 0
+iq3sz9.component_id = "iq3sz9"
+iq3sz9.component_type = "text"
+iq3sz9.tag_name = "h4"
+iq3sz9.custom_attributes = {"id": "iq3sz9"}
+id2pjg = Link(name="id2pjg", description="Link element", label="About", url="/about")
+id2pjg_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
+id2pjg_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+id2pjg_styling_color = Color(text_color="white")
+id2pjg_styling = Styling(size=id2pjg_styling_size, position=id2pjg_styling_pos, color=id2pjg_styling_color)
+id2pjg.styling = id2pjg_styling
+id2pjg.display_order = 0
+id2pjg.component_id = "id2pjg"
+id2pjg.component_type = "link"
+id2pjg.tag_name = "a"
+id2pjg.custom_attributes = {"href": "/about", "id": "id2pjg"}
+iyeciq = ViewContainer(name="iyeciq", description="li container", view_elements={id2pjg})
+iyeciq_styling_size = Size(width="auto", height="auto", padding="0", margin="8px 0", unit_size=UnitSize.PIXELS)
+iyeciq_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+iyeciq_styling_color = Color()
+iyeciq_styling = Styling(size=iyeciq_styling_size, position=iyeciq_styling_pos, color=iyeciq_styling_color)
+iyeciq.styling = iyeciq_styling
+iyeciq.display_order = 0
+iyeciq.component_id = "iyeciq"
+iyeciq.tag_name = "li"
+iyeciq.custom_attributes = {"id": "iyeciq"}
+icvtnv = ViewContainer(name="icvtnv", description="ul container", view_elements={iyeciq})
+icvtnv_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
+icvtnv_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+icvtnv_styling_color = Color(opacity="0.8")
+icvtnv_styling = Styling(size=icvtnv_styling_size, position=icvtnv_styling_pos, color=icvtnv_styling_color)
+icvtnv.styling = icvtnv_styling
+icvtnv.display_order = 1
+icvtnv.component_id = "icvtnv"
+icvtnv.tag_name = "ul"
+icvtnv.custom_attributes = {"id": "icvtnv"}
+component_2 = ViewContainer(name="Component_2", description=" component", view_elements={iq3sz9, icvtnv})
+component_2.display_order = 1
+inqfyo = Text(name="inqfyo", content="Contact", description="Text element")
+inqfyo_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
+inqfyo_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+inqfyo_styling_color = Color()
+inqfyo_styling = Styling(size=inqfyo_styling_size, position=inqfyo_styling_pos, color=inqfyo_styling_color)
+inqfyo.styling = inqfyo_styling
+inqfyo.display_order = 0
+inqfyo.component_id = "inqfyo"
+inqfyo.component_type = "text"
+inqfyo.tag_name = "h4"
+inqfyo.custom_attributes = {"id": "inqfyo"}
+ivv8oa = Text(name="ivv8oa", content="Email: info@besser-pearl.org\nPhone: (123) 456-7890", description="Text element")
+ivv8oa_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
+ivv8oa_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+ivv8oa_styling_color = Color(opacity="0.8")
+ivv8oa_styling = Styling(size=ivv8oa_styling_size, position=ivv8oa_styling_pos, color=ivv8oa_styling_color)
+ivv8oa.styling = ivv8oa_styling
+ivv8oa.display_order = 1
+ivv8oa.component_id = "ivv8oa"
+ivv8oa.component_type = "text"
+ivv8oa.tag_name = "p"
+ivv8oa.custom_attributes = {"id": "ivv8oa"}
+component_3 = ViewContainer(name="Component_3", description=" component", view_elements={inqfyo, ivv8oa})
+component_3.display_order = 2
+ikqajz = ViewContainer(name="ikqajz", description=" component", view_elements={component, component_2, component_3})
+ikqajz_styling_size = Size(width="auto", height="auto", padding="0", margin="0 auto", unit_size=UnitSize.PIXELS)
+ikqajz_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+ikqajz_styling_color = Color()
+ikqajz_styling = Styling(size=ikqajz_styling_size, position=ikqajz_styling_pos, color=ikqajz_styling_color)
+ikqajz_styling_layout = Layout(layout_type=LayoutType.GRID, grid_template_columns="repeat(auto-fit, minmax(250px, 1fr))", gap="30px")
+ikqajz_styling.layout = ikqajz_styling_layout
+ikqajz.styling = ikqajz_styling
+ikqajz_layout = Layout(layout_type=LayoutType.GRID, grid_template_columns="repeat(auto-fit, minmax(250px, 1fr))", gap="30px")
+ikqajz.layout = ikqajz_layout
+ikqajz.display_order = 0
+ikqajz.component_id = "ikqajz"
+ikqajz.custom_attributes = {"id": "ikqajz"}
+icjzp3 = Text(name="icjzp3", content="© 2025 BESSER. All rights reserved.", description="Text element")
+icjzp3_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
+icjzp3_styling_pos = Position(alignment=Alignment.CENTER, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+icjzp3_styling_color = Color(opacity="0.7")
+icjzp3_styling = Styling(size=icjzp3_styling_size, position=icjzp3_styling_pos, color=icjzp3_styling_color)
+icjzp3.styling = icjzp3_styling
+icjzp3.display_order = 1
+icjzp3.component_id = "icjzp3"
+icjzp3.component_type = "text"
+icjzp3.custom_attributes = {"id": "icjzp3"}
+iv0tsf = ViewContainer(name="iv0tsf", description="footer container", view_elements={ikqajz, icjzp3})
+iv0tsf_styling_size = Size(width="auto", height="auto", padding="40px 20px", margin="0", unit_size=UnitSize.PIXELS)
+iv0tsf_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
+iv0tsf_styling_color = Color(background_color="linear-gradient(135deg, #4b3c82 0%, #5a3d91 100%) !important", text_color="white")
+iv0tsf_styling = Styling(size=iv0tsf_styling_size, position=iv0tsf_styling_pos, color=iv0tsf_styling_color)
+iv0tsf.styling = iv0tsf_styling
+iv0tsf.display_order = 2
+iv0tsf.component_id = "iv0tsf"
+iv0tsf.tag_name = "footer"
+iv0tsf.custom_attributes = {"id": "iv0tsf"}
+i2bh.view_elements = {irenj, iofcf, iv0tsf}
+
+
 # Screen: wrapper
-wrapper = Screen(name="wrapper", description="Home", view_elements=set(), is_main_page=True, route_path="/home", screen_size="Medium")
-wrapper.component_id = "yXWXAvEmfeStNpkm"
+wrapper = Screen(name="wrapper", description="About", view_elements=set(), route_path="/about", screen_size="Medium")
+wrapper.component_id = "HWrxLpPdBSm60elV"
 meta = ViewComponent(name="meta", description="meta component")
 meta.display_order = 0
 meta.tag_name = "meta"
@@ -63,472 +363,14 @@ viewport = ViewComponent(name="viewport", description="meta component")
 viewport.display_order = 1
 viewport.tag_name = "meta"
 viewport.custom_attributes = {"name": "viewport", "content": "width=device-width, initial-scale=1"}
-title = Text(name="title", content="BESSER Generated Page", description="Text element")
-title.display_order = 2
-title.component_type = "text"
-title.tag_name = "title"
-io07 = Text(name="io07", content="BESSER", description="Text element")
-io07_styling_size = Size(width="auto", height="auto", padding="0", margin="0", font_size="24px", unit_size=UnitSize.PIXELS)
-io07_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-io07_styling_color = Color()
-io07_styling = Styling(size=io07_styling_size, position=io07_styling_pos, color=io07_styling_color)
-io07.styling = io07_styling
-io07.display_order = 0
-io07.component_id = "io07"
-io07.component_type = "text"
-io07.custom_attributes = {"id": "io07"}
-ibtww = Link(name="ibtww", description="Link element", label="Home", url="/")
-ibtww_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-ibtww_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-ibtww_styling_color = Color(text_color="white")
-ibtww_styling = Styling(size=ibtww_styling_size, position=ibtww_styling_pos, color=ibtww_styling_color)
-ibtww.styling = ibtww_styling
-ibtww.display_order = 0
-ibtww.component_id = "ibtww"
-ibtww.component_type = "link"
-ibtww.tag_name = "a"
-ibtww.custom_attributes = {"href": "/", "id": "ibtww"}
-ild7j = Link(name="ild7j", description="Link element", label="About", url="/about")
-ild7j_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-ild7j_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-ild7j_styling_color = Color(text_color="white")
-ild7j_styling = Styling(size=ild7j_styling_size, position=ild7j_styling_pos, color=ild7j_styling_color)
-ild7j.styling = ild7j_styling
-ild7j.display_order = 1
-ild7j.component_id = "ild7j"
-ild7j.component_type = "link"
-ild7j.tag_name = "a"
-ild7j.custom_attributes = {"href": "/about", "id": "ild7j"}
-inp2m = ViewContainer(name="inp2m", description=" component", view_elements={ibtww, ild7j})
-inp2m_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-inp2m_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-inp2m_styling_color = Color()
-inp2m_styling = Styling(size=inp2m_styling_size, position=inp2m_styling_pos, color=inp2m_styling_color)
-inp2m.styling = inp2m_styling
-inp2m.display_order = 1
-inp2m.component_id = "inp2m"
-inp2m.custom_attributes = {"id": "inp2m"}
-i5jh = ViewContainer(name="i5jh", description="nav container", view_elements={io07, inp2m})
-i5jh_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-i5jh_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-i5jh_styling_color = Color(background_color="linear-gradient(135deg, rgb(75, 60, 130) 0%, rgb(90, 61, 145) 100%) !important", text_color="white")
-i5jh_styling = Styling(size=i5jh_styling_size, position=i5jh_styling_pos, color=i5jh_styling_color)
-i5jh_styling_layout = Layout(layout_type=LayoutType.FLEX, justify_content="space-between", align_items="center", gap="16px")
-i5jh_styling.layout = i5jh_styling_layout
-i5jh.styling = i5jh_styling
-i5jh_layout = Layout(layout_type=LayoutType.FLEX, justify_content="space-between", align_items="center", gap="16px")
-i5jh.layout = i5jh_layout
-i5jh.display_order = 3
-i5jh.component_id = "i5jh"
-i5jh.tag_name = "nav"
-i5jh.custom_attributes = {"id": "i5jh"}
-i72zk = LineChart(name="i72zk", title="Line Chart Title", primary_color="#4CAF50", line_width=2, show_grid=False, show_legend=False, show_tooltip=False, curve_type="monotone", animate=False, legend_position="top", grid_color="#e0e0e0", dot_size=5)
-domain_model_ref = globals().get('domain_model')
-i72zk_binding_domain = None
-if domain_model_ref is not None:
-    i72zk_binding_domain = domain_model_ref.get_class_by_name("Counter")
-if i72zk_binding_domain:
-    i72zk_binding = DataBinding(domain_concept=i72zk_binding_domain)
-    i72zk_binding.label_field = next((attr for attr in i72zk_binding_domain.attributes if attr.name == "label"), None)
-    i72zk_binding.data_field = next((attr for attr in i72zk_binding_domain.attributes if attr.name == "value"), None)
-else:
-    # Domain class 'Counter' not resolved; data binding skipped.
-    i72zk_binding = None
-if i72zk_binding:
-    i72zk.data_binding = i72zk_binding
-i72zk_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-i72zk_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-i72zk_styling_color = Color()
-i72zk_styling = Styling(size=i72zk_styling_size, position=i72zk_styling_pos, color=i72zk_styling_color)
-i72zk.styling = i72zk_styling
-i72zk.display_order = 0
-i72zk.component_id = "i72zk"
-i72zk.component_type = "line-chart"
-i72zk.css_classes = ["line-chart-component", "has-data-binding"]
-i72zk.custom_attributes = {"chart-color": "#4CAF50", "chart-title": "Line Chart Title", "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648", "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e", "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc", "line-width": "2", "show-grid": "", "show-legend": "", "show-tooltip": "", "curve-type": "monotone", "animate": "", "id": "i72zk"}
-ifczf = ViewContainer(name="ifczf", description=" component", view_elements={i72zk})
-ifczf_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-ifczf_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-ifczf_styling_color = Color()
-ifczf_styling = Styling(size=ifczf_styling_size, position=ifczf_styling_pos, color=ifczf_styling_color)
-ifczf.styling = ifczf_styling
-ifczf.display_order = 0
-ifczf.component_id = "ifczf"
-ifczf.css_classes = ["gjs-cell"]
-ifczf.custom_attributes = {"id": "ifczf"}
-i8fz6 = PieChart(name="i8fz6", title="Pie Chart Title", show_legend=False, legend_position=Alignment.BOTTOM, show_labels=False, label_position=Alignment.INSIDE, padding_angle=0, inner_radius=0, outer_radius=80, start_angle=0, end_angle=360)
-domain_model_ref = globals().get('domain_model')
-i8fz6_binding_domain = None
-if domain_model_ref is not None:
-    i8fz6_binding_domain = domain_model_ref.get_class_by_name("Counter")
-if i8fz6_binding_domain:
-    i8fz6_binding = DataBinding(domain_concept=i8fz6_binding_domain)
-    i8fz6_binding.label_field = next((attr for attr in i8fz6_binding_domain.attributes if attr.name == "label"), None)
-    i8fz6_binding.data_field = next((attr for attr in i8fz6_binding_domain.attributes if attr.name == "value"), None)
-else:
-    # Domain class 'Counter' not resolved; data binding skipped.
-    i8fz6_binding = None
-if i8fz6_binding:
-    i8fz6.data_binding = i8fz6_binding
-i8fz6_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-i8fz6_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-i8fz6_styling_color = Color()
-i8fz6_styling = Styling(size=i8fz6_styling_size, position=i8fz6_styling_pos, color=i8fz6_styling_color)
-i8fz6.styling = i8fz6_styling
-i8fz6.display_order = 0
-i8fz6.component_id = "i8fz6"
-i8fz6.component_type = "pie-chart"
-i8fz6.css_classes = ["pie-chart-component", "has-data-binding"]
-i8fz6.custom_attributes = {"chart-title": "Pie Chart Title", "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648", "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e", "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc", "show-legend": "", "legend-position": "bottom", "show-labels": "", "label-position": "inside", "padding-angle": "0", "id": "i8fz6"}
-iz1hy = ViewContainer(name="iz1hy", description=" component", view_elements={i8fz6})
-iz1hy_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-iz1hy_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-iz1hy_styling_color = Color()
-iz1hy_styling = Styling(size=iz1hy_styling_size, position=iz1hy_styling_pos, color=iz1hy_styling_color)
-iz1hy.styling = iz1hy_styling
-iz1hy.display_order = 1
-iz1hy.component_id = "iz1hy"
-iz1hy.css_classes = ["gjs-cell"]
-iz1hy.custom_attributes = {"id": "iz1hy"}
-id9ne = RadarChart(name="id9ne", title="Radar Chart Title", primary_color="#8884d8", show_grid=False, show_tooltip=False, show_radius_axis=False, show_legend=True, legend_position="top", dot_size=3, grid_type="polygon", stroke_width=2)
-domain_model_ref = globals().get('domain_model')
-id9ne_binding_domain = None
-if domain_model_ref is not None:
-    id9ne_binding_domain = domain_model_ref.get_class_by_name("Counter")
-if id9ne_binding_domain:
-    id9ne_binding = DataBinding(domain_concept=id9ne_binding_domain)
-    id9ne_binding.label_field = next((attr for attr in id9ne_binding_domain.attributes if attr.name == "label"), None)
-    id9ne_binding.data_field = next((attr for attr in id9ne_binding_domain.attributes if attr.name == "value"), None)
-else:
-    # Domain class 'Counter' not resolved; data binding skipped.
-    id9ne_binding = None
-if id9ne_binding:
-    id9ne.data_binding = id9ne_binding
-id9ne_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-id9ne_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-id9ne_styling_color = Color()
-id9ne_styling = Styling(size=id9ne_styling_size, position=id9ne_styling_pos, color=id9ne_styling_color)
-id9ne.styling = id9ne_styling
-id9ne.display_order = 0
-id9ne.component_id = "id9ne"
-id9ne.component_type = "radar-chart"
-id9ne.css_classes = ["radar-chart-component", "has-data-binding"]
-id9ne.custom_attributes = {"chart-color": "#8884d8", "chart-title": "Radar Chart Title", "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648", "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e", "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc", "show-grid": "", "show-tooltip": "", "show-radius-axis": "", "id": "id9ne"}
-component = ViewContainer(name="Component", description=" component", view_elements={id9ne})
-component_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-component_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-component_styling_color = Color()
-component_styling = Styling(size=component_styling_size, position=component_styling_pos, color=component_styling_color)
-component.styling = component_styling
-component.display_order = 2
-component.css_classes = ["gjs-cell"]
-iiqx6 = ViewContainer(name="iiqx6", description=" component", view_elements={ifczf, iz1hy, component})
-iiqx6_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-iiqx6_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-iiqx6_styling_color = Color()
-iiqx6_styling = Styling(size=iiqx6_styling_size, position=iiqx6_styling_pos, color=iiqx6_styling_color)
-iiqx6.styling = iiqx6_styling
-iiqx6.display_order = 4
-iiqx6.component_id = "iiqx6"
-iiqx6.css_classes = ["gjs-row"]
-iiqx6.custom_attributes = {"id": "iiqx6"}
-iy0gc = BarChart(name="iy0gc", title="Bar Chart Title", primary_color="#3498db", bar_width=30, orientation="vertical", show_grid=False, show_legend=False, show_tooltip=True, stacked=False, animate=True, legend_position="top", grid_color="#e0e0e0", bar_gap=4)
-domain_model_ref = globals().get('domain_model')
-iy0gc_binding_domain = None
-if domain_model_ref is not None:
-    iy0gc_binding_domain = domain_model_ref.get_class_by_name("Counter")
-if iy0gc_binding_domain:
-    iy0gc_binding = DataBinding(domain_concept=iy0gc_binding_domain)
-    iy0gc_binding.label_field = next((attr for attr in iy0gc_binding_domain.attributes if attr.name == "label"), None)
-    iy0gc_binding.data_field = next((attr for attr in iy0gc_binding_domain.attributes if attr.name == "value"), None)
-else:
-    # Domain class 'Counter' not resolved; data binding skipped.
-    iy0gc_binding = None
-if iy0gc_binding:
-    iy0gc.data_binding = iy0gc_binding
-iy0gc_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-iy0gc_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-iy0gc_styling_color = Color()
-iy0gc_styling = Styling(size=iy0gc_styling_size, position=iy0gc_styling_pos, color=iy0gc_styling_color)
-iy0gc.styling = iy0gc_styling
-iy0gc.display_order = 0
-iy0gc.component_id = "iy0gc"
-iy0gc.component_type = "bar-chart"
-iy0gc.css_classes = ["bar-chart-component", "has-data-binding"]
-iy0gc.custom_attributes = {"chart-color": "#3498db", "chart-title": "Bar Chart Title", "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648", "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e", "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc", "bar-width": "30", "orientation": "vertical", "show-grid": "", "show-legend": "", "stacked": False, "id": "iy0gc"}
-i2lt6 = ViewContainer(name="i2lt6", description=" component", view_elements={iy0gc})
-i2lt6_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-i2lt6_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-i2lt6_styling_color = Color()
-i2lt6_styling = Styling(size=i2lt6_styling_size, position=i2lt6_styling_pos, color=i2lt6_styling_color)
-i2lt6.styling = i2lt6_styling
-i2lt6.display_order = 0
-i2lt6.component_id = "i2lt6"
-i2lt6.css_classes = ["gjs-cell"]
-i2lt6.custom_attributes = {"id": "i2lt6"}
-ig59l = RadialBarChart(name="ig59l", title="Radial Bar Chart Title", start_angle=90, end_angle=450, inner_radius=30, outer_radius=80, show_legend=True, legend_position="top", show_tooltip=True)
-domain_model_ref = globals().get('domain_model')
-ig59l_binding_domain = None
-if domain_model_ref is not None:
-    ig59l_binding_domain = domain_model_ref.get_class_by_name("Counter")
-if ig59l_binding_domain:
-    ig59l_binding = DataBinding(domain_concept=ig59l_binding_domain)
-else:
-    # Domain class 'Counter' not resolved; data binding skipped.
-    ig59l_binding = None
-if ig59l_binding:
-    ig59l.data_binding = ig59l_binding
-ig59l_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-ig59l_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-ig59l_styling_color = Color()
-ig59l_styling = Styling(size=ig59l_styling_size, position=ig59l_styling_pos, color=ig59l_styling_color)
-ig59l.styling = ig59l_styling
-ig59l.display_order = 0
-ig59l.component_id = "ig59l"
-ig59l.component_type = "radial-bar-chart"
-ig59l.css_classes = ["radial-bar-chart-component", "has-data-binding"]
-ig59l.custom_attributes = {"chart-title": "Radial Bar Chart Title", "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648", "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e", "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc", "start-angle": "90", "end-angle": "450", "id": "ig59l"}
-igud3 = ViewContainer(name="igud3", description=" component", view_elements={ig59l})
-igud3_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-igud3_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-igud3_styling_color = Color()
-igud3_styling = Styling(size=igud3_styling_size, position=igud3_styling_pos, color=igud3_styling_color)
-igud3.styling = igud3_styling
-igud3.display_order = 1
-igud3.component_id = "igud3"
-igud3.css_classes = ["gjs-cell"]
-igud3.custom_attributes = {"id": "igud3"}
-i4f21 = LineChart(name="i4f21", title="Line Chart Title", primary_color="#4CAF50", line_width=2, show_grid=False, show_legend=False, show_tooltip=False, curve_type="monotone", animate=False, legend_position="top", grid_color="#e0e0e0", dot_size=5)
-domain_model_ref = globals().get('domain_model')
-i4f21_binding_domain = None
-if domain_model_ref is not None:
-    i4f21_binding_domain = domain_model_ref.get_class_by_name("Counter")
-if i4f21_binding_domain:
-    i4f21_binding = DataBinding(domain_concept=i4f21_binding_domain)
-    i4f21_binding.label_field = next((attr for attr in i4f21_binding_domain.attributes if attr.name == "label"), None)
-    i4f21_binding.data_field = next((attr for attr in i4f21_binding_domain.attributes if attr.name == "value"), None)
-else:
-    # Domain class 'Counter' not resolved; data binding skipped.
-    i4f21_binding = None
-if i4f21_binding:
-    i4f21.data_binding = i4f21_binding
-i4f21_styling_size = Size(width="100%", height="400px", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-i4f21_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-i4f21_styling_color = Color()
-i4f21_styling = Styling(size=i4f21_styling_size, position=i4f21_styling_pos, color=i4f21_styling_color)
-i4f21.styling = i4f21_styling
-i4f21.display_order = 0
-i4f21.component_id = "i4f21"
-i4f21.component_type = "line-chart"
-i4f21.css_classes = ["line-chart-component", "has-data-binding"]
-i4f21.custom_attributes = {"chart-color": "#4CAF50", "chart-title": "Line Chart Title", "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648", "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e", "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc", "line-width": "2", "show-grid": "", "show-legend": "", "show-tooltip": "", "curve-type": "monotone", "animate": "", "id": "i4f21"}
-component_2 = ViewContainer(name="Component_2", description=" component", view_elements={i4f21})
-component_2_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-component_2_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-component_2_styling_color = Color()
-component_2_styling = Styling(size=component_2_styling_size, position=component_2_styling_pos, color=component_2_styling_color)
-component_2.styling = component_2_styling
-component_2.display_order = 2
-component_2.css_classes = ["gjs-cell"]
-is6fi = ViewContainer(name="is6fi", description=" component", view_elements={i2lt6, igud3, component_2})
-is6fi_styling_size = Size(width="100%", height="auto", padding="0", margin="0", unit_size=UnitSize.PERCENTAGE)
-is6fi_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-is6fi_styling_color = Color()
-is6fi_styling = Styling(size=is6fi_styling_size, position=is6fi_styling_pos, color=is6fi_styling_color)
-is6fi.styling = is6fi_styling
-is6fi.display_order = 5
-is6fi.component_id = "is6fi"
-is6fi.css_classes = ["gjs-row"]
-is6fi.custom_attributes = {"id": "is6fi"}
-i3p8x = Text(name="i3p8x", content="About BESSER", description="Text element")
-i3p8x_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-i3p8x_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-i3p8x_styling_color = Color()
-i3p8x_styling = Styling(size=i3p8x_styling_size, position=i3p8x_styling_pos, color=i3p8x_styling_color)
-i3p8x.styling = i3p8x_styling
-i3p8x.display_order = 0
-i3p8x.component_id = "i3p8x"
-i3p8x.component_type = "text"
-i3p8x.tag_name = "h4"
-i3p8x.custom_attributes = {"id": "i3p8x"}
-i9x6g = Text(name="i9x6g", content="BESSER is a low-code platform for building smarter software faster. Empower your development with our dashboard generator and modeling tools.", description="Text element")
-i9x6g_styling_size = Size(width="auto", height="auto", padding="0", margin="0", line_height="1.6", unit_size=UnitSize.PIXELS)
-i9x6g_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-i9x6g_styling_color = Color(opacity="0.8")
-i9x6g_styling = Styling(size=i9x6g_styling_size, position=i9x6g_styling_pos, color=i9x6g_styling_color)
-i9x6g.styling = i9x6g_styling
-i9x6g.display_order = 1
-i9x6g.component_id = "i9x6g"
-i9x6g.component_type = "text"
-i9x6g.tag_name = "p"
-i9x6g.custom_attributes = {"id": "i9x6g"}
-component_3 = ViewContainer(name="Component_3", description=" component", view_elements={i3p8x, i9x6g})
-component_3.display_order = 0
-iybmm = Text(name="iybmm", content="Quick Links", description="Text element")
-iybmm_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-iybmm_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-iybmm_styling_color = Color()
-iybmm_styling = Styling(size=iybmm_styling_size, position=iybmm_styling_pos, color=iybmm_styling_color)
-iybmm.styling = iybmm_styling
-iybmm.display_order = 0
-iybmm.component_id = "iybmm"
-iybmm.component_type = "text"
-iybmm.tag_name = "h4"
-iybmm.custom_attributes = {"id": "iybmm"}
-i0wq2 = Link(name="i0wq2", description="Link element", label="Dashboard Generator", url="#")
-i0wq2_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-i0wq2_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-i0wq2_styling_color = Color(text_color="white")
-i0wq2_styling = Styling(size=i0wq2_styling_size, position=i0wq2_styling_pos, color=i0wq2_styling_color)
-i0wq2.styling = i0wq2_styling
-i0wq2.display_order = 0
-i0wq2.component_id = "i0wq2"
-i0wq2.component_type = "link"
-i0wq2.tag_name = "a"
-i0wq2.custom_attributes = {"href": "#", "id": "i0wq2"}
-ichrl = ViewContainer(name="ichrl", description="li container", view_elements={i0wq2})
-ichrl_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-ichrl_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-ichrl_styling_color = Color()
-ichrl_styling = Styling(size=ichrl_styling_size, position=ichrl_styling_pos, color=ichrl_styling_color)
-ichrl.styling = ichrl_styling
-ichrl.display_order = 0
-ichrl.component_id = "ichrl"
-ichrl.tag_name = "li"
-ichrl.custom_attributes = {"id": "ichrl"}
-i2f1j = Link(name="i2f1j", description="Link element", label="API Reference", url="#")
-i2f1j_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-i2f1j_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-i2f1j_styling_color = Color(text_color="white")
-i2f1j_styling = Styling(size=i2f1j_styling_size, position=i2f1j_styling_pos, color=i2f1j_styling_color)
-i2f1j.styling = i2f1j_styling
-i2f1j.display_order = 0
-i2f1j.component_id = "i2f1j"
-i2f1j.component_type = "link"
-i2f1j.tag_name = "a"
-i2f1j.custom_attributes = {"href": "#", "id": "i2f1j"}
-ixtnt = ViewContainer(name="ixtnt", description="li container", view_elements={i2f1j})
-ixtnt_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-ixtnt_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-ixtnt_styling_color = Color()
-ixtnt_styling = Styling(size=ixtnt_styling_size, position=ixtnt_styling_pos, color=ixtnt_styling_color)
-ixtnt.styling = ixtnt_styling
-ixtnt.display_order = 1
-ixtnt.component_id = "ixtnt"
-ixtnt.tag_name = "li"
-ixtnt.custom_attributes = {"id": "ixtnt"}
-inu9a = Link(name="inu9a", description="Link element", label="Support", url="#")
-inu9a_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-inu9a_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-inu9a_styling_color = Color(text_color="white")
-inu9a_styling = Styling(size=inu9a_styling_size, position=inu9a_styling_pos, color=inu9a_styling_color)
-inu9a.styling = inu9a_styling
-inu9a.display_order = 0
-inu9a.component_id = "inu9a"
-inu9a.component_type = "link"
-inu9a.tag_name = "a"
-inu9a.custom_attributes = {"href": "#", "id": "inu9a"}
-irxsn = ViewContainer(name="irxsn", description="li container", view_elements={inu9a})
-irxsn_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-irxsn_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-irxsn_styling_color = Color()
-irxsn_styling = Styling(size=irxsn_styling_size, position=irxsn_styling_pos, color=irxsn_styling_color)
-irxsn.styling = irxsn_styling
-irxsn.display_order = 2
-irxsn.component_id = "irxsn"
-irxsn.tag_name = "li"
-irxsn.custom_attributes = {"id": "irxsn"}
-im0xi = ViewContainer(name="im0xi", description="ul container", view_elements={ichrl, ixtnt, irxsn})
-im0xi_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-im0xi_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-im0xi_styling_color = Color(opacity="0.8")
-im0xi_styling = Styling(size=im0xi_styling_size, position=im0xi_styling_pos, color=im0xi_styling_color)
-im0xi.styling = im0xi_styling
-im0xi.display_order = 1
-im0xi.component_id = "im0xi"
-im0xi.tag_name = "ul"
-im0xi.custom_attributes = {"id": "im0xi"}
-component_4 = ViewContainer(name="Component_4", description=" component", view_elements={iybmm, im0xi})
-component_4.display_order = 1
-igd5a = Text(name="igd5a", content="Contact", description="Text element")
-igd5a_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-igd5a_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-igd5a_styling_color = Color()
-igd5a_styling = Styling(size=igd5a_styling_size, position=igd5a_styling_pos, color=igd5a_styling_color)
-igd5a.styling = igd5a_styling
-igd5a.display_order = 0
-igd5a.component_id = "igd5a"
-igd5a.component_type = "text"
-igd5a.tag_name = "h4"
-igd5a.custom_attributes = {"id": "igd5a"}
-itmu2 = Text(name="itmu2", content="Email: info@besser-pearl.org\nPhone: (123) 456-7890", description="Text element")
-itmu2_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-itmu2_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-itmu2_styling_color = Color(opacity="0.8")
-itmu2_styling = Styling(size=itmu2_styling_size, position=itmu2_styling_pos, color=itmu2_styling_color)
-itmu2.styling = itmu2_styling
-itmu2.display_order = 1
-itmu2.component_id = "itmu2"
-itmu2.component_type = "text"
-itmu2.tag_name = "p"
-itmu2.custom_attributes = {"id": "itmu2"}
-component_5 = ViewContainer(name="Component_5", description=" component", view_elements={igd5a, itmu2})
-component_5.display_order = 2
-i8uhg = ViewContainer(name="i8uhg", description=" component", view_elements={component_3, component_4, component_5})
-i8uhg_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-i8uhg_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-i8uhg_styling_color = Color()
-i8uhg_styling = Styling(size=i8uhg_styling_size, position=i8uhg_styling_pos, color=i8uhg_styling_color)
-i8uhg_styling_layout = Layout(layout_type=LayoutType.GRID, grid_template_columns="repeat(auto-fit, minmax(250px, 1fr))", gap="16px")
-i8uhg_styling.layout = i8uhg_styling_layout
-i8uhg.styling = i8uhg_styling
-i8uhg_layout = Layout(layout_type=LayoutType.GRID, grid_template_columns="repeat(auto-fit, minmax(250px, 1fr))", gap="16px")
-i8uhg.layout = i8uhg_layout
-i8uhg.display_order = 0
-i8uhg.component_id = "i8uhg"
-i8uhg.custom_attributes = {"id": "i8uhg"}
-iph4d = Text(name="iph4d", content="© 2025 BESSER. All rights reserved.", description="Text element")
-iph4d_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-iph4d_styling_pos = Position(alignment=Alignment.CENTER, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-iph4d_styling_color = Color(opacity="0.7")
-iph4d_styling = Styling(size=iph4d_styling_size, position=iph4d_styling_pos, color=iph4d_styling_color)
-iph4d.styling = iph4d_styling
-iph4d.display_order = 1
-iph4d.component_id = "iph4d"
-iph4d.component_type = "text"
-iph4d.custom_attributes = {"id": "iph4d"}
-ictst = ViewContainer(name="ictst", description="footer container", view_elements={i8uhg, iph4d})
-ictst_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
-ictst_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
-ictst_styling_color = Color(background_color="linear-gradient(135deg, rgb(75, 60, 130) 0%, rgb(90, 61, 145) 100%) !important", text_color="white")
-ictst_styling = Styling(size=ictst_styling_size, position=ictst_styling_pos, color=ictst_styling_color)
-ictst.styling = ictst_styling
-ictst.display_order = 6
-ictst.component_id = "ictst"
-ictst.tag_name = "footer"
-ictst.custom_attributes = {"id": "ictst"}
-wrapper.view_elements = {meta, viewport, title, i5jh, iiqx6, is6fi, ictst}
-
-
-# Screen: wrapper_2
-wrapper_2 = Screen(name="wrapper_2", description="About", view_elements=set(), route_path="/about", screen_size="Medium")
-wrapper_2.component_id = "r853I1MU7LvrIvAK"
 meta_2 = ViewComponent(name="meta_2", description="meta component")
-meta_2.display_order = 0
+meta_2.display_order = 2
 meta_2.tag_name = "meta"
 meta_2.custom_attributes = {"charset": "utf-8"}
 viewport_2 = ViewComponent(name="viewport_2", description="meta component")
-viewport_2.display_order = 1
+viewport_2.display_order = 3
 viewport_2.tag_name = "meta"
 viewport_2.custom_attributes = {"name": "viewport", "content": "width=device-width, initial-scale=1"}
-meta_3 = ViewComponent(name="meta_3", description="meta component")
-meta_3.display_order = 2
-meta_3.tag_name = "meta"
-meta_3.custom_attributes = {"charset": "utf-8"}
-viewport_3 = ViewComponent(name="viewport_3", description="meta component")
-viewport_3.display_order = 3
-viewport_3.tag_name = "meta"
-viewport_3.custom_attributes = {"name": "viewport", "content": "width=device-width, initial-scale=1"}
 io07_2 = Text(name="io07_2", content="BESSER", description="Text element")
 io07_2_styling_size = Size(width="auto", height="auto", padding="0", margin="0", font_size="24px", unit_size=UnitSize.PIXELS)
 io07_2_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
@@ -769,7 +611,7 @@ ih9198.display_order = 0
 ih9198.component_id = "ih9198"
 ih9198.component_type = "text"
 ih9198.custom_attributes = {"id": "ih9198"}
-ii2qto = Text(name="ii2qto", content="Responsive Design", description="Text element")
+ii2qto = Text(name="ii2qto", content="Resp Design", description="Text element")
 ii2qto_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
 ii2qto_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
 ii2qto_styling_color = Color(text_color="rgb(51, 51, 51)")
@@ -854,8 +696,8 @@ i9x6g_2.component_id = "i9x6g-2"
 i9x6g_2.component_type = "text"
 i9x6g_2.tag_name = "p"
 i9x6g_2.custom_attributes = {"id": "i9x6g-2"}
-component_6 = ViewContainer(name="Component_6", description=" component", view_elements={i3p8x_2, i9x6g_2})
-component_6.display_order = 0
+component_4 = ViewContainer(name="Component_4", description=" component", view_elements={i3p8x_2, i9x6g_2})
+component_4.display_order = 0
 iybmm_2 = Text(name="iybmm_2", content="Quick Links", description="Text element")
 iybmm_2_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
 iybmm_2_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
@@ -940,8 +782,8 @@ im0xi_2.display_order = 1
 im0xi_2.component_id = "im0xi-2"
 im0xi_2.tag_name = "ul"
 im0xi_2.custom_attributes = {"id": "im0xi-2"}
-component_7 = ViewContainer(name="Component_7", description=" component", view_elements={iybmm_2, im0xi_2})
-component_7.display_order = 1
+component_5 = ViewContainer(name="Component_5", description=" component", view_elements={iybmm_2, im0xi_2})
+component_5.display_order = 1
 igd5a_2 = Text(name="igd5a_2", content="Contact", description="Text element")
 igd5a_2_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
 igd5a_2_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
@@ -968,7 +810,7 @@ iberth = ViewContainer(name="iberth", description=" component", view_elements={i
 iberth.display_order = 2
 iberth.component_id = "iberth"
 iberth.custom_attributes = {"id": "iberth"}
-i8uhg_2 = ViewContainer(name="i8uhg_2", description=" component", view_elements={component_6, component_7, iberth})
+i8uhg_2 = ViewContainer(name="i8uhg_2", description=" component", view_elements={component_4, component_5, iberth})
 i8uhg_2_styling_size = Size(width="auto", height="auto", padding="0", margin="0", unit_size=UnitSize.PIXELS)
 i8uhg_2_styling_pos = Position(alignment=Alignment.LEFT, top="auto", left="auto", right="auto", bottom="auto", z_index=0, p_type=PositionType.STATIC)
 i8uhg_2_styling_color = Color()
@@ -1021,11 +863,11 @@ is6fi_2.display_order = 9
 is6fi_2.component_id = "is6fi-2"
 is6fi_2.css_classes = ["gjs-row"]
 is6fi_2.custom_attributes = {"id": "is6fi-2"}
-wrapper_2.view_elements = {meta_2, viewport_2, meta_3, viewport_3, i5jh_2, ihhucw, i94ykd, ictst_2, iiqx6_2, is6fi_2}
+wrapper.view_elements = {meta, viewport, meta_2, viewport_2, i5jh_2, ihhucw, i94ykd, ictst_2, iiqx6_2, is6fi_2}
 
 gui_module = Module(
     name="GUI_Module",
-    screens={wrapper, wrapper_2}
+    screens={i2bh, wrapper}
 )
 
 # GUI Model

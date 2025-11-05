@@ -1,65 +1,65 @@
 {
   "project": {
-    "id": "8cb6c609-23cf-4f96-98af-b5686d2b9c21",
+    "id": "05de39a5-2536-45dd-9207-990d2c1cc848",
     "type": "Project",
-    "name": "468",
+    "name": "vdfgdf",
     "description": "New project",
     "owner": "User",
-    "createdAt": "2025-11-05T13:13:11.108Z",
+    "createdAt": "2025-11-05T16:11:13.685Z",
     "currentDiagramType": "ClassDiagram",
     "diagrams": {
       "ClassDiagram": {
-        "id": "d487c31c-be76-4f53-870f-5ccfe2f1407a",
+        "id": "1d841df3-04b3-4bc2-b952-0439ba9d4bae",
         "title": "Class Diagram",
         "model": {
           "version": "3.0.0",
           "type": "ClassDiagram",
           "size": {
-            "width": 1080,
-            "height": 620
+            "width": 1440,
+            "height": 560
           },
           "interactive": {
             "elements": {},
             "relationships": {}
           },
           "elements": {
-            "a87eb810-2e0a-492b-8cd3-62251566f648": {
-              "id": "a87eb810-2e0a-492b-8cd3-62251566f648",
+            "27243302-e707-43dd-8ac8-25c137307452": {
+              "id": "27243302-e707-43dd-8ac8-25c137307452",
               "name": "Counter",
               "type": "Class",
               "owner": null,
               "bounds": {
-                "x": -520,
-                "y": -290,
+                "x": -700,
+                "y": -260,
                 "width": 160,
                 "height": 100
               },
               "attributes": [
-                "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc"
+                "58afa26d-dae6-410e-8ca3-31f559a6980e",
+                "0c365500-e2b6-47d1-9763-70e404bc01af"
               ],
               "methods": []
             },
-            "f63380b5-ccf8-448a-bb82-70d62d61442e": {
-              "id": "f63380b5-ccf8-448a-bb82-70d62d61442e",
+            "58afa26d-dae6-410e-8ca3-31f559a6980e": {
+              "id": "58afa26d-dae6-410e-8ca3-31f559a6980e",
               "name": "+ label: str",
               "type": "ClassAttribute",
-              "owner": "a87eb810-2e0a-492b-8cd3-62251566f648",
+              "owner": "27243302-e707-43dd-8ac8-25c137307452",
               "bounds": {
-                "x": -519.5,
-                "y": -249.5,
+                "x": -699.5,
+                "y": -219.5,
                 "width": 159,
                 "height": 30
               }
             },
-            "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc": {
-              "id": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-              "name": "+ value: str",
+            "0c365500-e2b6-47d1-9763-70e404bc01af": {
+              "id": "0c365500-e2b6-47d1-9763-70e404bc01af",
+              "name": "+ value: int",
               "type": "ClassAttribute",
-              "owner": "a87eb810-2e0a-492b-8cd3-62251566f648",
+              "owner": "27243302-e707-43dd-8ac8-25c137307452",
               "bounds": {
-                "x": -519.5,
-                "y": -219.5,
+                "x": -699.5,
+                "y": -189.5,
                 "width": 159,
                 "height": 30
               }
@@ -68,10 +68,10 @@
           "relationships": {},
           "assessments": {}
         },
-        "lastUpdate": "2025-11-05T13:13:49.787Z"
+        "lastUpdate": "2025-11-05T16:13:02.971Z"
       },
       "ObjectDiagram": {
-        "id": "42c303fa-87df-4f83-84d7-da04679e0728",
+        "id": "d11c5d5c-8e01-4c93-9059-d17a2f4d81cb",
         "title": "Object Diagram",
         "model": {
           "version": "3.0.0",
@@ -88,10 +88,10 @@
           },
           "assessments": {}
         },
-        "lastUpdate": "2025-11-05T13:13:11.108Z"
+        "lastUpdate": "2025-11-05T16:11:13.685Z"
       },
       "StateMachineDiagram": {
-        "id": "7f1be92b-4a2e-4bf6-a33c-0ab30334cb91",
+        "id": "8e70fac9-c134-45c4-b34b-1e3a6fe4cc04",
         "title": "State Machine Diagram",
         "model": {
           "version": "3.0.0",
@@ -108,10 +108,10 @@
           },
           "assessments": {}
         },
-        "lastUpdate": "2025-11-05T13:13:11.108Z"
+        "lastUpdate": "2025-11-05T16:11:13.685Z"
       },
       "AgentDiagram": {
-        "id": "1149a228-9df1-4e14-a63f-1c689d5b2383",
+        "id": "06a25bde-fc7e-4609-8dee-290deda529a6",
         "title": "Agent Diagram",
         "model": {
           "version": "3.0.0",
@@ -128,10 +128,10 @@
           },
           "assessments": {}
         },
-        "lastUpdate": "2025-11-05T13:13:11.108Z"
+        "lastUpdate": "2025-11-05T16:11:13.685Z"
       },
       "GUINoCodeDiagram": {
-        "id": "9c87bc4b-ca63-4d72-a280-3f9fe0a204c0",
+        "id": "858aa988-9859-4356-ae71-aaa604143c6e",
         "title": "GUI Diagram",
         "model": {
           "pages": [
@@ -150,42 +150,20 @@
                       "background-position",
                       "background-size"
                     ],
+                    "attributes": {
+                      "id": "i2bh"
+                    },
                     "components": [
-                      {
-                        "tagName": "meta",
-                        "void": true,
-                        "attributes": {
-                          "charset": "utf-8"
-                        }
-                      },
-                      {
-                        "tagName": "meta",
-                        "void": true,
-                        "attributes": {
-                          "name": "viewport",
-                          "content": "width=device-width, initial-scale=1"
-                        }
-                      },
-                      {
-                        "tagName": "title",
-                        "type": "text",
-                        "components": [
-                          {
-                            "type": "textnode",
-                            "content": "BESSER Generated Page"
-                          }
-                        ]
-                      },
                       {
                         "tagName": "nav",
                         "attributes": {
-                          "id": "i5jh"
+                          "id": "irenj"
                         },
                         "components": [
                           {
                             "type": "text",
                             "attributes": {
-                              "id": "io07"
+                              "id": "i77yl"
                             },
                             "components": [
                               {
@@ -196,14 +174,14 @@
                           },
                           {
                             "attributes": {
-                              "id": "inp2m"
+                              "id": "i4vcj"
                             },
                             "components": [
                               {
                                 "type": "link",
                                 "attributes": {
                                   "href": "/",
-                                  "id": "ibtww"
+                                  "id": "iab76"
                                 },
                                 "components": [
                                   {
@@ -216,7 +194,7 @@
                                 "type": "link",
                                 "attributes": {
                                   "href": "/about",
-                                  "id": "ild7j"
+                                  "id": "ilzt5"
                                 },
                                 "components": [
                                   {
@@ -230,6 +208,18 @@
                         ]
                       },
                       {
+                        "name": "Row",
+                        "droppable": ".gjs-cell",
+                        "resizable": {
+                          "tl": 0,
+                          "tc": 0,
+                          "tr": 0,
+                          "cl": 0,
+                          "cr": 0,
+                          "bl": 0,
+                          "br": 0,
+                          "minDim": 1
+                        },
                         "classes": [
                           {
                             "name": "gjs-row",
@@ -237,19 +227,31 @@
                           }
                         ],
                         "attributes": {
-                          "id": "iiqx6"
+                          "id": "iofcf"
                         },
                         "components": [
                           {
+                            "name": "Cell",
+                            "draggable": ".gjs-row",
+                            "resizable": {
+                              "tl": 0,
+                              "tc": 0,
+                              "tr": 0,
+                              "cl": 0,
+                              "cr": 1,
+                              "bl": 0,
+                              "br": 0,
+                              "minDim": 1,
+                              "bc": 0,
+                              "currentUnit": 1,
+                              "step": 0.2
+                            },
                             "classes": [
                               {
                                 "name": "gjs-cell",
                                 "private": 1
                               }
                             ],
-                            "attributes": {
-                              "id": "ifczf"
-                            },
                             "components": [
                               {
                                 "type": "line-chart",
@@ -260,33 +262,48 @@
                                 ],
                                 "attributes": {
                                   "chart-color": "#4CAF50",
-                                  "chart-title": "Line Chart Title",
-                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                  "line-width": "2",
-                                  "show-grid": "",
-                                  "show-legend": "",
-                                  "show-tooltip": "",
+                                  "chart-title": "Line Chart",
+                                  "data-source": "27243302-e707-43dd-8ac8-25c137307452",
+                                  "label-field": "58afa26d-dae6-410e-8ca3-31f559a6980e",
+                                  "data-field": "0c365500-e2b6-47d1-9763-70e404bc01af",
+                                  "line-width": 2,
+                                  "show-grid": true,
+                                  "show-legend": true,
+                                  "show-tooltip": true,
                                   "curve-type": "monotone",
-                                  "animate": "",
-                                  "id": "i72zk"
+                                  "animate": true,
+                                  "id": "i1cekk"
                                 },
                                 "chart-color": "#4CAF50",
-                                "chart-title": "Line Chart Title",
-                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                "line-width": "2",
-                                "show-grid": "",
-                                "show-legend": "",
-                                "show-tooltip": "",
+                                "chart-title": "Line Chart",
+                                "data-source": "27243302-e707-43dd-8ac8-25c137307452",
+                                "label-field": "58afa26d-dae6-410e-8ca3-31f559a6980e",
+                                "data-field": "0c365500-e2b6-47d1-9763-70e404bc01af",
+                                "line-width": 2,
+                                "show-grid": true,
+                                "show-legend": true,
+                                "show-tooltip": true,
                                 "curve-type": "monotone",
-                                "animate": ""
+                                "animate": true
                               }
                             ]
                           },
                           {
+                            "name": "Cell",
+                            "draggable": ".gjs-row",
+                            "resizable": {
+                              "tl": 0,
+                              "tc": 0,
+                              "tr": 0,
+                              "cl": 0,
+                              "cr": 1,
+                              "bl": 0,
+                              "br": 0,
+                              "minDim": 1,
+                              "bc": 0,
+                              "currentUnit": 1,
+                              "step": 0.2
+                            },
                             "classes": [
                               {
                                 "name": "gjs-cell",
@@ -294,41 +311,58 @@
                               }
                             ],
                             "attributes": {
-                              "id": "iz1hy"
+                              "id": "iiyfi"
                             },
                             "components": [
                               {
-                                "type": "pie-chart",
+                                "type": "bar-chart",
                                 "style": "",
                                 "classes": [
-                                  "pie-chart-component",
+                                  "bar-chart-component",
                                   "has-data-binding"
                                 ],
                                 "attributes": {
-                                  "chart-title": "Pie Chart Title",
-                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                  "show-legend": "",
-                                  "legend-position": "bottom",
-                                  "show-labels": "",
-                                  "label-position": "inside",
-                                  "padding-angle": "0",
-                                  "id": "i8fz6"
+                                  "chart-color": "#3498db",
+                                  "chart-title": "Bar Chart Title",
+                                  "data-source": "27243302-e707-43dd-8ac8-25c137307452",
+                                  "label-field": "58afa26d-dae6-410e-8ca3-31f559a6980e",
+                                  "data-field": "0c365500-e2b6-47d1-9763-70e404bc01af",
+                                  "bar-width": 30,
+                                  "orientation": "vertical",
+                                  "show-grid": true,
+                                  "show-legend": true,
+                                  "stacked": false,
+                                  "id": "ig71rx"
                                 },
-                                "chart-title": "Pie Chart Title",
-                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                "show-legend": "",
-                                "legend-position": "bottom",
-                                "show-labels": "",
-                                "label-position": "inside",
-                                "padding-angle": "0"
+                                "chart-color": "#3498db",
+                                "chart-title": "Bar Chart Title",
+                                "data-source": "27243302-e707-43dd-8ac8-25c137307452",
+                                "label-field": "58afa26d-dae6-410e-8ca3-31f559a6980e",
+                                "data-field": "0c365500-e2b6-47d1-9763-70e404bc01af",
+                                "bar-width": 30,
+                                "orientation": "vertical",
+                                "show-grid": true,
+                                "show-legend": true,
+                                "stacked": false
                               }
                             ]
                           },
                           {
+                            "name": "Cell",
+                            "draggable": ".gjs-row",
+                            "resizable": {
+                              "tl": 0,
+                              "tc": 0,
+                              "tr": 0,
+                              "cl": 0,
+                              "cr": 1,
+                              "bl": 0,
+                              "br": 0,
+                              "minDim": 1,
+                              "bc": 0,
+                              "currentUnit": 1,
+                              "step": 0.2
+                            },
                             "classes": [
                               {
                                 "name": "gjs-cell",
@@ -345,159 +379,23 @@
                                 ],
                                 "attributes": {
                                   "chart-color": "#8884d8",
-                                  "chart-title": "Radar Chart Title",
-                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                  "show-grid": "",
-                                  "show-tooltip": "",
-                                  "show-radius-axis": "",
-                                  "id": "id9ne"
+                                  "chart-title": "Radar Chart",
+                                  "data-source": "27243302-e707-43dd-8ac8-25c137307452",
+                                  "label-field": "58afa26d-dae6-410e-8ca3-31f559a6980e",
+                                  "data-field": "0c365500-e2b6-47d1-9763-70e404bc01af",
+                                  "show-grid": true,
+                                  "show-tooltip": true,
+                                  "show-radius-axis": true,
+                                  "id": "irekdw"
                                 },
                                 "chart-color": "#8884d8",
-                                "chart-title": "Radar Chart Title",
-                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                "show-grid": "",
-                                "show-tooltip": "",
-                                "show-radius-axis": ""
-                              }
-                            ]
-                          }
-                        ]
-                      },
-                      {
-                        "classes": [
-                          {
-                            "name": "gjs-row",
-                            "private": 1
-                          }
-                        ],
-                        "attributes": {
-                          "id": "is6fi"
-                        },
-                        "components": [
-                          {
-                            "classes": [
-                              {
-                                "name": "gjs-cell",
-                                "private": 1
-                              }
-                            ],
-                            "attributes": {
-                              "id": "i2lt6"
-                            },
-                            "components": [
-                              {
-                                "type": "bar-chart",
-                                "style": "",
-                                "classes": [
-                                  "bar-chart-component",
-                                  "has-data-binding"
-                                ],
-                                "attributes": {
-                                  "chart-color": "#3498db",
-                                  "chart-title": "Bar Chart Title",
-                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                  "bar-width": "30",
-                                  "orientation": "vertical",
-                                  "show-grid": "",
-                                  "show-legend": "",
-                                  "stacked": false,
-                                  "id": "iy0gc"
-                                },
-                                "chart-color": "#3498db",
-                                "chart-title": "Bar Chart Title",
-                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                "bar-width": "30",
-                                "orientation": "vertical",
-                                "show-grid": "",
-                                "show-legend": "",
-                                "stacked": false
-                              }
-                            ]
-                          },
-                          {
-                            "classes": [
-                              {
-                                "name": "gjs-cell",
-                                "private": 1
-                              }
-                            ],
-                            "attributes": {
-                              "id": "igud3"
-                            },
-                            "components": [
-                              {
-                                "type": "radial-bar-chart",
-                                "style": "",
-                                "classes": [
-                                  "radial-bar-chart-component",
-                                  "has-data-binding"
-                                ],
-                                "attributes": {
-                                  "chart-title": "Radial Bar Chart Title",
-                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                  "start-angle": "90",
-                                  "end-angle": "450",
-                                  "id": "ig59l"
-                                },
-                                "chart-title": "Radial Bar Chart Title",
-                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                "start-angle": "90",
-                                "end-angle": "450"
-                              }
-                            ]
-                          },
-                          {
-                            "classes": [
-                              {
-                                "name": "gjs-cell",
-                                "private": 1
-                              }
-                            ],
-                            "components": [
-                              {
-                                "type": "line-chart",
-                                "style": "",
-                                "classes": [
-                                  "line-chart-component",
-                                  "has-data-binding"
-                                ],
-                                "attributes": {
-                                  "chart-color": "#4CAF50",
-                                  "chart-title": "Line Chart Title",
-                                  "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                  "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                  "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                  "line-width": "2",
-                                  "show-grid": "",
-                                  "show-legend": "",
-                                  "show-tooltip": "",
-                                  "curve-type": "monotone",
-                                  "animate": "",
-                                  "id": "i4f21"
-                                },
-                                "chart-color": "#4CAF50",
-                                "chart-title": "Line Chart Title",
-                                "data-source": "a87eb810-2e0a-492b-8cd3-62251566f648",
-                                "label-field": "f63380b5-ccf8-448a-bb82-70d62d61442e",
-                                "data-field": "2294f9b0-aa04-4c5d-8851-b333f6b3c2fc",
-                                "line-width": "2",
-                                "show-grid": "",
-                                "show-legend": "",
-                                "show-tooltip": "",
-                                "curve-type": "monotone",
-                                "animate": ""
+                                "chart-title": "Radar Chart",
+                                "data-source": "27243302-e707-43dd-8ac8-25c137307452",
+                                "label-field": "58afa26d-dae6-410e-8ca3-31f559a6980e",
+                                "data-field": "0c365500-e2b6-47d1-9763-70e404bc01af",
+                                "show-grid": true,
+                                "show-tooltip": true,
+                                "show-radius-axis": true
                               }
                             ]
                           }
@@ -506,12 +404,12 @@
                       {
                         "tagName": "footer",
                         "attributes": {
-                          "id": "ictst"
+                          "id": "iv0tsf"
                         },
                         "components": [
                           {
                             "attributes": {
-                              "id": "i8uhg"
+                              "id": "ikqajz"
                             },
                             "components": [
                               {
@@ -520,7 +418,7 @@
                                     "tagName": "h4",
                                     "type": "text",
                                     "attributes": {
-                                      "id": "i3p8x"
+                                      "id": "if1fqg"
                                     },
                                     "components": [
                                       {
@@ -533,7 +431,7 @@
                                     "tagName": "p",
                                     "type": "text",
                                     "attributes": {
-                                      "id": "i9x6g"
+                                      "id": "ijr0hh"
                                     },
                                     "components": [
                                       {
@@ -550,7 +448,7 @@
                                     "tagName": "h4",
                                     "type": "text",
                                     "attributes": {
-                                      "id": "iybmm"
+                                      "id": "iq3sz9"
                                     },
                                     "components": [
                                       {
@@ -562,67 +460,25 @@
                                   {
                                     "tagName": "ul",
                                     "attributes": {
-                                      "id": "im0xi"
+                                      "id": "icvtnv"
                                     },
                                     "components": [
                                       {
                                         "tagName": "li",
                                         "attributes": {
-                                          "id": "ichrl"
+                                          "id": "iyeciq"
                                         },
                                         "components": [
                                           {
                                             "type": "link",
                                             "attributes": {
-                                              "href": "#",
-                                              "id": "i0wq2"
+                                              "href": "/about",
+                                              "id": "id2pjg"
                                             },
                                             "components": [
                                               {
                                                 "type": "textnode",
-                                                "content": "Dashboard Generator"
-                                              }
-                                            ]
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "tagName": "li",
-                                        "attributes": {
-                                          "id": "ixtnt"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "link",
-                                            "attributes": {
-                                              "href": "#",
-                                              "id": "i2f1j"
-                                            },
-                                            "components": [
-                                              {
-                                                "type": "textnode",
-                                                "content": "API Reference"
-                                              }
-                                            ]
-                                          }
-                                        ]
-                                      },
-                                      {
-                                        "tagName": "li",
-                                        "attributes": {
-                                          "id": "irxsn"
-                                        },
-                                        "components": [
-                                          {
-                                            "type": "link",
-                                            "attributes": {
-                                              "href": "#",
-                                              "id": "inu9a"
-                                            },
-                                            "components": [
-                                              {
-                                                "type": "textnode",
-                                                "content": "Support"
+                                                "content": "About"
                                               }
                                             ]
                                           }
@@ -638,7 +494,7 @@
                                     "tagName": "h4",
                                     "type": "text",
                                     "attributes": {
-                                      "id": "igd5a"
+                                      "id": "inqfyo"
                                     },
                                     "components": [
                                       {
@@ -651,7 +507,7 @@
                                     "tagName": "p",
                                     "type": "text",
                                     "attributes": {
-                                      "id": "itmu2"
+                                      "id": "ivv8oa"
                                     },
                                     "components": [
                                       {
@@ -675,7 +531,7 @@
                           {
                             "type": "text",
                             "attributes": {
-                              "id": "iph4d"
+                              "id": "icjzp3"
                             },
                             "components": [
                               {
@@ -694,10 +550,10 @@
                       "tagName": "html"
                     }
                   },
-                  "id": "5NNAwALRgy9L45y5"
+                  "id": "reKblyvD3XDJV58P"
                 }
               ],
-              "id": "yXWXAvEmfeStNpkm"
+              "id": "7gx6FKvT6NwQwvkM"
             },
             {
               "name": "About",
@@ -1029,7 +885,7 @@
                                         "components": [
                                           {
                                             "type": "textnode",
-                                            "content": "Responsive Design"
+                                            "content": "Resp Design"
                                           }
                                         ]
                                       },
@@ -1270,10 +1126,10 @@
                       "tagName": "html"
                     }
                   },
-                  "id": "lmMooTdRTNYoBrNa"
+                  "id": "NeV3aOYRoxnQfVmO"
                 }
               ],
-              "id": "r853I1MU7LvrIvAK"
+              "id": "HWrxLpPdBSm60elV"
             }
           ],
           "styles": [
@@ -1325,74 +1181,6 @@
             },
             {
               "selectors": [
-                "#i5jh"
-              ],
-              "style": {
-                "background-color": "rgba(0, 0, 0, 0) !important",
-                "background-position-x": "0% !important",
-                "background-position-y": "0% !important",
-                "background-repeat": "repeat !important",
-                "background-attachment": "scroll !important",
-                "background-image": "linear-gradient(135deg, rgb(75, 60, 130) 0%, rgb(90, 61, 145) 100%) !important",
-                "background-size": "auto !important",
-                "background-origin": "padding-box !important",
-                "background-clip": "border-box !important",
-                "color": "white",
-                "padding-top": "15px",
-                "padding-right": "30px",
-                "padding-bottom": "15px",
-                "padding-left": "30px",
-                "display": "flex",
-                "justify-content": "space-between",
-                "align-items": "center",
-                "font-family": "Arial, sans-serif"
-              }
-            },
-            {
-              "selectors": [
-                "#io07"
-              ],
-              "style": {
-                "font-size": "24px",
-                "font-weight": "bold"
-              }
-            },
-            {
-              "selectors": [
-                "#inp2m"
-              ],
-              "style": {
-                "display": "flex",
-                "row-gap": "30px",
-                "column-gap": "30px"
-              }
-            },
-            {
-              "selectors": [
-                "#ibtww"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#ild7j"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
                 "#ibczy"
               ],
               "style": {
@@ -1413,238 +1201,6 @@
                 "text-decoration-line": "none",
                 "text-decoration-style": "solid",
                 "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#ictst"
-              ],
-              "style": {
-                "background-color": "rgba(0, 0, 0, 0) !important",
-                "background-position-x": "0% !important",
-                "background-position-y": "0% !important",
-                "background-repeat": "repeat !important",
-                "background-attachment": "scroll !important",
-                "background-image": "linear-gradient(135deg, rgb(75, 60, 130) 0%, rgb(90, 61, 145) 100%) !important",
-                "background-size": "auto !important",
-                "background-origin": "padding-box !important",
-                "background-clip": "border-box !important",
-                "color": "white",
-                "padding-top": "40px",
-                "padding-right": "20px",
-                "padding-bottom": "40px",
-                "padding-left": "20px",
-                "margin-top": "60px",
-                "font-family": "Arial, sans-serif"
-              }
-            },
-            {
-              "selectors": [
-                "#i8uhg"
-              ],
-              "style": {
-                "max-width": "1200px",
-                "margin-top": "0px",
-                "margin-right": "auto",
-                "margin-bottom": "0px",
-                "margin-left": "auto",
-                "display": "grid",
-                "grid-template-columns": "repeat(auto-fit, minmax(250px, 1fr))",
-                "row-gap": "30px",
-                "column-gap": "30px"
-              }
-            },
-            {
-              "selectors": [
-                "#i3p8x"
-              ],
-              "style": {
-                "margin-top": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#i9x6g"
-              ],
-              "style": {
-                "opacity": "0.8",
-                "line-height": "1.6"
-              }
-            },
-            {
-              "selectors": [
-                "#iybmm"
-              ],
-              "style": {
-                "margin-top": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#im0xi"
-              ],
-              "style": {
-                "list-style-position": "outside",
-                "list-style-image": "none",
-                "list-style-type": "none",
-                "padding-top": "0px",
-                "padding-right": "0px",
-                "padding-bottom": "0px",
-                "padding-left": "0px",
-                "opacity": "0.8"
-              }
-            },
-            {
-              "selectors": [
-                "#ichrl"
-              ],
-              "style": {
-                "margin-top": "8px",
-                "margin-right": "0px",
-                "margin-bottom": "8px",
-                "margin-left": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#i0wq2"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#ixtnt"
-              ],
-              "style": {
-                "margin-top": "8px",
-                "margin-right": "0px",
-                "margin-bottom": "8px",
-                "margin-left": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#i2f1j"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#irxsn"
-              ],
-              "style": {
-                "margin-top": "8px",
-                "margin-right": "0px",
-                "margin-bottom": "8px",
-                "margin-left": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#inu9a"
-              ],
-              "style": {
-                "color": "white",
-                "text-decoration-color": "currentcolor",
-                "text-decoration-line": "none",
-                "text-decoration-style": "solid",
-                "text-decoration-thickness": "auto"
-              }
-            },
-            {
-              "selectors": [
-                "#igd5a"
-              ],
-              "style": {
-                "margin-top": "0px"
-              }
-            },
-            {
-              "selectors": [
-                "#itmu2"
-              ],
-              "style": {
-                "opacity": "0.8"
-              }
-            },
-            {
-              "selectors": [
-                "#iph4d"
-              ],
-              "style": {
-                "text-align": "center",
-                "margin-top": "30px",
-                "padding-top": "20px",
-                "border-top-width": "1px",
-                "border-top-style": "solid",
-                "border-top-color": "rgba(255, 255, 255, 0.1)",
-                "opacity": "0.7"
-              }
-            },
-            {
-              "selectors": [
-                "#i8fz6"
-              ],
-              "style": {
-                "width": "100%",
-                "min-height": "400px"
-              }
-            },
-            {
-              "selectors": [
-                "#id9ne"
-              ],
-              "style": {
-                "width": "100%",
-                "min-height": "400px"
-              }
-            },
-            {
-              "selectors": [
-                "#iy0gc"
-              ],
-              "style": {
-                "width": "100%",
-                "min-height": "400px"
-              }
-            },
-            {
-              "selectors": [
-                "#ig59l"
-              ],
-              "style": {
-                "width": "100%",
-                "min-height": "400px"
-              }
-            },
-            {
-              "selectors": [
-                "#i72zk"
-              ],
-              "style": {
-                "width": "100%",
-                "min-height": "400px"
-              }
-            },
-            {
-              "selectors": [
-                "#i4f21"
-              ],
-              "style": {
-                "width": "100%",
-                "min-height": "400px"
               }
             },
             {
@@ -2335,13 +1891,426 @@
                 "color": "rgb(102, 102, 102)",
                 "line-height": "1.6"
               }
+            },
+            {
+              "selectors": [
+                "#ib41u"
+              ],
+              "style": {
+                "max-width": "1400px",
+                "margin": "0 auto"
+              }
+            },
+            {
+              "selectors": [
+                "#i76ci"
+              ],
+              "style": {
+                "margin-bottom": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#i82fr"
+              ],
+              "style": {
+                "color": "white",
+                "margin": "0 0 10px 0",
+                "font-size": "32px"
+              }
+            },
+            {
+              "selectors": [
+                "#ingch"
+              ],
+              "style": {
+                "color": "rgba(255,255,255,0.8)",
+                "margin": "0"
+              }
+            },
+            {
+              "selectors": [
+                "#iycprh"
+              ],
+              "style": {
+                "display": "grid",
+                "grid-template-columns": "repeat(auto-fit, minmax(250px, 1fr))",
+                "gap": "20px",
+                "margin-bottom": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#ibpqcw"
+              ],
+              "style": {
+                "background": "white",
+                "padding": "25px",
+                "border-radius": "10px",
+                "box-shadow": "0 4px 6px rgba(0,0,0,0.1)"
+              }
+            },
+            {
+              "selectors": [
+                "#i05hik"
+              ],
+              "style": {
+                "color": "#666",
+                "font-size": "14px",
+                "margin-bottom": "8px"
+              }
+            },
+            {
+              "selectors": [
+                "#iq02rk"
+              ],
+              "style": {
+                "color": "#e74c3c",
+                "font-size": "12px",
+                "margin-top": "8px"
+              }
+            },
+            {
+              "selectors": [
+                "#i1gqw1"
+              ],
+              "style": {
+                "background": "white",
+                "padding": "25px",
+                "border-radius": "10px",
+                "box-shadow": "0 4px 6px rgba(0,0,0,0.1)"
+              }
+            },
+            {
+              "selectors": [
+                "#id8ptv"
+              ],
+              "style": {
+                "color": "#666",
+                "font-size": "14px",
+                "margin-bottom": "8px"
+              }
+            },
+            {
+              "selectors": [
+                "#iejoib"
+              ],
+              "style": {
+                "font-size": "32px",
+                "font-weight": "bold",
+                "color": "#2c3e50"
+              }
+            },
+            {
+              "selectors": [
+                "#iv6ab8"
+              ],
+              "style": {
+                "color": "#27ae60",
+                "font-size": "12px",
+                "margin-top": "8px"
+              }
+            },
+            {
+              "selectors": [
+                "#iy688x"
+              ],
+              "style": {
+                "display": "grid",
+                "grid-template-columns": "repeat(auto-fit, minmax(500px, 1fr))",
+                "gap": "20px",
+                "margin-bottom": "20px"
+              }
+            },
+            {
+              "selectors": [
+                "#iq96ki"
+              ],
+              "style": {
+                "background": "white",
+                "padding": "25px",
+                "border-radius": "10px",
+                "box-shadow": "0 4px 6px rgba(0,0,0,0.1)"
+              }
+            },
+            {
+              "selectors": [
+                "#i1n3q3"
+              ],
+              "style": {
+                "margin": "0 0 20px 0",
+                "color": "#2c3e50"
+              }
+            },
+            {
+              "selectors": [
+                "#ihj3dk"
+              ],
+              "style": {
+                "width": "100%",
+                "height": "300px",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "background": "#f8f9fa",
+                "border-radius": "8px",
+                "color": "#666"
+              }
+            },
+            {
+              "selectors": [
+                "#iw7ufv"
+              ],
+              "style": {
+                "background": "white",
+                "padding": "25px",
+                "border-radius": "10px",
+                "box-shadow": "0 4px 6px rgba(0,0,0,0.1)"
+              }
+            },
+            {
+              "selectors": [
+                "#ie3tdq"
+              ],
+              "style": {
+                "margin": "0 0 20px 0",
+                "color": "#2c3e50"
+              }
+            },
+            {
+              "selectors": [
+                "#i8i7zz"
+              ],
+              "style": {
+                "width": "100%",
+                "height": "300px",
+                "display": "flex",
+                "align-items": "center",
+                "justify-content": "center",
+                "background": "#f8f9fa",
+                "border-radius": "8px",
+                "color": "#666"
+              }
+            },
+            {
+              "selectors": [
+                "dashboard-container"
+              ],
+              "style": {
+                "__background-type": "image, color, image",
+                "background-image": "none, linear-gradient( 0%,  100%), none",
+                "opacity": "1"
+              }
+            },
+            {
+              "selectors": [
+                "#irenj"
+              ],
+              "style": {
+                "background": "linear-gradient(135deg, #4b3c82 0%, #5a3d91 100%) !important",
+                "color": "white",
+                "padding": "15px 30px",
+                "display": "flex",
+                "justify-content": "space-between",
+                "align-items": "center",
+                "font-family": "Arial, sans-serif"
+              }
+            },
+            {
+              "selectors": [
+                "#i77yl"
+              ],
+              "style": {
+                "font-size": "24px",
+                "font-weight": "bold"
+              }
+            },
+            {
+              "selectors": [
+                "#i4vcj"
+              ],
+              "style": {
+                "display": "flex",
+                "gap": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#iab76"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration": "none"
+              }
+            },
+            {
+              "selectors": [
+                "#ilzt5"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration": "none"
+              }
+            },
+            {
+              "selectors": [
+                "gjs-cell30"
+              ],
+              "style": {
+                "width": "100%",
+                "display": "block"
+              },
+              "mediaText": "(max-width: 768px)",
+              "atRuleType": "media"
+            },
+            {
+              "selectors": [
+                "gjs-cell70"
+              ],
+              "style": {
+                "width": "100%",
+                "display": "block"
+              },
+              "mediaText": "(max-width: 768px)",
+              "atRuleType": "media"
+            },
+            {
+              "selectors": [
+                "#ig71rx"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#i1cekk"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#irekdw"
+              ],
+              "style": {
+                "width": "100%",
+                "min-height": "400px"
+              }
+            },
+            {
+              "selectors": [
+                "#iv0tsf"
+              ],
+              "style": {
+                "background": "linear-gradient(135deg, #4b3c82 0%, #5a3d91 100%) !important",
+                "color": "white",
+                "padding": "40px 20px",
+                "margin-top": "60px",
+                "font-family": "Arial, sans-serif"
+              }
+            },
+            {
+              "selectors": [
+                "#ikqajz"
+              ],
+              "style": {
+                "max-width": "1200px",
+                "margin": "0 auto",
+                "display": "grid",
+                "grid-template-columns": "repeat(auto-fit, minmax(250px, 1fr))",
+                "gap": "30px"
+              }
+            },
+            {
+              "selectors": [
+                "#if1fqg"
+              ],
+              "style": {
+                "margin-top": "0"
+              }
+            },
+            {
+              "selectors": [
+                "#ijr0hh"
+              ],
+              "style": {
+                "opacity": "0.8",
+                "line-height": "1.6"
+              }
+            },
+            {
+              "selectors": [
+                "#iq3sz9"
+              ],
+              "style": {
+                "margin-top": "0"
+              }
+            },
+            {
+              "selectors": [
+                "#icvtnv"
+              ],
+              "style": {
+                "list-style": "none",
+                "padding": "0",
+                "opacity": "0.8"
+              }
+            },
+            {
+              "selectors": [
+                "#iyeciq"
+              ],
+              "style": {
+                "margin": "8px 0"
+              }
+            },
+            {
+              "selectors": [
+                "#id2pjg"
+              ],
+              "style": {
+                "color": "white",
+                "text-decoration": "none"
+              }
+            },
+            {
+              "selectors": [
+                "#inqfyo"
+              ],
+              "style": {
+                "margin-top": "0"
+              }
+            },
+            {
+              "selectors": [
+                "#ivv8oa"
+              ],
+              "style": {
+                "opacity": "0.8"
+              }
+            },
+            {
+              "selectors": [
+                "#icjzp3"
+              ],
+              "style": {
+                "text-align": "center",
+                "margin-top": "30px",
+                "padding-top": "20px",
+                "border-top": "1px solid rgba(255,255,255,0.1)",
+                "opacity": "0.7"
+              }
             }
           ],
           "assets": [],
           "symbols": [],
           "version": "0.21.13"
         },
-        "lastUpdate": "2025-11-05T13:14:32.201Z"
+        "lastUpdate": "2025-11-05T16:13:35.429Z"
       }
     },
     "settings": {
@@ -2350,6 +2319,6 @@
       "collaborationEnabled": false
     }
   },
-  "exportedAt": "2025-11-05T13:31:38.115Z",
+  "exportedAt": "2025-11-05T16:18:36.158Z",
   "version": "2.0.0"
 }

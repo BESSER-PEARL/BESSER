@@ -5,7 +5,7 @@ Chart component parsers for GUI diagrams.
 from typing import Dict, Any
 from besser.BUML.metamodel.gui import (
     Alignment, BarChart, DataBinding, LineChart,
-    PieChart, RadarChart, RadialBarChart, ViewComponent,
+    PieChart, RadarChart, RadialBarChart, TableChart, ViewComponent,
     Color, Position, Size, Styling, DataAggregation, MetricCard,
 )
 from .styling import ensure_styling_parts
@@ -444,6 +444,102 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     return radial_bar_chart
 
 
+def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> TableChart:
+    """
+    Parses a table chart component, resolving data binding and presentation options.
+    """
+    attrs = view_comp.get('attributes', {})
+
+    # Parse common data binding fields
+    domain_class, label_field, data_field = _parse_chart_data_binding(
+        attrs, class_model, domain_model
+    )
+
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'TableChart'
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('TableChart')
+    if not chart_title:
+        chart_title = 'TableChart'
+    if not title_value:
+        title_value = chart_title.replace('_', ' ').title()
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
+    data_binding = None
+    if domain_class:
+        data_binding = DataBinding(
+            domain_concept=domain_class,
+            label_field=label_field,
+            data_field=data_field
+        )
+
+    def _bool_attr(key: str, default: bool) -> bool:
+        return parse_bool(attrs.get(key), default)
+
+    def _int_attr(key: str, default: int) -> int:
+        try:
+            return int(attrs.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    table_chart = TableChart(
+        name=chart_title,
+        show_header=_bool_attr('show-header', True),
+        striped_rows=_bool_attr('striped-rows', False),
+        show_pagination=_bool_attr('show-pagination', True),
+        rows_per_page=_int_attr('rows-per-page', 5),
+        title=title_value,
+        primary_color=primary_color
+    )
+
+    if domain_class:
+        column_names = []
+        for attr in getattr(domain_class, "attributes", []) or []:
+            attr_name = getattr(attr, "name", None)
+            if isinstance(attr_name, str) and attr_name:
+                column_names.append(attr_name)
+        # Attempt to include association end roles if available
+        association_iterables = []
+        for candidate in ("association_ends", "associationEnds"):
+            attr_value = getattr(domain_class, candidate, None)
+            if not attr_value:
+                continue
+            try:
+                association_data = attr_value() if callable(attr_value) else attr_value
+            except TypeError:
+                association_data = attr_value
+
+            if association_data is None:
+                continue
+            if isinstance(association_data, dict):
+                association_iterables.extend(association_data.values())
+            elif isinstance(association_data, (list, tuple, set)):
+                association_iterables.extend(list(association_data))
+            else:
+                association_iterables.append(association_data)
+
+        for association_end in association_iterables:
+            if association_end is None:
+                continue
+            end_name = None
+            if hasattr(association_end, "name"):
+                end_name = getattr(association_end, "name", None)
+            if not end_name and hasattr(association_end, "role"):
+                end_name = getattr(association_end, "role", None)
+            if isinstance(end_name, str) and end_name:
+                column_names.append(end_name)
+
+        if column_names:
+            table_chart.columns = column_names
+
+    table_chart.data_binding = data_binding
+    _attach_chart_metadata(table_chart, view_comp)
+    return table_chart
+
+
 def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
     """
     Apply chart-specific color styling based on chart type.
@@ -473,6 +569,8 @@ def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
         element.styling.color.line_color = color_value
     elif isinstance(element, RadialBarChart):
         element.styling.color.bar_color = color_value
+    elif isinstance(element, TableChart):
+        element.styling.color.background_color = color_value
 
 
 def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> MetricCard:

@@ -32,6 +32,7 @@ from besser.BUML.metamodel.gui.dashboard import (
     PieChart,
     RadarChart,
     RadialBarChart,
+    TableChart,
 )
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
@@ -464,6 +465,29 @@ class ReactGenerator(GeneratorInterface):
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
 
+        if isinstance(element, TableChart):
+            node["title"] = element.title or self._humanize(element.name)
+            node["chart"] = self._clean_dict(
+                {
+                    "showHeader": element.show_header,
+                    "stripedRows": element.striped_rows,
+                    "showPagination": element.show_pagination,
+                    "rowsPerPage": element.rows_per_page,
+                }
+            )
+            chart_colors = self._extract_chart_colors(element)
+            node["color"] = element.primary_color or chart_colors.get("background") or "#2c3e50"
+            columns = [
+                {
+                    "field": column,
+                    "label": self._humanize(column),
+                }
+                for column in getattr(element, "columns", []) or []
+                if isinstance(column, str) and column
+            ]
+            if columns:
+                node["chart"]["columns"] = columns
+
         if isinstance(element, MetricCard):
             node["title"] = element.metric_title or self._humanize(element.name)
             node["metric"] = self._clean_dict(
@@ -736,6 +760,7 @@ class ReactGenerator(GeneratorInterface):
             "line": getattr(color, "line_color", None),
             "bar": getattr(color, "bar_color", None),
             "palette": getattr(color, "color_palette", None),
+            "background": getattr(color, "background_color", None),
         }
 
     def _add_style_entry(self, selectors: Sequence[str], style: Dict[str, Any]):
@@ -860,6 +885,8 @@ class ReactGenerator(GeneratorInterface):
             return "radar-chart"
         if isinstance(element, RadialBarChart):
             return "radial-bar-chart"
+        if isinstance(element, TableChart):
+            return "table-chart"
         if isinstance(element, MetricCard):
             return "metric-card"
         return "component"

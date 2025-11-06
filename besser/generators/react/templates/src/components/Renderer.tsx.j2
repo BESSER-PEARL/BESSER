@@ -8,6 +8,8 @@ import { PieChartComponent } from "./charts/PieChartComponent";
 import { RadialBarChartComponent } from "./charts/RadialBarChartComponent";
 import { RadarChartComponent } from "./charts/RadarChartComponent";
 import { MetricCardComponent } from "./charts/MetricCardComponent";
+import { TableChartComponent } from "./charts/TableChartComponent";
+import "./charts/TableChartComponent.css";
 
 export interface RendererProps {
   component: any;
@@ -35,7 +37,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
 
   // Chart and metric card data fetching effect
   useEffect(() => {
-    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card"].includes(component.type)) {
+    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card", "table-chart"].includes(component.type)) {
       const endpoint = component.data_binding?.endpoint;
       if (endpoint) {
         setLoading(true);
@@ -507,6 +509,21 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         dataField={component.data_binding?.data_field}
         options={component.chart || {}}
         styles={style}
+      />
+    );
+  }
+
+  if (component.type === "table-chart") {
+    if (loading) return <div id={component.id}>Loading data...</div>;
+    if (error) return <div id={component.id}>{error}</div>;
+    return (
+      <TableChartComponent
+        id={component.id}
+        title={component.title || component.name}
+        data={chartData}
+        options={component.chart || {}}
+        styles={style}
+        dataBinding={component.data_binding}
       />
     );
   }

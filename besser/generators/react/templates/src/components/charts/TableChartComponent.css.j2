@@ -1,0 +1,35 @@
+.table-chart-wrapper {
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+  min-width: 0; /* Critical for grid/flex children */
+  contain: layout style paint; /* Optimize rendering and containment */
+}
+
+.table-chart-scroll {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  box-sizing: border-box;
+  min-width: 0; /* Critical for grid/flex children */
+}
+
+.table-chart-scroll table {
+  width: 100%;
+  min-width: 0;
+  table-layout: auto; /* Allow table to shrink */
+}
+
+.table-chart-scroll::-webkit-scrollbar {
+  height: 8px;
+}
+
+.table-chart-scroll::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.5);
+  border-radius: 9999px;
+}
+
+.table-chart-scroll::-webkit-scrollbar-track {
+  background-color: transparent;
+}

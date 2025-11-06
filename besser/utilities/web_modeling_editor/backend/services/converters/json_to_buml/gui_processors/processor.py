@@ -29,6 +29,7 @@ from .chart_parsers import (
     parse_pie_chart,
     parse_radar_chart,
     parse_radial_bar_chart,
+    parse_table_chart,
 )
 from .component_helpers import has_data_binding, has_menu_structure
 from .component_parsers import (
@@ -283,6 +284,16 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 if styling:  # Only assign if styling exists
                     element.styling = styling
                 element.name = get_unique_name(component, element.name or "RadialBarChart")
+                apply_chart_colors(element, attributes)
+                attach_meta(element, meta)
+            return element
+
+        if comp_type == "table-chart":
+            element = parse_table_chart(component, class_model, domain_model)
+            if element:
+                if styling:
+                    element.styling = styling
+                element.name = get_unique_name(component, element.name or "TableChart")
                 apply_chart_colors(element, attributes)
                 attach_meta(element, meta)
             return element

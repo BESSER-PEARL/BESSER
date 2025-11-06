@@ -25,7 +25,7 @@ from besser.BUML.metamodel.gui.graphical_ui import (
     DataSourceElement,
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    LineChart, BarChart, PieChart, RadarChart, RadialBarChart
+    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart
 )
 from besser.BUML.metamodel.gui.events_actions import Event, Transition, Create, Read, Update, Delete
 from besser.utilities.buml_code_builder import domain_model_to_code
@@ -110,7 +110,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
         f.write("    UnitSize, PositionType, Alignment\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.dashboard import (\n")
-        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart\n")
+        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.events_actions import (\n")
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
@@ -283,6 +283,8 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
         _write_radar_chart(f, comp_var, component)
     elif isinstance(component, RadialBarChart):
         _write_radial_bar_chart(f, comp_var, component)
+    elif isinstance(component, TableChart):
+        _write_table_chart(f, comp_var, component)
     elif isinstance(component, ViewContainer):
         _write_container(f, comp_var, component, created_vars, pending_button_events)
         # Metadata already written by _write_container
@@ -688,6 +690,30 @@ def _write_radial_bar_chart(f, var_name, chart):
         params.append(f'show_tooltip={chart.show_tooltip}')
     
     f.write(f'{var_name} = RadialBarChart({", ".join(params)})\n')
+    if hasattr(chart, 'data_binding') and chart.data_binding:
+        _write_data_binding_assignment(f, var_name, chart.data_binding)
+
+
+def _write_table_chart(f, var_name, chart):
+    """Write code for a TableChart component."""
+    params = [f'name="{chart.name}"']
+    if hasattr(chart, 'title') and chart.title:
+        params.append(f'title="{_escape_string(chart.title)}"')
+    if hasattr(chart, 'primary_color') and chart.primary_color:
+        params.append(f'primary_color="{_escape_string(chart.primary_color)}"')
+    if hasattr(chart, 'show_header'):
+        params.append(f'show_header={chart.show_header}')
+    if hasattr(chart, 'striped_rows'):
+        params.append(f'striped_rows={chart.striped_rows}')
+    if hasattr(chart, 'show_pagination'):
+        params.append(f'show_pagination={chart.show_pagination}')
+    if hasattr(chart, 'rows_per_page'):
+        params.append(f'rows_per_page={chart.rows_per_page}')
+    if hasattr(chart, 'columns') and chart.columns:
+        column_literals = ", ".join(f'"{_escape_string(col)}"' for col in chart.columns if col)
+        params.append(f'columns=[{column_literals}]')
+
+    f.write(f'{var_name} = TableChart({", ".join(params)})\n')
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Sequence
 
 from besser.BUML.metamodel.gui.graphical_ui import ViewComponent
 from besser.BUML.metamodel.gui.style import Alignment
@@ -768,6 +768,108 @@ class RadialBarChart(Chart):
         return (
             f"RadialBarChart(name={self.name}, start_angle={self.start_angle}, "
             f"end_angle={self.end_angle}, inner_radius={self.inner_radius})"
+        )
+
+class TableChart(Chart):
+    """Represents a tabular chart component in the dashboard.
+
+    Args:
+        name (str): The name of the table chart.
+        show_header (bool): Whether to render the table header.
+        striped_rows (bool): Whether to alternate row background colors.
+        show_pagination (bool): Whether to display pagination information.
+        rows_per_page (int): Number of rows shown per page.
+        title (str | None): Optional title of the table chart.
+        primary_color (str | None): Optional primary color used for the header/background.
+
+    Attributes:
+        show_header (bool): Whether to render the table header.
+        striped_rows (bool): Whether to alternate row backgrounds.
+        show_pagination (bool): Whether to display pagination controls.
+        rows_per_page (int): Number of rows per page when pagination is enabled.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        show_header: bool = True,
+        striped_rows: bool = False,
+        show_pagination: bool = False,
+        rows_per_page: int = 5,
+        title: Optional[str] = None,
+        primary_color: Optional[str] = None,
+        columns: Optional[Sequence[str]] = None,
+        **kwargs,
+    ):
+        super().__init__(name, title=title, primary_color=primary_color, **kwargs)
+        self.show_header = show_header
+        self.striped_rows = striped_rows
+        self.show_pagination = show_pagination
+        self.rows_per_page = rows_per_page
+        self.columns = list(columns or [])
+
+    @property
+    def show_header(self) -> bool:
+        """Property: Get whether the table header is displayed."""
+        return self._show_header
+
+    @show_header.setter
+    def show_header(self, value: bool):
+        """Property: Set whether the table header is displayed."""
+        self._show_header = bool(value)
+
+    @property
+    def striped_rows(self) -> bool:
+        """Property: Get whether striped rows are enabled."""
+        return self._striped_rows
+
+    @striped_rows.setter
+    def striped_rows(self, value: bool):
+        """Property: Set whether striped rows are enabled."""
+        self._striped_rows = bool(value)
+
+    @property
+    def show_pagination(self) -> bool:
+        """Property: Get whether pagination info is displayed."""
+        return self._show_pagination
+
+    @show_pagination.setter
+    def show_pagination(self, value: bool):
+        """Property: Set whether pagination info is displayed."""
+        self._show_pagination = bool(value)
+
+    @property
+    def rows_per_page(self) -> int:
+        """Property: Get the number of rows per page."""
+        return self._rows_per_page
+
+    @rows_per_page.setter
+    def rows_per_page(self, value: int):
+        """Property: Set the number of rows per page (minimum 1)."""
+        try:
+            int_value = int(value)
+        except (TypeError, ValueError):
+            int_value = 5
+        self._rows_per_page = max(1, int_value)
+
+    @property
+    def columns(self) -> list[str]:
+        """Property: Get the configured column names."""
+        return self._columns
+
+    @columns.setter
+    def columns(self, value: Sequence[str]):
+        """Property: Set the configured column names."""
+        if value is None:
+            self._columns = []
+            return
+        self._columns = [str(item) for item in value if item]
+
+    def __repr__(self):
+        return (
+            f"TableChart(name={self.name}, show_header={self.show_header}, "
+            f"striped_rows={self.striped_rows}, rows_per_page={self.rows_per_page}, "
+            f"columns={self.columns})"
         )
 
 class MetricCard(ViewComponent):

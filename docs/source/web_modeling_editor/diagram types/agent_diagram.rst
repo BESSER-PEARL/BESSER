@@ -72,10 +72,21 @@ Here is an example of a simple agent diagram that represents the `Greetings Agen
 Generating the Agent
 --------------------
 
-Once you have created your agent diagram, you can generate the agent by clicking on "Generate Code" and choosing "BESSER Agent".
-This will create the necessary files, which you'll be able to download. Instructions to deploy the agent are also provided.
+Once you have created your agent diagram, you can generate the agent by clicking 
+**Generate Code** and selecting **BESSER Agent**.
 
-.. image:: ../../img/wme/agent/agent_generate.png
-  :width: 200
+You will then be asked to provide:
+
+- **Source language**: the language of your current model.
+- **Target language**: the language in which the agent will communicate.
+
+Supported target languages include English, German, Spanish, French, Luxembourgish, and Portuguese.
+
+.. image:: ../../img/wme/agent/agent_generate_settings.png
+  :width: 300
   :alt: Greetings Agent
   :align: center
+
+After clicking **Generate**, the system will create all the necessary files, 
+which you can download. The generated files also include instructions for 
+deploying the agent.

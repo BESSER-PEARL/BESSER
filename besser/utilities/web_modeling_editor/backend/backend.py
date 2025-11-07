@@ -347,14 +347,80 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
 async def _handle_agent_generation(json_data: dict):
     """Handle agent diagram generation."""
     try:
-        agent_model = process_agent_diagram(json_data)
-        zip_buffer, file_name = generate_agent_files(agent_model)
+        # Get languages from config if present
+        config = json_data.get('config', {})
+        languages = config.get('languages') if config else None
 
-        return StreamingResponse(
-            zip_buffer,
-            media_type="application/zip",
-            headers={"Content-Disposition": f"attachment; filename={file_name}"},
-        )
+        # New format: languages is a dict with 'source' and 'target'
+        if languages and isinstance(languages, dict):
+            source_lang = languages.get('source')
+            target_langs = languages.get('target', None)
+            # If no target languages, fall back to single agent generation
+            agent_models = []
+
+            # Default agent (no language)
+            default_json_data = {**json_data}
+            if 'config' in default_json_data and isinstance(default_json_data['config'], dict):
+                default_json_data['config'] = {k: v for k, v in default_json_data['config'].items() if k != 'languages'}
+            agent_models.append((process_agent_diagram(default_json_data), 'default'))
+
+            # Agents for each target language
+            for lang in target_langs:
+                new_config = dict(config) if config else {}
+                new_config['language'] = lang
+                # Pass source language to process_agent_diagram via config
+                if source_lang:
+                    new_config['source_language'] = source_lang
+                new_json_data = dict(json_data)
+                new_json_data['config'] = new_config
+                agent_models.append((process_agent_diagram(new_json_data), lang))
+
+            # Generate files for each agent model
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                for agent_model, lang in agent_models:
+                    temp_dir = tempfile.mkdtemp(prefix=f"besser_agent_{lang}_")
+                    try:
+                        # Generate agent files in temp dir
+                        agent_file = os.path.join(temp_dir, f"agent_model_{lang}.py")
+                        agent_model_to_code(agent_model, agent_file)
+                        # Import and generate output files
+                        sys.path.insert(0, temp_dir)
+                        spec = importlib.util.spec_from_file_location(f"agent_model_{lang}", agent_file)
+                        agent_module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(agent_module)
+                        generator_info = get_generator_info("agent")
+                        generator_class = generator_info.generator_class
+                        if hasattr(agent_module, 'agent'):
+                            generator = generator_class(agent_module.agent)
+                        else:
+                            generator = generator_class(agent_model)
+                        generator.generate()
+                        # Add agent model file inside language folder
+                        zip_file.write(agent_file, f"{lang}/agent_model_{lang}.py")
+                        # Add all files from output dir inside language folder
+                        if os.path.exists(OUTPUT_DIR):
+                            for file_name in os.listdir(OUTPUT_DIR):
+                                file_path = os.path.join(OUTPUT_DIR, file_name)
+                                if os.path.isfile(file_path):
+                                    zip_file.write(file_path, f"{lang}/{file_name}")
+                    finally:
+                        cleanup_temp_resources(temp_dir)
+            zip_buffer.seek(0)
+            return StreamingResponse(
+                zip_buffer,
+                media_type="application/zip",
+                headers={"Content-Disposition": "attachment; filename=agents_multi_lang.zip"},
+            )
+        else:
+            # Single agent (default behavior)
+            agent_model = process_agent_diagram(json_data)
+            zip_buffer, file_name = generate_agent_files(agent_model)
+            return StreamingResponse(
+                zip_buffer,
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={file_name}"},
+            )
     except Exception as e:
         raise HTTPException(
             status_code=500, 

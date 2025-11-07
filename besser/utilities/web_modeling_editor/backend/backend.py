@@ -1254,7 +1254,7 @@ async def get_json_model_from_image(
         raise HTTPException(
             status_code=500, detail=f"Failed to process the uploaded image: {str(e)}"
         )
-    
+
 @app.post("/besser_api/get-json-model-from-kg")
 async def get_json_model_from_kg(
     kg_file: UploadFile = File(...),

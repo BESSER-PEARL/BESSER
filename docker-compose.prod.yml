@@ -1,0 +1,60 @@
+version: '3.8'
+
+services:
+  besser-wme-backend:
+    image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
+    ports:
+      - "9000:9000"
+    working_dir: /app/besser
+    environment:
+      - PYTHONPATH=/app
+    command: python -m besser.utilities.web_modeling_editor.backend.backend
+    networks:
+      - besser_network
+
+  besser_redis:
+    image: redis/redis-stack-server:latest
+    container_name: besser_redis
+    volumes:
+      - apollon_redis_data:/data
+    networks:
+      - besser_network
+
+  besser-wme-frontend:
+    image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
+    container_name: besser-wme-frontend
+    environment:
+      - APOLLON_REDIS_URL=redis://besser_redis:6379
+      - APOLLON_REDIS_DIAGRAM_TTL=${APOLLON_REDIS_DIAGRAM_TTL}
+      - APOLLON_REDIS_MIGRATE_FROM_FILE=true
+      - DEPLOYMENT_URL=${DEPLOYMENT_URL}
+      - BACKEND_URL=${BACKEND_URL}
+    volumes:
+      - ./diagrams:/app/diagrams
+    restart: always
+    networks:
+      - besser_network
+    ports:
+      - "8080:8080"
+
+  besser-wme-modeling-agent:
+    image: artefacts.list.lu/besser/web_modeling_editor/modeling_agent:latest
+    container_name: besser-wme-modeling-agent
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8765:8765"
+    restart: unless-stopped
+    networks:
+      - besser_network
+    depends_on:
+      - besser_redis
+volumes:
+  apollon_redis_data:
+    driver: local
+
+networks:
+  besser_network:
+    name: besser_network
+    driver: bridge

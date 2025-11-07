@@ -108,6 +108,9 @@ def class_buml_to_json(domain_model):
     # Track position
     current_column = 0
     current_row = 0
+    
+    # Track comments to create
+    comments_to_create = []  # [(comment_text, linked_class_id)]
 
     def get_position():
         nonlocal current_column, current_row
@@ -271,6 +274,8 @@ def class_buml_to_json(domain_model):
             if isinstance(type_obj, Class) and hasattr(type_obj, 'metadata') and type_obj.metadata:
                 if type_obj.metadata.description:
                     element_data["description"] = type_obj.metadata.description
+                    # Also create a comment element linked to this class
+                    comments_to_create.append((type_obj.metadata.description, element_id))
                 if type_obj.metadata.uri:
                     element_data["uri"] = type_obj.metadata.uri
                 if type_obj.metadata.icon:
@@ -456,6 +461,67 @@ def class_buml_to_json(domain_model):
                 "path": [{"x": 0, "y": 0}, {"x": 0, "y": 0}],
                 "isManuallyLayouted": False,
             }
+    
+    # Create comment elements from metadata descriptions
+    for comment_text, linked_class_id in comments_to_create:
+        comment_id = str(uuid.uuid4())
+        x, y = get_position()
+        
+        # Create comment element
+        elements[comment_id] = {
+            "id": comment_id,
+            "name": comment_text,
+            "type": "Comments",
+            "owner": None,
+            "bounds": {
+                "x": x,
+                "y": y,
+                "width": 160,
+                "height": 100,
+            },
+        }
+        
+        # Create Link relationship from comment to class
+        rel_id = str(uuid.uuid4())
+        relationships[rel_id] = {
+            "id": rel_id,
+            "name": "",
+            "type": "Link",
+            "owner": None,
+            "source": {
+                "direction": "Right",
+                "element": comment_id,
+                "multiplicity": "",
+                "role": "",
+            },
+            "target": {
+                "direction": "Left",
+                "element": linked_class_id,
+                "multiplicity": "",
+                "role": "",
+            },
+            "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "path": [{"x": 0, "y": 0}, {"x": 0, "y": 0}],
+            "isManuallyLayouted": False,
+        }
+    
+    # Handle domain model level comments (unlinked comments)
+    if hasattr(domain_model, 'metadata') and domain_model.metadata and domain_model.metadata.description:
+        comment_id = str(uuid.uuid4())
+        x, y = get_position()
+        
+        elements[comment_id] = {
+            "id": comment_id,
+            "name": domain_model.metadata.description,
+            "type": "Comments",
+            "owner": None,
+            "bounds": {
+                "x": x,
+                "y": y,
+                "width": 160,
+                "height": 100,
+            },
+        }
 
     # Create the final structure
     result = {

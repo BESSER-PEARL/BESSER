@@ -1,1 +1,1 @@
-from .web_app import *
+from .web_app_generator import *

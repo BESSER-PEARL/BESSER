@@ -717,7 +717,13 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     domain_model = None
     objectmodel = None
     agent_model = None
-    state_machine = None
+    gui_model = None
+
+    # Import GUIModel locally to avoid circular imports
+    try:
+        from besser.BUML.metamodel.gui import GUIModel
+    except ImportError:
+        GUIModel = None
 
     for model in project.models:
         if isinstance(model, DomainModel):
@@ -726,6 +732,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             objectmodel = model
         if isinstance(model, Agent):
             agent_model = model
+        if GUIModel and isinstance(model, GUIModel):
+            gui_model = model
 
     models = []
     with open(file_path, 'w', encoding='utf-8') as f:
@@ -751,6 +759,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             f.write(content_str)
             f.write("\n\n")
             models.append("domain_model")
+        
         if agent_model:
             output_file_path = os.path.join(temp_dir, "agent_model.py")
             agent_model_to_code(model=agent_model, file_path=output_file_path)
@@ -760,6 +769,20 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             f.write(content_str)
             f.write("\n\n")
             models.append("agent")
+        
+        if gui_model:
+            # Use gui_code_builder to generate GUI model code
+            # gui_model_to_code appends to file, but we're already writing, so write to temp file first
+            output_file_path = os.path.join(temp_dir, "gui_model.py")
+            from besser.utilities.gui_code_builder import gui_model_to_code
+            # Pass domain_model=None because we already wrote it above
+            gui_model_to_code(model=gui_model, file_path=output_file_path, domain_model=None)
+            with open(output_file_path, "r") as m:
+                file_content = m.read()
+            content_str = file_content
+            f.write(content_str)
+            f.write("\n\n")
+            models.append("gui_model")
 
         if sm != "":
             f.write(sm)

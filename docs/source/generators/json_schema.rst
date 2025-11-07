@@ -179,31 +179,66 @@ The output structure for Smart Data Models will be:
     ├── NRCellCU/
     │   ├── schema.json
     │   └── examples/
-    │       └── example-normalized.json
+    │       ├── example.json
+    │       ├── example-normalized.json
+    │       ├── example.jsonld
+    │       └── example-normalized.jsonld
     ├── NRCellDU/
     │   ├── schema.json
     │   └── examples/
-    │       └── example-normalized.json
+    │       ├── example.json
+    │       ├── example-normalized.json
+    │       ├── example.jsonld
+    │       └── example-normalized.jsonld
     ├── BWP/
     │   ├── schema.json
     │   └── examples/
-    │       └── example-normalized.json
+    │       ├── example.json
+    │       ├── example-normalized.json
+    │       ├── example.jsonld
+    │       └── example-normalized.jsonld
     ├── UE/
     │   ├── schema.json
     │   └── examples/
-    │       └── example-normalized.json
+    │       ├── example.json
+    │       ├── example-normalized.json
+    │       ├── example.jsonld
+    │       └── example-normalized.jsonld
     ├── PDUSession/
     │   ├── schema.json
     │   └── examples/
-    │       └── example-normalized.json
+    │       ├── example.json
+    │       ├── example-normalized.json
+    │       ├── example.jsonld
+    │       └── example-normalized.jsonld
     ├── SynchronizationSignal/
     │   ├── schema.json
     │   └── examples/
-    │       └── example-normalized.json
+    │       ├── example.json
+    │       ├── example-normalized.json
+    │       ├── example.jsonld
+    │       └── example-normalized.jsonld
     └── TDD/
         ├── schema.json
         └── examples/
-            └── example-normalized.json
+            ├── example.json
+            ├── example-normalized.json
+            ├── example.jsonld
+            └── example-normalized.jsonld
+
+Each class directory contains:
+
+- **schema.json**: The JSON Schema for the class.
+- **examples/**: A folder with example files in various formats:
+  - `example.json`: A key-value representation of the schema.
+  - `example-normalized.json`: An NGSI v2 normalized example.
+  - `example.jsonld`: A JSON-LD example with context.
+  - `example-normalized.jsonld`: An NGSI-LD normalized example.
+
+Additionally, the root directory includes:
+
+- **ADOPTERS.yaml**: A file listing adopters of the data model.
+- **notes.yaml**: A file containing notes about the data model.
 
 Generator Parameters
 --------------------

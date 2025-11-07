@@ -133,7 +133,9 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             if hasattr(cls, 'metadata') and cls.metadata:
                 metadata_params = []
                 if cls.metadata.description:
-                    metadata_params.append(f'description="{cls.metadata.description}"')
+                    # Escape backslashes first, then quotes, then newlines
+                    desc = cls.metadata.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+                    metadata_params.append(f'description="{desc}"')
                 if cls.metadata.uri:
                     metadata_params.append(f'uri="{cls.metadata.uri}"')
                 if cls.metadata.icon:
@@ -327,6 +329,22 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
         # Write domain model
         f.write("# Domain Model\n")
+        
+        # Write domain model metadata if it exists
+        domain_metadata_var = None
+        if hasattr(model, 'metadata') and model.metadata:
+            domain_metadata_var = "domain_metadata"
+            f.write(f"{domain_metadata_var} = Metadata(\n")
+            if model.metadata.description:
+                # Escape quotes and newlines in description
+                desc = model.metadata.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+                f.write(f'    description="{desc}",\n')
+            if model.metadata.uri:
+                f.write(f'    uri="{model.metadata.uri}",\n')
+            if model.metadata.icon:
+                f.write(f'    icon="{model.metadata.icon}"\n')
+            f.write(")\n\n")
+        
         f.write("domain_model = DomainModel(\n")
         f.write(f"    name=\"{model.name}\",\n")
 
@@ -349,9 +367,15 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             constraints_str = ', '.join(c.name.replace("-", "_") for c in sort(model.constraints))
             f.write(f"    constraints={{{constraints_str}}},\n")
         if model.generalizations:
-            f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))}}}\n")
+            f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))}}},\n")
         else:
-            f.write("    generalizations={}\n")
+            f.write("    generalizations={},\n")
+        
+        # Add metadata if it exists
+        if domain_metadata_var:
+            f.write(f"    metadata={domain_metadata_var}\n")
+        else:
+            f.write("    metadata=None\n")
         f.write(")\n")
 
         # Generate object model code if provided
@@ -430,7 +454,19 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
             f.write(f"object_model: ObjectModel = ObjectModel(\n")
             f.write(f"    name=\"{objectmodel.name}\",\n")
-            f.write(f"    objects={{{objects_str}}}\n")
+            f.write(f"    objects={{{objects_str}}}")
+            
+            # Add metadata if it exists
+            if hasattr(objectmodel, 'metadata') and objectmodel.metadata:
+                if objectmodel.metadata.description:
+                    # Escape quotes and newlines in description
+                    desc = objectmodel.metadata.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+                    f.write(",\n")
+                    f.write(f'    metadata=Metadata(description="{desc}")\n')
+                else:
+                    f.write("\n")
+            else:
+                f.write("\n")
             f.write(")\n")
 
     print(f"BUML model saved to {file_path}")
@@ -460,10 +496,15 @@ def agent_model_to_code(model: Agent, file_path: str):
         f.write("import datetime\n")
         f.write("from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty\n")
         f.write("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate\n")
+        f.write("from besser.BUML.metamodel.structural import Metadata\n")
         f.write("import operator\n\n")
 
-        # Create agent
-        f.write(f"agent = Agent('{model.name}')\n\n")
+        # Create agent with metadata if it exists
+        if hasattr(model, 'metadata') and model.metadata and model.metadata.description:
+            desc = model.metadata.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+            f.write(f"agent = Agent('{model.name}', metadata=Metadata(description=\"{desc}\"))\n\n")
+        else:
+            f.write(f"agent = Agent('{model.name}')\n\n")
         
         # Write configuration properties
         for prop in model.properties:
@@ -509,6 +550,14 @@ def agent_model_to_code(model: Agent, file_path: str):
                 f.write(", initial=True")
             f.write(")\n")
         f.write("\n")
+
+        # Write state metadata if any states have it
+        for state in model.states:
+            if hasattr(state, 'metadata') and state.metadata and state.metadata.description:
+                desc = state.metadata.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+                f.write(f"{state.name}.metadata = Metadata(description=\"{desc}\")\n")
+        if any(hasattr(state, 'metadata') and state.metadata and state.metadata.description for state in model.states):
+            f.write("\n")
 
         # Write bodies for states
         for state in model.states:

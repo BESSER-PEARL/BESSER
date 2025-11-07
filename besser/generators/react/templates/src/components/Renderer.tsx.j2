@@ -1,0 +1,582 @@
+import React, { CSSProperties, useEffect, useState } from "react";
+import axios from "axios";
+import { useNavigate } from "react-router-dom";
+import { applyStyle, StyleData } from "../utils/applyStyle";
+import { BarChartComponent } from "./charts/BarChartComponent";
+import { LineChartComponent } from "./charts/LineChartComponent";
+import { PieChartComponent } from "./charts/PieChartComponent";
+import { RadialBarChartComponent } from "./charts/RadialBarChartComponent";
+import { RadarChartComponent } from "./charts/RadarChartComponent";
+import { MetricCardComponent } from "./charts/MetricCardComponent";
+import { TableChartComponent } from "./charts/TableChartComponent";
+import "./charts/TableChartComponent.css";
+
+export interface RendererProps {
+  component: any;
+  styles: StyleData[];
+}
+
+export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
+  // BrowserRouter should be set up in index.tsx - hooks must be called unconditionally
+  const navigate = useNavigate();
+  
+  // All hooks must be at the top level - declare all states here
+  const [chartData, setChartData] = useState<any[]>(component.data ?? []);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [listData, setListData] = useState<any[]>([]);
+  
+  let style = applyStyle(`#${component.id}`, styles) as CSSProperties;
+  if (component.class_list && Array.isArray(component.class_list)) {
+    component.class_list.forEach((cls: string) => {
+      // Ensure class selectors have the . prefix for proper CSS matching
+      const classSelector = cls.startsWith('.') ? cls : `.${cls}`;
+      style = { ...style, ...applyStyle(classSelector, styles) };
+    });
+  }
+
+  // Chart and metric card data fetching effect
+  useEffect(() => {
+    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card", "table-chart"].includes(component.type)) {
+      const endpoint = component.data_binding?.endpoint;
+      if (endpoint) {
+        setLoading(true);
+        setError(null);
+        // Always use backend base URL for relative endpoints
+        const backendBase = "http://localhost:8000";
+        const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+        axios.get(url)
+          .then((res) => {
+            console.log("API response:", res.data); // Debug log
+            let data: any[] = [];
+            
+            // If response is already an array, use it directly
+            if (Array.isArray(res.data)) {
+              data = res.data;
+            } 
+            // If response is an object, try to find the first array property
+            else if (res.data && typeof res.data === 'object') {
+              // Look for common array property names first
+              const commonArrayKeys = ['data', 'results', 'items', 'records', 'list'];
+              let foundKey = commonArrayKeys.find(key => Array.isArray(res.data[key]));
+              
+              // If not found, search for any array property
+              if (!foundKey) {
+                foundKey = Object.keys(res.data).find(key => Array.isArray(res.data[key]));
+              }
+              
+              if (foundKey) {
+                data = res.data[foundKey];
+                console.log(`[Chart Data] Found array in property: ${foundKey}`);
+              }
+            }
+            
+            setChartData(data);
+          })
+          .catch((err) => {
+            console.error("[Chart Data] Error loading data:", err);
+            setError("Error loading data");
+            setChartData([]);
+          })
+          .finally(() => setLoading(false));
+      }
+    }
+  }, [component.type, component.data_binding?.endpoint]);
+
+  // Data list fetching effect
+  useEffect(() => {
+    if (component.type === "data-list" && component.data_sources && component.data_sources.length > 0) {
+      const source = component.data_sources[0];
+      const endpoint = source.endpoint || `/${source.domain?.toLowerCase()}/`;
+      if (endpoint) {
+        const backendBase = "http://localhost:8000";
+        const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+        axios.get(url)
+          .then((res) => {
+            let data = Array.isArray(res.data) ? res.data : (res.data.results || []);
+            setListData(data);
+          })
+          .catch(() => setListData([]));
+      }
+    }
+  }, [component.type, component.data_sources]);
+
+  if (component.type === "container" || component.type === "wrapper" || component.type === "component") {
+    // Use the actual HTML tag if available, otherwise default to div
+    const validTags = ["section", "article", "header", "footer", "nav", "aside", "main", "div", "ul", "ol", "li"];
+    const tagName = (component.tag && validTags.includes(component.tag.toLowerCase())) 
+      ? component.tag.toLowerCase()
+      : "div";
+    
+    // Check if this is a cell and has children
+    const isCell = component.class_list?.includes('gjs-cell');
+    const hasChildren = (component.children ?? []).length > 0;
+    
+    // If it's a cell with children, set height to auto
+    const adjustedStyle = isCell && hasChildren
+      ? { ...style, height: 'auto' }
+      : style;
+
+    // Filter out 'style' from attributes since we handle it separately as a React object
+    const { style: _, ...safeAttributes } = component.attributes || {};
+
+    return React.createElement(
+      tagName,
+      {
+        id: component.id,
+        style: adjustedStyle,
+        className: component.class_list?.join(' '),
+        ...safeAttributes
+      },
+      (component.children ?? []).map((child: any) => (
+        <Renderer key={child.id} component={child} styles={styles} />
+      ))
+    );
+  }
+
+  if (component.type === "text") {
+    // Use the actual HTML tag if available, otherwise default to p
+    const validTags = ["h1", "h2", "h3", "h4", "h5", "h6", "p", "span", "div", "strong", "em", "li"];
+    const tagName = (component.tag && validTags.includes(component.tag.toLowerCase())) 
+      ? component.tag.toLowerCase()
+      : "p";
+    
+    // Filter out 'style' from attributes since we handle it separately as a React object
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
+    return React.createElement(
+      tagName,
+      {
+        id: component.id,
+        style: style,
+        className: component.class_list?.join(' '),
+        ...safeAttributes
+      },
+      component.content || ""
+    );
+  }
+
+  if (component.type === "button" || component.type === "action-button") {
+    const handleClick = () => {
+      // Handle button events
+      if (component.events && Array.isArray(component.events)) {
+        component.events.forEach((event: any) => {
+          if (event.type === "onClick" && event.actions) {
+            event.actions.forEach((action: any) => {
+              if (action.kind === "Transition" && action.target_screen_path) {
+                navigate(action.target_screen_path);
+              } else if (action.kind === "Transition" && action.target_screen) {
+                // Fallback to target screen name if path not available
+                const targetPath = `/${action.target_screen.toLowerCase().replace(/\s+/g, '-')}`;
+                navigate(targetPath);
+              }
+            });
+          }
+        });
+      }
+      // Fallback to targetScreen if events not available
+      else if (component.target_screen_path) {
+        navigate(component.target_screen_path);
+      }
+    };
+    
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
+    return (
+      <button
+        id={component.id}
+        type={component.attributes?.type || "button"}
+        style={style}
+        className={component.class_list?.join(' ')}
+        onClick={handleClick}
+        {...safeAttributes}
+      >
+        {component.label || component.name || "Button"}
+      </button>
+    );
+  }
+
+  if (component.type === "link" || component.type === "link-button") {
+    const handleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+      // Handle internal navigation
+      if (component.target_screen_path && !component.url?.startsWith('http') && component.url !== '#') {
+        e.preventDefault();
+        navigate(component.target_screen_path);
+      }
+      // Let default link behavior handle external URLs
+    };
+    
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
+    return (
+      <a
+        id={component.id}
+        href={component.url || "#"}
+        target={component.target || undefined}
+        rel={component.rel || undefined}
+        style={style}
+        className={component.class_list?.join(' ')}
+        onClick={handleClick}
+        {...safeAttributes}
+      >
+        {component.label || component.name || ""}
+      </a>
+    );
+  }
+
+  if (component.type === "image") {
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
+    return (
+      <img
+        id={component.id}
+        src={component.src || ""}
+        alt={component.alt || component.description || ""}
+        style={style}
+        className={component.class_list?.join(' ')}
+        {...safeAttributes}
+      />
+    );
+  }
+
+  if (component.type === "input") {
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
+    return (
+      <input
+        id={component.id}
+        type={component.input_type?.toLowerCase() || "text"}
+        placeholder={component.attributes?.placeholder || ""}
+        style={style}
+        className={component.class_list?.join(' ')}
+        {...safeAttributes}
+      />
+    );
+  }
+
+  if (component.type === "form") {
+    const handleSubmit = (e: React.FormEvent) => {
+      e.preventDefault();
+      // Handle form submission
+      console.log("Form submitted:", component.name);
+    };
+    
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
+    return (
+      <form
+        id={component.id}
+        onSubmit={handleSubmit}
+        style={style}
+        className={component.class_list?.join(' ')}
+        {...safeAttributes}
+      >
+        {(component.inputs || []).map((input: any) => (
+          <div key={input.id} style={{ marginBottom: "10px" }}>
+            <label htmlFor={input.id} style={{ display: "block", marginBottom: "5px" }}>
+              {input.label || input.id}
+            </label>
+            <Renderer key={input.id} component={{ ...input, type: "input" }} styles={styles} />
+          </div>
+        ))}
+        <button type="submit">Submit</button>
+      </form>
+    );
+  }
+
+  if (component.type === "menu") {
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
+    return (
+      <nav id={component.id} style={style} className={component.class_list?.join(' ')} {...safeAttributes}>
+        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          {(component.items || []).map((item: any, index: number) => (
+            <li key={index} style={{ display: "inline-block", marginRight: "15px" }}>
+              <a
+                href={item.url || "#"}
+                target={item.target || undefined}
+                rel={item.rel || undefined}
+              >
+                {item.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+    );
+  }
+
+  if (component.type === "data-list") {
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
+    return (
+      <div id={component.id} style={style} className={component.class_list?.join(' ')} {...safeAttributes}>
+        <ul>
+          {listData.map((item: any, index: number) => (
+            <li key={index}>{JSON.stringify(item)}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  if (component.type === "embedded-content") {
+    // Filter out 'style' from attributes
+    const { style: _, ...safeAttributes } = component.attributes || {};
+    
+    return (
+      <iframe
+        id={component.id}
+        src={component.src || ""}
+        title={component.description || component.name}
+        style={style}
+        className={component.class_list?.join(' ')}
+        {...safeAttributes}
+      />
+    );
+  }
+
+  if (component.type === "radar-chart") {
+    if (loading) return <div id={component.id}>Loading data...</div>;
+    if (error) return <div id={component.id}>{error}</div>;
+    
+    // Use configured field names from data_binding, with intelligent fallback
+    let actualLabelField = component.data_binding?.label_field || "name";
+    let actualDataField = component.data_binding?.data_field || "value";
+    
+    // If data_binding fields look like UUIDs (contain hyphens and are long), detect from data
+    const isUUID = (str: string) => str && str.length > 20 && str.includes('-');
+    
+    if ((isUUID(actualLabelField) || isUUID(actualDataField)) && chartData && chartData.length > 0) {
+      const firstItem = chartData[0];
+      const keys = Object.keys(firstItem);
+      
+      if (isUUID(actualLabelField)) {
+        actualLabelField = keys.find(k => ['name', 'label', 'attribute'].includes(k.toLowerCase())) || 
+                          keys.find(k => typeof firstItem[k] === 'string') || 
+                          'name';
+      }
+      
+      if (isUUID(actualDataField)) {
+        actualDataField = keys.find(k => ['value', 'count', 'amount'].includes(k.toLowerCase())) || 
+                         keys.find(k => typeof firstItem[k] === 'number') || 
+                         'value';
+      }
+      
+      console.log(`[Radar Chart] Detected fields from data - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    } else {
+      console.log(`[Radar Chart] Using configured fields - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    }
+    
+    return (
+      <RadarChartComponent
+        id={component.id}
+        title={component.title || component.name}
+        color={component.color}
+        data={chartData}
+        labelField={actualLabelField}
+        dataField={actualDataField}
+        options={component.chart || {}}
+        styles={style}
+      />
+    );
+  }
+
+  if (component.type === "bar-chart") {
+    if (loading) return <div id={component.id}>Loading data...</div>;
+    if (error) return <div id={component.id}>{error}</div>;
+    
+    // Use configured field names from data_binding, with intelligent fallback
+    let actualLabelField = component.data_binding?.label_field || "name";
+    let actualDataField = component.data_binding?.data_field || "value";
+    
+    // If data_binding fields look like UUIDs (contain hyphens and are long), detect from data
+    const isUUID = (str: string) => str && str.length > 20 && str.includes('-');
+    
+    if ((isUUID(actualLabelField) || isUUID(actualDataField)) && chartData && chartData.length > 0) {
+      const firstItem = chartData[0];
+      const keys = Object.keys(firstItem);
+      
+      if (isUUID(actualLabelField)) {
+        actualLabelField = keys.find(k => ['name', 'label', 'attribute'].includes(k.toLowerCase())) || 
+                          keys.find(k => typeof firstItem[k] === 'string') || 
+                          'name';
+      }
+      
+      if (isUUID(actualDataField)) {
+        actualDataField = keys.find(k => ['value', 'count', 'amount'].includes(k.toLowerCase())) || 
+                         keys.find(k => typeof firstItem[k] === 'number') || 
+                         'value';
+      }
+      
+      console.log(`[Bar Chart] Detected fields from data - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    } else {
+      console.log(`[Bar Chart] Using configured fields - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    }
+    
+    return (
+      <BarChartComponent
+        id={component.id}
+        title={component.title || component.name}
+        color={component.color}
+        data={chartData}
+        labelField={actualLabelField}
+        dataField={actualDataField}
+        options={component.chart || {}}
+        styles={style}
+      />
+    );
+  }
+
+  if (component.type === "line-chart") {
+    if (loading) return <div id={component.id}>Loading data...</div>;
+    if (error) return <div id={component.id}>{error}</div>;
+    
+    // Use configured field names from data_binding, with intelligent fallback
+    let actualLabelField = component.data_binding?.label_field || "name";
+    let actualDataField = component.data_binding?.data_field || "value";
+    
+    // If data_binding fields look like UUIDs (contain hyphens and are long), detect from data
+    const isUUID = (str: string) => str && str.length > 20 && str.includes('-');
+    
+    if ((isUUID(actualLabelField) || isUUID(actualDataField)) && chartData && chartData.length > 0) {
+      const firstItem = chartData[0];
+      const keys = Object.keys(firstItem);
+      
+      if (isUUID(actualLabelField)) {
+        actualLabelField = keys.find(k => ['name', 'label', 'attribute'].includes(k.toLowerCase())) || 
+                          keys.find(k => typeof firstItem[k] === 'string') || 
+                          'name';
+      }
+      
+      if (isUUID(actualDataField)) {
+        actualDataField = keys.find(k => ['value', 'count', 'amount'].includes(k.toLowerCase())) || 
+                         keys.find(k => typeof firstItem[k] === 'number') || 
+                         'value';
+      }
+      
+      console.log(`[Line Chart] Detected fields from data - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    } else {
+      console.log(`[Line Chart] Using configured fields - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
+    }
+    
+    return (
+      <LineChartComponent
+        id={component.id}
+        title={component.title || component.name}
+        color={component.color}
+        data={chartData}
+        labelField={actualLabelField}
+        dataField={actualDataField}
+        options={component.chart || {}}
+        styles={style}
+      />
+    );
+  }
+
+  if (component.type === "pie-chart") {
+    if (loading) return <div id={component.id}>Loading data...</div>;
+    if (error) return <div id={component.id}>{error}</div>;
+    return (
+      <PieChartComponent
+        id={component.id}
+        title={component.title || component.name}
+        data={chartData}
+        labelField={component.data_binding?.label_field}
+        dataField={component.data_binding?.data_field}
+        options={component.chart || {}}
+        styles={style}
+      />
+    );
+  }
+
+  if (component.type === "radial-bar-chart") {
+    if (loading) return <div id={component.id}>Loading data...</div>;
+    if (error) return <div id={component.id}>{error}</div>;
+    return (
+      <RadialBarChartComponent
+        id={component.id}
+        title={component.title || component.name}
+        data={chartData}
+        labelField={component.data_binding?.label_field}
+        dataField={component.data_binding?.data_field}
+        options={component.chart || {}}
+        styles={style}
+      />
+    );
+  }
+
+  if (component.type === "table-chart") {
+    if (loading) return <div id={component.id}>Loading data...</div>;
+    if (error) return <div id={component.id}>{error}</div>;
+    return (
+      <TableChartComponent
+        id={component.id}
+        title={component.title || component.name}
+        data={chartData}
+        options={component.chart || {}}
+        styles={style}
+        dataBinding={component.data_binding}
+      />
+    );
+  }
+
+  if (component.type === "metric-card") {
+    if (loading) return <div id={component.id}>Loading data...</div>;
+    if (error) return <div id={component.id}>{error}</div>;
+    
+    // Calculate the last value from the data
+    let metricValue = 0;
+    if (chartData && chartData.length > 0) {
+      const lastItem = chartData[chartData.length - 1];
+      const dataField = component.data_binding?.data_field;
+      
+      // Try to get value from the specified data field
+      if (dataField && lastItem[dataField] !== undefined) {
+        metricValue = Number(lastItem[dataField]) || 0;
+      } 
+      // Fallback: try common field names
+      else {
+        const commonFields = ['value', 'count', 'amount', 'total', 'sum'];
+        for (const field of commonFields) {
+          if (lastItem[field] !== undefined) {
+            metricValue = Number(lastItem[field]) || 0;
+            break;
+          }
+        }
+      }
+    }
+    
+    return (
+      <MetricCardComponent
+        id={component.id}
+        metric-title={component.metric?.metricTitle || component.title || "Metric"}
+        format={component.metric?.format || "number"}
+        value-color={component.metric?.valueColor || "#2c3e50"}
+        value-size={component.metric?.valueSize || 32}
+        show-trend={component.metric?.showTrend !== false}
+        positive-color={component.metric?.positiveColor || "#27ae60"}
+        negative-color={component.metric?.negativeColor || "#e74c3c"}
+        value={metricValue}
+        trend={12}
+        data_binding={component.data_binding}
+      />
+    );
+  }
+
+  return (
+    <div id={component.id} style={style}>
+      <strong>{component.name || component.type}</strong>
+      <pre style={{ whiteSpace: "pre-wrap" }}>
+        {JSON.stringify(component, null, 2)}
+      </pre>
+    </div>
+  );
+};

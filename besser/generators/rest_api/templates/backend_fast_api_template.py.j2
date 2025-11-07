@@ -1,6 +1,7 @@
 import uvicorn
 import os, json
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from pydantic_classes import *
@@ -20,6 +21,15 @@ def init_db():
     return SessionLocal
 
 app = FastAPI()
+
+# Enable CORS for all origins (for development)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Or restrict to ["http://localhost:3000"]
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Initialize database session
 SessionLocal = init_db()

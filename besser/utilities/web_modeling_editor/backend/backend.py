@@ -50,6 +50,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
     process_object_diagram,
     json_to_buml_project,
+    process_gui_diagram,
     # BUML to JSON converters
     class_buml_to_json,
     parse_buml_content,
@@ -196,6 +197,64 @@ def generate_agent_files(agent_model):
         cleanup_temp_resources(temp_dir)
 
 
+@app.post("/besser_api/generate-output-from-project")
+async def generate_code_output_from_project(input_data: ProjectInput):
+    """
+    Generate code output from a complete project.
+    This endpoint handles generators that require multiple diagrams (e.g., Web App).
+    """
+    try:
+        generator_type = input_data.settings.get("generator") if input_data.settings else None
+
+        if not generator_type:
+            raise HTTPException(
+                status_code=400, 
+                detail="Generator type is required in project settings"
+            )
+
+        # Validate generator
+        if not is_generator_supported(generator_type):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
+            )
+
+        generator_info = get_generator_info(generator_type)
+
+        # Get configuration from project settings
+        config = input_data.settings.get("config", {}) if input_data.settings else {}
+
+        # Handle Web App generator (requires both ClassDiagram and GUINoCodeDiagram)
+        if generator_type == "web_app":
+            return await _handle_web_app_project_generation(input_data, generator_info, config)
+
+        # For other generators, use the current diagram
+        current_diagram = input_data.diagrams.get(input_data.currentDiagramType)
+        if not current_diagram:
+            raise HTTPException(
+                status_code=400,
+                detail=f"No diagram found for type: {input_data.currentDiagramType}"
+            )
+
+        # Convert to DiagramInput and use existing logic
+        diagram_input = DiagramInput(
+            id=current_diagram.id,
+            title=current_diagram.title,
+            model=current_diagram.model,
+            lastUpdate=current_diagram.lastUpdate,
+            generator=generator_type,
+            config=config,
+            referenceDiagramData=current_diagram.referenceDiagramData
+        )
+
+        return await generate_code_output(diagram_input)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/besser_api/generate-output")
 async def generate_code_output(input_data: DiagramInput):
     """
@@ -211,7 +270,7 @@ async def generate_code_output(input_data: DiagramInput):
         HTTPException: If generator is not supported or generation fails
     """
     temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
-    
+
     try:
         json_data = input_data.model_dump()
         generator_type = input_data.generator
@@ -224,22 +283,59 @@ async def generate_code_output(input_data: DiagramInput):
             )
 
         generator_info = get_generator_info(generator_type)
-        
+
         # Handle agent generators (different diagram type)
         if generator_info.category == "ai_agent":
             return await _handle_agent_generation(json_data)
-        
+
         # Handle class diagram based generators
         return await _handle_class_diagram_generation(
             json_data, generator_type, generator_info, input_data.config, temp_dir
         )
-        
+
     except HTTPException as e:
         cleanup_temp_resources(temp_dir)
         raise e
     except Exception as e:
         cleanup_temp_resources(temp_dir)
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+
+async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):
+    """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram."""
+    try:
+        # Extract ClassDiagram
+        class_diagram = input_data.diagrams.get("ClassDiagram")
+        if not class_diagram:
+            raise HTTPException(
+                status_code=400,
+                detail="ClassDiagram is required for Web App generator"
+            )
+
+        # Extract GUINoCodeDiagram
+        gui_diagram = input_data.diagrams.get("GUINoCodeDiagram")
+        if not gui_diagram:
+            raise HTTPException(
+                status_code=400,
+                detail="GUINoCodeDiagram is required for Web App generator"
+            )
+
+        temp_dir = tempfile.mkdtemp(prefix=TEMP_DIR_PREFIX)
+
+        # Process class diagram to BUML
+        buml_model = process_class_diagram(class_diagram.model_dump())
+
+        gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
+
+        # Generate Web App TypeScript project
+        generator_class = generator_info.generator_class
+
+        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Web App generation failed: {str(e)}")
 
 
 async def _handle_agent_generation(json_data: dict):
@@ -327,28 +423,29 @@ async def _handle_agent_generation(json_data: dict):
 
 
 async def _handle_class_diagram_generation(
-    json_data: dict, 
-    generator_type: str, 
-    generator_info, 
-    config: dict, 
+    json_data: dict,
+    generator_type: str,
+    generator_info,
+    config: dict,
     temp_dir: str
 ):
     """Handle class diagram based generation."""
     # Process the class diagram JSON data
     buml_model = process_class_diagram(json_data)
     generator_class = generator_info.generator_class
-    
+    print("Generator type " + generator_type)
+
     # Generate based on generator type
     if generator_type == "django":
         return await _generate_django(buml_model, generator_class, config, temp_dir)
-    elif generator_type == "sql":
+    if generator_type == "sql":
         return await _generate_sql(buml_model, generator_class, config, temp_dir)
-    elif generator_type == "sqlalchemy":
+    if generator_type == "sqlalchemy":
         return await _generate_sqlalchemy(buml_model, generator_class, config, temp_dir)
-    elif generator_type == "jsonschema":
+    if generator_type == "jsonschema":
         return await _generate_jsonschema(buml_model, generator_class, config, temp_dir)
-    else:
-        return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
+
+    return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
 
 
 async def _generate_django(buml_model, generator_class, config: dict, temp_dir: str):
@@ -357,7 +454,7 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
         raise HTTPException(status_code=400, detail="Django configuration is required")
 
     project_dir = os.path.join(temp_dir, config["project_name"])
-    
+
     # Clean up any existing project directory
     if os.path.exists(project_dir):
         shutil.rmtree(project_dir)
@@ -375,7 +472,7 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
             output_dir=temp_dir,
         )
         generator_instance.generate()
-        
+
         # Wait for file system operations
         await asyncio.sleep(1)
 
@@ -394,7 +491,7 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
 
         zip_buffer.seek(0)
         file_name = get_filename_for_generator("django")
-        
+
         return StreamingResponse(
             zip_buffer,
             media_type="application/zip",
@@ -410,12 +507,12 @@ async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str
     dialect = "standard"
     if config and "dialect" in config:
         dialect = config["dialect"]
-    
+
     generator_instance = generator_class(
         buml_model, output_dir=temp_dir, sql_dialect=dialect
     )
     generator_instance.generate()
-    
+
     return _create_file_response(temp_dir, "sql")
 
 
@@ -461,6 +558,11 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
     else:
         return _create_file_response(temp_dir, "jsonschema")
 
+async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str):
+    """Generate web application files."""
+    generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir)
+    generator_instance.generate()
+    return _create_zip_response(temp_dir, "web_app")
 
 async def _generate_standard(buml_model, generator_class, generator_type: str, generator_info, temp_dir: str):
     """Generate standard files (non-Django, non-SQL)."""
@@ -673,21 +775,22 @@ async def export_buml(input_data: DiagramInput):
             )
 
         elif elements_data.get("type") == "ObjectDiagram":
+            # Old referencing without project
             # Handle object diagram - need both class model and object model in one file
-            reference_data = elements_data.get("referenceDiagramData", {})
-            if not reference_data:
-                raise ValueError("Object diagram requires reference class diagram data")
+            # reference_data = elements_data.get("referenceDiagramData", {})
+            # if not reference_data:
+            #     raise ValueError("Object diagram requires reference class diagram data")
 
             # Process the reference class diagram first
-            reference_json = {"elements": reference_data, "diagramTitle": reference_data.get("title", "Reference Classes")}
-            domain_model = process_class_diagram(reference_json)
+            # reference_json = {"elements": reference_data, "diagramTitle": reference_data.get("title", "Reference Classes")}
+            # domain_model = process_class_diagram(reference_json)
 
             # Process the object diagram with the domain model
-            object_model = process_object_diagram(json_data, domain_model)
+            object_model = process_object_diagram(json_data, buml_model)
 
             # Generate a single file with both domain model and object model
             output_file_path = os.path.join(temp_dir, "complete_model.py")
-            domain_model_to_code(model=domain_model, file_path=output_file_path, objectmodel=object_model)
+            domain_model_to_code(model=buml_model, file_path=output_file_path, objectmodel=object_model)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
             shutil.rmtree(temp_dir, ignore_errors=True)

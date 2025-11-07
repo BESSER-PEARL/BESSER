@@ -11,6 +11,7 @@ own generator).
 .. toctree::
    :maxdepth: 1
 
+   generators/full_web_app
    generators/django
    generators/python
    generators/java

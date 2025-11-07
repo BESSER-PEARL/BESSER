@@ -8,6 +8,10 @@ import uuid
 from typing import Dict, Any, Optional
 
 from besser.BUML.metamodel.object import ObjectModel, Object, Link
+from besser.utilities.web_modeling_editor.backend.services.utils import (
+    determine_connection_direction, calculate_connection_points,
+    calculate_path_points, calculate_relationship_bounds
+)
 
 
 def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, Any]:
@@ -75,6 +79,8 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
         # Track objects and their information
         objects_by_name = {}
         object_class_mapping = {}
+        object_comments = {}  # object_var -> comment_text
+        om_comment = None  # ObjectModel metadata comment
         
         # Extract object instantiations using fluent API
         for node in ast.walk(tree):
@@ -141,6 +147,27 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                                         "attributes": attributes
                                     }
                                     object_class_mapping[object_name] = class_name
+                            
+                            # Check for ObjectModel instantiation with metadata
+                            elif call_chain and call_chain[0] == "ObjectModel":
+                                # Extract ObjectModel metadata
+                                for kw in node.value.keywords:
+                                    if kw.arg == "metadata":
+                                        if isinstance(kw.value, ast.Call):
+                                            for meta_kw in kw.value.keywords:
+                                                if meta_kw.arg == "description":
+                                                    om_comment = ast.literal_eval(meta_kw.value)
+                
+                # Check for object.classifier.metadata = Metadata(...) patterns
+                target = node.targets[0]
+                if isinstance(target, ast.Attribute) and target.attr == "metadata":
+                    # This could be: obj.classifier.metadata = ...
+                    if isinstance(target.value, ast.Attribute) and target.value.attr == "classifier":
+                        obj_var = target.value.value.id if isinstance(target.value.value, ast.Name) else None
+                        if obj_var and isinstance(node.value, ast.Call):
+                            for kw in node.value.keywords:
+                                if kw.arg == "description":
+                                    object_comments[obj_var] = ast.literal_eval(kw.value)
         
         # Create object elements in JSON format
         for obj_name, obj_info in objects_by_name.items():
@@ -272,6 +299,108 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                                         "isManuallyLayouted": False,
                                         "associationId": assoc_id
                                     }
+
+        # Position for comments
+        comment_x = -970
+        comment_y = -300
+
+        # Create comment elements from metadata
+        # 1. ObjectModel comment (unlinked)
+        if om_comment:
+            comment_id = str(uuid.uuid4())
+            elements[comment_id] = {
+                "id": comment_id,
+                "name": om_comment,
+                "type": "Comments",
+                "owner": None,
+                "bounds": {
+                    "x": comment_x,
+                    "y": comment_y,
+                    "width": 200,
+                    "height": 100,
+                },
+            }
+            comment_y += 130
+
+        # 2. Object comments (linked to objects)
+        object_var_to_id = {}  # Map object variable names to their element IDs
+        for obj_name, obj_info in objects_by_name.items():
+            # Find the object ID for this object
+            for elem_id, elem in elements.items():
+                if elem.get("type") == "ObjectName" and elem.get("name") == obj_info["instance_name"]:
+                    object_var_to_id[obj_name] = elem_id
+                    break
+
+        for obj_var, comment_text in object_comments.items():
+            if obj_var in object_var_to_id:
+                comment_id = str(uuid.uuid4())
+                object_id = object_var_to_id[obj_var]
+                
+                elements[comment_id] = {
+                    "id": comment_id,
+                    "name": comment_text,
+                    "type": "Comments",
+                    "owner": None,
+                    "bounds": {
+                        "x": comment_x,
+                        "y": comment_y,
+                        "width": 200,
+                        "height": 100,
+                    },
+                }
+                
+                # Create Link relationship
+                link_id = str(uuid.uuid4())
+                source_element = elements[comment_id]
+                target_element = elements[object_id]
+                
+                source_dir, target_dir = determine_connection_direction(
+                    source_element["bounds"], target_element["bounds"]
+                )
+                
+                source_point = calculate_connection_points(
+                    source_element["bounds"], source_dir
+                )
+                target_point = calculate_connection_points(
+                    target_element["bounds"], target_dir
+                )
+                
+                path_points = calculate_path_points(
+                    source_point, target_point, source_dir, target_dir
+                )
+                rel_bounds = calculate_relationship_bounds(path_points)
+                
+                relationships[link_id] = {
+                    "id": link_id,
+                    "name": "",
+                    "type": "Link",
+                    "owner": None,
+                    "bounds": rel_bounds,
+                    "path": path_points,
+                    "source": {
+                        "direction": source_dir,
+                        "element": comment_id,
+                        "bounds": {
+                            "x": source_point["x"],
+                            "y": source_point["y"],
+                            "width": 0,
+                            "height": 0,
+                        },
+                    },
+                    "target": {
+                        "direction": target_dir,
+                        "element": object_id,
+                        "bounds": {
+                            "x": target_point["x"],
+                            "y": target_point["y"],
+                            "width": 0,
+                            "height": 0,
+                        },
+                    },
+                    "isManuallyLayouted": False,
+                }
+                
+                comment_y += 130
 
         return {
             "version": "3.0.0",

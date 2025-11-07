@@ -6,6 +6,7 @@ from fastapi import HTTPException
 from besser.BUML.metamodel.object import ObjectModel
 from besser.BUML.metamodel.object.builder import ObjectBuilder
 from besser.BUML.metamodel.object import Link, LinkEnd
+from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import parse_attribute
 from datetime import datetime, date, time, timedelta
 import re
@@ -89,9 +90,19 @@ def process_object_diagram(json_data, domain_model):
 
     # Track objects by their ID for link creation
     objects_by_id = {}
+    
+    # Store comments for later processing
+    comment_elements = {}  # {comment_id: comment_text}
+    comment_links = {}  # {comment_id: [linked_element_ids]}
 
     # First pass: Create objects using fluent API
     for element_id, element in elements.items():
+        # Collect comments
+        if element.get("type") == "Comments":
+            comment_text = element.get("name", "").strip()
+            comment_elements[element_id] = comment_text
+            continue
+            
         if element.get("type") == "ObjectName":
             # Extract object name and class ID
             object_name = element.get("name", "")
@@ -236,6 +247,29 @@ def process_object_diagram(json_data, domain_model):
 
     # Second pass: Create links between objects
     for rel_id, relationship in relationships.items():
+        # Handle Link (comment links)
+        if relationship.get("type") == "Link":
+            source_element_id = relationship.get("source", {}).get("element")
+            target_element_id = relationship.get("target", {}).get("element")
+            
+            # Determine which is the comment and which is the target
+            comment_id = None
+            target_id = None
+            
+            if source_element_id in comment_elements:
+                comment_id = source_element_id
+                target_id = target_element_id
+            elif target_element_id in comment_elements:
+                comment_id = target_element_id
+                target_id = source_element_id
+            
+            if comment_id and target_id:
+                if comment_id not in comment_links:
+                    comment_links[comment_id] = []
+                comment_links[comment_id].append(target_id)
+            
+            continue
+            
         if relationship.get("type") == "ObjectLink":
             source_id = relationship.get("source", {}).get("element")
             target_id = relationship.get("target", {}).get("element")
@@ -334,4 +368,29 @@ def process_object_diagram(json_data, domain_model):
                     status_code=400,
                     detail=f"Could not find association for link '{link_name}'. Please ensure all links correspond to valid associations in the class diagram."
                 )
+    
+    for comment_id, comment_text in comment_elements.items():
+        if comment_id in comment_links:
+            # Comment is linked to specific objects
+            for linked_element_id in comment_links[comment_id]:
+                obj = objects_by_id.get(linked_element_id)
+                if obj:
+                    # Add comment to object's classifier metadata
+                    if not obj.classifier.metadata:
+                        obj.classifier.metadata = Metadata(description=comment_text)
+                    else:
+                        if obj.classifier.metadata.description:
+                            obj.classifier.metadata.description += f"\n{comment_text}"
+                        else:
+                            obj.classifier.metadata.description = comment_text
+        else:
+            # Comment is not linked, add to object model metadata
+            if not object_model.metadata:
+                object_model.metadata = Metadata(description=comment_text)
+            else:
+                if object_model.metadata.description:
+                    object_model.metadata.description += f"\n{comment_text}"
+                else:
+                    object_model.metadata.description = comment_text
+    
     return object_model

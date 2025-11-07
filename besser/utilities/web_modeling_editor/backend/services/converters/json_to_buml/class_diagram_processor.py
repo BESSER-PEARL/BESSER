@@ -24,10 +24,20 @@ def process_class_diagram(json_data):
     # Get elements and OCL constraints from the JSON data
     elements = json_data.get('model', {}).get('elements', {})
     relationships = json_data.get('model', {}).get('relationships', {})
+    
+    # Store comments for later processing
+    comment_elements = {}  # {comment_id: comment_text}
+    comment_links = {}  # {comment_id: [linked_element_ids]}
 
     # FIRST PASS: Process all type declarations (enumerations and classes)
     # 1. First process enumerations
     for element_id, element in elements.items():
+        # Collect comments
+        if element.get("type") == "Comments":
+            comment_text = element.get("name", "").strip()
+            comment_elements[element_id] = comment_text
+            continue
+            
         if element.get("type") == "Enumeration":
             element_name = element.get("name", "").strip()
             if not element_name or any(char.isspace() for char in element_name):
@@ -101,7 +111,7 @@ def process_class_diagram(json_data):
                         property_ = Property(name=name, type=type_obj, visibility=visibility)
                     else:
                         property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility)
-                    cls.attributes.add(property_)
+                    cls.add_attribute(property_)
 
             # Add methods
             for method_id in element.get("methods", []):
@@ -154,7 +164,7 @@ def process_class_diagram(json_data):
                         else:
                             method_obj.type = PrimitiveDataType(return_type)
                     
-                    cls.methods.add(method_obj)
+                    cls.add_method(method_obj)
 
     # Processing relationships (Associations, Generalizations, and Compositions)
     # Store association classes candidates and their links for third pass processing
@@ -172,6 +182,29 @@ def process_class_diagram(json_data):
 
         # Skip OCL links
         if rel_type == "ClassOCLLink":
+            continue
+        
+        # Handle Link (comment links)
+        if rel_type == "Link":
+            source_element_id = source.get("element")
+            target_element_id = target.get("element")
+            
+            # Determine which is the comment and which is the target
+            comment_id = None
+            target_id = None
+            
+            if source_element_id in comment_elements:
+                comment_id = source_element_id
+                target_id = target_element_id
+            elif target_element_id in comment_elements:
+                comment_id = target_element_id
+                target_id = source_element_id
+            
+            if comment_id and target_id:
+                if comment_id not in comment_links:
+                    comment_links[comment_id] = []
+                comment_links[comment_id].append(target_id)
+            
             continue
 
         # Handle ClassLinkRel (association class links) later
@@ -339,6 +372,38 @@ def process_class_diagram(json_data):
                     continue    # Attach warnings to domain model for later use
     domain_model.ocl_warnings = all_warnings
     domain_model.constraints = all_constraints
+
+    # Process comments and apply them to class or domain model metadata
+    for comment_id, comment_text in comment_elements.items():
+        if comment_id in comment_links:
+            # Comment is linked to specific elements
+            for linked_element_id in comment_links[comment_id]:
+                linked_element = elements.get(linked_element_id)
+                if linked_element:
+                    element_name = linked_element.get("name", "").strip()
+                    # Find the class in the domain model
+                    for type_obj in domain_model.types:
+                        if isinstance(type_obj, Class) and type_obj.name == element_name:
+                            # Add comment to class metadata
+                            if not type_obj.metadata:
+                                type_obj.metadata = Metadata(description=comment_text)
+                            else:
+                                # Append to existing description
+                                if type_obj.metadata.description:
+                                    type_obj.metadata.description += f"\n{comment_text}"
+                                else:
+                                    type_obj.metadata.description = comment_text
+                            break
+        else:
+            # Comment is not linked, add to domain model metadata
+            if not domain_model.metadata:
+                domain_model.metadata = Metadata(description=comment_text)
+            else:
+                # Append to existing description
+                if domain_model.metadata.description:
+                    domain_model.metadata.description += f"\n{comment_text}"
+                else:
+                    domain_model.metadata.description = comment_text
 
     # Store the association_by_id mapping for object diagram processing
     domain_model.association_by_id = association_by_id

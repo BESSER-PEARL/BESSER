@@ -13,7 +13,8 @@ def process_state_machine(json_data):
     code_lines.append("#######################")
     code_lines.append("")
     code_lines.append("import datetime")
-    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event\n")
+    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event")
+    code_lines.append("from besser.BUML.metamodel.structural import Metadata\n")
     sm_name = json_data.get("title", "Generated_State_Machine")
     if ' ' in sm_name:
         sm_name = sm_name.replace(' ', '_')
@@ -26,10 +27,18 @@ def process_state_machine(json_data):
     states_by_id = {}
     body_names = set()
     event_names = set()
+    
+    # Store comments for later processing
+    comment_elements = {}  # {comment_id: comment_text}
+    comment_links = {}  # {comment_id: [linked_element_ids]}
 
     # Collect all body and event names first
     for element in elements.values():
-        if element.get("type") == "StateBody":
+        if element.get("type") == "Comments":
+            comment_text = element.get("name", "")
+            comment_elements[element.get("id")] = comment_text
+            continue
+        elif element.get("type") == "StateBody":
             body_names.add(element.get("name"))
         elif element.get("type") == "StateFallbackBody":
             body_names.add(element.get("name"))
@@ -38,6 +47,25 @@ def process_state_machine(json_data):
     for rel in relationships.values():
         if rel.get("type") == "StateTransition" and rel.get("name"):
             event_names.add(rel.get("name"))
+        elif rel.get("type") == "Link":
+            # Handle comment links
+            source_element_id = rel.get("source", {}).get("element")
+            target_element_id = rel.get("target", {}).get("element")
+            
+            comment_id = None
+            target_id = None
+            
+            if source_element_id in comment_elements:
+                comment_id = source_element_id
+                target_id = target_element_id
+            elif target_element_id in comment_elements:
+                comment_id = target_element_id
+                target_id = source_element_id
+            
+            if comment_id and target_id:
+                if comment_id not in comment_links:
+                    comment_links[comment_id] = []
+                comment_links[comment_id].append(target_id)
 
     # Write function definitions first
     for element in elements.values():
@@ -122,5 +150,25 @@ def process_state_machine(json_data):
                     code_lines.append(f"    dest={target_name}_state,")
                     code_lines.append(f"    {event_params}")
                     code_lines.append(")")
+
+    # Process comments
+    state_id_to_name = {state_id: state_name for state_id, state_name in states_by_id.items()}
+    
+    for comment_id, comment_text in comment_elements.items():
+        if comment_id in comment_links:
+            # Comment is linked to one or more elements
+            for linked_element_id in comment_links[comment_id]:
+                if linked_element_id in state_id_to_name:
+                    # Apply comment to state's metadata
+                    state_name = state_id_to_name[linked_element_id]
+                    escaped_comment = comment_text.replace("'", "\\'").replace("\n", "\\n")
+                    code_lines.append(f"{state_name}_state.metadata = Metadata(description='{escaped_comment}')")
+        else:
+            # Unlinked comment - add to StateMachine metadata
+            escaped_comment = comment_text.replace("'", "\\'").replace("\n", "\\n")
+            code_lines.append(f"sm.metadata = Metadata(description='{escaped_comment}')")
+    
+    if comment_elements:
+        code_lines.append("")
 
     return "\n".join(code_lines)

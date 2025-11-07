@@ -1,5 +1,9 @@
-Flutter Generator
-=====================
+Flutter Generator (deprecated)
+==============================
+
+.. warning::
+
+   This code generator is **deprecated** and may be discontinued in future versions.
 
 BESSER introduces a code generator for `Flutter <https://flutter.dev/>`_ applications. By supplying
 a :doc:`structural model <../buml_language/model_types/structural>` and a :doc:`GUI model <../buml_language/model_types/gui>`,

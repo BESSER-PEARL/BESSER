@@ -1,0 +1,76 @@
+import React from "react";
+import { useLocation } from "react-router-dom";
+import componentsData from "../data/ui_components.json";
+import stylesData from "../data/ui_styles.json";
+import { Renderer } from "../components/Renderer";
+import { applyStyle, StyleData } from "../utils/applyStyle";
+
+const mainPageId = "[[ main_page_id or '' ]]";
+
+const Home: React.FC = () => {
+  const location = useLocation();
+  
+  // Debug logging
+  console.log("Home component loaded");
+  console.log("Current route:", location.pathname);
+  console.log("componentsData:", componentsData);
+  console.log("stylesData:", stylesData);
+  console.log("mainPageId:", mainPageId);
+
+  const pages = componentsData?.pages ?? [];
+  console.log("pages array:", pages);
+
+  // Find page by route path or fallback to main page
+  let page = pages.find((p: any) => p.route_path === location.pathname);
+  
+  // If not found by route, use main page or first page
+  if (!page) {
+    page = pages.find((p: any) => (mainPageId ? p.id === mainPageId : false)) ?? pages[0];
+  }
+
+  if (!page) {
+    console.error("No page found!");
+    return (
+      <div style={{ padding: "20px" }}>
+        <h1>No screens defined in the generated GUI model.</h1>
+        <p>Pages array length: {pages.length}</p>
+        <p>Current route: {location.pathname}</p>
+        <pre>{JSON.stringify(componentsData, null, 2)}</pre>
+      </div>
+    );
+  }
+
+  console.log("Selected page:", page);
+  console.log("Page components:", page.components);
+
+  const styles = (stylesData?.styles ?? []) as StyleData[];
+  const pageStyle = {
+    width: "100%",
+    minHeight: "100vh",
+    ...applyStyle(`#${page.id}`, styles),
+  };
+
+  const components = page.components ?? [];
+  console.log("Components to render:", components.length);
+
+  if (components.length === 0) {
+    return (
+      <div id={page.id} style={pageStyle}>
+        <div style={{ padding: "20px" }}>
+          <h1>Page "{page.name || page.id}" loaded but has no components.</h1>
+          <pre>{JSON.stringify(page, null, 2)}</pre>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div id={page.id} style={pageStyle}>
+      {components.map((component: any) => (
+        <Renderer key={component.id} component={component} styles={styles} />
+      ))}
+    </div>
+  );
+};
+
+export default Home;

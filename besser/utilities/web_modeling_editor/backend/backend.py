@@ -330,12 +330,6 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
         # Generate Web App TypeScript project
         generator_class = generator_info.generator_class
 
-        from besser.utilities import ModelSerializer
-        # Create an instance of ModelSerializer
-        serializer: ModelSerializer = ModelSerializer()
-        # test_model serialization
-        serializer.dump(model=gui_model)
-
         return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir)
 
     except HTTPException:

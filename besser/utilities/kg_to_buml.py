@@ -125,8 +125,11 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
     with open("kg.txt", "w") as file:
         file.write(plant_uml_chunk)    
 
-    domain = plantuml_to_buml(plantUML_model_path="kg.txt", buml_file_path="buml_model_from_kg")
-    
+    try:
+        domain = plantuml_to_buml(plantUML_model_path="kg.txt", buml_file_path="buml_model_from_kg")
+    except Exception as e:
+        raise RuntimeError(f"Failed to convert the LLM-generated PlantUML diagram to B-UML. The PlantUML diagram is stored in kg.txt for inspection: {e}") from e
+
     os.remove("kg.txt")
     
     return domain

@@ -1,0 +1,32 @@
+Version 5.1.0
+=============
+
+This update brings improved support for GUI diagrams in the Web Modeling Editor, Oracle database compatibility, and an enhanced Docker setup for production deployment.
+
+New Features and Improvements
+-----------------------------
+
+**Database**
+
+* Added support for **Oracle** in the SQLAlchemy generator and templates.
+* SQL generation now includes **ENUM type definitions** for enumeration models.
+
+**Docker and Deployment**
+
+* Updated frontend Docker setup to use **serve** instead of nginx, and unified port mappings.
+* Added a new ``docker-compose.prod.yml`` for production with backend, frontend, Redis, and modeling agent services.
+
+**React Charts**
+
+* Fixed chart axis rendering by using direct function calls for ``PolarAngleAxis``.
+* Updated **Recharts** dependency version.
+
+**Miscellaneous**
+
+* Changed default package value in the GUI model processor from ``"ai.factories"`` to an empty string.
+
+Fixes
+-----
+
+* Fixed issue: `#343 <https://github.com/BESSER-PEARL/BESSER/issues/343>`_
+* Fixed issue: `#344 <https://github.com/BESSER-PEARL/BESSER/issues/344>`_

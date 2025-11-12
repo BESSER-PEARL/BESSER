@@ -47,6 +47,14 @@ sql_file_path = os.path.join(current_directory, f"tables_{dialect}.sql")
 
 ddl_statements = []
 
+# --- Emit ENUM types ---
+for table in Base.metadata.tables.values():
+    for col in table.columns:
+        if isinstance(col.type, Enum):
+            enum_name = col.type.name or f"{{col.name}}_enum"
+            enum_values = [repr(e.value) for e in col.type.enum_class]
+            ddl_statements.append(f"CREATE TYPE {{enum_name}} AS ENUM ({{', '.join(enum_values)}});")
+
 for table in Base.metadata.sorted_tables:
     ddl_statements.append(str(CreateTable(table).compile(engine)))
 

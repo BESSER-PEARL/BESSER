@@ -61,7 +61,7 @@ export const RadialBarChartComponent: React.FC<Props> = ({
           startAngle={options?.startAngle || 0}
           endAngle={options?.endAngle || 360}
         >
-          <PolarAngleAxis dataKey={labelField} />
+          {PolarAngleAxis({ dataKey: labelField })}
           <RadialBar
             background
             dataKey={dataField}

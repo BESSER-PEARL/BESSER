@@ -4,4 +4,5 @@ Version 5
 .. toctree::
    :maxdepth: 1
 
+   v5/v5.1.0
    v5/v5.0.0

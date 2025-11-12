@@ -199,6 +199,8 @@ DATABASE_URL = "postgresql+psycopg2://username:password@localhost:5432/db_name" 
 DATABASE_URL = "mysql+pymysql://username:password@localhost:3306/db_name"  # MySQL or MariaDB connection
 {%- elif dbms == "mssql" %}
 DATABASE_URL = "mssql+pyodbc://username:password@localhost:1433/db_name?driver=SQL+Server" # MSSQL connection
+{%- elif dbms == "oracle" %}
+DATABASE_URL = "oracle+oracledb://username:password@localhost:1521/?service_name=your_service"
 {% else %}
     {# Fallback if the DBMS is invalid or not supported. This is just a safety measure. #}
     raise ValueError("Invalid DBMS. Valid options are sqlite, postgresql, and mysql.")

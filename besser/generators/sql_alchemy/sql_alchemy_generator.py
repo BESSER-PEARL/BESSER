@@ -24,7 +24,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         "datetime": "DateTime",
     }
 
-    VALID_DBMS = {"sqlite", "postgresql", "mysql", "mssql", "mariadb"}
+    VALID_DBMS = {"sqlite", "postgresql", "mysql", "mssql", "mariadb", "oracle"}
 
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
@@ -119,7 +119,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
         Args:
             dbms (str, optional): The database management system to be used. Values allowed: 
-            "sqlite", "postgresql", "mysql", "mssql", or "mariadb". Defaults to "sqlite".
+            "sqlite", "postgresql", "mysql", "mssql", "mariadb", or "oracle". Defaults to "sqlite".
 
         Returns:
             None, but stores the generated code as a file named sql_alchemy.py 

@@ -57,6 +57,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     state_machine_to_json,
     agent_buml_to_json,
     object_buml_to_json,
+    gui_buml_to_json,
     project_to_json,
 )
 
@@ -717,7 +718,12 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
         state_machine = input_data.diagrams.get("StateMachineDiagram", None)
 
         state_machine_code = ""
-        if state_machine.model.get("elements"):
+        if (
+            state_machine is not None
+            and hasattr(state_machine, "model")
+            and state_machine.model
+            and state_machine.model.get("elements")
+        ):
             state_machine_code = process_state_machine(state_machine.model_dump())
 
         temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
@@ -881,6 +887,10 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             'domainmodel(', '.create_class(', '.add_attribute(', '.create_association'
         ])
         
+        is_gui_model = any(keyword in content_lower for keyword in [
+            'guimodel(', '.new_screen(', '.new_module(', 'viewcomponent', 'viewcontainer'
+        ])
+        
         is_project = 'project(' in content_lower or 'def create_project' in content_lower
 
         # Try to parse based on detected type
@@ -901,6 +911,9 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 elif parsed_project.get("AgentDiagram") and parsed_project["AgentDiagram"].get("model"):
                     diagram_data = parsed_project["AgentDiagram"]
                     diagram_type = "AgentDiagram"
+                elif parsed_project.get("GUINoCodeDiagram") and parsed_project["GUINoCodeDiagram"].get("model"):
+                    diagram_data = parsed_project["GUINoCodeDiagram"]
+                    diagram_type = "GUINoCodeDiagram"
                     
                 if diagram_data and diagram_data.get("title"):
                     diagram_title = diagram_data["title"]
@@ -947,6 +960,18 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                     raise ValueError("No types found in domain model")
             except Exception as class_error:
                 print(f"Class diagram parsing failed: {str(class_error)}")
+                
+        elif is_gui_model:
+            try:
+                print("Detected GUI Model diagram, parsing...")
+                gui_json = gui_buml_to_json(buml_content)
+                diagram_data = {
+                    "title": diagram_title,
+                    "model": gui_json
+                }
+                diagram_type = "GUINoCodeDiagram"
+            except Exception as gui_error:
+                print(f"GUI diagram parsing failed: {str(gui_error)}")
 
         # Return the diagram in the format expected by the frontend
         return {

@@ -411,7 +411,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     # Create GUI model
     gui_model = GUIModel(
         name=gui_name,
-        package="ai.factories",
+        package="",
         versionCode="1.0",
         versionName="1.0",
         modules=set(),

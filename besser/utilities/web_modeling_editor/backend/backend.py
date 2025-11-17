@@ -126,7 +126,8 @@ def get_api_root():
             "export_project": "/besser_api/export-project_as_buml",
             "get_project_json_model": "/besser_api/get-project-json-model",
             "get_single_json_model": "/besser_api/get-single-json-model",
-            "validate_ocl": "/besser_api/check-ocl"
+            "validate_diagram": "/besser_api/validate-diagram",
+            "check_ocl": "/besser_api/check-ocl (deprecated, use validate_diagram)"
         }
     }
 
@@ -1045,54 +1046,162 @@ async def get_json_model_from_image(
         )
 
 
-@app.post("/besser_api/check-ocl")
-async def check_ocl(input_data: DiagramInput):
+@app.post("/besser_api/validate-diagram")
+async def validate_diagram(input_data: DiagramInput):
+    """
+    Validate diagram by converting to BUML and running metamodel validation.
+    
+    This is the unified validation endpoint that:
+    1. Converts JSON to BUML (construction validation)
+    2. Calls .validate() method on the model for structured metamodel validation
+    3. For ClassDiagram/ObjectDiagram: runs OCL constraint checks if conversion succeeded
+    4. Returns unified validation results with errors, warnings, and OCL results
+    """
     try:
-        # Check if this is an ObjectDiagram by looking at the elements type
         diagram_type = input_data.model.get("type") if input_data.model else None
-
-        if diagram_type == "ObjectDiagram":
-            # Handle object diagram - need both class model and object model in one file
-            reference_data = input_data.model.get("referenceDiagramData", {})
-            if not reference_data:
-                raise ValueError("Object diagram requires reference class diagram data")
-            
-            # Process the reference class diagram first
-            reference_json = {
-                "title": reference_data.get("title", "Reference Classes"),
-                "model": {
-                    "elements": reference_data.get("elements", {}),
-                    "relationships": reference_data.get("relationships", {})
-                }
-            }
-            buml_model = process_class_diagram(reference_json)
-            # Process the object diagram with the domain model
-            object_model = process_object_diagram(input_data.model_dump(), buml_model)
-            result = check_ocl_constraint(buml_model, object_model)
-
-        else:
-            # Convert diagram to BUML model
-            json_data = {
+        validation_errors = []
+        validation_warnings = []
+        buml_model = None
+        object_model = None
+        
+        # Step 1: Convert to BUML (construction validation)
+        try:
+            if diagram_type == "ClassDiagram":
+                json_data = {
                     "title": input_data.title,
                     "model": input_data.model
                 }
-            buml_model = process_class_diagram(json_data)
-            if not buml_model:
-                return {"success": False, "message": "Failed to create BUML model"}
-
-            # Check OCL constraints
-            result = check_ocl_constraint(buml_model)
-
-        # Add warnings to the message if they exist
-        if hasattr(buml_model, "ocl_warnings") and buml_model.ocl_warnings:
-            warnings_text = "\n\nWarnings:\n" + "\n".join(buml_model.ocl_warnings)
-            result["message"] = result["message"] + warnings_text
-
-        return result
-
+                buml_model = process_class_diagram(json_data)
+                
+                # Run structured metamodel validation
+                validation_result = buml_model.validate(raise_exception=False)
+                validation_errors.extend(validation_result.get("errors", []))
+                validation_warnings.extend(validation_result.get("warnings", []))
+                
+            elif diagram_type == "ObjectDiagram":
+                reference_data = input_data.model.get("referenceDiagramData", {})
+                if not reference_data:
+                    return {
+                        "isValid": False,
+                        "errors": ["Object diagram requires reference class diagram data"],
+                        "warnings": [],
+                        "message": "❌ Validation failed"
+                    }
+                
+                # Process the reference class diagram first
+                reference_json = {
+                    "title": reference_data.get("title", "Reference Classes"),
+                    "model": {
+                        "elements": reference_data.get("elements", {}),
+                        "relationships": reference_data.get("relationships", {})
+                    }
+                }
+                buml_model = process_class_diagram(reference_json)
+                
+                # Validate the domain model first
+                domain_validation = buml_model.validate(raise_exception=False)
+                validation_errors.extend(domain_validation.get("errors", []))
+                validation_warnings.extend(domain_validation.get("warnings", []))
+                
+                # If domain model is valid, process and validate object model
+                if domain_validation.get("success", False):
+                    object_model = process_object_diagram(input_data.model_dump(), buml_model)
+                    object_validation = object_model.validate(raise_exception=False)
+                    validation_errors.extend(object_validation.get("errors", []))
+                    validation_warnings.extend(object_validation.get("warnings", []))
+                
+            elif diagram_type == "StateMachineDiagram":
+                state_machine_code = process_state_machine(input_data.model_dump())
+                return {
+                    "isValid": True,
+                    "message": "✅ State machine diagram is valid",
+                    "errors": [],
+                    "warnings": []
+                }
+                
+            elif diagram_type == "AgentDiagram":
+                agent_model = process_agent_diagram(input_data.model_dump())
+                return {
+                    "isValid": True,
+                    "message": "✅ Agent diagram is valid",
+                    "errors": [],
+                    "warnings": []
+                }
+                
+            elif diagram_type == "GUINoCodeDiagram":
+                return {
+                    "isValid": True,
+                    "message": "✅ GUI diagram is valid",
+                    "errors": [],
+                    "warnings": []
+                }
+            else:
+                return {
+                    "isValid": False,
+                    "errors": [f"Unsupported diagram type: {diagram_type}"],
+                    "warnings": [],
+                    "message": "❌ Validation failed"
+                }
+                
+        except ValueError as e:
+            # Construction validation errors (from BUML creation setters)
+            error_msg = str(e)
+            validation_errors.append(error_msg)
+        except Exception as e:
+            validation_errors.append(f"Validation error: {str(e)}")
+        
+        # Step 2: If BUML model created successfully AND it's a diagram with OCL support
+        ocl_results = None
+        if buml_model and diagram_type in ["ClassDiagram", "ObjectDiagram"] and len(validation_errors) == 0:
+            try:
+                if diagram_type == "ObjectDiagram" and object_model:
+                    ocl_results = check_ocl_constraint(buml_model, object_model)
+                else:
+                    ocl_results = check_ocl_constraint(buml_model)
+                    
+                # Add OCL warnings if present
+                if hasattr(buml_model, "ocl_warnings") and buml_model.ocl_warnings:
+                    validation_warnings.extend(buml_model.ocl_warnings)
+                    
+            except Exception as e:
+                validation_warnings.append(f"OCL check warning: {str(e)}")
+        
+        # Step 3: Build unified response
+        is_valid = len(validation_errors) == 0
+        response = {
+            "isValid": is_valid,
+            "errors": validation_errors,
+            "warnings": validation_warnings,
+            "message": "✅ Diagram is valid" if is_valid else "❌ Validation failed"
+        }
+        
+        # Add OCL-specific results if available
+        if ocl_results:
+            response["valid_constraints"] = ocl_results.get("valid_constraints", [])
+            response["invalid_constraints"] = ocl_results.get("invalid_constraints", [])
+            if ocl_results.get("message"):
+                response["ocl_message"] = ocl_results["message"]
+        
+        return response
+        
     except Exception as e:
-        print(f"Error in check_ocl: {str(e)}")
-        return {"success": False, "message": f"{str(e)}"}
+        print(f"Error in validate_diagram: {str(e)}")
+        return {
+            "isValid": False,
+            "errors": [f"Unexpected error: {str(e)}"],
+            "warnings": [],
+            "message": "❌ Validation failed"
+        }
+
+
+@app.post("/besser_api/check-ocl")
+async def check_ocl(input_data: DiagramInput):
+    """
+    Deprecated: Use /validate-diagram instead.
+    This endpoint is kept for backwards compatibility and redirects to the new unified validation.
+    """
+    print("Warning: /check-ocl is deprecated. Use /validate-diagram instead.")
+    return await validate_diagram(input_data)
 
 
 # Main application entry point

@@ -3,6 +3,7 @@ Generators
 
 .. toctree::
 
+   generators/api_full_wapp
    generators/api_django
    generators/api_python
    generators/api_pydantic

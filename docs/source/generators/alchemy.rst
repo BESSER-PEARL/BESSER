@@ -18,7 +18,7 @@ the ``generate`` method as follows:
     generator.generate(dbms="sqlite")
 
 The ``dbms`` parameter specifies the target database management system. 
-In this example, we use ``sqlite``, but you can also specify ``postgresql``, ``mysql``, ``mssql``, or ``mariadb``.
+In this example, we use ``sqlite``, but you can also specify ``postgresql``, ``mysql``, ``mssql``, ``mariadb``, or ``oracle``.
 
 Generated Output
 ----------------

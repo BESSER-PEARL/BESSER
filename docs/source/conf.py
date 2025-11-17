@@ -46,7 +46,7 @@ templates_path = ['_templates']
 html_title = f"{project} {release}"
 
 # -- Options for HTML output
-
+html_favicon = "_static/besser_ico.ico"
 html_theme_options = {
     "light_logo": "besser_logo_light.png",
     "dark_logo": "besser_logo_dark.png"

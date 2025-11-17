@@ -273,7 +273,7 @@ class PrimitiveDataType(DataType):
                         Allowed values are int, float, str, bool, time, date, 
                         datetime, timedelta, and any.
         """
-        if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta']:
+        if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta', 'any']:
             raise ValueError("Invalid primitive data type")
         super(PrimitiveDataType, PrimitiveDataType).name.fset(self, name)
 

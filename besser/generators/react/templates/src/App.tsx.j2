@@ -1,0 +1,35 @@
+import React from "react";
+import { Routes, Route, Link } from "react-router-dom";
+import Home from "./pages/Home";
+
+function App() {
+  return (
+    <div className="app-container">
+      {/* Navigation Menu 
+      <nav className="app-nav">
+        <ul className="nav-list">
+          {% for page in pages_meta %}
+          <li className="nav-item">
+            <Link to="[[page.route_path]]" className="nav-link">
+              [[page.name]]
+            </Link>
+          </li>
+          {% endfor %}
+        </ul>
+      </nav>*/}
+
+      {/* Page Routes */}
+      <main className="app-main">
+        <Routes>
+          {% for page in pages_meta %}
+          <Route path="[[page.route_path]]" element={<Home />} />
+          {% endfor %}
+          {/* Redirect root to main page */}
+          <Route path="/" element={<Home />} />
+        </Routes>
+      </main>
+    </div>
+  );
+}
+
+export default App;

@@ -46,5 +46,6 @@ Contents
    examples
    api
    releases
-   contributing
+   contributing/index
    about
+

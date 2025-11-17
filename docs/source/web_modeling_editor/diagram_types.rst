@@ -12,6 +12,7 @@ The Web Modeling Editor allows you to create various types of UML and domain-spe
 * **Object Diagrams**: Show instances and snapshots of your system
 * **State Machine Diagrams**: Model dynamic behavior and state transitions
 * **Agent Diagrams**: Design conversational agents and their behaviors
+* **GUI Diagrams**: Design graphical user interfaces for your applications
 
 Each diagram type has its own specific elements and notation. You can combine multiple diagram types
 in a single project to create comprehensive models of your system.
@@ -26,3 +27,4 @@ Supported Diagram Types
    diagram types/object_diagram
    diagram types/statemachine_diagram
    diagram types/agent_diagram
+   diagram types/gui_diagram

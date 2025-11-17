@@ -504,12 +504,14 @@ class ObjectModel(NamedElement):
         """Ensure each object has a unique name inside the model."""
         seen_names: dict[str, Object] = {}
         for obj in self.__objects:
-            if obj.name in seen_names:
+            # Use name_ property to get the object's identifier, not any "name" attribute
+            obj_name = obj.name_
+            if obj_name in seen_names:
                 errors.append(
-                    f"Duplicate object name '{obj.name}' found in object model '{self.name}'."
+                    f"Duplicate object name '{obj_name}' found in object model '{self.name}'."
                 )
             else:
-                seen_names[obj.name] = obj
+                seen_names[obj_name] = obj
 
     def _validate_links(self, errors: list[str]):
         """Validate that each link is well-formed and typed correctly."""

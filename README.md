@@ -16,7 +16,7 @@ The BESSER low-code platform is built on top of [B-UML](https://besser.readthedo
 With B-UML you can specify your software application and then use any of the [code-generators available](https://besser.readthedocs.io/en/latest/generators.html) to translate your model into executable code suitable for various applications, such as Django web apps or database structures compatible with SQLAlchemy.
 
 This repository contains the backend foundation for the ecosystem: the
-metamodel, code generators, notations, utilities, and services that drive theweb modeling editor and the Python SDK. The editor's frontend is maintained in the companion [BESSER_WME_standalone](https://github.com/BESSER-PEARL/BESSER_WME_standalone) repository and is included here only as a submodule for local deployments.
+metamodel, code generators, notations, utilities, and services that drive the web modeling editor and the Python SDK. The editor's frontend is maintained in the companion [BESSER_WME_standalone](https://github.com/BESSER-PEARL/BESSER_WME_standalone) repository and is included here only as a submodule for local deployments.
 
 **Check out the [BESSER Web Modeling Editor online](https://editor.besser-pearl.org/)**
 ![BESSER Web Modeling Editor Demo](./docs/source/img/besser_new.gif)

@@ -1867,6 +1867,86 @@ class DomainModel(Model):
         sorted_list.reverse()
         return sorted_list
 
+    def validate(self, raise_exception: bool = True) -> dict:
+        """
+        Validate the domain model according to structural model constraints.
+
+        Args:
+            raise_exception (bool): If True, raise ValueError when validation fails.
+
+        Returns:
+            dict: Validation result with success flag, errors, and warnings.
+        """
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        self._validate_generalizations(errors)
+        self._validate_associations(errors)
+        self._validate_constraints(errors)
+        self._validate_circular_inheritance(errors)
+
+        result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
+        if errors and raise_exception:
+            raise ValueError("\n".join(errors))
+        return result
+
+    def _validate_generalizations(self, errors: list[str]):
+        """Validate that generalizations reference types in the model."""
+        for generalization in self.__generalizations:
+            if generalization.general not in self.get_classes():
+                errors.append(
+                    f"Generalization references general class '{generalization.general.name}' "
+                    f"which is not in the domain model '{self.name}'."
+                )
+            if generalization.specific not in self.get_classes():
+                errors.append(
+                    f"Generalization references specific class '{generalization.specific.name}' "
+                    f"which is not in the domain model '{self.name}'."
+                )
+
+    def _validate_associations(self, errors: list[str]):
+        """Validate that association ends reference types in the model."""
+        for association in self.__associations:
+            for end in association.ends:
+                if end.type not in self.__types:
+                    errors.append(
+                        f"Association '{association.name}' has end '{end.name}' "
+                        f"referencing type '{end.type.name}' which is not in the domain model '{self.name}'."
+                    )
+
+    def _validate_constraints(self, errors: list[str]):
+        """Validate that constraint contexts reference classes in the model."""
+        for constraint in self.__constraints:
+            if constraint.context not in self.get_classes():
+                errors.append(
+                    f"Constraint '{constraint.name}' references context class '{constraint.context.name}' "
+                    f"which is not in the domain model '{self.name}'."
+                )
+
+    def _validate_circular_inheritance(self, errors: list[str]):
+        """Detect circular inheritance in the class hierarchy."""
+        def has_cycle(cls: Class, visited: set, rec_stack: set) -> bool:
+            visited.add(cls)
+            rec_stack.add(cls)
+            
+            for parent in cls.parents():
+                if parent not in visited:
+                    if has_cycle(parent, visited, rec_stack):
+                        return True
+                elif parent in rec_stack:
+                    return True
+            
+            rec_stack.remove(cls)
+            return False
+
+        visited = set()
+        for cls in self.get_classes():
+            if cls not in visited:
+                if has_cycle(cls, visited, set()):
+                    errors.append(
+                        f"Circular inheritance detected involving class '{cls.name}'."
+                    )
+
     def __repr__(self):
         return (
             f'DomainModel({self.name}, {self.types}, {self.associations}, {self.generalizations}, '

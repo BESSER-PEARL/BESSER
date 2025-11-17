@@ -1,6 +1,15 @@
-# GitHub Copilot Instructions for the BESSER Backend Repository
+# AI Assistant Instructions for the BESSER Backend Repository
 
-These instructions tailor Copilot suggestions to the structure of the `BESSER`
+> **Note**: This file provides AI assistant instructions for the BESSER repository.  
+> Tool-specific files are also available:
+> - **GitHub Copilot**: `.github/copilot-instructions.md`
+> - **Cursor IDE**: `.cursorrules`
+> 
+> All files are kept in sync and contain the same content.
+
+---
+
+These instructions tailor AI assistant suggestions to the structure of the `BESSER`
 repository, which implements the **backend** for the BESSER Web Modeling Editor
 and the core B-UML SDK. The web editor's frontend lives in
 [`BESSER_WME_standalone`](https://github.com/BESSER-PEARL/BESSER_WME_standalone);
@@ -165,8 +174,5 @@ This guide covers the full lifecycle for extending B-UML with a new domain-speci
 
 ---
 
-_Note: These instructions are also available as `.cursorrules` in the repository root for Cursor IDE compatibility. The canonical source is this file for GitHub Copilot._
+_This file contains the same content as `.github/copilot-instructions.md` and `.cursorrules` for universal compatibility. All files are kept in sync._
 
-_Following these guidelines helps Copilot propose changes that respect the
-architecture of the BESSER backend and keeps human and AI contributions
-consistent._

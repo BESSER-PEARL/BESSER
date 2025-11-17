@@ -90,7 +90,7 @@ overview of how the pieces fit together.
 ### Code style and tooling
 
 - Follow the formatting, naming, and AI-assistant rules defined in
-  `.github/copilot-instructions.md` and `.cursor/rules/`.
+  `.github/copilot-instructions.md` (also available as `.cursorrules` for Cursor IDE).
 - Write idiomatic Python (PEP 8), add type hints where they improve clarity, and
   prefer descriptive naming.
 - Keep functions, modules, and classes focused. Share repeated logic through

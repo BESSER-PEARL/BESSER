@@ -196,7 +196,6 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
 
     # Parse series list
     series_objs = []
-    import json
     series_json = attrs.get('series') or view_comp.get('series')
     if isinstance(series_json, str):
         try:
@@ -271,7 +270,6 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
 
     # Parse series list
     series_objs = []
-    import json
     series_json = attrs.get('series') or view_comp.get('series')
     if isinstance(series_json, str):
         try:
@@ -365,7 +363,6 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
 
     # Parse series list
     series_objs = []
-    import json
     series_json = attrs.get('series') or view_comp.get('series')
     if isinstance(series_json, str):
         try:
@@ -438,7 +435,6 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
 
     # Parse series list
     series_objs = []
-    import json
     series_json = attrs.get('series') or view_comp.get('series')
     if isinstance(series_json, str):
         try:

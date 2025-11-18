@@ -1,13 +1,14 @@
 """
 Chart component parsers for GUI diagrams.
 """
-
+import json
 from typing import Dict, Any
 from besser.BUML.metamodel.gui import (
     Alignment, BarChart, DataBinding, LineChart,
-    PieChart, RadarChart, RadialBarChart, TableChart, ViewComponent,
+    PieChart, RadarChart, RadialBarChart, TableChart,
     Color, Position, Size, Styling, DataAggregation, MetricCard,
 )
+from besser.BUML.metamodel.gui.dashboard import Series
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
 
@@ -63,16 +64,15 @@ def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) 
     if data_field_name:
         data_field_name = clean_attribute_name(data_field_name)
 
-    # Resolve domain class and fields
     domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
     label_field = None
     data_field = None
 
     if domain_class:
         if label_field_name:
-            label_field = next((a for a in domain_class.attributes if a.name == label_field_name), None)
+            label_field = next((a for a in domain_class.attributes if clean_attribute_name(a.name) == label_field_name), None)
         if data_field_name:
-            data_field = next((a for a in domain_class.attributes if a.name == data_field_name), None)
+            data_field = next((a for a in domain_class.attributes if clean_attribute_name(a.name) == data_field_name), None)
 
     return domain_class, label_field, data_field
 
@@ -81,13 +81,13 @@ def _attach_chart_metadata(chart, component: Dict[str, Any]) -> None:
     """Helper to attach GrapesJS metadata to chart component for code generation fidelity."""
     if not chart:
         return
-    
+
     attributes = component.get("attributes", {})
     if isinstance(attributes, dict):
         chart.component_id = attributes.get("id") or component.get("id")
     else:
         chart.component_id = component.get("id")
-    
+
     chart.component_type = component.get("type")
     chart.tag_name = component.get("tagName")
     chart.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in (component.get("classes") or [])]
@@ -108,15 +108,9 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
     """
     attrs = view_comp.get('attributes', {})
 
-    # Parse common data binding fields
-    domain_class, label_field, data_field = _parse_chart_data_binding(
-        attrs, class_model, domain_model
-    )
-
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
     name_seed = raw_title if isinstance(raw_title, str) else 'LineChart'
-    # Use sanitize_name for proper name handling (removes special chars, handles typos)
     chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('LineChart')
     if not chart_title:
         chart_title = 'LineChart'
@@ -127,18 +121,36 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Create data binding (only if domain_class exists)
-    data_binding = None
-    if domain_class:
-        data_binding = DataBinding(
-            domain_concept=domain_class,
-            label_field=label_field,
-            data_field=data_field
-        )
+    # Parse series list
+    series_objs = []
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except Exception:
+            series_json = []
+    if isinstance(series_json, list):
+        for s in series_json:
+            s_attrs = s if isinstance(s, dict) else {}
+            s_raw_name = s_attrs.get('name', 'Series')
+            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+            domain_class, label_field, data_field = _parse_chart_data_binding(s_attrs, class_model, domain_model)
+            data_binding = None
+            if domain_class:
+                data_binding = DataBinding(
+                    domain_concept=domain_class,
+                    label_field=label_field,
+                    data_field=data_field
+                )
+            styling = None
+            if 'styling' in s_attrs:
+                from .styling import styling_from_css
+                styling = styling_from_css(s_attrs['styling'])
+            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
 
-    # Parse enhanced line chart properties
     line_chart = LineChart(
         name=chart_title,
+        series=series_objs,
         line_width=int(attrs.get('line-width', 2)),
         show_grid=parse_bool(attrs.get('show-grid'), True),
         show_legend=parse_bool(attrs.get('show-legend'), True),
@@ -151,7 +163,6 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
         title=title_value,
         primary_color=primary_color
     )
-    line_chart.data_binding = data_binding
     _attach_chart_metadata(line_chart, view_comp)
     return line_chart
 
@@ -170,15 +181,9 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
     """
     attrs = view_comp.get('attributes', {})
 
-    # Parse common data binding fields
-    domain_class, label_field, data_field = _parse_chart_data_binding(
-        attrs, class_model, domain_model
-    )
-
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
     name_seed = raw_title if isinstance(raw_title, str) else 'BarChart'
-    # Use sanitize_name for proper name handling (removes special chars, handles typos)
     chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('BarChart')
     if not chart_title:
         chart_title = 'BarChart'
@@ -189,18 +194,37 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Create data binding (only if domain_class exists)
-    data_binding = None
-    if domain_class:
-        data_binding = DataBinding(
-            domain_concept=domain_class,
-            label_field=label_field,
-            data_field=data_field
-        )
+    # Parse series list
+    series_objs = []
+    import json
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except Exception:
+            series_json = []
+    if isinstance(series_json, list):
+        for s in series_json:
+            s_attrs = s if isinstance(s, dict) else {}
+            s_raw_name = s_attrs.get('name', 'Series')
+            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+            domain_class, label_field, data_field = _parse_chart_data_binding(s_attrs, class_model, domain_model)
+            data_binding = None
+            if domain_class:
+                data_binding = DataBinding(
+                    domain_concept=domain_class,
+                    label_field=label_field,
+                    data_field=data_field
+                )
+            styling = None
+            if 'styling' in s_attrs:
+                from .styling import styling_from_css
+                styling = styling_from_css(s_attrs['styling'])
+            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
 
-    # Parse enhanced bar chart properties
     bar_chart = BarChart(
         name=chart_title,
+        series=series_objs,
         bar_width=int(attrs.get('bar-width', 30)),
         orientation=attrs.get('orientation', 'vertical'),
         show_grid=parse_bool(attrs.get('show-grid'), True),
@@ -214,7 +238,6 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
         title=title_value,
         primary_color=primary_color
     )
-    bar_chart.data_binding = data_binding
     _attach_chart_metadata(bar_chart, view_comp)
     return bar_chart
 
@@ -233,15 +256,9 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
     """
     attrs = view_comp.get('attributes', {})
 
-    # Parse common data binding fields
-    domain_class, label_field, data_field = _parse_chart_data_binding(
-        attrs, class_model, domain_model
-    )
-
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
     name_seed = raw_title if isinstance(raw_title, str) else 'PieChart'
-    # Use sanitize_name for proper name handling (removes special chars, handles typos)
     chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('PieChart')
     if not chart_title:
         chart_title = 'PieChart'
@@ -252,20 +269,37 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Create data binding (only if domain_class exists)
-    data_binding = None
-    if domain_class:
-        data_binding = DataBinding(
-            domain_concept=domain_class,
-            label_field=label_field,
-            data_field=data_field
-        )
+    # Parse series list
+    series_objs = []
+    import json
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except Exception:
+            series_json = []
+    if isinstance(series_json, list):
+        for s in series_json:
+            s_attrs = s if isinstance(s, dict) else {}
+            s_raw_name = s_attrs.get('name', 'Series')
+            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+            domain_class, label_field, data_field = _parse_chart_data_binding(s_attrs, class_model, domain_model)
+            data_binding = None
+            if domain_class:
+                data_binding = DataBinding(
+                    domain_concept=domain_class,
+                    label_field=label_field,
+                    data_field=data_field
+                )
+            styling = None
+            if 'styling' in s_attrs:
+                from .styling import styling_from_css
+                styling = styling_from_css(s_attrs['styling'])
+            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
 
-    # Parse enhanced pie chart properties
     show_legend = parse_bool(attrs.get('show-legend'), True)
     show_labels = parse_bool(attrs.get('show-labels'), True)
 
-    # Map string positions to Alignment enum
     legend_pos_map = {
         'top': Alignment.TOP,
         'right': Alignment.RIGHT,
@@ -285,6 +319,7 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
 
     pie_chart = PieChart(
         name=chart_title,
+        series=series_objs,
         show_legend=show_legend,
         legend_position=legend_position,
         show_labels=show_labels,
@@ -297,7 +332,6 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
         title=title_value,
         primary_color=primary_color
     )
-    pie_chart.data_binding = data_binding
     _attach_chart_metadata(pie_chart, view_comp)
     return pie_chart
 
@@ -316,15 +350,9 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
     """
     attrs = view_comp.get('attributes', {})
 
-    # Parse common data binding fields
-    domain_class, label_field, data_field = _parse_chart_data_binding(
-        attrs, class_model, domain_model
-    )
-
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
     name_seed = raw_title if isinstance(raw_title, str) else 'RadarChart'
-    # Use sanitize_name for proper name handling (removes special chars, handles typos)
     chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('RadarChart')
     if not chart_title:
         chart_title = 'RadarChart'
@@ -335,18 +363,37 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Create data binding (only if domain_class exists)
-    data_binding = None
-    if domain_class:
-        data_binding = DataBinding(
-            domain_concept=domain_class,
-            label_field=label_field,
-            data_field=data_field
-        )
+    # Parse series list
+    series_objs = []
+    import json
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except Exception:
+            series_json = []
+    if isinstance(series_json, list):
+        for s in series_json:
+            s_attrs = s if isinstance(s, dict) else {}
+            s_raw_name = s_attrs.get('name', 'Series')
+            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+            domain_class, label_field, data_field = _parse_chart_data_binding(s_attrs, class_model, domain_model)
+            data_binding = None
+            if domain_class:
+                data_binding = DataBinding(
+                    domain_concept=domain_class,
+                    label_field=label_field,
+                    data_field=data_field
+                )
+            styling = None
+            if 'styling' in s_attrs:
+                from .styling import styling_from_css
+                styling = styling_from_css(s_attrs['styling'])
+            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
 
-    # Parse enhanced radar chart properties
     radar_chart = RadarChart(
         name=chart_title,
+        series=series_objs,
         show_grid=parse_bool(attrs.get('show-grid'), True),
         show_tooltip=parse_bool(attrs.get('show-tooltip'), True),
         show_radius_axis=parse_bool(attrs.get('show-radius-axis'), True),
@@ -358,7 +405,6 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
         title=title_value,
         primary_color=primary_color
     )
-    radar_chart.data_binding = data_binding
     _attach_chart_metadata(radar_chart, view_comp)
     return radar_chart
 
@@ -377,36 +423,9 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     """
     attrs = view_comp.get('attributes', {})
 
-    # For radial bar, parse using special 'features' and 'values' attrs
-    # but also check for standard fields with aggregation support
-    data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
-    features_el = get_element_by_id(class_model, attrs.get('features')) or get_element_by_id(class_model, attrs.get('label-field'))
-    values_el = get_element_by_id(class_model, attrs.get('values')) or get_element_by_id(class_model, attrs.get('data-field'))
-
-    data_source_name = data_source_el.get('name') if data_source_el else None
-    features_name = features_el.get('name') if features_el else None
-    values_name = values_el.get('name') if values_el else None
-
-    if features_name:
-        features_name = clean_attribute_name(features_name)
-    if values_name:
-        values_name = clean_attribute_name(values_name)
-
-    # Resolve domain class and fields
-    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
-    label_field = None
-    data_field = None
-
-    if domain_class:
-        if features_name:
-            label_field = next((a for a in domain_class.attributes if a.name == features_name), None)
-        if values_name:
-            data_field = next((a for a in domain_class.attributes if a.name == values_name), None)
-
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
     name_seed = raw_title if isinstance(raw_title, str) else 'RadialBarChart'
-    # Use sanitize_name for proper name handling (removes special chars, handles typos)
     chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('RadialBarChart')
     if not chart_title:
         chart_title = 'RadialBarChart'
@@ -417,18 +436,54 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     if not isinstance(primary_color, str) or not primary_color.strip():
         primary_color = None
 
-    # Create data binding (only if domain_class exists)
-    data_binding = None
-    if domain_class:
-        data_binding = DataBinding(
-            domain_concept=domain_class,
-            label_field=label_field,
-            data_field=data_field
-        )
+    # Parse series list
+    series_objs = []
+    import json
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except Exception:
+            series_json = []
+    if isinstance(series_json, list):
+        for s in series_json:
+            s_attrs = s if isinstance(s, dict) else {}
+            s_raw_name = s_attrs.get('name', 'Series')
+            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+            data_source_el = get_element_by_id(class_model, s_attrs.get('data-source'))
+            features_el = get_element_by_id(class_model, s_attrs.get('features')) or get_element_by_id(class_model, s_attrs.get('label-field'))
+            values_el = get_element_by_id(class_model, s_attrs.get('values')) or get_element_by_id(class_model, s_attrs.get('data-field'))
+            data_source_name = data_source_el.get('name') if data_source_el else None
+            features_name = features_el.get('name') if features_el else None
+            values_name = values_el.get('name') if values_el else None
+            if features_name:
+                features_name = clean_attribute_name(features_name)
+            if values_name:
+                values_name = clean_attribute_name(values_name)
+            domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
+            label_field = None
+            data_field = None
+            if domain_class:
+                if features_name:
+                    label_field = next((a for a in domain_class.attributes if a.name == features_name), None)
+                if values_name:
+                    data_field = next((a for a in domain_class.attributes if a.name == values_name), None)
+            data_binding = None
+            if domain_class:
+                data_binding = DataBinding(
+                    domain_concept=domain_class,
+                    label_field=label_field,
+                    data_field=data_field
+                )
+            styling = None
+            if 'styling' in s_attrs:
+                from .styling import styling_from_css
+                styling = styling_from_css(s_attrs['styling'])
+            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
 
-    # Parse enhanced radial bar chart properties
     radial_bar_chart = RadialBarChart(
         name=chart_title,
+        series=series_objs,
         start_angle=int(attrs.get('start-angle', 0)),
         end_angle=int(attrs.get('end-angle', 360)),
         inner_radius=int(attrs.get('inner-radius', 30)),
@@ -439,7 +494,6 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
         title=title_value,
         primary_color=primary_color
     )
-    radial_bar_chart.data_binding = data_binding
     _attach_chart_metadata(radial_bar_chart, view_comp)
     return radial_bar_chart
 
@@ -508,7 +562,7 @@ def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> T
             if not attr_value:
                 continue
             try:
-                association_data = attr_value() if callable(attr_value) else attr_value
+                association_data = attr_value if callable(attr_value) else attr_value
             except TypeError:
                 association_data = attr_value
 

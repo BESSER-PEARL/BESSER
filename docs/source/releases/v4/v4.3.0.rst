@@ -1,0 +1,21 @@
+Version 4.3.0
+=============
+
+New Features and Improvements
+-----------------------------
+
+**Web Modeling Editor**:
+
+* Added multilingual support for `BAF <https://github.com/BESSER-PEARL/BESSER-Agentic-Framework>`_ generation: agents can now be generated to communicate in multiple languages, including English, Luxembourgish, Spanish, French, German, and Portuguese.
+
+**BESSER Low-code Platform**:
+
+* SQLAlchemy code generator: added explicit handling of abstract classes and `concrete inheritance <https://docs.sqlalchemy.org/en/20/orm/inheritance.html#concrete-table-inheritance>`_ using AbstractConcreteBase.
+* Added tests for the SQLAlchemy generator
+
+Fixes
+-----
+
+* Fixed issue: `334 <https://github.com/BESSER-PEARL/BESSER/issues/334>`_
+* Fixed issue: `332 <https://github.com/BESSER-PEARL/BESSER/issues/332>`_
+* Fixed issue: `330 <https://github.com/BESSER-PEARL/BESSER/issues/330>`_

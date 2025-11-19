@@ -7,6 +7,7 @@ Pipfile
 Pipfile.lock
 besser_venv/
 .env
+venv/
 
 # package
 /dist/
@@ -31,3 +32,6 @@ besser/utilities/web_modeling_editor/backend/output
 
 # pylint
 .pylintrc
+
+TEST_GUI/react_output_test/*
+

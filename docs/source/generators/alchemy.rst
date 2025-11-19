@@ -18,7 +18,7 @@ the ``generate`` method as follows:
     generator.generate(dbms="sqlite")
 
 The ``dbms`` parameter specifies the target database management system. 
-In this example, we use ``sqlite``, but you can also specify ``postgresql``, ``mysql``, ``mssql``, or ``mariadb``.
+In this example, we use ``sqlite``, but you can also specify ``postgresql``, ``mysql``, ``mssql``, ``mariadb``, or ``oracle``.
 
 Generated Output
 ----------------
@@ -48,5 +48,13 @@ looks like this:
 
 .. note::
 
-  If you want to use another DBMS such as ``postgresql`` or ``mysql``, you should change the connection string in the 
+  Note that for DBMS different to SQLite, such as ``postgresql`` or ``mysql``, you should change the connection string in the 
   generated code, providing the necessary information to connect to the database: username, password, host, port, and database name.
+
+.. warning::
+
+  By default, inheritance is implemented using the `Joined Table Inheritance <https://docs.sqlalchemy.org/en/20/orm/inheritance.html#joined-table-inheritance>`_.
+  Other strategies like `Concrete Table Inheritance <https://docs.sqlalchemy.org/en/20/orm/inheritance.html#concrete-table-inheritance>`_ is implemented only when you
+  mark a parent class as abstract in the B-UML model, but there are limitations in Concrete inheritance, for example: the definition of relationships
+  involving abstract classes are not supported. So only if the abstract class does not have relationships, it will be treated as a concrete parent class, otherwise,
+  it will be treated as a parent class using Joined Table Inheritance.

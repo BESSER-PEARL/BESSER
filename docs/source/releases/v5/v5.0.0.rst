@@ -1,0 +1,42 @@
+Version 5.0.0
+=============
+
+A no-code editor for designing web application GUIs is here!
+A code generator to produce a full web application from your
+GUI designs and data model (class diagram) is now available!
+
+New Features and Improvements
+-----------------------------
+
+**Web Modeling Editor**:
+
+* Added support for creating and editing GUIs from a no-code visual editor (see :doc:`GUI modeling <../../web_modeling_editor/diagram types/gui_diagram>`).
+* Added a new shape to create comments in plain text within diagrams.
+* From project settings, you can choose if hide/show association names for class diagrams.
+* When creating/updating class attributes, you can now directly select their visibility and datatype from dropdown lists.
+* From the *File* menu, you can click *Preview Project* to get the JSON and B-UML representation of the current project.
+
+**BESSER Low-code Platform**:
+
+* GUI metamodel extended with
+    * additional view components such as graphs (lineCharts, barCharts, pieCharts, etc.), tables, and forms.
+    * events and actions to define user interactions and navigation flows between different pages and components.
+* New code generator to produce a full web application from your GUI designs and structural model (class diagram). This generator produce:
+    * Frontend code using React.js framework.
+    * Backend code using FastAPI, with RESTful APIs to handle data operations based on the class diagram.
+    * Database schema generation scripts using SQLAlchemy ORM.
+* Added a parser to convert JSON GUI model (from the WME), to B-UML representation.
+
+**Documentation**:
+
+* Added guidelines about how to contribute to BESSER project.
+* Documentation of the GUI metamodel updated.
+* Added documentation about the new code generator for web applications.
+
+Fixes
+-----
+
+* Fixed issue: `304 <https://github.com/BESSER-PEARL/BESSER/issues/304>`_
+* Fixed issue: `315 <https://github.com/BESSER-PEARL/BESSER/issues/315>`_
+* Fixed issue: `323 <https://github.com/BESSER-PEARL/BESSER/issues/323>`_
+* Fixed issue: `265 <https://github.com/BESSER-PEARL/BESSER/issues/265>`_

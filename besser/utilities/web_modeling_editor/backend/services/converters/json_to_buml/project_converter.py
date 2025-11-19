@@ -19,22 +19,39 @@ def json_to_buml_project(project):
     description = project.description or ""
 
     # List of diagram names to check
-    diagram_names = ["ClassDiagram", "ObjectDiagram", "StateMachineDiagram", "AgentDiagram"]
+    diagram_names = ["ClassDiagram", "ObjectDiagram", "StateMachineDiagram", "AgentDiagram", "GUINoCodeDiagram"]
     diagrams = {}
 
     # Filter out empty diagrams (those without elements)
     for d_name in diagram_names:
         diag = project.diagrams.get(d_name)
         elements = None
-        if diag and hasattr(diag, "model"):
-            if isinstance(diag.model, dict):
-                elements = diag.model.get("elements")
+        
+        # Special handling for GUINoCodeDiagram - it doesn't have "elements", it has "pages"
+        if d_name == "GUINoCodeDiagram":
+            if diag and hasattr(diag, "model"):
+                if isinstance(diag.model, dict):
+                    pages = diag.model.get("pages")
+                else:
+                    pages = getattr(diag.model, "pages", None)
+                # GUI diagram is valid if it has pages
+                if diag and pages:
+                    diagrams[d_name] = diag
+                else:
+                    diagrams[d_name] = None
             else:
-                elements = getattr(diag.model, "elements", None)
-        if diag and elements:
-            diagrams[d_name] = diag
+                diagrams[d_name] = None
         else:
-            diagrams[d_name] = None
+            # Standard element-based diagram handling
+            if diag and hasattr(diag, "model"):
+                if isinstance(diag.model, dict):
+                    elements = diag.model.get("elements")
+                else:
+                    elements = getattr(diag.model, "elements", None)
+            if diag and elements:
+                diagrams[d_name] = diag
+            else:
+                diagrams[d_name] = None
 
     model_list = []
 
@@ -57,6 +74,38 @@ def json_to_buml_project(project):
     if agent_model_py:
         agent_model = process_agent_diagram(agent_model_py.model_dump())
         model_list.append(agent_model)
+
+    # Process GUINoCodeDiagram if it exists
+    gui_model_py = diagrams.get("GUINoCodeDiagram")
+    if gui_model_py:
+        from .gui_diagram_processor import process_gui_diagram
+        
+        # GUI processing requires class_model (JSON) and domain_model (BUML)
+        # Get the class diagram JSON for GUI processing
+        class_diagram_py = diagrams.get("ClassDiagram")
+        if class_diagram_py and domain_model:
+            class_diagram_json = class_diagram_py.model_dump()
+            gui_diagram_data = gui_model_py.model_dump()
+            
+            # Extract the actual model data (not the whole diagram wrapper)
+            if isinstance(gui_diagram_data, dict) and "model" in gui_diagram_data:
+                gui_json = gui_diagram_data["model"]
+            else:
+                gui_json = gui_diagram_data
+            
+            # Extract class diagram model data
+            if isinstance(class_diagram_json, dict) and "model" in class_diagram_json:
+                class_json = class_diagram_json["model"]
+            else:
+                class_json = class_diagram_json
+            
+            print(f"[GUI Processing] GUI diagram has pages: {bool(gui_json.get('pages') if isinstance(gui_json, dict) else False)}")
+            gui_model = process_gui_diagram(gui_json, class_json, domain_model)
+            model_list.append(gui_model)
+        else:
+            # GUI diagram exists but no ClassDiagram - skip GUI processing
+            print("Warning: GUINoCodeDiagram found but ClassDiagram is missing. Skipping GUI processing.")
+
 
     metadata = Metadata(description=description)
 

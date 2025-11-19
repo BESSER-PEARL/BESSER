@@ -2,11 +2,12 @@ import os
 import tempfile
 import uuid
 import shutil
+from re import search
 from besser.BUML.metamodel.structural.structural import DomainModel, AssociationClass, Metadata
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
-from besser.BUML.metamodel.state_machine.state_machine import StateMachine
-from besser.BUML.metamodel.state_machine.agent import Agent, Intent
+from besser.BUML.metamodel.state_machine.state_machine import StateMachine, CustomCodeAction
+from besser.BUML.metamodel.state_machine.agent import Agent, Intent, AgentReply, LLMReply
 from besser.BUML.metamodel.state_machine.state_machine import Body
 from besser.utilities import sort_by_timestamp as sort
 
@@ -526,17 +527,14 @@ def agent_model_to_code(model: Agent, file_path: str):
         llm_required = False
         for state in model.states:
             if state.body:
-                if hasattr(state.body, 'messages') and isinstance(state.body.messages, list) and state.body.messages:
-                    # Check if any of the messages are LLM messages
-                    if any(message.startswith("LLM:") for message in state.body.messages):
-                        llm_required = True
-                        break
-            elif state.fallback_body:
-                if hasattr(state.fallback_body, 'messages') and isinstance(state.fallback_body.messages, list) and state.fallback_body.messages:
-                    # Check if any of the messages are LLM messages
-                    if any(message.startswith("LLM:") for message in state.fallback_body.messages):
-                        llm_required = True
-                        break
+                if hasattr(state.body, 'actions') and isinstance(state.body.actions[0], LLMReply):
+                    llm_required = True
+                    break
+                    
+            if state.fallback_body:
+                if hasattr(state.fallback_body, 'actions') and isinstance(state.fallback_body.actions[0], LLMReply):
+                    llm_required = True
+                    break
         if llm_required:
             # Create an LLM instance for use in state bodies
             f.write("# Create LLM instance for use in state bodies\n")
@@ -562,102 +560,56 @@ def agent_model_to_code(model: Agent, file_path: str):
         # Write bodies for states
         for state in model.states:
             f.write(f"# {state.name} state\n")
-            
             # Write body function if it exists
             if state.body:
                 # Check if the body has a messages attribute
-                if hasattr(state.body, 'messages') and isinstance(state.body.messages, list) and state.body.messages:
-                    # Check if any of the messages are code messages
-                    has_code = any(message.startswith("CODE:") for message in state.body.messages)
-                    
-                    if has_code:
-                        # For code messages, write them directly as functions
-                        for message in state.body.messages:
-                            if message.startswith("CODE:"):
-                                # Extract the code content
-                                code_content = message[5:]
-                                # Write the code directly
-                                f.write(f"{code_content}\n\n")
+                
+                if hasattr(state.body, 'actions') and state.body.actions:
+                    if isinstance(state.body.actions[0], AgentReply):
+                        f.write(f"{state.name}_body = Body('{state.name}_body')\n")
+                        for action in state.body.actions:
+                            msg = action.message.replace('\\', '\\\\').replace("'", "\\'")
+                            f.write(f"{state.name}_body.add_action(AgentReply('{msg}'))\n")
+                        f.write("\n")
+                        f.write(f"{state.name}.set_body({state.name}_body)\n")
+                    elif isinstance(state.body.actions[0], LLMReply):
+                        f.write(f"{state.name}_body = Body('{state.name}_body')\n")
+                        f.write(f"{state.name}_body.add_action(LLMReply())\n")
+                        f.write(f"{state.name}.set_body({state.name}_body)\n")
+                    elif isinstance(state.body.actions[0], CustomCodeAction):
+                        action = state.body.actions[0]
+                        f.write(f"{action.to_code()}\n")
+                        function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', action.code)
+                        f.write(f"CustomCodeAction_{state.name} = CustomCodeAction(callable={function_match.group(1)})\n")
+                        f.write(f"{state.name}_body = Body('{state.name}_body')\n")
+                        f.write(f"{state.name}_body.add_action(CustomCodeAction_{state.name})\n")
+                        f.write(f"{state.name}.set_body({state.name}_body)\n")
+                            
                         
-                        # Set the body to the function defined in the code
-                        # Look for function name in the code
-                        import re
-                        function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
-                        if function_match:
-                            function_name = function_match.group(1)
-                            f.write(f"{state.name}.set_body(Body('{function_name}', {function_name}))\n")
-                        else:
-                            # If no function name found, use state_name_body
-                            f.write(f"def {state.name}_body(session: AgentSession):\n")
-                            f.write(f"    session.reply('Code body for {state.name}')\n\n")
-                            f.write(f"{state.name}.set_body(Body('{state.name}_body', {state.name}_body))\n")
-                    else:
-                        # Check if any of the messages are LLM messages
-                        has_llm = any(message.startswith("LLM:") for message in state.body.messages)
-                        
-                        if has_llm:
-                            # Generate a function that uses llm.predict
-                            f.write(f"def {state.name}_body(session: AgentSession):\n")
-                            f.write(f"    session.reply(llm.predict(session.event.message))\n\n")
-                        else:
-                            # Write a function that outputs all messages
-                            f.write(f"def {state.name}_body(session: AgentSession):\n")
-                            for message in state.body.messages:
-                                # Escape single quotes and backslashes
-                                escaped_message = message.replace('\\', '\\\\').replace("'", "\\'")
-                                f.write(f"    session.reply('{escaped_message}')\n")
-                            f.write("\n")
-                        
-                        # Set the body on the state
-                        f.write(f"{state.name}.set_body(Body('{state.name}_body', {state.name}_body))\n")
                 
             # Write fallback body function if it exists
             if state.fallback_body:
                 # Check if the fallback body has a messages attribute
-                if hasattr(state.fallback_body, 'messages') and isinstance(state.fallback_body.messages, list) and state.fallback_body.messages:
-                    # Check if any of the messages are code messages
-                    has_code = any(message.startswith("CODE:") for message in state.fallback_body.messages)
-                    
-                    if has_code:
-                        # For code messages, write them directly as functions
-                        for message in state.fallback_body.messages:
-                            if message.startswith("CODE:"):
-                                # Extract the code content
-                                code_content = message[5:]
-                                # Write the code directly
-                                f.write(f"{code_content}\n\n")
-                    
-                        # Set the fallback body to the function defined in the code
-                        # Look for function name in the code
-                        import re
-                        function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
-                        if function_match:
-                            function_name = function_match.group(1)
-                            f.write(f"{state.name}.set_fallback_body(Body('{function_name}', {function_name}))\n")
-                        else:
-                            # If no function name found, use state_name_fallback_body
-                            f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
-                            f.write(f"    session.reply('Code fallback body for {state.name}')\n\n")
-                            f.write(f"{state.name}.set_fallback_body(Body('{state.name}_fallback_body', {state.name}_fallback_body))\n")
-                    else:
-                        # Check if any of the messages are LLM messages
-                        has_llm = any(message.startswith("LLM:") for message in state.fallback_body.messages)
-                        
-                        if has_llm:
-                            # Generate a function that uses llm.predict
-                            f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
-                            f.write(f"    session.reply(llm.predict(session.event.message))\n\n")
-                        else:
-                            # Write a function that outputs all messages
-                            f.write(f"def {state.name}_fallback_body(session: AgentSession):\n")
-                            for message in state.fallback_body.messages:
-                                # Escape single quotes and backslashes
-                                escaped_message = message.replace('\\', '\\\\').replace("'", "\\'")
-                                f.write(f"    session.reply('{escaped_message}')\n")
-                            f.write("\n")
-                        
-                        # Set the fallback body on the state
-                        f.write(f"{state.name}.set_fallback_body(Body('{state.name}_fallback_body', {state.name}_fallback_body))\n")
+                if hasattr(state.fallback_body, 'actions') and state.fallback_body.actions:
+                    if isinstance(state.fallback_body.actions[0], AgentReply):
+                        f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
+                        for action in state.fallback_body.actions:
+                            msg = action.message.replace('\\', '\\\\').replace("'", "\\'")
+                            f.write(f"{state.name}_fallback_body.add_action(AgentReply('{msg}'))\n")
+                        f.write("\n")
+                        f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
+                    elif isinstance(state.fallback_body.actions[0], LLMReply):
+                        f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
+                        f.write(f"{state.name}_fallback_body.add_action(LLMReply())\n")
+                        f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
+                    elif isinstance(state.fallback_body.actions[0], CustomCodeAction):
+                        action = state.fallback_body.actions[0]
+                        f.write(f"{action.to_code()}\n")
+                        function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', action.code)
+                        f.write(f"CustomCodeAction_{state.name}_fallback = CustomCodeAction(callable={function_match.group(1)})\n")
+                        f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
+                        f.write(f"{state.name}_fallback_body.add_action(CustomCodeAction_{state.name}_fallback)\n")
+                        f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
             
             # Write transitions
             for transition in state.transitions:

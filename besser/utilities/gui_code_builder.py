@@ -25,7 +25,7 @@ from besser.BUML.metamodel.gui.graphical_ui import (
     DataSourceElement,
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart
+    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart, AgentComponent
 )
 from besser.BUML.metamodel.gui.events_actions import Event, Transition, Create, Read, Update, Delete
 from besser.utilities.buml_code_builder import domain_model_to_code
@@ -110,7 +110,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
         f.write("    UnitSize, PositionType, Alignment\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.dashboard import (\n")
-        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart\n")
+        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart, AgentComponent\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.events_actions import (\n")
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
@@ -285,6 +285,8 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
         _write_radial_bar_chart(f, comp_var, component)
     elif isinstance(component, TableChart):
         _write_table_chart(f, comp_var, component)
+    elif isinstance(component, AgentComponent):
+        _write_agent_component(f, comp_var, component)
     elif isinstance(component, ViewContainer):
         _write_container(f, comp_var, component, created_vars, pending_button_events)
         # Metadata already written by _write_container
@@ -887,11 +889,24 @@ def _write_styling(f, component_var, styling, created_vars):
     f.write(f'{component_var}.styling = {styling_var}\n')
 
 
+def _write_agent_component(f, var_name, agent):
+    """Write code for an AgentComponent."""
+    params = [f'name="{agent.name}"']
+    params.append(f'description="{agent.description or ""}"')
+    
+    if hasattr(agent, 'agent_name') and agent.agent_name:
+        params.append(f'agent_name="{_escape_string(agent.agent_name)}"')
+    
+    if hasattr(agent, 'agent_title') and agent.agent_title:
+        params.append(f'agent_title="{_escape_string(agent.agent_title)}"')
+    
+    f.write(f'{var_name} = AgentComponent({", ".join(params)})\n')
+
+
 def _write_data_binding_assignment(f, var_name, binding):
     if not binding:
         return
     binding_var = f"{var_name}_binding"
-    binding_name = _escape_string(getattr(binding, "name", binding_var))
     domain_name = _get_attr_name(getattr(binding, "domain_concept", None))
     label_name = _get_attr_name(getattr(binding, "label_field", None))
     data_name = _get_attr_name(getattr(binding, "data_field", None))

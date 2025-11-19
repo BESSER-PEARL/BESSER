@@ -24,9 +24,10 @@ class WebAppGenerator(GeneratorInterface):
         output_dir (str, optional): Directory where generated code will be saved. Defaults to None.
     """
 
-    def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None):
+    def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None, agent_model=None):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
+        self.agent_model = agent_model
         # Jinja environment configuration
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
@@ -35,12 +36,15 @@ class WebAppGenerator(GeneratorInterface):
     def generate(self):
         """
         Generates web application code based on the provided B-UML and GUI models.
+        If agent_model is provided, also generates agent code.
 
         Returns:
             None, but store the generated code in the specified output directory.
         """
         self._generate_frontend(self.env)
         self._generate_backend(self.env)
+        if self.agent_model:
+            self._generate_agent(self.env)
         self._generate_docker_files(self.env)
 
     def _generate_frontend(self, env):
@@ -54,6 +58,23 @@ class WebAppGenerator(GeneratorInterface):
         backend_dir = os.path.join(self.output_dir, "backend") if self.output_dir else "backend"
         backend_gen = BackendGenerator(self.model, output_dir=backend_dir)
         backend_gen.generate()
+    
+    def _generate_agent(self, env):
+        """Generate agent code if agent model is provided."""
+        from besser.generators.agents.baf_generator import BAFGenerator
+        from besser.utilities.buml_code_builder import agent_model_to_code
+        
+        # Generate agent code in 'agent' subfolder
+        agent_dir = os.path.join(self.output_dir, "agent") if self.output_dir else "agent"
+        os.makedirs(agent_dir, exist_ok=True)
+        
+        # # Generate agent model file
+        # agent_file = os.path.join(agent_dir, "agent_model.py")
+        # agent_model_to_code(self.agent_model, agent_file)
+        
+        # Generate agent files using BAFGenerator
+        agent_gen = BAFGenerator(self.agent_model, output_dir=agent_dir)
+        agent_gen.generate()
 
     def _generate_docker_files(self, env):
         """
@@ -66,7 +87,7 @@ class WebAppGenerator(GeneratorInterface):
         docker_compose_template = env.get_template('docker-compose.yml.j2')
         docker_compose_path = os.path.join(self.output_dir, 'docker-compose.yml')
         with open(docker_compose_path, 'w') as f:
-            f.write(docker_compose_template.render())
+            f.write(docker_compose_template.render(agent_model=self.agent_model))
 
         # Generate frontend Dockerfile
         frontend_dockerfile_template = env.get_template('frontend.Dockerfile.j2')
@@ -81,3 +102,11 @@ class WebAppGenerator(GeneratorInterface):
         os.makedirs(os.path.dirname(backend_dockerfile_path), exist_ok=True)
         with open(backend_dockerfile_path, 'w') as f:
             f.write(backend_dockerfile_template.render())
+        
+        # Generate agent Dockerfile if agent model exists
+        if self.agent_model:
+            agent_dockerfile_template = env.get_template('agent.Dockerfile.j2')
+            agent_dockerfile_path = os.path.join(self.output_dir, 'agent', 'Dockerfile')
+            os.makedirs(os.path.dirname(agent_dockerfile_path), exist_ok=True)
+            with open(agent_dockerfile_path, 'w') as f:
+                f.write(agent_dockerfile_template.render(agent_model=self.agent_model))

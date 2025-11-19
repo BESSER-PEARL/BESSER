@@ -23,6 +23,7 @@ from besser.BUML.metamodel.gui.events_actions import (
 
 from .chart_parsers import (
     apply_chart_colors,
+    parse_agent_component,
     parse_bar_chart,
     parse_line_chart,
     parse_metric_card,
@@ -304,6 +305,15 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 if styling:  # Only assign if styling exists
                     element.styling = styling
                 element.name = get_unique_name(component, element.name or "MetricCard")
+                attach_meta(element, meta)
+            return element
+
+        if comp_type == "agent-component":
+            element = parse_agent_component(component, class_model, domain_model)
+            if element:
+                if styling:  # Only assign if styling exists
+                    element.styling = styling
+                element.name = get_unique_name(component, element.name or "AgentComponent")
                 attach_meta(element, meta)
             return element
 

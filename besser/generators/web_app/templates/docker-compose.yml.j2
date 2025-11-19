@@ -9,8 +9,14 @@ services:
       - "3000:3000"
     depends_on:
       - backend
+{% if agent_model %}
+      - agent
+{% endif %}
     environment:
       - REACT_APP_API_URL=http://backend:8000
+{% if agent_model %}
+      - REACT_APP_AGENT_URL=ws://localhost:8765
+{% endif %}
 
   backend:
     build:
@@ -20,6 +26,27 @@ services:
       - "8000:8000"
     volumes:
       - sqlite_data:/app/data
+{% if agent_model %}
+    depends_on:
+      - agent
+{% endif %}
+
+{% if agent_model %}
+  agent:
+    build:
+      context: ./agent
+      dockerfile: Dockerfile
+    ports:
+      - "8765:8765"
+      - "5000:5000"
+    volumes:
+      - agent_data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+{% endif %}
 
 volumes:
   sqlite_data:
+{% if agent_model %}
+  agent_data:
+{% endif %}

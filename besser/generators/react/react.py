@@ -26,6 +26,7 @@ from besser.BUML.metamodel.gui import (
     ViewContainer,
 )
 from besser.BUML.metamodel.gui.dashboard import (
+    AgentComponent,
     BarChart,
     LineChart,
     MetricCard,
@@ -505,6 +506,12 @@ class ReactGenerator(GeneratorInterface):
             )
             node["color"] = element.primary_color or element.value_color or "#2c3e50"
 
+        if isinstance(element, AgentComponent):
+            node["agent-name"] = element.agent_name or ""
+            node["agent-title"] = element.agent_title or "BESSER Agent"
+            node["agent_name"] = element.agent_name or ""
+            node["agent_title"] = element.agent_title or "BESSER Agent"
+
         binding_data = self._serialize_data_binding(getattr(element, "data_binding", None))
         if binding_data:
             node["data_binding"] = binding_data
@@ -889,6 +896,8 @@ class ReactGenerator(GeneratorInterface):
             return "table-chart"
         if isinstance(element, MetricCard):
             return "metric-card"
+        if isinstance(element, AgentComponent):
+            return "agent-component"
         return "component"
 
     @staticmethod

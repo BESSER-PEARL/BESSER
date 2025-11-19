@@ -75,22 +75,30 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                     {% endif %}
                 {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
                     {%- if backend %}
-    {{ ns.end2.name }}: int  # N:1 Relationship
-                    {%- else %}
+                        {%- if ns.end2.multiplicity.min > 0 %}
+    {{ ns.end2.name }}: int  # N:1 Relationship (mandatory)
+                        {% else %}
+    {{ ns.end2.name }}: Optional[int] = None  # N:1 Relationship (optional)
+                        {% endif %}
+                    {% else %}
     {{ ns.end2.name }}: "{{ ns.end2.type.name }}"  # N:1 Relationship
-                    {%- endif %}
+                    {% endif %}
                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
                     {%- if backend %}
     {{ ns.end2.name }}: Optional[List[int]] = None  # 1:N Relationship
-                    {%- else %}
+                    {% else %}
     {{ ns.end2.name }}: List["{{ ns.end2.type.name }}"]  # 1:N Relationship
-                    {%- endif %}
+                    {% endif %}
                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
                     {%- if backend %}
-    {{ ns.end2.name }}: Optional[int] = None  # 1:1 Relationship
-                    {%- else %}
+                        {%- if ns.end2.multiplicity.min > 0 %}
+    {{ ns.end2.name }}: int  # 1:1 Relationship (mandatory)
+                        {% else %}
+    {{ ns.end2.name }}: Optional[int] = None  # 1:1 Relationship (optional)
+                        {% endif %}
+                    {% else %}
     {{ ns.end2.name }}: "{{ ns.end2.type.name }}"  # 1:1 Relationship
-                    {%- endif %}
+                    {% endif %}
                 {%- endif %}
             {%- endif %}
         {%- endif %}

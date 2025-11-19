@@ -28,7 +28,7 @@ from besser.BUML.metamodel.gui.dashboard import (
     LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart, AgentComponent
 )
 from besser.BUML.metamodel.gui.events_actions import Event, Transition, Create, Read, Update, Delete
-from besser.utilities.buml_code_builder import domain_model_to_code
+from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 
 
 def _escape_string(value: str | None) -> str:

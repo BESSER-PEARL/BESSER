@@ -52,9 +52,9 @@ def process_agent_diagram(json_data):
     agent = Agent(title)
 
     # Add default configuration properties
-    agent.add_property(ConfigProperty('websocket_platform', 'websocket.host', 'localhost'))
+    agent.add_property(ConfigProperty('websocket_platform', 'websocket.host', '0.0.0.0'))
     agent.add_property(ConfigProperty('websocket_platform', 'websocket.port', 8765))
-    agent.add_property(ConfigProperty('websocket_platform', 'streamlit.host', 'localhost'))
+    agent.add_property(ConfigProperty('websocket_platform', 'streamlit.host', '0.0.0.0'))
     agent.add_property(ConfigProperty('websocket_platform', 'streamlit.port', 5000))
     agent.add_property(ConfigProperty('nlp', 'nlp.language', 'en'))
     agent.add_property(ConfigProperty('nlp', 'nlp.region', 'US'))

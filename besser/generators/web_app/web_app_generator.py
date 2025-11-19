@@ -62,7 +62,7 @@ class WebAppGenerator(GeneratorInterface):
     def _generate_agent(self, env):
         """Generate agent code if agent model is provided."""
         from besser.generators.agents.baf_generator import BAFGenerator
-        from besser.utilities.buml_code_builder import agent_model_to_code
+        from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
         
         # Generate agent code in 'agent' subfolder
         agent_dir = os.path.join(self.output_dir, "agent") if self.output_dir else "agent"

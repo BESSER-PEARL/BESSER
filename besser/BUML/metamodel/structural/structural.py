@@ -1,5 +1,6 @@
 from abc import ABC
 from datetime import datetime, timedelta
+from os import name
 from typing import Any, Union, List
 import time
 
@@ -170,10 +171,12 @@ class NamedElement(Element):
         str: Set the name of the named element.
         
         Raises:
-            ValueError: If the name is empty or contains any whitespace characters.
+            ValueError: If the name is empty or contains invalid characters (spaces, hyphens, etc.).
         """
         if ' ' in name:
             raise ValueError(f"'{name}' is invalid. Name cannot contain spaces.")
+        if '-' in name:
+            raise ValueError(f"'{name}' is invalid. Hyphens are not allowed; use '_' instead.")
         self.__name = name
 
     @property

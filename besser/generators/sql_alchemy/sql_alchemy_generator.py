@@ -63,9 +63,26 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
             # One-to-one
             if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
-                fkeys[association.name] = [ends[0].type.name, ends[1].name]
-                if ends[1].multiplicity.min == 0:
+                # Put FK in the class that NAVIGATES TO the other class with mandatory multiplicity
+                # ends[0] is a property with name ends[0].name, type ends[0].type, navigated FROM ends[1].type
+                # ends[1] is a property with name ends[1].name, type ends[1].type, navigated FROM ends[0].type
+                
+                # If ends[0] has mandatory multiplicity (min > 0), it means ends[1].type MUST have the relationship
+                # So FK goes in ends[1].type, pointing to ends[0].type
+                # If ends[1] has mandatory multiplicity (min > 0), it means ends[0].type MUST have the relationship  
+                # So FK goes in ends[0].type, pointing to ends[1].type
+                
+                if ends[0].multiplicity.min > 0 and ends[1].multiplicity.min == 0:
+                    # ends[0] is mandatory (navigated from ends[1].type)
+                    # FK should be in ends[1].type
                     fkeys[association.name] = [ends[1].type.name, ends[0].name]
+                elif ends[1].multiplicity.min > 0 and ends[0].multiplicity.min == 0:
+                    # ends[1] is mandatory (navigated from ends[0].type)
+                    # FK should be in ends[0].type
+                    fkeys[association.name] = [ends[0].type.name, ends[1].name]
+                else:
+                    # Both mandatory or both optional, default to ends[0]
+                    fkeys[association.name] = [ends[0].type.name, ends[1].name]
 
             # Many to one
             elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max <= 1:

@@ -60,7 +60,7 @@ def get_db():
         {% set name_end1 = lns.end1.name %} 
         {% set name_end2 = lns.end2.name %}
         {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
-            {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower())) %}
+            {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), lns.end2.multiplicity.min, lns.end2.multiplicity.max)) %}
         {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max == 1 %}
@@ -68,12 +68,51 @@ def get_db():
         {% endif %}
     {% endif %}
 {% endfor %}
+{# Include inherited associations from parent classes #}
+{% for parent in class.parents() %}
+{% for association in parent.associations %}
+    {% if association.ends|length == 2 %}
+        {% set plns = namespace(end1=None, end2=None) %}
+        {% for end in association.ends %}
+            {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+            {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+        {% endfor %}
+        {% set class1_name = plns.end1.type.name %} 
+        {% set class2_name = plns.end2.type.name %}
+        {% set name_end1 = plns.end1.name %} 
+        {% set name_end2 = plns.end2.name %}
+        {% if plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max > 1 %}
+            {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), plns.end2.multiplicity.min, plns.end2.multiplicity.max)) %}
+        {% elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+{% endfor %}
 
 {% if "GET" in http_methods %}
 @app.get("/{{ class.name | lower}}/", response_model=None)
-def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list[{{ class.name }}]:
+def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list:
     {{ class.name | lower}}_list = database.query({{ class.name }}).all()
+    {% if ns.end_name_multiple %}
+    result = []
+    for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
+        {% for x in ns.end_name_multiple %}
+        {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
+        {% endfor %}
+        item_data = {
+            "{{class.name | lower}}": {{ class.name | lower}}_item,
+            {% for x in ns.end_name_multiple %}
+            "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids]{% if not loop.last %},{% endif %}
+            {% endfor %}
+        }
+        result.append(item_data)
+    return result
+    {% else %}
     return {{ class.name | lower}}_list
+    {% endif %}
 
 
 @app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
@@ -84,7 +123,7 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
 
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]|lower}}).filter({{x[4]}}.c.{{x[2]|lower}} == db_{{ class.name | lower}}.id).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.id).all()
     {% endfor %}
     {% endif %}
     response_data = {
@@ -117,9 +156,46 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endif -%}
     {% endfor -%}
     {%- endif %}
+    {# Validate inherited mandatory relationships #}
+    {% for parent in class.parents() %}
+    {% for association in parent.associations %}
+        {% if association.ends|length == 2 %}
+            {% set plns = namespace(end1=None, end2=None) %}
+            {% for end in association.ends %}
+                {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+            {% endfor %}
+            {%- if (plns.end1.multiplicity.max == 1 or plns.end1.multiplicity.max > 1) and plns.end2.multiplicity.max == 1 -%}
+                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                {% if parent_has_fk %}
+    if {{ class.name | lower}}_data.{{plns.end2.name}} {% if plns.end2.multiplicity.min==1 %}is not None{%endif%}:
+        db_{{plns.end2.name}} = database.query({{plns.end2.type.name}}).filter({{plns.end2.type.name}}.id == {{ class.name | lower}}_data.{{plns.end2.name}}).first()
+        if not db_{{plns.end2.name}}:
+            raise HTTPException(status_code=400, detail="{{plns.end2.type.name}} not found")
+    {%if plns.end2.multiplicity.min == 1 %}
+    else:
+        raise HTTPException(status_code=400, detail="{{plns.end2.type.name}} ID is required")
+    {% endif -%}
+                {% endif -%}
+            {%- endif -%}
+        {% endif %}
+    {% endfor %}
+    {% endfor %}
+    {% if ns.end_name_multiple %}
+    {% for x in ns.end_name_multiple %}
+    {# x[5] = min multiplicity, x[3] = relationship name #}
+    {% if x[5] > 0 %}
+    if not {{ class.name | lower}}_data.{{x[3]}} or len({{ class.name | lower}}_data.{{x[3]}}) < {{x[5]}}:
+        raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
+    {% endif %}
+    {% endfor %}
+    {% endif %}
 
-    {% if class.attributes %}
     db_{{ class.name | lower}} = {{ class.name }}(
+        {% for parent in class.parents() %}
+        {% for attrparent in parent.attributes %}
+        {{attrparent.name}}={{ class.name | lower}}_data.{{attrparent.name}}{% if attrparent.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}, {% endfor %}
+        {% endfor %}
         {% for attribute in class.attributes %}
         {{attribute.name}}={{ class.name | lower}}_data.{{attribute.name}}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
         {% endfor %}
@@ -129,22 +205,26 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
         {% if has_fk %}, {{x[2]}}_id={{ class.name | lower}}_data.{{x[2]}}{% endif -%}
         {% endfor %}
         {% endif %}
+        {# Include parent FKs for inherited classes #}
+        {% for parent in class.parents() %}
+        {% for association in parent.associations %}
+            {% if association.ends|length == 2 %}
+                {% set plns = namespace(end1=None, end2=None) %}
+                {% for end in association.ends %}
+                    {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                    {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+                {% endfor %}
+                {%- if plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 -%}
+                    {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                    {% if parent_has_fk %}, {{plns.end2.name}}_id={{ class.name | lower}}_data.{{plns.end2.name}}{% endif -%}
+                {%- elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 -%}
+                    {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                    {% if parent_has_fk %}, {{plns.end2.name}}_id={{ class.name | lower}}_data.{{plns.end2.name}}{% endif -%}
+                {%- endif -%}
+            {% endif %}
+        {% endfor %}
+        {% endfor %}
         )
-    {% else %}
-    {% for parent in class.parents() %}
-    db_{{ class.name | lower}} = {{ class.name }}(
-        {% for attrparent in parent.attributes %}
-        {{attrparent.name}}={{ class.name | lower}}_data.{{attrparent.name}}{% if attrparent.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
-        {% endfor %}
-        {% if ns.end_name_one %}
-        {% for x in ns.end_name_one -%}
-        {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
-        {% if has_fk %}, {{x[2]}}_id={{ class.name | lower}}_data.{{x[2]}}{% endif -%}
-        {% endfor %}
-        {% endif %}
-    )
-    {% endfor %}
-    {% endif %}
 
     database.add(db_{{ class.name | lower}})
     database.commit()
@@ -158,7 +238,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
             if not db_{{x[1] | lower}}:
                 raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {id} not found")
             # Create the association
-            association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ x[0]|lower }}.id, {{ x[3] }}=db_{{ x[1]|lower }}.id)
+            association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ class.name | lower }}.id, {{ x[3] }}=db_{{ x[1]|lower }}.id)
             database.execute(association)
             database.commit()
     {% endfor -%}
@@ -222,13 +302,13 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
     {% endif %}
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
-    existing_{{x[1] | lower}}_ids = [assoc.{{x[3]|lower}} for assoc in database.execute(
-        {{x[4]}}.select().where({{x[4]}}.c.{{x[2]|lower}} == db_{{ class.name | lower }}.id))]
+    existing_{{x[1] | lower}}_ids = [assoc.{{x[3]}} for assoc in database.execute(
+        {{x[4]}}.select().where({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.id))]
     
     {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%})
     for {{x[1]|lower}}_id in {{x[1]|lower}}s_to_remove:
         association = {{x[4]}}.delete().where(
-            {{x[4]}}.c.{{x[2]|lower}} == db_{{x[0]|lower}}.id and {{x[4]}}.c.{{x[1]|lower}}_id == {{x[1]|lower}}_id)
+            {{x[4]}}.c.{{x[2]}} == db_{{x[0]|lower}}.id and {{x[4]}}.c.{{x[1]|lower}}_id == {{x[1]|lower}}_id)
         database.execute(association)
 
     new_{{x[1]|lower}}_ids = set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%}) - set(existing_{{x[1]|lower}}_ids)
@@ -236,7 +316,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
         db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[0]}}.id == {{x[0]|lower}}_id).first()
         if db_{{x[0]|lower}} is None:
             raise HTTPException(status_code=404, detail="{{x[0]}} with ID {{x[0]|lower}}_id not found")
-        association = {{x[4]}}.insert().values({{x[3]|lower}}=db_{{x[1]|lower}}.id, {{x[2]|lower}}=db_{{x[0]|lower}}.id)
+        association = {{x[4]}}.insert().values({{x[3]}}=db_{{x[1]|lower}}.id, {{x[2]}}=db_{{x[0]|lower}}.id)
         database.execute(association)
     {% endfor %}
     {% endif %}

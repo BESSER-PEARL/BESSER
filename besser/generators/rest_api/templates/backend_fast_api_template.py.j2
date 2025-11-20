@@ -47,7 +47,7 @@ def get_db():
 #   {{ class.name }} functions
 #
 ############################################
-{% set ns = namespace(end_name_one=[], end_name_multiple=[], manytomany_associations=[]) %}
+{% set ns = namespace(end_name_one=[], end_name_multiple=[], one_to_many=[]) %}
 {% for association in class.associations %}
     {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
         {% set lns = namespace(end1=None, end2=None) %}
@@ -61,6 +61,9 @@ def get_db():
         {% set name_end2 = lns.end2.name %}
         {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), lns.end2.multiplicity.min, lns.end2.multiplicity.max)) %}
+        {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max > 1 %}
+            {# 1:N relationship - Library has many Books #}
+            {% do ns.one_to_many.append((class2_name, name_end1, class2_name.lower())) %}
         {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max == 1 %}
@@ -83,6 +86,9 @@ def get_db():
         {% set name_end2 = plns.end2.name %}
         {% if plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max > 1 %}
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), plns.end2.multiplicity.min, plns.end2.multiplicity.max)) %}
+        {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max > 1 %}
+            {# 1:N inherited relationship #}
+            {% do ns.one_to_many.append((class2_name, name_end1, class2_name.lower())) %}
         {% elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 %}
@@ -96,16 +102,22 @@ def get_db():
 @app.get("/{{ class.name | lower}}/", response_model=None)
 def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list:
     {{ class.name | lower}}_list = database.query({{ class.name }}).all()
-    {% if ns.end_name_multiple %}
+    {% if ns.end_name_multiple or ns.one_to_many %}
     result = []
     for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
         {% for x in ns.end_name_multiple %}
         {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
         {% endfor %}
+        {% for x in ns.one_to_many %}
+        {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()
+        {% endfor %}
         item_data = {
             "{{class.name | lower}}": {{ class.name | lower}}_item,
             {% for x in ns.end_name_multiple %}
-            "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids]{% if not loop.last %},{% endif %}
+            "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+            {% endfor %}
+            {% for x in ns.one_to_many %}
+            "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
             {% endfor %}
         }
         result.append(item_data)
@@ -126,10 +138,18 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
     {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.id).all()
     {% endfor %}
     {% endif %}
+    {% if ns.one_to_many %}
+    {% for x in ns.one_to_many %}
+    {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    {% endif %}
     response_data = {
         "{{class.name | lower}}": db_{{ class.name | lower}},
         {% for x in ns.end_name_multiple %}
-        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids]{% if not loop.last %},{% endif %}
+        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
         {% endfor -%}
     }
     return response_data
@@ -275,7 +295,27 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endfor %}
     {% endif %}
     
+    {% if ns.end_name_multiple or ns.one_to_many %}
+    {# Return response with relationship IDs like GET endpoint #}
+    {% for x in ns.end_name_multiple %}
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    {% for x in ns.one_to_many %}
+    {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    response_data = {
+        "{{class.name | lower}}": db_{{ class.name | lower}},
+        {% for x in ns.end_name_multiple %}
+        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+        {% endfor %}
+    }
+    return response_data
+    {% else %}
     return db_{{ class.name | lower}}
+    {% endif %}
 
 {% endif %}
 
@@ -326,7 +366,28 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
     {% endif %}
     database.commit()
     database.refresh(db_{{ class.name | lower }})
+    
+    {% if ns.end_name_multiple or ns.one_to_many %}
+    {# Return response with relationship IDs like GET endpoint #}
+    {% for x in ns.end_name_multiple %}
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    {% for x in ns.one_to_many %}
+    {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    response_data = {
+        "{{class.name | lower}}": db_{{ class.name | lower}},
+        {% for x in ns.end_name_multiple %}
+        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+        {% endfor %}
+    }
+    return response_data
+    {% else %}
     return db_{{ class.name | lower }}
+    {% endif %}
 {% endif %}
 
 

@@ -29,7 +29,7 @@ class {{ enum.name }}(Enum):
 ############################################
 # Classes are defined here
 ############################################
-{% for class in domain.get_classes() %}
+{% for class in sorted_classes %}
 class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{% if backend %}Create{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC, BaseModel){% else %}(BaseModel){% endif %}:
     {% set ns.id_found = false -%}
     {%- set inherited_attr_names = [] -%}

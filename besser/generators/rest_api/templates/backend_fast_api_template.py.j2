@@ -208,6 +208,12 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     if not {{ class.name | lower}}_data.{{x[3]}} or len({{ class.name | lower}}_data.{{x[3]}}) < {{x[5]}}:
         raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
     {% endif %}
+    {# Validate that all related entities exist BEFORE creating the main entity #}
+    if {{ class.name | lower}}_data.{{x[3]}}:
+        for id in {{ class.name | lower}}_data.{{x[3]}}:
+            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == id).first()
+            if not db_{{x[1] | lower}}:
+                raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {id} not found")
     {% endfor %}
     {% endif %}
 
@@ -258,9 +264,8 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% for x in ns.end_name_multiple %}
     if {{ class.name | lower}}_data.{{x[3]}}:
         for id in {{ class.name | lower}}_data.{{x[3]}}:
+            # Entity already validated before creation
             db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == id).first()
-            if not db_{{x[1] | lower}}:
-                raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {id} not found")
             # Create the association
             association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ class.name | lower }}.id, {{ x[3] }}=db_{{ x[1]|lower }}.id)
             database.execute(association)

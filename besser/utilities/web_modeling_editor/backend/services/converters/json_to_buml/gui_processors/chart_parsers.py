@@ -8,6 +8,7 @@ from besser.BUML.metamodel.gui import (
     PieChart, RadarChart, RadialBarChart, TableChart, ViewComponent,
     Color, Position, Size, Styling, DataAggregation, MetricCard,
 )
+from besser.BUML.metamodel.gui.dashboard import AgentComponent
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
 
@@ -630,3 +631,35 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     _attach_chart_metadata(metric_card, view_comp)
     
     return metric_card
+
+
+def parse_agent_component(view_comp: Dict[str, Any], class_model, domain_model) -> AgentComponent:
+    """
+    Parse an agent component from JSON to BUML AgentComponent.
+    
+    Args:
+        view_comp: Component dictionary from GrapesJS JSON
+        class_model: Class diagram model (not used for agent, but kept for consistency)
+        domain_model: Domain model (not used for agent, but kept for consistency)
+        
+    Returns:
+        AgentComponent instance
+    """
+    attrs = view_comp.get("attributes", {})
+    
+    # Parse agent component properties
+    agent_name = attrs.get('agent-name', '')
+    agent_title = attrs.get('agent-title', 'BESSER Agent')
+
+    
+    # Create agent component
+    agent_component = AgentComponent(
+        name=sanitize_name(agent_title or 'AgentComponent'),
+        agent_name=agent_name,
+        agent_title=agent_title,
+        description=f"Agent component for {agent_name or 'agent'}",
+    )
+    
+    _attach_chart_metadata(agent_component, view_comp)
+    
+    return agent_component

@@ -194,15 +194,17 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     db_{{ class.name | lower}} = {{ class.name }}(
         {% for parent in class.parents() %}
         {% for attrparent in parent.attributes %}
-        {{attrparent.name}}={{ class.name | lower}}_data.{{attrparent.name}}{% if attrparent.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}, {% endfor %}
+        {{attrparent.name}}={{ class.name | lower}}_data.{{attrparent.name}}{% if attrparent.type.__class__.__name__ == 'Enumeration' %}.value{% endif %},
+        {% endfor %}
         {% endfor %}
         {% for attribute in class.attributes %}
-        {{attribute.name}}={{ class.name | lower}}_data.{{attribute.name}}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
+        {{attribute.name}}={{ class.name | lower}}_data.{{attribute.name}}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %},{% endif %}
         {% endfor %}
         {% if ns.end_name_one %}
         {% for x in ns.end_name_one -%}
         {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
-        {% if has_fk %}, {{x[2]}}_id={{ class.name | lower}}_data.{{x[2]}}{% endif -%}
+        {% if has_fk %},
+        {{x[2]}}_id={{ class.name | lower}}_data.{{x[2]}}{% endif -%}
         {% endfor %}
         {% endif %}
         {# Include parent FKs for inherited classes #}
@@ -216,10 +218,12 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
                 {% endfor %}
                 {%- if plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 -%}
                     {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
-                    {% if parent_has_fk %}, {{plns.end2.name}}_id={{ class.name | lower}}_data.{{plns.end2.name}}{% endif -%}
+                    {% if parent_has_fk %},
+        {{plns.end2.name}}_id={{ class.name | lower}}_data.{{plns.end2.name}}{% endif -%}
                 {%- elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 -%}
                     {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
-                    {% if parent_has_fk %}, {{plns.end2.name}}_id={{ class.name | lower}}_data.{{plns.end2.name}}{% endif -%}
+                    {% if parent_has_fk %},
+        {{plns.end2.name}}_id={{ class.name | lower}}_data.{{plns.end2.name}}{% endif -%}
                 {%- endif -%}
             {% endif %}
         {% endfor %}

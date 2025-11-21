@@ -29,6 +29,10 @@ class RESTAPIGenerator(GeneratorInterface):
         if not http_methods:
             http_methods = allowed_methods
         else:
+            invalid_methods = [method for method in http_methods if method not in allowed_methods]
+            if invalid_methods:
+                import logging
+                logging.warning(f"Invalid HTTP methods ignored: {invalid_methods}. Allowed methods are: {allowed_methods}")
             http_methods = [method for method in http_methods if method in allowed_methods]
         self.http_methods = http_methods
         self.backend = backend

@@ -2,7 +2,6 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
-import itertools
 
 class PydanticGenerator(GeneratorInterface):
     """
@@ -44,9 +43,14 @@ class PydanticGenerator(GeneratorInterface):
             extensions=['jinja2.ext.do']
         )
         template = env.get_template('pydantic_classes_template.py.j2')
+        
+        # Use DomainModel's built-in method to sort classes by inheritance (parents before children)
+        sorted_classes = self.domain_model.classes_sorted_by_inheritance()
+        
         with open(file_path, mode="w", newline='\n') as f:
             generated_code = template.render(
                 domain=self.domain_model,
+                sorted_classes=sorted_classes,
                 backend=self.backend,
                 nested_creations=self.nested_creations
             )

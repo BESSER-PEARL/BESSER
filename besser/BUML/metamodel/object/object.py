@@ -1,7 +1,14 @@
 import string
 import datetime
 from typing import Union
-from besser.BUML.metamodel.structural import NamedElement, Property, Type, Association, PrimitiveDataType
+from besser.BUML.metamodel.structural import (
+    NamedElement,
+    Property,
+    Type,
+    Association,
+    PrimitiveDataType,
+    UNLIMITED_MAX_MULTIPLICITY,
+)
 
 class AttributeLink():
     """An attribute link is a named slot in an instance, which holds the value of an attribute
@@ -470,6 +477,119 @@ class ObjectModel(NamedElement):
     def add_object(self, obj: Object):
         """Object: Method to add an object to the set of objects."""
         self.__objects.add(obj)
+
+    def validate(self, raise_exception: bool = True) -> dict:
+        """
+        Validate the object model according to the UML object diagram constraints.
+
+        Args:
+            raise_exception (bool): If True, raise ValueError when validation fails.
+
+        Returns:
+            dict: Validation result with success flag, errors, and warnings.
+        """
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        self._validate_unique_object_names(errors)
+        self._validate_links(errors)
+        self._validate_multiplicities(errors)
+
+        result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
+        if errors and raise_exception:
+            raise ValueError("\n".join(errors))
+        return result
+
+    def _validate_unique_object_names(self, errors: list[str]):
+        """Ensure each object has a unique name inside the model."""
+        seen_names: dict[str, Object] = {}
+        for obj in self.__objects:
+            # Use name_ property to get the object's identifier, not any "name" attribute
+            obj_name = obj.name_
+            if obj_name in seen_names:
+                errors.append(
+                    f"Duplicate object name '{obj_name}' found in object model '{self.name}'."
+                )
+            else:
+                seen_names[obj_name] = obj
+
+    def _validate_links(self, errors: list[str]):
+        """Validate that each link is well-formed and typed correctly."""
+        for link in self.links:
+            association = link.association
+            if association is None:
+                errors.append(f"Link '{link.name}' is missing an association.")
+                continue
+
+            if len(link.connections) != len(association.ends):
+                errors.append(
+                    f"Link '{link.name}' must instantiate all ends of association '{association.name}' "
+                    f"(expected {len(association.ends)}, got {len(link.connections)})."
+                )
+
+            seen_ends: set[Property] = set()
+            for conn in link.connections:
+                if conn.association_end not in association.ends:
+                    errors.append(
+                        f"Link '{link.name}' references end '{conn.association_end.name}' "
+                        f"that does not belong to association '{association.name}'."
+                    )
+                    continue
+
+                if conn.association_end in seen_ends:
+                    errors.append(
+                        f"Link '{link.name}' has multiple instances of association end '{conn.association_end.name}'."
+                    )
+                seen_ends.add(conn.association_end)
+
+                if conn.object not in self.__objects:
+                    errors.append(
+                        f"Link '{link.name}' references object '{conn.object.name}' "
+                        f"which is not part of object model '{self.name}'."
+                    )
+                elif not self._conforms_to_type(conn.object.classifier, conn.association_end.type):
+                    errors.append(
+                        f"Object '{conn.object.name}' does not conform to type '{conn.association_end.type.name}' "
+                        f"required by association end '{conn.association_end.name}'."
+                    )
+
+    def _validate_multiplicities(self, errors: list[str]):
+        """Verify that each object satisfies multiplicity constraints for every navigable association end."""
+        for obj in self.__objects:
+            if not hasattr(obj.classifier, "all_association_ends"):
+                continue
+            # Count connections grouped by association end
+            end_counts: dict[Property, int] = {}
+            for link_end in obj.link_ends():
+                end_counts[link_end.association_end] = end_counts.get(link_end.association_end, 0) + 1
+
+            for assoc_end in obj.classifier.all_association_ends():
+                current = end_counts.get(assoc_end, 0)
+                min_mult = assoc_end.multiplicity.min
+                max_mult = assoc_end.multiplicity.max
+                if current < min_mult or current > max_mult:
+                    errors.append(
+                        f"Object '{obj.name}' violates multiplicity "
+                        f"{self._format_multiplicity(assoc_end)} for association end '{assoc_end.name}' "
+                        f"of association '{assoc_end.owner.name}' (found {current} link"
+                        f"{'s' if current != 1 else ''})."
+                    )
+
+    @staticmethod
+    def _conforms_to_type(classifier: Type, expected_type: Type) -> bool:
+        """Return True if classifier matches or specializes expected_type."""
+        if classifier == expected_type:
+            return True
+        if hasattr(classifier, "all_parents") and expected_type in classifier.all_parents():
+            return True
+        return False
+
+    @staticmethod
+    def _format_multiplicity(assoc_end: Property) -> str:
+        """Render multiplicity bounds readable for error messages."""
+        max_value = assoc_end.multiplicity.max
+        max_repr = "*" if max_value == UNLIMITED_MAX_MULTIPLICITY else max_value
+        return f"{assoc_end.multiplicity.min}..{max_repr}"
 
     def __repr__(self):
         return f'ObjectModel({self.name}, {self.objects})'

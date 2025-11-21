@@ -1,7 +1,9 @@
 import inspect
-from typing import Any, Callable
+import textwrap
+from typing import Any, Callable, List, Optional
 
 from besser.BUML.metamodel.structural import NamedElement, Model, Method, Parameter, Type
+from abc import ABC, abstractmethod
 
 
 class ConfigProperty:
@@ -36,6 +38,43 @@ class ConfigProperty:
         return f"ConfigProperty(section='{self.section}', name='{self.name}', value={repr(self.value)})"
 
 
+class Action(ABC):
+    """Base class for actions composing a Body.
+    
+    Actions represent discrete operations that can be performed in a state body,
+    enabling programmatic manipulation and model transformation.
+    """
+
+    @abstractmethod
+    def __repr__(self):
+        pass
+
+
+class CustomCodeAction(Action):
+    """Arbitrary code action from a callable or raw source string.
+    
+    Args:
+        source (str, optional): Raw Python source code
+        callable (Callable, optional): A callable whose source will be extracted
+        
+    Attributes:
+        source (str): The Python source code
+    """
+    
+    def __init__(self, source: str = None, callable: Callable = None):
+        if callable is not None:
+            src = inspect.getsource(callable)
+            self.code = textwrap.dedent(src)
+        else:
+            self.code = textwrap.dedent(source) if source else ""
+
+    def to_code(self) -> str:
+        return self.code
+
+    def __repr__(self):
+        return f"CustomCodeAction(source='{self.code[:50]}...')"
+
+
 class Body(Method):
     """The body of the state of a state machine.
 
@@ -46,6 +85,7 @@ class Body(Method):
     Args:
         name (str): The name of the body.
         callable (Callable): The function containing the body's code.
+        actions (Optional[List[Action]]): List of actions composing the body
 
     Attributes:
         name (str): Inherited from Method, represents the name of the body.
@@ -54,19 +94,72 @@ class Body(Method):
         is_abstract (bool): Inherited from Method, indicates if the body is abstract.
         parameters (set[structural.Parameter]): Inherited from Method, the set of parameters for the body.
         owner (Type): Inherited from Method, the type that owns the property.
-        code (str): Inherited from Method, code of the body.
+        code (str): Inherited from Method, code of the body (contains source of CustomCodeAction if present, otherwise "").
+        actions (List[Action]): List of actions composing the body
     """
 
-    def __init__(self, name: str, callable: Callable):
+    def __init__(self, name: str, callable: Callable = None, actions: Optional[List[Action]] = None):
+        # If the caller passed actions explicitly, use them; otherwise fallback to wrapping the callable.
+        if actions is None:
+            actions = []
+            if callable is not None:
+                actions.append(CustomCodeAction(callable=callable))
+
+        self.actions: List[Action] = actions
+
+        # Set code to the CustomCodeAction source if exists, otherwise ""
+        code = self._extract_code()
+
         super().__init__(
             name=name,
             parameters={Parameter(name='session', type=Type('Session'))},
             type=None,
-            code=inspect.getsource(callable)
+            code=code
         )
 
+    def _extract_code(self) -> str:
+        """Extract code from CustomCodeAction if present, otherwise return empty string."""
+        for action in self.actions:
+            if isinstance(action, CustomCodeAction):
+                return action.to_code()
+        return ""
+
+    def add_action(self, action: Action) -> 'Body':
+        """Add an action to the body.
+
+        Args:
+            action (Action): The action to add
+
+        Returns:
+            Body: Returns self for method chaining
+        """
+        self.actions.append(action)
+        
+        # Update code: if new action is CustomCodeAction, set code to its code, otherwise set to ""
+        if isinstance(action, CustomCodeAction):
+            self.code = action.to_code()
+        else:
+            self.code = ""
+        
+        return self
+
+    def add_custom_code(self, source: str) -> 'Body':
+        """Add custom Python code as an action.
+
+        Args:
+            source (str): The Python source code
+
+        Returns:
+            Body: Returns self for method chaining
+        """
+        self.add_action(CustomCodeAction(source=source))
+        return self
+
     def __repr__(self):
-        return f"Body(name='{self.name}')"
+        if self.code:
+            return f"Body(name='{self.name}', code='{self.code[:50]}...')"
+        names = [repr(a) for a in self.actions]
+        return f"Body(name='{self.name}', actions={names})"
 
 
 class Event(NamedElement):

@@ -68,9 +68,14 @@ class Deployment_BUML_Listener(deploymentListener):
         self.output.write(text)
 
     def enterRegion(self, ctx: deploymentParser.RegionContext):
-        name = ctx.ID_REG(0).getText()
-        text = name.replace("-", "_") + " : Region = Region(name=\"" + name + "\", zones={})\n"
-        self.output.write(text)
+        # Try ID_REG first
+        if ctx.ID_REG(0) is not None:
+            name = ctx.ID_REG(0).getText()
+            # Convert hyphens to underscores for both variable name and Region name
+            # (BUML metamodel doesn't allow hyphens in names)
+            clean_name = name.replace("-", "_")
+            text = clean_name + " : Region = Region(name=\"" + clean_name + "\", zones={})\n"
+            self.output.write(text)
 
     def enterPublicCluster(self, ctx: deploymentParser.PublicClusterContext):
         text = "\n# Public cluster definition\n"

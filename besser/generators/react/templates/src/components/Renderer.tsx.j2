@@ -9,6 +9,7 @@ import { RadialBarChartComponent } from "./charts/RadialBarChartComponent";
 import { RadarChartComponent } from "./charts/RadarChartComponent";
 import { MetricCardComponent } from "./charts/MetricCardComponent";
 import { TableChartComponent } from "./charts/TableChartComponent";
+import { AgentComponent } from "./AgentComponent";
 import "./charts/TableChartComponent.css";
 
 export interface RendererProps {
@@ -45,6 +46,10 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         // Always use backend base URL for relative endpoints
         const backendBase = "http://localhost:8000";
         const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+        
+        // Backend returns flat entities by default (perfect for charts)
+        // Use ?detailed=true if you need relationships included
+        
         axios.get(url)
           .then((res) => {
             console.log("API response:", res.data); // Debug log
@@ -567,6 +572,17 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         value={metricValue}
         trend={12}
         data_binding={component.data_binding}
+      />
+    );
+  }
+
+  if (component.type === "agent-component") {
+    return (
+      <AgentComponent
+        id={component.id}
+        agent-name={component["agent-name"] || component.agent_name || ""}
+        agent-title={component["agent-title"] || component.agent_title || "BESSER Agent"}
+        styles={style}
       />
     );
   }

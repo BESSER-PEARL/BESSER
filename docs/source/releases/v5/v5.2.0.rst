@@ -1,0 +1,55 @@
+Version 5.2.0
+=============
+
+New Features and Improvements
+-----------------------------
+
+**No-Code Editor & WebApp Generator**
+
+* Added the ability to **link agents directly from the no-code editor**, enabling users to reference agents visually during modeling.
+* Extended the **WebApp generator** to automatically generate these agent links inside the generated application.
+
+**Agent Framework**
+
+* Introduced a flexible **Action abstraction** for agent state machines, including `CustomCodeAction`, `AgentReply`, and `LLMReply`.
+* Refactored state **Body** to store structured action sequences and generate cleaner, more maintainable code.
+* Added **AgentComponent** to the GUI metamodel for visual agent representation.
+* Extended the **React dashboard generator** to render agent components in the generated frontend.
+* Enhanced agent code-generation templates with improved platform/LLM initialization and support for **speech input/output** modalities.
+
+**REST API Generator**
+
+* Improved **foreign key validation** in the generated `create` functions, ensuring related entities are checked before main entity creation.
+* Enhanced handling of **associations and relationships**, including multiplicity, bidirectional references, and consistent CRUD operations.
+* Improved **formatting and readability** of generated CRUD functions for better maintainability.
+* Added consistent **count endpoints** and standardized naming conventions across all generated routes.
+* Enhanced API responses with **detailed query metadata**, including pagination and filtering information.
+* Added more robust **error handling**, including structured responses for invalid HTTP methods and runtime issues.
+* Updated the FastAPI template with **advanced database connection pooling** and improved initialization patterns.
+
+**Pydantic Models**
+
+* Improved class generation by **sorting models by inheritance**, ensuring parent classes are created before children.
+* Removed duplicated inherited attributes and improved overall naming and import consistency.
+
+**Validation System**
+
+* Added the centralized ``validate()`` method to **DomainModel** and updated backend endpoints to use structured validation instead of exception catching.
+* Removed redundant validation calls — the backend is now the **single source of truth** for validation.
+
+**AI Assistant & Copilot Instructions**
+
+This pull request introduces comprehensive AI assistant and Copilot instruction guides for the BESSER backend repository, ensuring that both human and AI contributors follow consistent, high-quality practices. The instructions cover repository structure, coding standards, documentation expectations, and contribution workflows, and are provided in two synchronized files for compatibility with both GitHub Copilot and Cursor IDE.
+
+Documentation and contribution guidelines:
+
+* Added ``.github/copilot-instructions.md`` with detailed instructions for GitHub Copilot, outlining repository structure, coding standards, documentation requirements, and step-by-step guides for creating new generators and sub-DSLs.
+* Added ``.cursorrules`` as a synchronized copy of the Copilot instructions, tailored for Cursor IDE compatibility, ensuring that AI assistant suggestions are aligned across different tools.
+
+Fixes
+-----
+
+* Fixed issue: `#354 <https://github.com/BESSER-PEARL/BESSER/issues/354>`_
+* Fixed issue: `#353 <https://github.com/BESSER-PEARL/BESSER/issues/353>`_
+* Fixed issue: `#351 <https://github.com/BESSER-PEARL/BESSER/issues/351>`_
+* Fixed issue: `#221 <https://github.com/BESSER-PEARL/BESSER/issues/221>`_

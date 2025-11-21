@@ -28,6 +28,7 @@ from besser.BUML.metamodel.gui import (
 )
 from besser.BUML.metamodel.gui.binding import DataBinding
 from besser.BUML.metamodel.gui.dashboard import (
+    AgentComponent,
     BarChart,
     LineChart,
     MetricCard,
@@ -124,6 +125,7 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         "RadialBarChart": RadialBarChart,
         "TableChart": TableChart,
         "MetricCard": MetricCard,
+        "AgentComponent": AgentComponent,
         "Transition": Transition,
         "Create": Create,
         "Read": Read,
@@ -297,6 +299,8 @@ def _apply_component_specific_attributes(element: ViewComponent, attrs: Dict[str
         _apply_table_chart_attributes(element, attrs)
     elif isinstance(element, MetricCard):
         _apply_metric_card_attributes(element, attrs)
+    elif isinstance(element, AgentComponent):
+        _apply_agent_component_attributes(element, attrs)
     elif isinstance(element, InputField):
         _apply_input_field_attributes(element, attrs)
     elif isinstance(element, Form):
@@ -421,6 +425,9 @@ def _apply_metric_card_attributes(card: MetricCard, attrs: Dict[str, Any]) -> No
     attrs.setdefault("show-trend", getattr(card, "show_trend", True))
     attrs.setdefault("positive-color", getattr(card, "positive_color", "#27ae60"))
     attrs.setdefault("negative-color", getattr(card, "negative_color", "#e74c3c"))
+def _apply_agent_component_attributes(agent: AgentComponent, attrs: Dict[str, Any]) -> None:
+    attrs.setdefault("agent-name", getattr(agent, "agent_name", None) or "")
+    attrs.setdefault("agent-title", getattr(agent, "agent_title", None) or "BESSER Agent")
 def _apply_input_field_attributes(field: InputField, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("placeholder", field.description or "")
     field_type = getattr(field, "field_type", None)
@@ -622,6 +629,7 @@ def _infer_component_type(element: ViewComponent) -> Optional[str]:
         RadialBarChart: "radial-bar-chart",
         TableChart: "table-chart",
         MetricCard: "metric-card",
+        AgentComponent: "agent-component",
     }
     for cls, comp_type in mapping.items():
         if isinstance(element, cls):

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -26,6 +27,7 @@ from besser.BUML.metamodel.gui import (
     ViewContainer,
 )
 from besser.BUML.metamodel.gui.dashboard import (
+    AgentComponent,
     BarChart,
     LineChart,
     MetricCard,
@@ -98,10 +100,18 @@ class ReactGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         for root, _, files in os.walk(templates_path):
             for file_name in files:
+                abs_template_path = os.path.join(root, file_name)
+                rel_template_path = os.path.relpath(abs_template_path, templates_path)
+                
                 if file_name.endswith(".j2"):
-                    abs_template_path = os.path.join(root, file_name)
-                    rel_template_path = os.path.relpath(abs_template_path, templates_path)
+                    # Template files - render with Jinja2
                     generate_file_from_template(rel_template_path)
+                else:
+                    # Static files (images, etc.) - copy directly
+                    rel_output_path = rel_template_path
+                    dest_path = self.build_generation_path(file_name=rel_output_path)
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    shutil.copy2(abs_template_path, dest_path)
 
     # --------------------------------------------------------------------- #
     # Context builders
@@ -505,6 +515,12 @@ class ReactGenerator(GeneratorInterface):
             )
             node["color"] = element.primary_color or element.value_color or "#2c3e50"
 
+        if isinstance(element, AgentComponent):
+            node["agent-name"] = element.agent_name or ""
+            node["agent-title"] = element.agent_title or "BESSER Agent"
+            node["agent_name"] = element.agent_name or ""
+            node["agent_title"] = element.agent_title or "BESSER Agent"
+
         binding_data = self._serialize_data_binding(getattr(element, "data_binding", None))
         if binding_data:
             node["data_binding"] = binding_data
@@ -889,6 +905,8 @@ class ReactGenerator(GeneratorInterface):
             return "table-chart"
         if isinstance(element, MetricCard):
             return "metric-card"
+        if isinstance(element, AgentComponent):
+            return "agent-component"
         return "component"
 
     @staticmethod

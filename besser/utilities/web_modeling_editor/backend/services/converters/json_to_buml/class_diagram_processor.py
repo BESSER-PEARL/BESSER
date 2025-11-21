@@ -45,6 +45,7 @@ def process_class_diagram(json_data):
                     status_code=400, 
                     detail=f"Invalid enumeration name: '{element_name}'. Names cannot contain whitespace or be empty."
                 )
+            
             literals = set()
             for literal_id in element.get("attributes", []):
                 literal = elements.get(literal_id)
@@ -52,7 +53,11 @@ def process_class_diagram(json_data):
                     literal_obj = EnumerationLiteral(name=literal.get("name", ""))
                     literals.add(literal_obj)
             enum = Enumeration(name=element_name, literals=literals)
-            domain_model.types.add(enum)
+            # Use add_type() which triggers validation through the setter
+            try:
+                domain_model.add_type(enum)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
     
     # 2. Then create all class structures without attributes or methods
     for element_id, element in elements.items():
@@ -75,7 +80,8 @@ def process_class_diagram(json_data):
                 metadata = Metadata(description=description, uri=uri, icon=icon)
             try:
                 cls = Class(name=class_name, is_abstract=is_abstract, metadata=metadata)
-                domain_model.types.add(cls)
+                # Use add_type() which triggers validation through the setter
+                domain_model.add_type(cls)
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
 

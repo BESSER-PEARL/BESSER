@@ -31,7 +31,10 @@ def empty_model(diagram_type: str) -> Dict[str, Any]:
             "version": "3.0.0",
             "type": diagram_type,
             "size": {"width": 1400, "height": 740},
-            "pages": {}
+            "pages": [],
+            "styles": [],
+            "assets": [],
+            "symbols": []
         }
     
     return {

@@ -23,12 +23,34 @@ logger = logging.getLogger(__name__)
 
 def init_db():
     SQLALCHEMY_DATABASE_URL = "sqlite:///./{{name}}.db"
-    engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL, 
+        connect_args={"check_same_thread": False},
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+        echo=False
+    )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
     return SessionLocal
 
-app = FastAPI()
+app = FastAPI(
+    title="{{name}} API",
+    description="Auto-generated REST API with full CRUD operations, relationship management, and advanced features",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_tags=[
+        {"name": "System", "description": "System health and statistics"},
+        {% for class in classes %}
+        {"name": "{{ class.name }}", "description": "Operations for {{ class.name }} entities"},
+        {% if class.associations %}
+        {"name": "{{ class.name }} Relationships", "description": "Manage {{ class.name }} relationships"},
+        {% endif %}
+        {% endfor %}
+    ]
+)
 
 # Enable CORS for all origins (for development)
 app.add_middleware(
@@ -44,6 +66,15 @@ app.add_middleware(
 #   Middleware
 #
 ############################################
+
+# Request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all incoming requests and responses."""
+    logger.info(f"Incoming request: {request.method} {request.url.path}")
+    response = await call_next(request)
+    logger.info(f"Response status: {response.status_code}")
+    return response
 
 # Request timing middleware
 @app.middleware("http")
@@ -126,6 +157,10 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        logger.error("Database session rollback due to exception")
+        raise
     finally:
         db.close()
 
@@ -297,6 +332,33 @@ def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, datab
         "data": {{ class.name | lower}}_list
     }
     {% endif %}
+
+
+@app.get("/{{ class.name | lower}}/search/", response_model=None, tags=["{{ class.name }}"])
+def search_{{ class.name | lower}}(
+    {% for attribute in class.attributes %}
+    {% if attribute.type.__class__.__name__ in ['StringType', 'IntegerType', 'FloatType', 'BooleanType'] %}
+    {{attribute.name}}: {% if attribute.type.__class__.__name__ == 'StringType' %}str{% elif attribute.type.__class__.__name__ == 'IntegerType' %}int{% elif attribute.type.__class__.__name__ == 'FloatType' %}float{% elif attribute.type.__class__.__name__ == 'BooleanType' %}bool{% endif %} = None,
+    {% endif %}
+    {% endfor %}
+    database: Session = Depends(get_db)
+) -> list:
+    """Search {{ class.name }} entities by attributes"""
+    query = database.query({{ class.name }})
+    
+    {% for attribute in class.attributes %}
+    {% if attribute.type.__class__.__name__ in ['StringType', 'IntegerType', 'FloatType', 'BooleanType'] %}
+    if {{attribute.name}} is not None:
+        {% if attribute.type.__class__.__name__ == 'StringType' %}
+        query = query.filter({{ class.name }}.{{attribute.name}}.ilike(f"%{% raw %}{{% endraw %}{{attribute.name}}{% raw %}}{% endraw %}%"))
+        {% else %}
+        query = query.filter({{ class.name }}.{{attribute.name}} == {{attribute.name}})
+        {% endif %}
+    {% endif %}
+    {% endfor %}
+    
+    results = query.all()
+    return results
 
 
 @app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
@@ -494,6 +556,84 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     return db_{{ class.name | lower}}
     {% endif %}
 
+{% endif %}
+
+{% if "POST" in http_methods %}
+@app.post("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
+async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create], database: Session = Depends(get_db)) -> dict:
+    """Create multiple {{ class.name }} entities at once"""
+    created_items = []
+    errors = []
+    
+    for idx, item_data in enumerate(items):
+        try:
+            # Basic validation for each item
+            {% if ns.end_name_one %}
+            {% for x in ns.end_name_one %}
+            {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+            {% if has_fk and x[1] == 1 %}
+            if not item_data.{{x[2]}}:
+                raise ValueError("{{x[0]}} ID is required")
+            {% endif -%}
+            {% endfor -%}
+            {%- endif %}
+            
+            db_{{ class.name | lower}} = {{ class.name }}(
+                {% for parent in class.parents() %}
+                {% for attrparent in parent.attributes %}
+                {{attrparent.name}}=item_data.{{attrparent.name}}{% if attrparent.type.__class__.__name__ == 'Enumeration' %}.value{% endif %},
+                {% endfor %}
+                {% endfor %}
+                {% for attribute in class.attributes %}
+                {{attribute.name}}=item_data.{{attribute.name}}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %},{% endif %}
+                {% endfor %}
+                {% if ns.end_name_one %}
+                {% for x in ns.end_name_one -%}
+                {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+                {% if has_fk %},
+                {{x[2]}}_id=item_data.{{x[2]}}{% endif -%}
+                {% endfor %}
+                {% endif %}
+            )
+            database.add(db_{{ class.name | lower}})
+            database.flush()  # Get ID without committing
+            created_items.append(db_{{ class.name | lower}}.id)
+        except Exception as e:
+            errors.append({"index": idx, "error": str(e)})
+    
+    if errors:
+        database.rollback()
+        raise HTTPException(status_code=400, detail={"message": "Bulk creation failed", "errors": errors})
+    
+    database.commit()
+    return {
+        "created_count": len(created_items),
+        "created_ids": created_items,
+        "message": f"Successfully created {len(created_items)} {{ class.name }} entities"
+    }
+
+
+@app.delete("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
+async def bulk_delete_{{ class.name | lower}}(ids: list[int], database: Session = Depends(get_db)) -> dict:
+    """Delete multiple {{ class.name }} entities at once"""
+    deleted_count = 0
+    not_found = []
+    
+    for item_id in ids:
+        db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == item_id).first()
+        if db_{{ class.name | lower}}:
+            database.delete(db_{{ class.name | lower}})
+            deleted_count += 1
+        else:
+            not_found.append(item_id)
+    
+    database.commit()
+    
+    return {
+        "deleted_count": deleted_count,
+        "not_found": not_found,
+        "message": f"Successfully deleted {deleted_count} {{ class.name }} entities"
+    }
 {% endif %}
 
 {% if class.is_read_only == False %}

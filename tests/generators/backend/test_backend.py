@@ -146,7 +146,7 @@ def test_simple_generator(simple_model, tmpdir):
     # API checks
     api_markers = [
         "@app.get(\"/name1/\"",
-        "def get_all_name1(database: Session = Depends(get_db))",
+        "def get_all_name1(detailed: bool = False, database: Session = Depends(get_db))",
         "name1_list = database.query(name1).all()"
     ]
     

@@ -260,9 +260,14 @@ def get_statistics(database: Session = Depends(get_db)):
 
 {% if "GET" in http_methods %}
 @app.get("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
-def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list:
+def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = Depends(get_db)) -> list:
     {{ class.name | lower}}_list = database.query({{ class.name }}).all()
     {% if ns.end_name_multiple or ns.one_to_many %}
+    # By default, return flat entities (for charts/widgets)
+    # Use detailed=true to get entities with relationships
+    if not detailed:
+        return {{ class.name | lower}}_list
+    
     result = []
     for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
         {% for x in ns.end_name_multiple %}
@@ -295,11 +300,21 @@ def get_count_{{ class.name | lower}}(database: Session = Depends(get_db)) -> di
 
 
 @app.get("/{{ class.name | lower}}/paginated/", response_model=None, tags=["{{ class.name }}"])
-def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, database: Session = Depends(get_db)) -> dict:
+def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detailed: bool = False, database: Session = Depends(get_db)) -> dict:
     """Get paginated list of {{ class.name }} entities"""
     total = database.query({{ class.name }}).count()
     {{ class.name | lower}}_list = database.query({{ class.name }}).offset(skip).limit(limit).all()
     {% if ns.end_name_multiple or ns.one_to_many %}
+    # By default, return flat entities (for charts/widgets)
+    # Use detailed=true to get entities with relationships
+    if not detailed:
+        return {
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+            "data": {{ class.name | lower}}_list
+        }
+    
     result = []
     for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
         {% for x in ns.end_name_multiple %}

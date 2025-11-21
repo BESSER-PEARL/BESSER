@@ -46,6 +46,10 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         // Always use backend base URL for relative endpoints
         const backendBase = "http://localhost:8000";
         const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+        
+        // Backend returns flat entities by default (perfect for charts)
+        // Use ?detailed=true if you need relationships included
+        
         axios.get(url)
           .then((res) => {
             console.log("API response:", res.data); // Debug log

@@ -288,7 +288,7 @@ def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list
 
 
 @app.get("/{{ class.name | lower}}/count/", response_model=None, tags=["{{ class.name }}"])
-def count_{{ class.name | lower}}(database: Session = Depends(get_db)) -> dict:
+def get_count_{{ class.name | lower}}(database: Session = Depends(get_db)) -> dict:
     """Get the total count of {{ class.name }} entities"""
     count = database.query({{ class.name }}).count()
     return {"count": count}

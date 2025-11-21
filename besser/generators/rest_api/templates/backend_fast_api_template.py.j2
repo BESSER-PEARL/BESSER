@@ -1,11 +1,19 @@
 import uvicorn
 import os, json
-from fastapi import Depends, FastAPI, HTTPException
+import time as time_module
+import logging
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from pydantic_classes import *
 from sql_alchemy import *
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 ############################################
 #
@@ -31,6 +39,86 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+############################################
+#
+#   Middleware
+#
+############################################
+
+# Request timing middleware
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    """Add processing time header to all responses."""
+    start_time = time_module.time()
+    response = await call_next(request)
+    process_time = time_module.time() - start_time
+    response.headers["X-Process-Time"] = str(process_time)
+    return response
+
+############################################
+#
+#   Exception Handlers
+#
+############################################
+
+# Global exception handlers
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    """Handle ValueError exceptions."""
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "error": "Bad Request",
+            "message": str(exc),
+            "detail": "Invalid input data provided"
+        }
+    )
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    """Handle database integrity errors."""
+    logger.error(f"Database integrity error: {exc}")
+    
+    # Extract more detailed error information
+    error_detail = str(exc.orig) if hasattr(exc, 'orig') else str(exc)
+    
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "error": "Conflict",
+            "message": "Data conflict occurred",
+            "detail": error_detail
+        }
+    )
+
+
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError):
+    """Handle general SQLAlchemy errors."""
+    logger.error(f"Database error: {exc}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "Internal Server Error", 
+            "message": "Database operation failed",
+            "detail": "An internal database error occurred"
+        }
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handle HTTP exceptions with consistent format."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail if isinstance(exc.detail, str) else "HTTP Error",
+            "message": exc.detail,
+            "detail": f"HTTP {exc.status_code} error occurred"
+        }
+    )
+
 # Initialize database session
 SessionLocal = init_db()
 # Dependency to get DB session
@@ -40,6 +128,43 @@ def get_db():
         yield db
     finally:
         db.close()
+
+############################################
+#
+#   Global API endpoints
+#
+############################################
+
+@app.get("/", tags=["System"])
+def root():
+    """Root endpoint - API information"""
+    return {
+        "name": "{{name}} API",
+        "version": "1.0.0",
+        "status": "running"
+    }
+
+
+@app.get("/health", tags=["System"])
+def health_check():
+    """Health check endpoint for monitoring"""
+    from datetime import datetime
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "database": "connected"
+    }
+
+
+@app.get("/statistics", tags=["System"])
+def get_statistics(database: Session = Depends(get_db)):
+    """Get database statistics for all entities"""
+    stats = {}
+    {% for class in classes %}
+    stats["{{class.name|lower}}_count"] = database.query({{class.name}}).count()
+    {% endfor %}
+    stats["total_entities"] = sum(stats.values())
+    return stats
 
 {% for class in classes %}
 ############################################
@@ -99,7 +224,7 @@ def get_db():
 {% endfor %}
 
 {% if "GET" in http_methods %}
-@app.get("/{{ class.name | lower}}/", response_model=None)
+@app.get("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
 def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list:
     {{ class.name | lower}}_list = database.query({{ class.name }}).all()
     {% if ns.end_name_multiple or ns.one_to_many %}
@@ -127,7 +252,54 @@ def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list
     {% endif %}
 
 
-@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
+@app.get("/{{ class.name | lower}}/count/", response_model=None, tags=["{{ class.name }}"])
+def count_{{ class.name | lower}}(database: Session = Depends(get_db)) -> dict:
+    """Get the total count of {{ class.name }} entities"""
+    count = database.query({{ class.name }}).count()
+    return {"count": count}
+
+
+@app.get("/{{ class.name | lower}}/paginated/", response_model=None, tags=["{{ class.name }}"])
+def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, database: Session = Depends(get_db)) -> dict:
+    """Get paginated list of {{ class.name }} entities"""
+    total = database.query({{ class.name }}).count()
+    {{ class.name | lower}}_list = database.query({{ class.name }}).offset(skip).limit(limit).all()
+    {% if ns.end_name_multiple or ns.one_to_many %}
+    result = []
+    for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
+        {% for x in ns.end_name_multiple %}
+        {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()
+        {% endfor %}
+        item_data = {
+            "{{class.name | lower}}": {{ class.name | lower}}_item,
+            {% for x in ns.end_name_multiple %}
+            "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+            {% endfor %}
+            {% for x in ns.one_to_many %}
+            "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+            {% endfor %}
+        }
+        result.append(item_data)
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "data": result
+    }
+    {% else %}
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "data": {{ class.name | lower}}_list
+    }
+    {% endif %}
+
+
+@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)) -> {{ class.name }}:
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
@@ -158,7 +330,7 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
 
 
 {% if "POST" in http_methods %}
-@app.post("/{{ class.name | lower}}/", response_model=None)
+@app.post("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
 async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
 
     {% if ns.end_name_one %}
@@ -326,7 +498,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
 
 {% if class.is_read_only == False %}
 {% if "PUT" in http_methods %}
-@app.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/", response_model=None)
+@app.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ class.name | lower }}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
     db_{{ class.name | lower }} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower }}_id).first()
     if db_{{ class.name | lower }} is None:
@@ -357,15 +529,15 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
     {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%})
     for {{x[1]|lower}}_id in {{x[1]|lower}}s_to_remove:
         association = {{x[4]}}.delete().where(
-            {{x[4]}}.c.{{x[2]}} == db_{{x[0]|lower}}.id and {{x[4]}}.c.{{x[1]|lower}}_id == {{x[1]|lower}}_id)
+            ({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.id) & ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id))
         database.execute(association)
 
     new_{{x[1]|lower}}_ids = set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%}) - set(existing_{{x[1]|lower}}_ids)
     for {{x[1]|lower}}_id in new_{{x[1]|lower}}_ids:
-        db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[0]}}.id == {{x[0]|lower}}_id).first()
-        if db_{{x[0]|lower}} is None:
-            raise HTTPException(status_code=404, detail="{{x[0]}} with ID {{x[0]|lower}}_id not found")
-        association = {{x[4]}}.insert().values({{x[3]}}=db_{{x[1]|lower}}.id, {{x[2]}}=db_{{x[0]|lower}}.id)
+        db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == {{x[1]|lower}}_id).first()
+        if db_{{x[1]|lower}} is None:
+            raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[1]|lower}}_id{% raw %}}{% endraw %} not found")
+        association = {{x[4]}}.insert().values({{x[3]}}=db_{{x[1]|lower}}.id, {{x[2]}}=db_{{ class.name | lower }}.id)
         database.execute(association)
     {% endfor %}
     {% endif %}
@@ -397,7 +569,7 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
 
 
 {% if "DELETE" in http_methods %}
-@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
+@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
@@ -405,6 +577,83 @@ async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, databa
     database.delete(db_{{ class.name | lower}})
     database.commit()
     return db_{{ class.name | lower}}
+{% endif %}
+
+{% if ns.end_name_multiple %}
+{# Add relationship-specific endpoints for N:M associations #}
+{% for x in ns.end_name_multiple %}
+@app.post("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{x[1]|lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{x[1]|lower}}_id: int, database: Session = Depends(get_db)):
+    """Add a {{x[1]}} to this {{ class.name }}'s {{x[3]}} relationship"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    
+    db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == {{x[1]|lower}}_id).first()
+    if db_{{x[1]|lower}} is None:
+        raise HTTPException(status_code=404, detail="{{x[1]}} not found")
+    
+    # Check if relationship already exists
+    existing = database.query({{x[4]}}).filter(
+        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) & 
+        ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id)
+    ).first()
+    
+    if existing:
+        raise HTTPException(status_code=400, detail="Relationship already exists")
+    
+    # Create the association
+    association = {{x[4]}}.insert().values({{x[2]}}={{ class.name | lower}}_id, {{x[3]}}={{x[1]|lower}}_id)
+    database.execute(association)
+    database.commit()
+    
+    return {"message": "{{x[1]}} added to {{x[3]}} successfully"}
+
+
+@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{x[1]|lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{x[1]|lower}}_id: int, database: Session = Depends(get_db)):
+    """Remove a {{x[1]}} from this {{ class.name }}'s {{x[3]}} relationship"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    
+    # Check if relationship exists
+    existing = database.query({{x[4]}}).filter(
+        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) & 
+        ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id)
+    ).first()
+    
+    if not existing:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    
+    # Delete the association
+    association = {{x[4]}}.delete().where(
+        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) & 
+        ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id)
+    )
+    database.execute(association)
+    database.commit()
+    
+    return {"message": "{{x[1]}} removed from {{x[3]}} successfully"}
+
+
+@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+    """Get all {{x[1]}} entities related to this {{ class.name }} through {{x[3]}}"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    
+    {{x[1]|lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id).all()
+    {{x[1]|lower}}_list = database.query({{x[1]}}).filter({{x[1]}}.id.in_([id[0] for id in {{x[1]|lower}}_ids])).all()
+    
+    return {
+        "{{ class.name | lower}}_id": {{ class.name | lower}}_id,
+        "{{x[3]}}_count": len({{x[1]|lower}}_list),
+        "{{x[3]}}": {{x[1]|lower}}_list
+    }
+
+{% endfor %}
 {% endif %}
 
 {% endif %}

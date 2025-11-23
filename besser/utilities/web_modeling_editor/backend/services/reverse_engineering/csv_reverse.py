@@ -111,7 +111,14 @@ def csv_to_domain_model(csv_paths, model_name=None) -> DomainModel:
             prop = Property(name=field, type=types[field], owner=buml_class, is_id=is_id)
             field_props[class_name][field] = prop
             # Only add as attribute if not a true association (foreign key to another class)
-            if not (field in fk_candidates[class_name] and any(target_class.lower() == field[:-3].lower() for target_class in id_fields)):
+            if not (
+                field in fk_candidates[class_name]
+                and any(
+                    normalize_name(target_class)
+                    == normalize_name(field[:-3] if field.lower().endswith('_id') else field[:-2] if field.lower().endswith('id') else field)
+                    for target_class in id_fields
+                )
+            ):
                 buml_class.add_attribute(prop)
 
     # 3. Detect foreign keys and create BinaryAssociations

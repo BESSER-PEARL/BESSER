@@ -1,4 +1,6 @@
 import React, { CSSProperties, useEffect, useMemo, useState } from "react";
+import axios from "axios";
+import { createPortal } from "react-dom";
 import "./TableChartComponent.css";
 
 interface TableColumn {
@@ -59,19 +61,56 @@ export const TableChartComponent: React.FC<Props> = ({
   styles,
   dataBinding,
 }) => {
-  const resolvedOptions: Required<TableChartOptions> = {
+  // Local state for table data
+  const [tableData, setTableData] = useState<any[]>(data ?? []);
+
+  // Fetch table data from backend
+  const fetchTableData = async () => {
+    const endpoint = dataBinding?.endpoint
+      ? dataBinding.endpoint
+      : dataBinding?.entity
+        ? `/${dataBinding.entity}/`
+        : id
+          ? `/${id}/`
+          : "";
+    if (!endpoint) return;
+    const backendBase = "http://localhost:8000";
+    const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+    try {
+      const response = await axios.get(url);
+      if (Array.isArray(response.data)) {
+        setTableData(response.data);
+      } else if (response.data && typeof response.data === "object") {
+        setTableData(Array.isArray(response.data.results) ? response.data.results : [response.data]);
+      }
+    } catch (err) {
+      console.error("Error fetching table data:", err);
+    }
+  };
+
+  // Initial fetch and update on data prop change
+  useEffect(() => {
+    if (data && Array.isArray(data)) {
+      setTableData(data);
+    } else {
+      fetchTableData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data]);
+  const resolvedOptions: Required<TableChartOptions> & { actionButtons: boolean } = {
     showHeader: options?.showHeader ?? true,
     stripedRows: options?.stripedRows ?? false,
     showPagination: options?.showPagination ?? true,
     rowsPerPage: options?.rowsPerPage ?? 5,
     columns: options?.columns ?? [],
+    actionButtons: (options as any)?.actionButtons ?? (options as any)?.["action-buttons"] ?? false,
   };
 
   const normalizedRows = useMemo(() => {
-    if (!Array.isArray(data)) {
+    if (!Array.isArray(tableData)) {
       return [];
     }
-    return data
+    return tableData
       .filter((row) => row !== null && row !== undefined)
       .map((row) => {
         if (row && typeof row === "object" && !Array.isArray(row)) {
@@ -79,7 +118,7 @@ export const TableChartComponent: React.FC<Props> = ({
         }
         return { value: row };
       });
-  }, [data]);
+  }, [tableData]);
 
   const columns: TableColumn[] = useMemo(() => {
     if (resolvedOptions.columns.length > 0) {
@@ -123,10 +162,25 @@ export const TableChartComponent: React.FC<Props> = ({
   );
 
   const [currentPage, setCurrentPage] = useState(1);
+  const [showModal, setShowModal] = useState(false);
+  const [formValues, setFormValues] = useState<Record<string, any>>({});
+  const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
+  const [editRowData, setEditRowData] = useState<any>(null);
 
   useEffect(() => {
     setCurrentPage(1);
   }, [pageSize, normalizedRows.length]);
+
+  // Reset form values when modal opens
+  useEffect(() => {
+    if (showModal) {
+      const initialValues: Record<string, any> = {};
+      columns.forEach(col => {
+        initialValues[col.field] = modalMode === 'edit' && editRowData ? (editRowData[col.field] ?? "") : "";
+      });
+      setFormValues(initialValues);
+    }
+  }, [showModal, columns, modalMode, editRowData]);
 
   const totalPages = resolvedOptions.showPagination
     ? Math.max(1, Math.ceil(normalizedRows.length / pageSize))
@@ -165,10 +219,192 @@ export const TableChartComponent: React.FC<Props> = ({
     tableLayout: "auto",
   };
 
+  // Helper to get endpoint for entity
+  const getEndpoint = () => {
+    let endpoint = "";
+    if (dataBinding?.endpoint) {
+      endpoint = dataBinding.endpoint;
+    } else if (dataBinding?.entity) {
+      endpoint = `/${dataBinding.entity}/`;
+    }
+    if (!endpoint && id) {
+      endpoint = `/${id}/`;
+    }
+    return endpoint;
+  };
+
+  // Helper to get row id
+  const getRowId = (row: any) => {
+    return row?.id ?? row?.ID ?? row?.Id ?? Object.values(row)[0];
+  };
+
   return (
     <div id={id} style={containerStyle} className="table-chart-wrapper">
       {title && (
         <h3 style={{ margin: 0, color: "#1e293b", fontSize: "18px" }}>{title}</h3>
+      )}
+
+      {/* Action Buttons above table */}
+      {resolvedOptions.actionButtons && (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "8px" }}>
+          <button
+            style={{
+              padding: "10px 24px",
+              background: "linear-gradient(90deg, #2563eb 0%, #1e40af 100%)",
+              color: "#fff",
+              border: "none",
+              borderRadius: "6px",
+              fontWeight: 700,
+              cursor: "pointer",
+              fontSize: "15px",
+              boxShadow: "0 2px 8px rgba(37,99,235,0.12)",
+              letterSpacing: "0.03em",
+              transition: "background 0.2s",
+              marginRight: "0",
+              display: "flex",
+              alignItems: "center",
+              gap: "8px",
+            }}
+            type="button"
+            title="Add Register"
+            onClick={() => {
+              setModalMode('add');
+              setEditRowData(null);
+              setShowModal(true);
+            }}
+          >
+            <svg width="20" height="20" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="10" cy="10" r="9" fill="#2563eb"/>
+              <rect x="9" y="5" width="2" height="10" rx="1" fill="white"/>
+              <rect x="5" y="9" width="10" height="2" rx="1" fill="white"/>
+            </svg>
+            Add Register
+          </button>
+        </div>
+      )}
+
+      {/* Modal for Add/Edit Register */}
+      {showModal && (
+        createPortal(
+          <div style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(30,41,59,0.25)",
+            zIndex: 2147483647,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}>
+            <div style={{
+              background: "#fff",
+              borderRadius: "12px",
+              boxShadow: "0 4px 24px rgba(30,41,59,0.18)",
+              padding: "32px 24px 24px 24px",
+              minWidth: "320px",
+              maxWidth: "90vw",
+              width: "400px",
+              position: "relative",
+            }}>
+              <h4 style={{ margin: 0, marginBottom: "18px", color: "#1e293b" }}>
+                {modalMode === 'edit' ? 'Edit Register' : 'Add Register'}
+              </h4>
+              <form
+                onSubmit={async e => {
+                  e.preventDefault();
+                  const endpoint = getEndpoint();
+                  const backendBase = "http://localhost:8000";
+                  if (modalMode === 'add') {
+                    const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+                    try {
+                      await axios.post(url, formValues);
+                      await fetchTableData();
+                    } catch (err) {
+                      console.error("Error saving data:", err);
+                    }
+                  } else if (modalMode === 'edit') {
+                    const rowId = getRowId(editRowData);
+                    const url = endpoint.replace(/\/$/, "");
+                    const fullUrl = url.startsWith("/") ? `${backendBase}${url}/${rowId}/` : `${url}/${rowId}/`;
+                    try {
+                      await axios.put(fullUrl, formValues);
+                      await fetchTableData();
+                    } catch (err) {
+                      console.error("Error updating data:", err);
+                    }
+                  }
+                  setShowModal(false);
+                }}
+                style={{ display: "flex", flexDirection: "column", gap: "16px" }}
+              >
+                {columns.map(col => (
+                  <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                    <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>{col.label}</label>
+                    <input
+                      id={`modal-input-${col.field}`}
+                      type="text"
+                      value={formValues[col.field] ?? ""}
+                      onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.value }))}
+                      style={{
+                        padding: "8px 12px",
+                        borderRadius: "6px",
+                        border: "1px solid #cbd5f5",
+                        fontSize: "15px",
+                        color: "#1e293b",
+                        background: "#f8fafc",
+                      }}
+                    />
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "8px" }}>
+                  <button
+                    type="button"
+                    onClick={() => setShowModal(false)}
+                    style={{
+                      padding: "8px 18px",
+                      borderRadius: "6px",
+                      border: "1px solid #cbd5f5",
+                      background: "#f8fafc",
+                      color: "#475569",
+                      fontWeight: 500,
+                      cursor: "pointer",
+                    }}
+                  >Cancel</button>
+                  <button
+                    type="submit"
+                    style={{
+                      padding: "8px 18px",
+                      borderRadius: "6px",
+                      border: "none",
+                      background: "linear-gradient(90deg, #2563eb 0%, #1e40af 100%)",
+                      color: "#fff",
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >Save</button>
+                </div>
+              </form>
+              <button
+                type="button"
+                onClick={() => setShowModal(false)}
+                style={{
+                  position: "absolute",
+                  top: "12px",
+                  right: "12px",
+                  background: "none",
+                  border: "none",
+                  fontSize: "20px",
+                  color: "#64748b",
+                  cursor: "pointer",
+                }}
+                aria-label="Close"
+              >×</button>
+            </div>
+          </div>,
+          document.body
+        )
       )}
 
       {normalizedRows.length === 0 || columns.length === 0 ? (
@@ -183,7 +419,7 @@ export const TableChartComponent: React.FC<Props> = ({
           }}
         >
           No data available for{" "}
-          {dataBinding?.entity ? "${dataBinding.entity}" : "this table"}.
+          {dataBinding?.entity ? `${dataBinding.entity}` : "this table"}.
         </div>
       ) : (
         <div className="table-chart-scroll">
@@ -204,6 +440,9 @@ export const TableChartComponent: React.FC<Props> = ({
                       {column.label}
                     </th>
                   ))}
+                  {resolvedOptions.actionButtons && (
+                    <th style={{ textAlign: "center", padding: "10px 4px", fontWeight: 600, width: "40px", minWidth: "40px", maxWidth: "40px", overflow: "hidden" }}></th>
+                  )}
                 </tr>
               </thead>
             )}
@@ -235,6 +474,58 @@ export const TableChartComponent: React.FC<Props> = ({
                       {formatCellValue(row[column.field])}
                     </td>
                   ))}
+                  {resolvedOptions.actionButtons && (
+                    <td style={{ textAlign: "center", padding: "10px 2px", width: "40px", minWidth: "40px", maxWidth: "40px", overflow: "hidden" }}>
+                      <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: "2px", width: "100%" }}>
+                        <button
+                          style={{
+                            background: "none",
+                            border: "none",
+                            padding: "2px",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                          }}
+                          type="button"
+                          title="Edit"
+                          onClick={() => {
+                            setModalMode('edit');
+                            setEditRowData(row);
+                            setShowModal(true);
+                          }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#f59e42" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+                        </button>
+                        <button
+                          style={{
+                            background: "none",
+                            border: "none",
+                            padding: "2px",
+                            cursor: "pointer",
+                            display: "flex",
+                            alignItems: "center",
+                          }}
+                          type="button"
+                          title="Remove"
+                          onClick={async () => {
+                            const endpoint = getEndpoint();
+                            const rowId = getRowId(row);
+                            const url = endpoint.replace(/\/$/, "");
+                            const backendBase = "http://localhost:8000";
+                            const fullUrl = url.startsWith("/") ? `${backendBase}${url}/${rowId}/` : `${url}/${rowId}/`;
+                            try {
+                              await axios.delete(fullUrl);
+                              await fetchTableData();
+                            } catch (err) {
+                              console.error("Error deleting data:", err);
+                            }
+                          }}
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m5 0V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>
+                        </button>
+                      </div>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

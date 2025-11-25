@@ -799,6 +799,7 @@ class TableChart(Chart):
         title: Optional[str] = None,
         primary_color: Optional[str] = None,
         columns: Optional[Sequence[str]] = None,
+        action_buttons: bool = False,
         **kwargs,
     ):
         super().__init__(name, title=title, primary_color=primary_color, **kwargs)
@@ -807,6 +808,7 @@ class TableChart(Chart):
         self.show_pagination = show_pagination
         self.rows_per_page = rows_per_page
         self.columns = list(columns or [])
+        self.action_buttons = action_buttons
 
     @property
     def show_header(self) -> bool:
@@ -865,11 +867,21 @@ class TableChart(Chart):
             return
         self._columns = [str(item) for item in value if item]
 
+    @property
+    def action_buttons(self) -> bool:
+        """Property: Get whether action buttons are displayed."""
+        return self._action_buttons
+
+    @action_buttons.setter
+    def action_buttons(self, value: bool):
+        """Property: Set whether action buttons are displayed."""
+        self._action_buttons = bool(value)
+
     def __repr__(self):
         return (
             f"TableChart(name={self.name}, show_header={self.show_header}, "
             f"striped_rows={self.striped_rows}, rows_per_page={self.rows_per_page}, "
-            f"columns={self.columns})"
+            f"columns={self.columns}, action_buttons={self.action_buttons})"
         )
 
 class MetricCard(ViewComponent):

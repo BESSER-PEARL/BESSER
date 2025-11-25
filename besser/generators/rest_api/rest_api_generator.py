@@ -29,11 +29,46 @@ class RESTAPIGenerator(GeneratorInterface):
         if not http_methods:
             http_methods = allowed_methods
         else:
+            invalid_methods = [method for method in http_methods if method not in allowed_methods]
+            if invalid_methods:
+                import logging
+                logging.warning(f"Invalid HTTP methods ignored: {invalid_methods}. Allowed methods are: {allowed_methods}")
             http_methods = [method for method in http_methods if method in allowed_methods]
         self.http_methods = http_methods
         self.backend = backend
         self.nested_creations = nested_creations
         self.port = port
+
+    def get_foreign_keys(self):
+        """
+        Returns a dictionary with the association names as keys and the class names that should hold the foreign
+        keys as values. This is used to determine which class owns the FK in relationships.
+        """
+        fkeys = dict()
+
+        for association in self.model.associations:
+            ends = list(association.ends)  # Convert set to list
+
+            # One-to-one
+            if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
+                if ends[0].multiplicity.min > 0 and ends[1].multiplicity.min == 0:
+                    # ends[0] is mandatory, FK should be in ends[1].type
+                    fkeys[association.name] = [ends[1].type.name, ends[0].name]
+                elif ends[1].multiplicity.min > 0 and ends[0].multiplicity.min == 0:
+                    # ends[1] is mandatory, FK should be in ends[0].type
+                    fkeys[association.name] = [ends[0].type.name, ends[1].name]
+                else:
+                    # Both mandatory or both optional, default to ends[0]
+                    fkeys[association.name] = [ends[0].type.name, ends[1].name]
+
+            # Many to one
+            elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max <= 1:
+                fkeys[association.name] = [ends[0].type.name, ends[1].name]
+
+            elif ends[0].multiplicity.max <= 1 and ends[1].multiplicity.max > 1:
+                fkeys[association.name] = [ends[1].type.name, ends[0].name]
+
+        return fkeys
 
     def generate_requirements(self):
         """
@@ -73,8 +108,14 @@ class RESTAPIGenerator(GeneratorInterface):
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
             template = env.get_template('backend_fast_api_template.py.j2')
             with open(file_path, mode="w") as f:
-                generated_code = template.render(name=self.model.name, classes=self.model.classes_sorted_by_inheritance(),
-                                             http_methods=self.http_methods, nested_creations=self.nested_creations, port=self.port)
+                generated_code = template.render(
+                    name=self.model.name,
+                    classes=self.model.classes_sorted_by_inheritance(),
+                    http_methods=self.http_methods,
+                    nested_creations=self.nested_creations,
+                    port=self.port,
+                    fkeys=self.get_foreign_keys()
+                )
                 f.write(generated_code)
             print("Code generated in the location: " + file_path)
 

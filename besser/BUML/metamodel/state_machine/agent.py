@@ -1,11 +1,10 @@
 from abc import ABC
 from enum import Enum
 import json
-from typing import Any, Callable
+from typing import Any, Callable, Optional, Union
 
-from besser.BUML.metamodel.state_machine.state_machine import Transition, Event, Condition, StateMachine, State, Session, TransitionBuilder
+from besser.BUML.metamodel.state_machine.state_machine import Action, Transition, Event, Condition, StateMachine, State, Session, TransitionBuilder
 from besser.BUML.metamodel.structural import NamedElement
-
 
 
 class File:
@@ -32,6 +31,37 @@ class File:
         self.name: str = file_name
         self.type: str = file_type
         self.base64: str = file_base64
+
+
+class AgentReply(Action):
+    """Primitive action that represents sending a reply message.
+
+    Args:
+        message (Expression): The message to send (can be Literal, VariableRef, ParameterRef, or any Expression)
+
+    Attributes:
+        message (Expression): The message expression
+    """
+
+    def __init__(self, message: str):
+        self.message: str = message
+
+    def __repr__(self):
+        return f"AgentReply(message={self.message!r})"
+
+
+class LLMReply(Action):
+    """Primitive action that represents sending a reply using an LLM.
+
+    This action does not contain any attributes, as it always uses:
+    session.reply(llm.predict(session.event.message))
+    """
+
+    def __init__(self):
+        super().__init__()
+
+    def __repr__(self):
+        return "LLMReply()"
 
 
 class IntentClassifierConfiguration(ABC):

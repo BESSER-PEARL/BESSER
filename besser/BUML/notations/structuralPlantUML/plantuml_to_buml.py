@@ -1,5 +1,5 @@
 from antlr4 import CommonTokenStream, FileStream, ParseTreeWalker
-from besser.utilities.buml_code_builder import domain_model_to_code
+from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.BUML.metamodel.structural import DomainModel
 from .PlantUMLLexer import PlantUMLLexer
 from .PlantUMLParser import PlantUMLParser

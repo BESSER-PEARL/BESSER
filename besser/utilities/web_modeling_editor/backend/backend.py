@@ -29,11 +29,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 
 # BESSER utilities
-from besser.utilities.buml_code_builder import (
-    domain_model_to_code, 
-    agent_model_to_code, 
-    project_to_code
-)
+from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
+from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
+from besser.utilities.buml_code_builder.project_builder import project_to_code
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -306,7 +304,8 @@ async def generate_code_output(input_data: DiagramInput):
 
 
 async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):
-    """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram."""
+    """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram.
+    Optionally includes AgentDiagram if agent components are present in the GUI."""
     try:
         # Extract ClassDiagram
         class_diagram = input_data.diagrams.get("ClassDiagram")
@@ -331,10 +330,29 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
 
         gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
 
+        # Check if GUI model contains agent components
+        agent_diagram = None
+        agent_model = None
+        has_agent_components = _check_for_agent_components(gui_model)
+        
+        if has_agent_components:
+            # Extract AgentDiagram if present
+            agent_diagram = input_data.diagrams.get("AgentDiagram")
+            if agent_diagram and agent_diagram.model:
+                # Process agent diagram to BUML
+                # process_agent_diagram expects the full diagram structure with title, config, and model
+                agent_diagram_dict = agent_diagram.model_dump()
+                if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
+                    agent_model = process_agent_diagram(agent_diagram_dict)
+                else:
+                    print("Warning: AgentDiagram data is invalid. Agent components will not be functional.")
+            else:
+                print("Warning: GUI contains agent components but no AgentDiagram found. Agent components will not be functional.")
+
         # Generate Web App TypeScript project
         generator_class = generator_info.generator_class
 
-        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir)
+        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir, agent_model)
 
     except HTTPException:
         raise
@@ -562,9 +580,48 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
     else:
         return _create_file_response(temp_dir, "jsonschema")
 
-async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str):
-    """Generate web application files."""
-    generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir)
+def _check_for_agent_components(gui_model):
+    """Check if the GUI model contains any agent components."""
+    from besser.BUML.metamodel.gui.dashboard import AgentComponent
+    
+    if not gui_model or not gui_model.modules:
+        return False
+    
+    for module in gui_model.modules:
+        if not module.screens:
+            continue
+        for screen in module.screens:
+            if not screen.view_elements:
+                continue
+            for element in screen.view_elements:
+                if isinstance(element, AgentComponent):
+                    return True
+                # Check recursively in containers
+                from besser.BUML.metamodel.gui import ViewContainer
+                if isinstance(element, ViewContainer):
+                    if _check_container_for_agent_components(element):
+                        return True
+    return False
+
+def _check_container_for_agent_components(container):
+    """Recursively check a container for agent components."""
+    from besser.BUML.metamodel.gui.dashboard import AgentComponent
+    
+    if not container.view_elements:
+        return False
+    
+    for element in container.view_elements:
+        if isinstance(element, AgentComponent):
+            return True
+        from besser.BUML.metamodel.gui import ViewContainer
+        if isinstance(element, ViewContainer):
+            if _check_container_for_agent_components(element):
+                return True
+    return False
+
+async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str, agent_model=None):
+    """Generate web application files. Optionally includes agent model if agent components are present."""
+    generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir, agent_model=agent_model)
     generator_instance.generate()
     return _create_zip_response(temp_dir, "web_app")
 

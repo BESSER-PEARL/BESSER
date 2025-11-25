@@ -266,7 +266,7 @@ export const TableChartComponent: React.FC<Props> = ({
               gap: "8px",
             }}
             type="button"
-            title="Add Register"
+            title={`Add ${dataBinding?.entity || 'Register'}`}
             onClick={() => {
               setModalMode('add');
               setEditRowData(null);
@@ -278,7 +278,7 @@ export const TableChartComponent: React.FC<Props> = ({
               <rect x="9" y="5" width="2" height="10" rx="1" fill="white"/>
               <rect x="5" y="9" width="10" height="2" rx="1" fill="white"/>
             </svg>
-            Add Register
+            {`Add ${dataBinding?.entity || 'Register'}`}
           </button>
         </div>
       )}
@@ -309,7 +309,7 @@ export const TableChartComponent: React.FC<Props> = ({
               position: "relative",
             }}>
               <h4 style={{ margin: 0, marginBottom: "18px", color: "#1e293b" }}>
-                {modalMode === 'edit' ? 'Edit Register' : 'Add Register'}
+                {modalMode === 'edit' ? `Edit ${dataBinding?.entity || 'Register'}` : `Add ${dataBinding?.entity || 'Register'}`}
               </h4>
               <form
                 onSubmit={async e => {

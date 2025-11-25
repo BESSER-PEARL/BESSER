@@ -492,7 +492,8 @@ def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> T
         show_pagination=_bool_attr('show-pagination', True),
         rows_per_page=_int_attr('rows-per-page', 5),
         title=title_value,
-        primary_color=primary_color
+        primary_color=primary_color,
+        action_buttons=_bool_attr('action-buttons', False)
     )
 
     if domain_class:
@@ -508,7 +509,7 @@ def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> T
             if not attr_value:
                 continue
             try:
-                association_data = attr_value() if callable(attr_value) else attr_value
+                association_data = attr_value if callable(attr_value) else attr_value
             except TypeError:
                 association_data = attr_value
 

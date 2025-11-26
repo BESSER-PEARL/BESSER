@@ -916,14 +916,14 @@ async def get_json_model_from_image(
         raise HTTPException(
             status_code=500, detail=f"Failed to process the uploaded image: {str(e)}"
         )
-
+    
 @app.post("/besser_api/get-json-model-from-kg")
 async def get_json_model_from_kg(
     kg_file: UploadFile = File(...),
     api_key: str = Form(...)
 ):
     """
-    Accepts an .TTL ot .JSON knowledge graphs and an OpenAI API key, uses BESSER's kgtouml feature to transform the kg into a BUML class diagram, then converts the BUML to JSON and returns the JSON object.
+    Accepts an .TTL ot .JSON knowledge graphs and an OpenAI API key, uses BESSER's kgtouml feature to transform the kg into a BUML class diagram in JSON.
     """
     import os
     import tempfile
@@ -945,7 +945,6 @@ async def get_json_model_from_kg(
                 raise HTTPException(status_code=400, detail="No valid KG file found.")
             kg_path = os.path.join(kg_folder, kg_files[0])
             domain_model = kg_to_buml(kg_path=kg_path, openai_token=api_key)
-
             diagram_json = class_buml_to_json(domain_model)
 
             diagram_title = diagram_json.get("title", "Imported Class Diagram")
@@ -955,7 +954,7 @@ async def get_json_model_from_kg(
                 "model": {**diagram_json, "type": diagram_type},
                 "diagramType": diagram_type,
                 "exportedAt": datetime.utcnow().isoformat(),
-                "version": "2.0.0",
+                "version": "3.0.0",
             }
 
     except HTTPException as e:
@@ -965,7 +964,6 @@ async def get_json_model_from_kg(
         raise HTTPException(
             status_code=500, detail=f"Failed to process the uploaded KG: {str(e)}"
         )
-
 
 @app.post("/besser_api/check-ocl")
 async def check_ocl(input_data: DiagramInput):

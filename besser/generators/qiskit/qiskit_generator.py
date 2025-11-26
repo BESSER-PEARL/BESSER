@@ -6,7 +6,8 @@ from besser.BUML.metamodel.quantum import (
     ControlState, SwapGate, PauliXGate, PauliYGate, PauliZGate, 
     HadamardGate, RXGate, RYGate, RZGate, PhaseGate,
     QFTGate, SpacerGate, ArithmeticGate, ModularArithmeticGate,
-    ComparisonGate, DisplayOperation, InputGate
+    ComparisonGate, DisplayOperation, InputGate, CustomGate,
+    TimeDependentGate, PhaseGradientGate
 )
 
 class QiskitGenerator(GeneratorInterface):
@@ -58,7 +59,31 @@ class QiskitGenerator(GeneratorInterface):
             # Here we assume 'q' and 'c' are the main registers
             target = op.target_qubits[0]
             output = op.output_bit if op.output_bit is not None else target
+            target = op.target_qubits[0]
+            output = op.output_bit if op.output_bit is not None else target
             return f"qc.measure(q[{target}], c[{output}])"
+
+        # Handle InputGate (State Initialization)
+        if isinstance(op, InputGate):
+            cmds = []
+            if op.value is not None:
+                val = op.value
+                for i, target in enumerate(op.target_qubits):
+                    if (val >> i) & 1:
+                        cmds.append(f"qc.x(q[{target}])")
+            if not cmds:
+                return f"# Input {op.input_type} (No value set)"
+            return "\n".join(cmds)
+        
+        # Handle DisplayOperation (Direct call on qc)
+        if isinstance(op, DisplayOperation):
+            gate_code = self._get_base_gate_code(op)
+            if "save_" in gate_code:
+                # It's a save instruction, call directly on qc
+                # e.g. qc.save_statevector()
+                return gate_code
+            else:
+                return gate_code
 
         # Handle Gates
         gate_code = self._get_base_gate_code(op)
@@ -72,8 +97,14 @@ class QiskitGenerator(GeneratorInterface):
         # Append to circuit
         # qc.append(gate, [q[c1], q[c2], ..., q[t1], ...])
         
-        # Construct qubit list: controls + targets
-        qubit_indices = op.control_qubits + op.target_qubits
+        # Construct qubit list: controls + inputs + targets
+        qubit_indices = op.control_qubits[:]
+        
+        # Some gates have input_qubits (Arithmetic, Comparison, etc.)
+        if hasattr(op, 'input_qubits') and op.input_qubits:
+            qubit_indices.extend(op.input_qubits)
+            
+        qubit_indices.extend(op.target_qubits)
         qubit_args = ", ".join([f"q[{i}]" for i in qubit_indices])
         
         return f"qc.append({gate_code}, [{qubit_args}])"
@@ -103,29 +134,63 @@ class QiskitGenerator(GeneratorInterface):
             
         elif isinstance(gate, QFTGate):
             # QFT(num_qubits, approximation_degree=0, do_swaps=True, inverse=False, insert_barriers=False, name='qft')
-            # We need to import QFT from qiskit.circuit.library
-            # For now, let's assume it's available or use a library call
             inverse_str = ", inverse=True" if gate.inverse else ""
             return f"QFT({len(gate.target_qubits)}{inverse_str}).to_instruction()"
+
+        elif isinstance(gate, PhaseGradientGate):
+            # Use the class defined in the template
+            inverse_str = ", inverse=True" if gate.inverse else ""
+            return f"PhaseGradient({len(gate.target_qubits)}{inverse_str}).to_instruction()"
 
         elif isinstance(gate, SpacerGate):
             # Identity or just pass
             return "IGate()"
 
         elif isinstance(gate, ArithmeticGate):
-            return f"# ArithmeticGate({gate.operation}) - Placeholder"
+            # Try to map to known arithmetic gates or use generic instruction
+            if gate.operation == 'Add':
+                # DraperQFTAdder or similar if available
+                # DraperQFTAdder(num_state_qubits, kind='fixed', name='draper')
+                # It usually takes 2 registers.
+                return f"DraperQFTAdder({len(gate.target_qubits)}, kind='fixed').to_instruction()"
+            if gate.operation == 'Add':
+                # DraperQFTAdder or similar if available
+                # DraperQFTAdder(num_state_qubits, kind='fixed', name='draper')
+                # It usually takes 2 registers.
+                return f"DraperQFTAdder({len(gate.target_qubits)}, kind='fixed').to_instruction()"
+            return f"create_placeholder('{gate.operation}', {len(gate.target_qubits)})"
 
         elif isinstance(gate, ModularArithmeticGate):
-            return f"# ModularArithmeticGate({gate.operation}, mod={gate.modulo}) - Placeholder"
+            return f"create_placeholder('{gate.operation}_mod_{gate.modulo}', {len(gate.target_qubits)})"
             
         elif isinstance(gate, ComparisonGate):
-            return f"# ComparisonGate({gate.operation}) - Placeholder"
+            return f"create_placeholder('{gate.operation}', {len(gate.target_qubits)})"
+            
+        elif isinstance(gate, CustomGate):
+            if gate.definition:
+                # In a full implementation, we would generate the definition as a Gate/Instruction
+                # For now, we create an opaque instruction with the name
+                return f"create_placeholder('{gate.name}', {len(gate.target_qubits)})"
+            return f"create_placeholder('{gate.name}', {len(gate.target_qubits)})"
+
+        elif isinstance(gate, TimeDependentGate):
+            # Map to a generic Unitary or Instruction with the expression as label
+            return f"create_placeholder('{gate.type_name}({gate.parameter_expr})', {len(gate.target_qubits)})"
             
         elif isinstance(gate, DisplayOperation):
+            # For AerSimulator, we can use save functions
+            if "Bloch" in gate.display_type or "State" in gate.display_type:
+                return "qc.save_statevector()"
+            elif "Density" in gate.display_type:
+                return "qc.save_density_matrix()"
+            elif "Prob" in gate.display_type:
+                return "qc.save_probabilities()"
             return f"# Display: {gate.display_type}"
             
         elif isinstance(gate, InputGate):
-            return f"# Input: {gate.input_type} = {gate.value}"
+            # InputGate logic is handled in _map_operation because it might involve multiple gates (X)
+            # Here we return a marker or pass
+            return "IGate()"
             
         # Fallback for other types
         return f"# Unsupported Gate Type: {type(gate).__name__}"

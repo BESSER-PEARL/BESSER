@@ -226,7 +226,7 @@ async def generate_code_output_from_project(input_data: ProjectInput):
 
         if not generator_type:
             raise HTTPException(
-                status_code=400, 
+                status_code=400,
                 detail="Generator type is required in project settings"
             )
 
@@ -325,7 +325,7 @@ async def generate_code_output(input_data: DiagramInput):
         # Handle agent generators (different diagram type)
         if generator_info.category == "ai_agent":
             return await _handle_agent_generation(json_data)
-            
+
         # Handle quantum generators
         if generator_info.category == "quantum":
             return await _generate_qiskit(json_data, generator_info.generator_class, input_data.config, temp_dir)
@@ -374,7 +374,7 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
         agent_diagram = None
         agent_model = None
         has_agent_components = _check_for_agent_components(gui_model)
-        
+
         if has_agent_components:
             # Extract AgentDiagram if present
             agent_diagram = input_data.diagrams.get("AgentDiagram")
@@ -625,7 +625,7 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
     # Process quantum diagram
     # Note: json_data here is the DiagramInput model dump, so it has 'model' field
     # process_quantum_diagram expects the diagram data structure
-    
+
     # Validate that this is a quantum diagram (has 'cols' in model)
     model_data = json_data.get('model', {})
     if not isinstance(model_data, dict) or 'cols' not in model_data:
@@ -636,7 +636,7 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
             detail=f"Invalid diagram type for Qiskit generator. Expected QuantumCircuitDiagram but received '{diagram_type}'. "
                    f"Please use the 'generate-output-from-project' endpoint or select the Quantum Circuit diagram."
         )
-    
+
     # Debug logging
     # print(f"[Qiskit Gen] json_data keys: {json_data.keys()}")
     # print(f"[Qiskit Gen] title: {json_data.get('title')}")
@@ -645,34 +645,34 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
     # print(f"[Qiskit Gen] cols length: {len(cols)}")
     # if cols:
     #     print(f"[Qiskit Gen] first col: {cols[0]}")
-    
+
     quantum_model = process_quantum_diagram(json_data)
-    
+
     # print(f"[Qiskit Gen] quantum_model: {quantum_model}")
     # print(f"[Qiskit Gen] qregs: {quantum_model.qregs}")
     # print(f"[Qiskit Gen] operations count: {len(quantum_model.operations)}")
-    
+
     # Extract Qiskit config
     backend_type = config.get('backend', 'aer_simulator') if config else 'aer_simulator'
     shots = config.get('shots', 1024) if config else 1024
-    
+
     generator_instance = generator_class(
-        quantum_model, 
+        quantum_model,
         output_dir=temp_dir,
         backend_type=backend_type,
         shots=shots
     )
     generator_instance.generate()
-    
+
     return _create_file_response(temp_dir, "qiskit")
 
 def _check_for_agent_components(gui_model):
     """Check if the GUI model contains any agent components."""
     from besser.BUML.metamodel.gui.dashboard import AgentComponent
-    
+
     if not gui_model or not gui_model.modules:
         return False
-    
+
     for module in gui_model.modules:
         if not module.screens:
             continue
@@ -692,10 +692,10 @@ def _check_for_agent_components(gui_model):
 def _check_container_for_agent_components(container):
     """Recursively check a container for agent components."""
     from besser.BUML.metamodel.gui.dashboard import AgentComponent
-    
+
     if not container.view_elements:
         return False
-    
+
     for element in container.view_elements:
         if isinstance(element, AgentComponent):
             return True
@@ -1036,7 +1036,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         is_gui_model = any(keyword in content_lower for keyword in [
             'guimodel(', '.new_screen(', '.new_module(', 'viewcomponent', 'viewcontainer'
         ])
-        
+
         is_project = 'project(' in content_lower or 'def create_project' in content_lower
 
         # Try to parse based on detected type
@@ -1060,7 +1060,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 elif parsed_project.get("GUINoCodeDiagram") and parsed_project["GUINoCodeDiagram"].get("model"):
                     diagram_data = parsed_project["GUINoCodeDiagram"]
                     diagram_type = "GUINoCodeDiagram"
-                    
+
                 if diagram_data and diagram_data.get("title"):
                     diagram_title = diagram_data["title"]
                     
@@ -1106,7 +1106,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                     raise ValueError("No types found in domain model")
             except Exception as class_error:
                 print(f"Class diagram parsing failed: {str(class_error)}")
-                
+
         elif is_gui_model:
             try:
                 print("Detected GUI Model diagram, parsing...")
@@ -1125,7 +1125,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
                 "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
                 "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, or Project."
             )
-        
+
         # Return the diagram in the format expected by the frontend
         return {
             "title": diagram_title,
@@ -1186,7 +1186,7 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
                 "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
                 "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, or Project."
             )
-        
+
         # Return the diagram in the format expected by the frontend
         return {
             "title": diagram_title,
@@ -1307,7 +1307,7 @@ async def get_json_model_from_kg(
 async def validate_diagram(input_data: DiagramInput):
     """
     Validate diagram by converting to BUML and running metamodel validation.
-    
+
     This is the unified validation endpoint that:
     1. Converts JSON to BUML (construction validation)
     2. Calls .validate() method on the model for structured metamodel validation
@@ -1320,7 +1320,7 @@ async def validate_diagram(input_data: DiagramInput):
         validation_warnings = []
         buml_model = None
         object_model = None
-        
+
         # Step 1: Convert to BUML (construction validation)
         try:
             if diagram_type == "ClassDiagram":
@@ -1329,12 +1329,12 @@ async def validate_diagram(input_data: DiagramInput):
                     "model": input_data.model
                 }
                 buml_model = process_class_diagram(json_data)
-                
+
                 # Run structured metamodel validation
                 validation_result = buml_model.validate(raise_exception=False)
                 validation_errors.extend(validation_result.get("errors", []))
                 validation_warnings.extend(validation_result.get("warnings", []))
-                
+
             elif diagram_type == "ObjectDiagram":
                 reference_data = input_data.model.get("referenceDiagramData", {})
                 if not reference_data:
@@ -1344,7 +1344,7 @@ async def validate_diagram(input_data: DiagramInput):
                         "warnings": [],
                         "message": "❌ Validation failed"
                     }
-                
+
                 # Process the reference class diagram first
                 reference_json = {
                     "title": reference_data.get("title", "Reference Classes"),
@@ -1354,19 +1354,19 @@ async def validate_diagram(input_data: DiagramInput):
                     }
                 }
                 buml_model = process_class_diagram(reference_json)
-                
+
                 # Validate the domain model first
                 domain_validation = buml_model.validate(raise_exception=False)
                 validation_errors.extend(domain_validation.get("errors", []))
                 validation_warnings.extend(domain_validation.get("warnings", []))
-                
+
                 # If domain model is valid, process and validate object model
                 if domain_validation.get("success", False):
                     object_model = process_object_diagram(input_data.model_dump(), buml_model)
                     object_validation = object_model.validate(raise_exception=False)
                     validation_errors.extend(object_validation.get("errors", []))
                     validation_warnings.extend(object_validation.get("warnings", []))
-                
+
             elif diagram_type == "StateMachineDiagram":
                 state_machine_code = process_state_machine(input_data.model_dump())
                 return {
@@ -1375,7 +1375,7 @@ async def validate_diagram(input_data: DiagramInput):
                     "errors": [],
                     "warnings": []
                 }
-                
+
             elif diagram_type == "AgentDiagram":
                 agent_model = process_agent_diagram(input_data.model_dump())
                 return {
@@ -1384,7 +1384,7 @@ async def validate_diagram(input_data: DiagramInput):
                     "errors": [],
                     "warnings": []
                 }
-                
+
             elif diagram_type == "GUINoCodeDiagram":
                 return {
                     "isValid": True,
@@ -1399,14 +1399,14 @@ async def validate_diagram(input_data: DiagramInput):
                     "warnings": [],
                     "message": "❌ Validation failed"
                 }
-                
+
         except ValueError as e:
             # Construction validation errors (from BUML creation setters)
             error_msg = str(e)
             validation_errors.append(error_msg)
         except Exception as e:
             validation_errors.append(f"Validation error: {str(e)}")
-        
+
         # Step 2: If BUML model created successfully AND it's a diagram with OCL support
         ocl_results = None
         if buml_model and diagram_type in ["ClassDiagram", "ObjectDiagram"] and len(validation_errors) == 0:
@@ -1415,14 +1415,14 @@ async def validate_diagram(input_data: DiagramInput):
                     ocl_results = check_ocl_constraint(buml_model, object_model)
                 else:
                     ocl_results = check_ocl_constraint(buml_model)
-                    
+
                 # Add OCL warnings if present
                 if hasattr(buml_model, "ocl_warnings") and buml_model.ocl_warnings:
                     validation_warnings.extend(buml_model.ocl_warnings)
-                    
+
             except Exception as e:
                 validation_warnings.append(f"OCL check warning: {str(e)}")
-        
+
         # Step 3: Build unified response
         is_valid = len(validation_errors) == 0
         response = {
@@ -1431,16 +1431,16 @@ async def validate_diagram(input_data: DiagramInput):
             "warnings": validation_warnings,
             "message": "✅ Diagram is valid" if is_valid else "❌ Validation failed"
         }
-        
+
         # Add OCL-specific results if available
         if ocl_results:
             response["valid_constraints"] = ocl_results.get("valid_constraints", [])
             response["invalid_constraints"] = ocl_results.get("invalid_constraints", [])
             if ocl_results.get("message"):
                 response["ocl_message"] = ocl_results["message"]
-        
+
         return response
-        
+
     except Exception as e:
         print(f"Error in validate_diagram: {str(e)}")
         return {
@@ -1465,16 +1465,16 @@ async def check_ocl(input_data: DiagramInput):
 async def feedback_endpoint(feedback: FeedbackSubmission):
     """
     Feedback submission endpoint.
-    
+
     Receives user feedback and processes it via the feedback service.
     See feedback_service.py for implementation details.
-    
+
     Args:
         feedback: FeedbackSubmission model containing user feedback data
-        
+
     Returns:
         dict: Status message confirming feedback receipt
-        
+
     Raises:
         HTTPException: If feedback processing fails
     """

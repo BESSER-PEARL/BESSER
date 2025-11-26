@@ -1,0 +1,37 @@
+import sys
+import os
+
+# Sanitize sys.path to remove entries with newlines which cause OSError in stevedore
+sys.path = [p.strip() for p in sys.path if p]
+
+from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
+from qiskit_aer import AerSimulator
+from qiskit.circuit.library import *
+import numpy as np
+
+# Initialize Registers
+{% for qreg in circuit.qregs %}
+{{ qreg.name }} = QuantumRegister({{ qreg.size }}, '{{ qreg.name }}')
+{% endfor %}
+{% for creg in circuit.cregs %}
+{{ creg.name }} = ClassicalRegister({{ creg.size }}, '{{ creg.name }}')
+{% endfor %}
+
+# Initialize Circuit
+qc = QuantumCircuit({% for qreg in circuit.qregs %}{{ qreg.name }}, {% endfor %}{% for creg in circuit.cregs %}{{ creg.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+
+# Operations
+{% for line in operations_code %}
+{{ line }}
+{% endfor %}
+
+# Execution (Simulation)
+print("Simulating circuit...")
+simulator = AerSimulator()
+transpiled_qc = transpile(qc, simulator)
+result = simulator.run(transpiled_qc, shots=1024).result()
+counts = result.get_counts()
+print("Counts:", counts)
+
+# Draw
+print(qc.draw())

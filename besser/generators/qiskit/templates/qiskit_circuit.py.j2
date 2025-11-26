@@ -8,6 +8,7 @@ from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
 from qiskit.circuit import Instruction
 from qiskit_aer import AerSimulator
 from qiskit.circuit.library import *
+from qiskit.circuit.library.standard_gates import GlobalPhaseGate
 import numpy as np
 
 def create_placeholder(name, num_qubits):

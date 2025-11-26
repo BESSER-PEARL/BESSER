@@ -281,6 +281,14 @@ class SwapGate(PrimitiveGate):
     def __init__(self, qubit1: int, qubit2: int, control_qubits: List[int] = None, control_states: List[ControlState] = None):
         super().__init__("SWAP", [qubit1, qubit2], control_qubits, control_states)
 
+class SGate(PrimitiveGate):
+    def __init__(self, target_qubit: int, control_qubits: List[int] = None, control_states: List[ControlState] = None):
+        super().__init__("S", [target_qubit], control_qubits, control_states)
+
+class TGate(PrimitiveGate):
+    def __init__(self, target_qubit: int, control_qubits: List[int] = None, control_states: List[ControlState] = None):
+        super().__init__("T", [target_qubit], control_qubits, control_states)
+
 class RXGate(ParametricGate):
     def __init__(self, target_qubit: int, angle: float, control_qubits: List[int] = None, control_states: List[ControlState] = None):
         super().__init__("RX", [target_qubit], angle, control_qubits, control_states)

@@ -4,10 +4,10 @@ from besser.generators import GeneratorInterface
 from besser.BUML.metamodel.quantum import (
     QuantumCircuit, PrimitiveGate, ParametricGate, Measurement, 
     ControlState, SwapGate, PauliXGate, PauliYGate, PauliZGate, 
-    HadamardGate, RXGate, RYGate, RZGate, PhaseGate,
+    HadamardGate, RXGate, RYGate, RZGate, PhaseGate, SGate, TGate,
     QFTGate, SpacerGate, ArithmeticGate, ModularArithmeticGate,
     ComparisonGate, DisplayOperation, InputGate, CustomGate,
-    TimeDependentGate, PhaseGradientGate
+    TimeDependentGate, PhaseGradientGate, OrderGate, ScalarGate, PostSelection
 )
 
 class QiskitGenerator(GeneratorInterface):
@@ -114,22 +114,55 @@ class QiskitGenerator(GeneratorInterface):
         Returns the Qiskit object creation code for the base gate (without controls).
         """
         if isinstance(gate, PrimitiveGate):
-            if gate.type_name == 'H': return "HGate()"
-            if gate.type_name == 'X': return "XGate()"
-            if gate.type_name == 'Y': return "YGate()"
-            if gate.type_name == 'Z': return "ZGate()"
-            if gate.type_name == 'S': return "SGate()"
-            if gate.type_name == 'T': return "TGate()"
-            if gate.type_name == 'SWAP': return "SwapGate()"
+            if gate.type_name == 'H':
+                return "HGate()"
+            if gate.type_name == 'X':
+                return "XGate()"
+            if gate.type_name == 'Y':
+                return "YGate()"
+            if gate.type_name == 'Z':
+                return "ZGate()"
+            if gate.type_name == 'S':
+                return "SGate()"
+            if gate.type_name == 'T':
+                return "TGate()"
+            if gate.type_name == 'SWAP':
+                return "SwapGate()"
             # Add more primitives as needed
             return f"# Unsupported Primitive: {gate.type_name}"
-            
+
         elif isinstance(gate, ParametricGate):
             param = gate.parameter
-            if gate.type_name == 'RX': return f"RXGate({param})"
-            if gate.type_name == 'RY': return f"RYGate({param})"
-            if gate.type_name == 'RZ': return f"RZGate({param})"
-            if gate.type_name == 'PHASE': return f"PhaseGate({param})"
+            if gate.type_name == 'RX':
+                return f"RXGate({param})"
+            if gate.type_name == 'RY':
+                return f"RYGate({param})"
+            if gate.type_name == 'RZ':
+                return f"RZGate({param})"
+            if gate.type_name == 'PHASE':
+                return f"PhaseGate({param})"
+            # Quarter turns
+            if gate.type_name == 'S_DAG':
+                return "SdgGate()"
+            if gate.type_name == 'V':
+                return "SXGate()"
+            if gate.type_name == 'V_DAG':
+                return "SXdgGate()"
+            if gate.type_name in ('SQRT_Y', 'Y^1/2'):
+                return f"RYGate({param})"
+            if gate.type_name in ('SQRT_Y_DAG', 'Y^-1/2'):
+                return f"RYGate({param})"
+            # Eighth turns
+            if gate.type_name == 'T_DAG':
+                return "TdgGate()"
+            if gate.type_name in ('X^1/4', 'SQRT_SQRT_X'):
+                return f"PhaseGate({param})"
+            if gate.type_name in ('X^-1/4', 'SQRT_SQRT_X_DAG'):
+                return f"PhaseGate({param})"
+            if gate.type_name in ('Y^1/4', 'SQRT_SQRT_Y'):
+                return f"RYGate({param})"
+            if gate.type_name in ('Y^-1/4', 'SQRT_SQRT_Y_DAG'):
+                return f"RYGate({param})"
             return f"# Unsupported Parametric: {gate.type_name}"
             
         elif isinstance(gate, QFTGate):
@@ -191,6 +224,22 @@ class QiskitGenerator(GeneratorInterface):
             # InputGate logic is handled in _map_operation because it might involve multiple gates (X)
             # Here we return a marker or pass
             return "IGate()"
+
+        elif isinstance(gate, OrderGate):
+            # OrderGate represents order manipulation (Interleave, Reverse, bit shifts, etc.)
+            # Qiskit doesn't have native order gates, so create a placeholder
+            return f"create_placeholder('{gate.order_type}', {len(gate.target_qubits) if gate.target_qubits else 1})"
+
+        elif isinstance(gate, ScalarGate):
+            # ScalarGate applies a global phase or scalar multiplication
+            # In Qiskit, global phase can be represented with GlobalPhaseGate
+            # The scalar_type might be a symbolic value like 'e^(iπ/4)'
+            return f"# GlobalPhase: {gate.scalar_type}"
+
+        elif isinstance(gate, PostSelection):
+            # PostSelection is a measurement-based selection, not a standard gate
+            # Create a comment with the expected state information
+            return f"# PostSelection: measure qubit in basis {gate.basis}, expect value {gate.value}"
             
         # Fallback for other types
         return f"# Unsupported Gate Type: {type(gate).__name__}"

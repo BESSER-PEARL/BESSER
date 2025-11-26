@@ -8,6 +8,7 @@ from .state_machine_processor import process_state_machine
 from .agent_diagram_processor import process_agent_diagram
 from .project_converter import json_to_buml_project
 from .gui_diagram_processor import process_gui_diagram
+from .quantum_diagram_processor import process_quantum_diagram
 
 __all__ = [
     'process_class_diagram',
@@ -15,5 +16,6 @@ __all__ = [
     'process_state_machine',
     'process_agent_diagram',
     'json_to_buml_project',
-    'process_gui_diagram'
+    'process_gui_diagram',
+    'process_quantum_diagram',
 ]

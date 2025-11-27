@@ -124,6 +124,9 @@ def process_class_diagram(json_data):
                 method = elements.get(method_id)
                 if method:
                     visibility, name, parameters, return_type = parse_method(method.get("name", ""), domain_model)
+                    
+                    # Get the code attribute for the method
+                    method_code = method.get("code", "")
 
                     # Create method parameters
                     method_params = []
@@ -149,11 +152,12 @@ def process_class_diagram(json_data):
                             param_obj.default_value = param['default']
                         method_params.append(param_obj)
 
-                    # Create method with parameters and return type
+                    # Create method with parameters, return type, and code
                     method_obj = Method(
                         name=name,
                         visibility=visibility,
-                        parameters=method_params
+                        parameters=method_params,
+                        code=method_code
                     )
                     
                     # Handle return type

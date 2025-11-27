@@ -203,7 +203,7 @@ def class_buml_to_json(domain_model):
                         )
                         method_signature += f": {return_type}"
 
-                    elements[method_id] = {
+                    method_element = {
                         "id": method_id,
                         "name": method_signature,
                         "type": "ClassMethod",
@@ -215,6 +215,12 @@ def class_buml_to_json(domain_model):
                             "height": 30,
                         },
                     }
+                    
+                    # Add code attribute if it exists and is not empty
+                    if hasattr(method, "code") and method.code:
+                        method_element["code"] = method.code
+
+                    elements[method_id] = method_element
                     method_ids.append(method_id)
                     y_offset += 30
 

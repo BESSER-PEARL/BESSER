@@ -1,7 +1,7 @@
 From a Knowledge Graph to B-UML
 ===============================
 
-BESSER also enables the definition of a :doc:`../model_types/structural` from a Knowledge Graph (KG). The KG to be imported can be either a tripple store in .ttl or a property graph exported in .json.
+BESSER also enables the definition of a :doc:`../model_types/structural` from a Knowledge Graph (KG). The KG to be imported can be either a tripple store in .ttl, an RDF file in .rdf, or a property graph exported in .json.
 For this we use `OpenAI's GPT4 <https://openai.com/gpt-4>`_  and you must have an OpenAI token to implement this BESSER 
 functionality. 
 
@@ -14,7 +14,7 @@ The following example KG represents the relationship between a company, its empl
 
 .. warning::
 
-    Please make sure your KG is below 20 MB in size and is of one the following formats: ['ttl', 'json']
+    Please make sure your KG is below 20 MB in size and is of one the following formats: ['ttl', 'json', 'rdf']
 
 To transform this KG into a :doc:`../model_types/structural` you can use the following code.
 

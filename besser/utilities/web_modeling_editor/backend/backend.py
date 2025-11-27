@@ -923,7 +923,7 @@ async def get_json_model_from_kg(
     api_key: str = Form(...)
 ):
     """
-    Accepts an .TTL ot .JSON knowledge graphs and an OpenAI API key, uses BESSER's kgtouml feature to transform the kg into a BUML class diagram in JSON.
+    Accepts an .TTL, .RDF, or .JSON knowledge graphs and an OpenAI API key, uses BESSER's kgtouml feature to transform the kg into a BUML class diagram in JSON.
     """
     import os
     import tempfile
@@ -940,7 +940,7 @@ async def get_json_model_from_kg(
             os.rename(kg_path, os.path.join(kg_folder, kg_file.filename))
             # Use kg_to_buml to generate DomainModel from kg and API key
             # Find the kg file path
-            kg_files = [f for f in os.listdir(kg_folder) if f.lower().endswith(('.ttl', '.json'))]
+            kg_files = [f for f in os.listdir(kg_folder) if f.lower().endswith(('.ttl', '.json', '.rdf'))]
             if not kg_files:
                 raise HTTPException(status_code=400, detail="No valid KG file found.")
             kg_path = os.path.join(kg_folder, kg_files[0])

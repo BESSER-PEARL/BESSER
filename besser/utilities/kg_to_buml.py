@@ -173,7 +173,8 @@ def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"
 
     **Supported inputs:**
     
-    - RDF KGs (TTL files)
+    - Turtle files (.ttl)
+    - RDF KGs (.rdf files)
     - Neo4j graphs (JSON) exported using the Cypher command below::
 
         CALL apoc.export.json.all(null, {stream:true, pretty:true})
@@ -187,7 +188,7 @@ def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"
     Parameters
     ----------
     kg_path : str
-        Path to the input Knowledge Graph file (raw JSON, TTL).
+        Path to the input Knowledge Graph file (raw JSON, TTL, RDF).
     openai_token : str
         Your OpenAI API token.
     openai_model : str, optional
@@ -294,14 +295,15 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
 
     **Supported inputs**
     
-    - RDF KGs (TTL files)
+    - Turtle files (.ttl)
+    - RDF KGs (.rdf files)
     - Neo4j graphs (JSON) exported using the Cypher command below::
 
         CALL apoc.export.json.all(null, {stream:true, pretty:true})
         YIELD data
         RETURN data AS json
 
-    The function reads the KG (RDF/OWL or Neo4j JSON export), extracts classes,
+    The function reads the KG (TTL/RDF or Neo4j JSON export), extracts classes,
     attributes, methods, and associations, and uses an LLM to generate a DomainModel object 
     defined in `besser.BUML.metamodel.structural`.
 

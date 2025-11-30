@@ -34,7 +34,7 @@ from besser.BUML.metamodel.gui.dashboard import (
     PieChart,
     RadarChart,
     RadialBarChart,
-    TableChart,
+    Table,
 )
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
@@ -475,7 +475,7 @@ class ReactGenerator(GeneratorInterface):
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
 
-        if isinstance(element, TableChart):
+        if isinstance(element, Table):
             node["title"] = element.title or self._humanize(element.name)
             node["chart"] = self._clean_dict(
                 {
@@ -901,8 +901,8 @@ class ReactGenerator(GeneratorInterface):
             return "radar-chart"
         if isinstance(element, RadialBarChart):
             return "radial-bar-chart"
-        if isinstance(element, TableChart):
-            return "table-chart"
+        if isinstance(element, Table):
+            return "table"
         if isinstance(element, MetricCard):
             return "metric-card"
         if isinstance(element, AgentComponent):

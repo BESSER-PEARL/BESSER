@@ -810,16 +810,16 @@ class RadialBarChart(Chart):
             f"end_angle={self.end_angle}, inner_radius={self.inner_radius})"
         )
 
-class TableChart(Chart):
-    """Represents a tabular chart component in the dashboard.
+class Table(ViewComponent):
+    """Represents a table component in the dashboard.
 
     Args:
-        name (str): The name of the table chart.
+        name (str): The name of the table.
         show_header (bool): Whether to render the table header.
         striped_rows (bool): Whether to alternate row background colors.
         show_pagination (bool): Whether to display pagination information.
         rows_per_page (int): Number of rows shown per page.
-        title (str | None): Optional title of the table chart.
+        title (str | None): Optional title of the table.
         primary_color (str | None): Optional primary color used for the header/background.
 
     Attributes:
@@ -842,13 +842,35 @@ class TableChart(Chart):
         action_buttons: bool = False,
         **kwargs,
     ):
-        super().__init__(name, title=title, primary_color=primary_color, **kwargs)
+        super().__init__(name, **kwargs)
+        self.title = title
+        self.primary_color = primary_color
         self.show_header = show_header
         self.striped_rows = striped_rows
         self.show_pagination = show_pagination
         self.rows_per_page = rows_per_page
         self.columns = list(columns or [])
         self.action_buttons = action_buttons
+
+    @property
+    def title(self) -> Optional[str]:
+        """Property: Get the title of the table."""
+        return self._title
+
+    @title.setter
+    def title(self, value: Optional[str]):
+        """Property: Set the title of the table."""
+        self._title = value
+
+    @property
+    def primary_color(self) -> Optional[str]:
+        """Property: Get the primary color of the table."""
+        return self._primary_color
+
+    @primary_color.setter
+    def primary_color(self, value: Optional[str]):
+        """Property: Set the primary color of the table."""
+        self._primary_color = value
 
     @property
     def show_header(self) -> bool:
@@ -919,7 +941,7 @@ class TableChart(Chart):
 
     def __repr__(self):
         return (
-            f"TableChart(name={self.name}, show_header={self.show_header}, "
+            f"Table(name={self.name}, show_header={self.show_header}, "
             f"striped_rows={self.striped_rows}, rows_per_page={self.rows_per_page}, "
             f"columns={self.columns}, action_buttons={self.action_buttons})"
         )

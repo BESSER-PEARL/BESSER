@@ -1,26 +1,27 @@
 import React, { CSSProperties, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { createPortal } from "react-dom";
-import "./TableChartComponent.css";
+import "./TableComponent.css";
 
 interface TableColumn {
   field: string;
   label: string;
+  type?: string;
 }
 
-interface TableChartOptions {
+interface TableOptions {
   showHeader?: boolean;
   stripedRows?: boolean;
   showPagination?: boolean;
   rowsPerPage?: number;
-  columns?: Array<{ field: string; label?: string } | string>;
+  columns?: Array<{ field: string; label?: string; type?: string } | string>;
 }
 
 interface Props {
   id: string;
   title?: string;
   data?: any[];
-  options?: TableChartOptions;
+  options?: TableOptions;
   styles?: CSSProperties;
   dataBinding?: Record<string, any>;
 }
@@ -53,7 +54,7 @@ const formatCellValue = (value: any): string => {
   return JSON.stringify(value);
 };
 
-export const TableChartComponent: React.FC<Props> = ({
+export const TableComponent: React.FC<Props> = ({
   id,
   title,
   data,
@@ -97,7 +98,7 @@ export const TableChartComponent: React.FC<Props> = ({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
-  const resolvedOptions: Required<TableChartOptions> & { actionButtons: boolean } = {
+  const resolvedOptions: Required<TableOptions> & { actionButtons: boolean } = {
     showHeader: options?.showHeader ?? true,
     stripedRows: options?.stripedRows ?? false,
     showPagination: options?.showPagination ?? true,
@@ -123,14 +124,15 @@ export const TableChartComponent: React.FC<Props> = ({
   const columns: TableColumn[] = useMemo(() => {
     if (resolvedOptions.columns.length > 0) {
       return resolvedOptions.columns
-        .filter((col): col is { field: string; label?: string } | string => Boolean(col))
+        .filter((col): col is { field: string; label?: string; type?: string } | string => Boolean(col))
         .map((col) => {
           if (typeof col === "string") {
-            return { field: col, label: humanize(col) };
+            return { field: col, label: humanize(col), type: "string" };
           }
           return {
             field: col.field,
             label: humanize(col.label || col.field),
+            type: col.type || "string",
           };
         });
     }
@@ -151,6 +153,7 @@ export const TableChartComponent: React.FC<Props> = ({
     return columnOrder.map((field) => ({
       field,
       label: humanize(field),
+      type: "string",
     }));
   }, [normalizedRows, resolvedOptions.columns]);
 
@@ -176,7 +179,16 @@ export const TableChartComponent: React.FC<Props> = ({
     if (showModal) {
       const initialValues: Record<string, any> = {};
       columns.forEach(col => {
-        initialValues[col.field] = modalMode === 'edit' && editRowData ? (editRowData[col.field] ?? "") : "";
+        if (modalMode === 'edit' && editRowData) {
+          const value = editRowData[col.field];
+          if (col.type === 'list') {
+            initialValues[col.field] = Array.isArray(value) ? value.join(', ') : (value ?? "");
+          } else {
+            initialValues[col.field] = value ?? "";
+          }
+        } else {
+          initialValues[col.field] = "";
+        }
       });
       setFormValues(initialValues);
     }
@@ -239,7 +251,7 @@ export const TableChartComponent: React.FC<Props> = ({
   };
 
   return (
-    <div id={id} style={containerStyle} className="table-chart-wrapper">
+    <div id={id} style={containerStyle} className="table-wrapper">
       {title && (
         <h3 style={{ margin: 0, color: "#1e293b", fontSize: "18px" }}>{title}</h3>
       )}
@@ -316,10 +328,30 @@ export const TableChartComponent: React.FC<Props> = ({
                   e.preventDefault();
                   const endpoint = getEndpoint();
                   const backendBase = "http://localhost:8000";
+                  
+                  // Process form values based on column types
+                  const processedValues: Record<string, any> = {};
+                  columns.forEach(col => {
+                    const value = formValues[col.field];
+                    if (col.type === 'list') {
+                      // Convert comma-separated string to array
+                      processedValues[col.field] = typeof value === 'string' 
+                        ? value.split(',').map(item => item.trim()).filter(item => item !== '')
+                        : (Array.isArray(value) ? value : []);
+                    } else if (col.type === 'int') {
+                      // Convert to integer
+                      const intValue = parseInt(value, 10);
+                      processedValues[col.field] = isNaN(intValue) ? 0 : intValue;
+                    } else {
+                      // Keep as string
+                      processedValues[col.field] = value;
+                    }
+                  });
+                  
                   if (modalMode === 'add') {
                     const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
                     try {
-                      await axios.post(url, formValues);
+                      await axios.post(url, processedValues);
                       await fetchTableData();
                     } catch (err) {
                       console.error("Error saving data:", err);
@@ -329,7 +361,7 @@ export const TableChartComponent: React.FC<Props> = ({
                     const url = endpoint.replace(/\/$/, "");
                     const fullUrl = url.startsWith("/") ? `${backendBase}${url}/${rowId}/` : `${url}/${rowId}/`;
                     try {
-                      await axios.put(fullUrl, formValues);
+                      await axios.put(fullUrl, processedValues);
                       await fetchTableData();
                     } catch (err) {
                       console.error("Error updating data:", err);
@@ -341,12 +373,18 @@ export const TableChartComponent: React.FC<Props> = ({
               >
                 {columns.map(col => (
                   <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>{col.label}</label>
+                    <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
+                      {col.label}
+                      {col.type && col.type !== 'string' && (
+                        <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>({col.type === 'list' ? 'comma-separated' : col.type})</span>
+                      )}
+                    </label>
                     <input
                       id={`modal-input-${col.field}`}
-                      type="text"
+                      type={col.type === 'int' ? 'number' : 'text'}
                       value={formValues[col.field] ?? ""}
                       onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.value }))}
+                      placeholder={col.type === 'list' ? 'item1, item2, item3' : ''}
                       style={{
                         padding: "8px 12px",
                         borderRadius: "6px",
@@ -422,7 +460,7 @@ export const TableChartComponent: React.FC<Props> = ({
           {dataBinding?.entity ? `${dataBinding.entity}` : "this table"}.
         </div>
       ) : (
-        <div className="table-chart-scroll">
+        <div className="table-scroll">
           <table style={tableStyle}>
             {resolvedOptions.showHeader && (
               <thead>

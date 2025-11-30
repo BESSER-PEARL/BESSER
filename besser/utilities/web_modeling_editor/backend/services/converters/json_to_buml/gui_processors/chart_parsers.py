@@ -5,7 +5,7 @@ Chart component parsers for GUI diagrams.
 from typing import Dict, Any
 from besser.BUML.metamodel.gui import (
     Alignment, BarChart, DataBinding, LineChart,
-    PieChart, RadarChart, RadialBarChart, TableChart, ViewComponent,
+    PieChart, RadarChart, RadialBarChart, Table, ViewComponent,
     Color, Position, Size, Styling, DataAggregation, MetricCard,
 )
 from besser.BUML.metamodel.gui.dashboard import AgentComponent
@@ -445,9 +445,9 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     return radial_bar_chart
 
 
-def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> TableChart:
+def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:
     """
-    Parses a table chart component, resolving data binding and presentation options.
+    Parses a table component, resolving data binding and presentation options.
     """
     attrs = view_comp.get('attributes', {})
 
@@ -458,10 +458,10 @@ def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> T
 
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
-    name_seed = raw_title if isinstance(raw_title, str) else 'TableChart'
-    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('TableChart')
+    name_seed = raw_title if isinstance(raw_title, str) else 'Table'
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('Table')
     if not chart_title:
-        chart_title = 'TableChart'
+        chart_title = 'Table'
     if not title_value:
         title_value = chart_title.replace('_', ' ').title()
 
@@ -486,7 +486,7 @@ def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> T
         except (TypeError, ValueError):
             return default
 
-    table_chart = TableChart(
+    table = Table(
         name=chart_title,
         show_header=_bool_attr('show-header', True),
         striped_rows=_bool_attr('striped-rows', False),
@@ -535,12 +535,11 @@ def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> T
                 column_names.append(end_name)
 
         if column_names:
-            table_chart.columns = column_names
+            table.columns = column_names
 
-    table_chart.data_binding = data_binding
-    _attach_chart_metadata(table_chart, view_comp)
-    return table_chart
-
+    table.data_binding = data_binding
+    _attach_chart_metadata(table, view_comp)
+    return table
 
 def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
     """
@@ -571,7 +570,7 @@ def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
         element.styling.color.line_color = color_value
     elif isinstance(element, RadialBarChart):
         element.styling.color.bar_color = color_value
-    elif isinstance(element, TableChart):
+    elif isinstance(element, Table):
         element.styling.color.background_color = color_value
 
 

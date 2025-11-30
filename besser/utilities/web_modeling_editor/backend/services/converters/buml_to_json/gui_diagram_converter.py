@@ -35,7 +35,7 @@ from besser.BUML.metamodel.gui.dashboard import (
     PieChart,
     RadarChart,
     RadialBarChart,
-    TableChart,
+    Table,
 )
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
@@ -123,7 +123,7 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         "PieChart": PieChart,
         "RadarChart": RadarChart,
         "RadialBarChart": RadialBarChart,
-        "TableChart": TableChart,
+        "Table": Table,
         "MetricCard": MetricCard,
         "AgentComponent": AgentComponent,
         "Transition": Transition,
@@ -295,8 +295,8 @@ def _apply_component_specific_attributes(element: ViewComponent, attrs: Dict[str
         _apply_radar_chart_attributes(element, attrs)
     elif isinstance(element, RadialBarChart):
         _apply_radial_bar_chart_attributes(element, attrs)
-    elif isinstance(element, TableChart):
-        _apply_table_chart_attributes(element, attrs)
+    elif isinstance(element, Table):
+        _apply_table_attributes(element, attrs)
     elif isinstance(element, MetricCard):
         _apply_metric_card_attributes(element, attrs)
     elif isinstance(element, AgentComponent):
@@ -408,7 +408,8 @@ def _apply_radial_bar_chart_attributes(chart: RadialBarChart, attrs: Dict[str, A
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("start-angle", chart.start_angle)
     attrs.setdefault("end-angle", chart.end_angle)
-def _apply_table_chart_attributes(chart: TableChart, attrs: Dict[str, Any]) -> None:
+def _apply_table_attributes(chart: Table, attrs: Dict[str, Any]) -> None:
+    """Apply Table-specific attributes to the attributes dict."""
     _apply_chart_data_binding_attributes(chart, attrs)
     attrs.setdefault("chart-title", chart.title or chart.name)
     attrs.setdefault("chart-color", chart.primary_color or "#2c3e50")
@@ -627,7 +628,7 @@ def _infer_component_type(element: ViewComponent) -> Optional[str]:
         PieChart: "pie-chart",
         RadarChart: "radar-chart",
         RadialBarChart: "radial-bar-chart",
-        TableChart: "table-chart",
+        Table: "table",
         MetricCard: "metric-card",
         AgentComponent: "agent-component",
     }

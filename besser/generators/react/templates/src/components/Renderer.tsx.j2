@@ -8,9 +8,9 @@ import { PieChartComponent } from "./charts/PieChartComponent";
 import { RadialBarChartComponent } from "./charts/RadialBarChartComponent";
 import { RadarChartComponent } from "./charts/RadarChartComponent";
 import { MetricCardComponent } from "./charts/MetricCardComponent";
-import { TableChartComponent } from "./charts/TableChartComponent";
+import { TableComponent } from "./charts/TableComponent";
 import { AgentComponent } from "./AgentComponent";
-import "./charts/TableChartComponent.css";
+import "./charts/TableComponent.css";
 
 export interface RendererProps {
   component: any;
@@ -38,7 +38,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
 
   // Chart and metric card data fetching effect
   useEffect(() => {
-    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card", "table-chart"].includes(component.type)) {
+    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card", "table"].includes(component.type)) {
       const endpoint = component.data_binding?.endpoint;
       if (endpoint) {
         setLoading(true);
@@ -518,7 +518,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     );
   }
 
-  if (component.type === "table-chart") {
+  if (component.type === "table") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
     // Merge action-buttons from attributes into options
@@ -527,7 +527,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       actionButtons: component.attributes?.["action-buttons"] ?? false,
     };
     return (
-      <TableChartComponent
+      <TableComponent
         id={component.id}
         title={component.title || component.name}
         data={chartData}

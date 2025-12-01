@@ -7,6 +7,9 @@ interface TableColumn {
   field: string;
   label: string;
   type?: string;
+  columnType?: string;
+  path?: string;
+  lookupField?: string;
 }
 
 interface TableOptions {
@@ -14,7 +17,7 @@ interface TableOptions {
   stripedRows?: boolean;
   showPagination?: boolean;
   rowsPerPage?: number;
-  columns?: Array<{ field: string; label?: string; type?: string } | string>;
+  columns?: Array<{ field: string; label?: string; type?: string; column_type?: string; path?: string } | string>;
 }
 
 interface Props {
@@ -52,6 +55,11 @@ const formatCellValue = (value: any): string => {
     return value.toLocaleString();
   }
   return JSON.stringify(value);
+};
+
+// Helper to get value from nested path (e.g., customer.age)
+const getNestedValue = (obj: any, path: string): any => {
+  return path.split('.').reduce((current, key) => current?.[key], obj);
 };
 
 export const TableComponent: React.FC<Props> = ({
@@ -124,15 +132,22 @@ export const TableComponent: React.FC<Props> = ({
   const columns: TableColumn[] = useMemo(() => {
     if (resolvedOptions.columns.length > 0) {
       return resolvedOptions.columns
-        .filter((col): col is { field: string; label?: string; type?: string } | string => Boolean(col))
+        .filter((col): col is { field: string; label?: string; type?: string; column_type?: string; path?: string } | string => Boolean(col))
         .map((col) => {
           if (typeof col === "string") {
             return { field: col, label: humanize(col), type: "string" };
           }
+          // For lookup columns, use path as the actual field to read
+          const actualField = col.column_type === "lookup" && col.path
+            ? col.path  // Use path for lookup (e.g., "customer")
+            : col.field;
           return {
-            field: col.field,
+            field: actualField,
             label: humanize(col.label || col.field),
             type: col.type || "string",
+            columnType: col.column_type,
+            path: col.path,
+            lookupField: col.column_type === "lookup" ? col.field : undefined,  // Store the nested field (e.g., "age")
           };
         });
     }
@@ -169,6 +184,7 @@ export const TableComponent: React.FC<Props> = ({
   const [formValues, setFormValues] = useState<Record<string, any>>({});
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [editRowData, setEditRowData] = useState<any>(null);
+  const [lookupOptions, setLookupOptions] = useState<Record<string, any[]>>({});
 
   useEffect(() => {
     setCurrentPage(1);
@@ -180,17 +196,48 @@ export const TableComponent: React.FC<Props> = ({
       const initialValues: Record<string, any> = {};
       columns.forEach(col => {
         if (modalMode === 'edit' && editRowData) {
-          const value = editRowData[col.field];
-          if (col.type === 'list') {
-            initialValues[col.field] = Array.isArray(value) ? value.join(', ') : (value ?? "");
+          // For lookup columns in edit mode, use the FK ID
+          if (col.columnType === 'lookup') {
+            const fkField = `${col.field}_id`;
+            initialValues[fkField] = editRowData[fkField] ?? "";
           } else {
-            initialValues[col.field] = value ?? "";
+            const value = editRowData[col.field];
+            if (col.type === 'list') {
+              initialValues[col.field] = Array.isArray(value) ? value.join(', ') : (value ?? "");
+            } else {
+              initialValues[col.field] = value ?? "";
+            }
           }
         } else {
           initialValues[col.field] = "";
         }
       });
       setFormValues(initialValues);
+
+      // Fetch lookup options for lookup columns
+      const fetchLookupOptions = async () => {
+        const options: Record<string, any[]> = {};
+        const backendBase = "http://localhost:8000";
+        
+        for (const col of columns) {
+          if (col.columnType === 'lookup' && col.path) {
+            try {
+              const response = await axios.get(`${backendBase}/${col.path}/`);
+              if (Array.isArray(response.data)) {
+                options[col.path] = response.data;
+              } else if (response.data && typeof response.data === 'object') {
+                options[col.path] = Array.isArray(response.data.results) ? response.data.results : [response.data];
+              }
+            } catch (err) {
+              console.error(`Error fetching ${col.path} options:`, err);
+              options[col.path] = [];
+            }
+          }
+        }
+        setLookupOptions(options);
+      };
+
+      fetchLookupOptions();
     }
   }, [showModal, columns, modalMode, editRowData]);
 
@@ -332,19 +379,26 @@ export const TableComponent: React.FC<Props> = ({
                   // Process form values based on column types
                   const processedValues: Record<string, any> = {};
                   columns.forEach(col => {
-                    const value = formValues[col.field];
-                    if (col.type === 'list') {
-                      // Convert comma-separated string to array
-                      processedValues[col.field] = typeof value === 'string' 
-                        ? value.split(',').map(item => item.trim()).filter(item => item !== '')
-                        : (Array.isArray(value) ? value : []);
-                    } else if (col.type === 'int') {
-                      // Convert to integer
-                      const intValue = parseInt(value, 10);
-                      processedValues[col.field] = isNaN(intValue) ? 0 : intValue;
+                    // For lookup columns, use the FK field name (path_id)
+                    if (col.columnType === 'lookup' && col.path) {
+                      const fkField = `${col.path}_id`;
+                      const value = formValues[fkField];
+                      processedValues[col.path] = value ? parseInt(value, 10) : null;
                     } else {
-                      // Keep as string
-                      processedValues[col.field] = value;
+                      const value = formValues[col.field];
+                      if (col.type === 'list') {
+                        // Convert comma-separated string to array
+                        processedValues[col.field] = typeof value === 'string' 
+                          ? value.split(',').map(item => item.trim()).filter(item => item !== '')
+                          : (Array.isArray(value) ? value : []);
+                      } else if (col.type === 'int') {
+                        // Convert to integer
+                        const intValue = parseInt(value, 10);
+                        processedValues[col.field] = isNaN(intValue) ? 0 : intValue;
+                      } else {
+                        // Keep as string
+                        processedValues[col.field] = value;
+                      }
                     }
                   });
                   
@@ -371,31 +425,68 @@ export const TableComponent: React.FC<Props> = ({
                 }}
                 style={{ display: "flex", flexDirection: "column", gap: "16px" }}
               >
-                {columns.map(col => (
-                  <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                    <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
-                      {col.label}
-                      {col.type && col.type !== 'string' && (
-                        <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>({col.type === 'list' ? 'comma-separated' : col.type})</span>
-                      )}
-                    </label>
-                    <input
-                      id={`modal-input-${col.field}`}
-                      type={col.type === 'int' ? 'number' : 'text'}
-                      value={formValues[col.field] ?? ""}
-                      onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.value }))}
-                      placeholder={col.type === 'list' ? 'item1, item2, item3' : ''}
-                      style={{
-                        padding: "8px 12px",
-                        borderRadius: "6px",
-                        border: "1px solid #cbd5f5",
-                        fontSize: "15px",
-                        color: "#1e293b",
-                        background: "#f8fafc",
-                      }}
-                    />
-                  </div>
-                ))}
+                {columns.map(col => {
+                  // For lookup columns, render a select dropdown
+                  if (col.columnType === 'lookup' && col.path) {
+                    const fkField = `${col.path}_id`;
+                    const options = lookupOptions[col.path] || [];
+                    
+                    return (
+                      <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                        <label htmlFor={`modal-input-${fkField}`} style={{ fontWeight: 500, color: "#334155" }}>
+                          {col.label}
+                        </label>
+                        <select
+                          id={`modal-input-${fkField}`}
+                          value={formValues[fkField] ?? ""}
+                          onChange={e => setFormValues(fv => ({ ...fv, [fkField]: e.target.value }))}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid #cbd5f5",
+                            fontSize: "15px",
+                            color: "#1e293b",
+                            background: "#f8fafc",
+                          }}
+                        >
+                          <option value="">-- Select {col.label} --</option>
+                          {options.map((option: any) => (
+                            <option key={option.id} value={option.id}>
+                              {option.name || option.title || option.email || `ID: ${option.id}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  }
+                  
+                  // For regular fields, render input
+                  return (
+                    <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
+                        {col.label}
+                        {col.type && col.type !== 'string' && (
+                          <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>({col.type === 'list' ? 'comma-separated' : col.type})</span>
+                        )}
+                      </label>
+                      <input
+                        id={`modal-input-${col.field}`}
+                        type={col.type === 'int' ? 'number' : 'text'}
+                        value={formValues[col.field] ?? ""}
+                        onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.value }))}
+                        placeholder={col.type === 'list' ? 'item1, item2, item3' : ''}
+                        style={{
+                          padding: "8px 12px",
+                          borderRadius: "6px",
+                          border: "1px solid #cbd5f5",
+                          fontSize: "15px",
+                          color: "#1e293b",
+                          background: "#f8fafc",
+                        }}
+                      />
+                    </div>
+                  );
+                })}
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: "12px", marginTop: "8px" }}>
                   <button
                     type="button"
@@ -496,22 +587,33 @@ export const TableComponent: React.FC<Props> = ({
                     borderBottom: "1px solid #e2e8f0",
                   }}
                 >
-                  {columns.map((column) => (
-                    <td
-                      key={`${id}-row-${rowIndex}-cell-${column.field}`}
-                      style={{
-                        padding: "10px 12px",
-                        color: "#1f2937",
-                        whiteSpace: "nowrap",
-                        textOverflow: "ellipsis",
-                        overflow: "hidden",
-                        maxWidth: "200px",
-                      }}
-                      title={formatCellValue(row[column.field])}
-                    >
-                      {formatCellValue(row[column.field])}
-                    </td>
-                  ))}
+                  {columns.map((column) => {
+                    // For lookup columns, get nested value (e.g., customer.age)
+                    let cellValue;
+                    if (column.columnType === 'lookup' && column.lookupField) {
+                      const nestedPath = `${column.field}.${column.lookupField}`;
+                      cellValue = getNestedValue(row, nestedPath);
+                    } else {
+                      cellValue = row[column.field];
+                    }
+                    
+                    return (
+                      <td
+                        key={`${id}-row-${rowIndex}-cell-${column.field}`}
+                        style={{
+                          padding: "10px 12px",
+                          color: "#1f2937",
+                          whiteSpace: "nowrap",
+                          textOverflow: "ellipsis",
+                          overflow: "hidden",
+                          maxWidth: "200px",
+                        }}
+                        title={formatCellValue(cellValue)}
+                      >
+                        {formatCellValue(cellValue)}
+                      </td>
+                    );
+                  })}
                   {resolvedOptions.actionButtons && (
                     <td style={{ textAlign: "center", padding: "10px 2px", width: "40px", minWidth: "40px", maxWidth: "40px", overflow: "hidden" }}>
                       <div style={{ display: "flex", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: "2px", width: "100%" }}>

@@ -30,6 +30,10 @@ from besser.BUML.metamodel.gui.binding import DataBinding
 from besser.BUML.metamodel.gui.dashboard import (
     AgentComponent,
     BarChart,
+    Column,
+    FieldColumn,
+    LookupColumn,
+    ExpressionColumn,
     LineChart,
     MetricCard,
     PieChart,
@@ -417,6 +421,38 @@ def _apply_table_attributes(chart: Table, attrs: Dict[str, Any]) -> None:
     attrs.setdefault("striped-rows", chart.striped_rows)
     attrs.setdefault("show-pagination", chart.show_pagination)
     attrs.setdefault("rows-per-page", chart.rows_per_page)
+    attrs.setdefault("action-buttons", getattr(chart, "action_buttons", False))
+
+    # Serialize columns as a JSON array
+    columns_list = []
+    for col in getattr(chart, "columns", []) or []:
+        column_dict = {"label": col.label}
+
+        if isinstance(col, FieldColumn):
+            column_dict["columnType"] = "field"
+            column_dict["field"] = col.field.name if hasattr(col.field, "name") else str(col.field)
+
+        elif isinstance(col, LookupColumn):
+            column_dict["columnType"] = "lookup"
+            # Store the relationship end name as lookupPath
+            column_dict["lookupPath"] = col.path.name if hasattr(col.path, "name") else str(col.path)
+            # Store the target class ID as lookupEntity
+            if hasattr(col.path, "type") and hasattr(col.path.type, "name"):
+                column_dict["lookupEntity"] = col.path.type.name
+            # Store the attribute name as lookupField
+            column_dict["lookupField"] = col.field.name if hasattr(col.field, "name") else str(col.field)
+
+        elif isinstance(col, ExpressionColumn):
+            column_dict["columnType"] = "expression"
+            column_dict["expression"] = col.expression
+
+        # Add _expanded as false by default (UI state)
+        column_dict["_expanded"] = False
+
+        columns_list.append(column_dict)
+
+    if columns_list:
+        attrs["columns"] = columns_list
 def _apply_metric_card_attributes(card: MetricCard, attrs: Dict[str, Any]) -> None:
     _apply_chart_data_binding_attributes(card, attrs)
     attrs.setdefault("metric-title", card.title or card.name)

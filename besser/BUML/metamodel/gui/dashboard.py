@@ -2,6 +2,7 @@ from typing import Optional, Sequence
 
 from besser.BUML.metamodel.gui.graphical_ui import ViewComponent
 from besser.BUML.metamodel.gui.style import Alignment
+from besser.BUML.metamodel.structural import Property
 
 
 class AgentComponent(ViewComponent):
@@ -810,6 +811,132 @@ class RadialBarChart(Chart):
             f"end_angle={self.end_angle}, inner_radius={self.inner_radius})"
         )
 
+class Column:
+    """Represents a column in a table.
+
+    Args:
+        label (str): The display label of the column.
+    
+    Attributes:
+        label (str): The display label of the column.
+    """
+    def __init__(self, label: str):
+        self.label = label
+
+    @property
+    def label(self) -> str:
+        """Property: Get the label of the column."""
+        return self._label
+
+    @label.setter
+    def label(self, value: str):
+        """Property: Set the label of the column."""
+        self._label = value
+
+class FieldColumn(Column):
+    """Represents a field column in a table.
+
+    Args:
+        label (str): The display label of the column.
+        field (Property): The property representing the field.
+    Attributes:
+        label (str): The display label of the column.
+        field (Property): The property representing the field.
+    """
+
+    def __init__(self, label: str, field: Property):
+        super().__init__(label)
+        self.field = field
+
+    @property
+    def field(self) -> Property:
+        """Property: Get the field property of the column."""
+        return self._field
+
+    @field.setter
+    def field(self, value: Property):
+        """Property: Set the field property of the column."""
+        self._field = value
+
+    def __repr__(self):
+        return f"FieldColumn(label={self.label}, field={self.field.name})"
+
+class LookupColumn(Column):
+    """Represents a lookup column in a table.
+
+    Args:
+        label (str): The display label of the column.
+        path (Property): The property representing the lookup path.
+        field (Property): The property representing the lookup field.
+        
+    Attributes:
+        label (str): The display label of the column.
+        path (Property): The property representing the lookup path.
+        field (Property): The property representing the lookup field.
+    """
+
+    def __init__(
+        self,
+        label: str,
+        path: Property,
+        field: Property
+    ):
+        super().__init__(label)
+        self.path = path
+        self.field = field
+
+    @property
+    def path(self) -> Property:
+        """Property: Get the path property of the lookup column."""
+        return self._path
+
+    @path.setter
+    def path(self, value: Property):
+        """Property: Set the path property of the lookup column."""
+        self._path = value
+
+    @property
+    def field(self) -> Property:
+        """Property: Get the field property of the lookup column."""
+        return self._field
+
+    @field.setter
+    def field(self, value: Property):
+        """Property: Set the field property of the lookup column."""
+        self._field = value
+
+    def __repr__(self):
+        return f"LookupColumn(label={self.label}, field={self.field.name})"
+
+class ExpressionColumn(Column):
+    """Represents an expression column in a table.
+
+    Args:
+        label (str): The display label of the column.
+        expression (str): The expression used to compute the column value.
+        
+    Attributes:
+        label (str): The display label of the column.
+        expression (str): The expression used to compute the column value.
+    """
+
+    def __init__(self, label: str, expression: str):
+        super().__init__(label)
+        self.expression = expression
+
+    @property
+    def expression(self) -> str:
+        """Property: Get the expression of the column."""
+        return self._expression
+
+    @expression.setter
+    def expression(self, value: str):
+        """Property: Set the expression of the column."""
+        self._expression = value
+
+    def __repr__(self):
+        return f"ExpressionColumn(label={self.label}, expression={self.expression})"
+
 class Table(ViewComponent):
     """Represents a table component in the dashboard.
 
@@ -838,7 +965,7 @@ class Table(ViewComponent):
         rows_per_page: int = 5,
         title: Optional[str] = None,
         primary_color: Optional[str] = None,
-        columns: Optional[Sequence[str]] = None,
+        columns: Optional[Sequence[Column]] = None,
         action_buttons: bool = False,
         **kwargs,
     ):
@@ -917,17 +1044,17 @@ class Table(ViewComponent):
         self._rows_per_page = max(1, int_value)
 
     @property
-    def columns(self) -> list[str]:
+    def columns(self) -> list[Column]:
         """Property: Get the configured column names."""
         return self._columns
 
     @columns.setter
-    def columns(self, value: Sequence[str]):
+    def columns(self, value: Sequence[Column]):
         """Property: Set the configured column names."""
         if value is None:
             self._columns = []
             return
-        self._columns = [str(item) for item in value if item]
+        self._columns = [item for item in value if item]
 
     @property
     def action_buttons(self) -> bool:

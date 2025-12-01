@@ -10,6 +10,7 @@ interface TableColumn {
   columnType?: string;
   path?: string;
   lookupField?: string;
+  relationshipKey?: string;
 }
 
 interface TableOptions {
@@ -84,7 +85,18 @@ export const TableComponent: React.FC<Props> = ({
           : "";
     if (!endpoint) return;
     const backendBase = "http://localhost:8000";
-    const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+    
+    // Check if table has lookup columns - if so, request detailed data with joins
+    const hasLookupColumns = options?.columns?.some(
+      (col: any) => typeof col === 'object' && col.column_type === 'lookup'
+    );
+    
+    // Add detailed=true query param if there are lookup columns
+    const urlParams = hasLookupColumns ? '?detailed=true' : '';
+    const url = endpoint.startsWith("/") 
+      ? backendBase + endpoint + urlParams
+      : endpoint + urlParams;
+    
     try {
       const response = await axios.get(url);
       if (Array.isArray(response.data)) {
@@ -141,13 +153,21 @@ export const TableComponent: React.FC<Props> = ({
           const actualField = col.column_type === "lookup" && col.path
             ? col.path  // Use path for lookup (e.g., "customer")
             : col.field;
+          
+          // The relationship key in the API response is simply the path name
+          // Example: "customer"
+          const relationshipKey = col.column_type === "lookup" && col.path
+            ? col.path
+            : undefined;
+          
           return {
             field: actualField,
             label: humanize(col.label || col.field),
             type: col.type || "string",
             columnType: col.column_type,
             path: col.path,
-            lookupField: col.column_type === "lookup" ? col.field : undefined,  // Store the nested field (e.g., "age")
+            lookupField: col.column_type === "lookup" ? col.field : undefined,  // Store the nested field (e.g., "name")
+            relationshipKey: relationshipKey,  // API relationship key (e.g., "customer")
           };
         });
     }
@@ -588,11 +608,19 @@ export const TableComponent: React.FC<Props> = ({
                   }}
                 >
                   {columns.map((column) => {
-                    // For lookup columns, get nested value (e.g., customer.age)
+                    // For lookup columns, get nested value using the API relationship key
                     let cellValue;
                     if (column.columnType === 'lookup' && column.lookupField) {
-                      const nestedPath = `${column.field}.${column.lookupField}`;
-                      cellValue = getNestedValue(row, nestedPath);
+                      // Try the relationship key first (e.g., customer.name)
+                      if (column.relationshipKey) {
+                        const nestedPath = `${column.relationshipKey}.${column.lookupField}`;
+                        cellValue = getNestedValue(row, nestedPath);
+                      }
+                      // Fallback to direct path (e.g., customer.name)
+                      if (!cellValue) {
+                        const nestedPath = `${column.field}.${column.lookupField}`;
+                        cellValue = getNestedValue(row, nestedPath);
+                      }
                     } else {
                       cellValue = row[column.field];
                     }

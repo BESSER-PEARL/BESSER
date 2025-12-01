@@ -45,14 +45,20 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         setError(null);
         // Always use backend base URL for relative endpoints
         const backendBase = "http://localhost:8000";
-        const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
         
-        // Backend returns flat entities by default (perfect for charts)
-        // Use ?detailed=true if you need relationships included
+        // Check if table has lookup columns - if so, request detailed data with joins
+        const hasLookupColumns = component.chart?.columns?.some(
+          (col: any) => typeof col === 'object' && col.column_type === 'lookup'
+        );
+        
+        // Add detailed=true query param if there are lookup columns
+        const urlParams = hasLookupColumns ? '?detailed=true' : '';
+        const url = endpoint.startsWith("/") 
+          ? backendBase + endpoint + urlParams
+          : endpoint + urlParams;
         
         axios.get(url)
           .then((res) => {
-            console.log("API response:", res.data); // Debug log
             let data: any[] = [];
             
             // If response is already an array, use it directly

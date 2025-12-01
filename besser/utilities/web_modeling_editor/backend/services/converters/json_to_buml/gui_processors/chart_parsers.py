@@ -507,7 +507,8 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
         
         elif column_type == 'lookup':
             # Parse LookupColumn
-            lookup_path = col_data.get('lookupPath', '')
+            # GrapesJS stores the relationship path in 'field' for lookup columns
+            lookup_path = col_data.get('path') or col_data.get('field', '')
             lookup_field_name = col_data.get('lookupField', '')
             
             if domain_class and lookup_path:

@@ -261,34 +261,54 @@ def get_statistics(database: Session = Depends(get_db)):
 {% if "GET" in http_methods %}
 @app.get("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
 def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = Depends(get_db)) -> list:
-    {{ class.name | lower}}_list = database.query({{ class.name }}).all()
-    {% if ns.end_name_multiple or ns.one_to_many %}
-    # By default, return flat entities (for charts/widgets)
-    # Use detailed=true to get entities with relationships
-    if not detailed:
-        return {{ class.name | lower}}_list
+    from sqlalchemy.orm import joinedload
     
-    result = []
-    for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
-        {% for x in ns.end_name_multiple %}
-        {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
+    {% if ns.end_name_one or ns.end_name_multiple or ns.one_to_many %}
+    # Use detailed=true to get entities with eagerly loaded relationships (for tables with lookup columns)
+    if detailed:
+        # Eagerly load all relationships to avoid N+1 queries
+        query = database.query({{ class.name }})
+        {% for x in ns.end_name_one %}
+        query = query.options(joinedload({{ class.name }}.{{ x[2] }}))
         {% endfor %}
-        {% for x in ns.one_to_many %}
-        {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()
-        {% endfor %}
-        item_data = {
-            "{{class.name | lower}}": {{ class.name | lower}}_item,
+        {{ class.name | lower}}_list = query.all()
+        
+        # Serialize with relationships included
+        result = []
+        for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
+            item_dict = {{ class.name | lower}}_item.__dict__.copy()
+            item_dict.pop('_sa_instance_state', None)
+            
+            # Add many-to-one relationships (foreign keys for lookup columns)
+            {% for x in ns.end_name_one %}
+            if {{ class.name | lower}}_item.{{ x[2] }}:
+                related_obj = {{ class.name | lower}}_item.{{ x[2] }}
+                related_dict = related_obj.__dict__.copy()
+                related_dict.pop('_sa_instance_state', None)
+                item_dict['{{ x[2] }}'] = related_dict
+            else:
+                item_dict['{{ x[2] }}'] = None
+            {% endfor %}
+            
+            {% if ns.end_name_multiple or ns.one_to_many %}
+            # Add many-to-many and one-to-many relationship IDs
             {% for x in ns.end_name_multiple %}
-            "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+            {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
+            item_dict['{{x[1] | lower}}_ids'] = [x[0] for x in {{x[1] | lower}}_ids]
             {% endfor %}
             {% for x in ns.one_to_many %}
-            "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+            {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()
+            item_dict['{{x[2]}}_ids'] = [x[0] for x in {{x[2]}}_ids]
             {% endfor %}
-        }
-        result.append(item_data)
-    return result
+            {% endif %}
+            
+            result.append(item_dict)
+        return result
+    else:
+        # Default: return flat entities (faster for charts/widgets without lookup columns)
+        return database.query({{ class.name }}).all()
     {% else %}
-    return {{ class.name | lower}}_list
+    return database.query({{ class.name }}).all()
     {% endif %}
 
 
@@ -824,7 +844,3 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port={% if port %}{{ port }}{%else%}8000{%endif%})
-
-
-
-

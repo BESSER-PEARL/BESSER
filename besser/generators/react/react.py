@@ -507,7 +507,15 @@ class ReactGenerator(GeneratorInterface):
                     column_dict["path"] = col.path.name if hasattr(col.path, "name") else str(col.path)
                     column_dict["entity"] = col.path.type.name if hasattr(col.path, "type") and hasattr(col.path.type, "name") else ""
                     column_dict["field"] = col.field.name if hasattr(col.field, "name") else str(col.field)
-                    column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
+                    # Determine type based on path multiplicity
+                    if hasattr(col.path, "multiplicity") and hasattr(col.path.multiplicity, "max"):
+                        is_list = col.path.multiplicity.max > 1 or col.path.multiplicity.max == "*"
+                        if is_list:
+                            column_dict["type"] = "list"
+                        else:
+                            column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
+                    else:
+                        column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
 
                 elif isinstance(col, ExpressionColumn):
                     column_dict["column_type"] = "expression"

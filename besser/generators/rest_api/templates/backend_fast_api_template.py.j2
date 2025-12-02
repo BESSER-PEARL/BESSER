@@ -291,14 +291,22 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
             {% endfor %}
             
             {% if ns.end_name_multiple or ns.one_to_many %}
-            # Add many-to-many and one-to-many relationship IDs
+            # Add many-to-many and one-to-many relationship objects (full details)
             {% for x in ns.end_name_multiple %}
-            {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
-            item_dict['{{x[1] | lower}}_ids'] = [x[0] for x in {{x[1] | lower}}_ids]
+            {{x[1] | lower}}_list = database.query({{x[0]}}).join({{x[4]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
+            item_dict['{{x[2]}}'] = []
+            for {{x[1] | lower}}_obj in {{x[1] | lower}}_list:
+                {{x[1] | lower}}_dict = {{x[1] | lower}}_obj.__dict__.copy()
+                {{x[1] | lower}}_dict.pop('_sa_instance_state', None)
+                item_dict['{{x[2]}}'].append({{x[1] | lower}}_dict)
             {% endfor %}
             {% for x in ns.one_to_many %}
-            {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()
-            item_dict['{{x[2]}}_ids'] = [x[0] for x in {{x[2]}}_ids]
+            {{x[0] | lower}}_list = database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()
+            item_dict['{{x[2]}}'] = []
+            for {{x[0] | lower}}_obj in {{x[0] | lower}}_list:
+                {{x[0] | lower}}_dict = {{x[0] | lower}}_obj.__dict__.copy()
+                {{x[0] | lower}}_dict.pop('_sa_instance_state', None)
+                item_dict['{{x[2]}}'].append({{x[0] | lower}}_dict)
             {% endfor %}
             {% endif %}
             
@@ -529,6 +537,25 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     database.commit()
     database.refresh(db_{{ class.name | lower}})
 
+    {# Set one-to-many relationships if provided #}
+    {% if ns.one_to_many %}
+    {% for x in ns.one_to_many %}
+    {# x[0] = related class, x[1] = foreign key field name, x[2] = relationship name #}
+    if {{ class.name | lower }}_data.{{x[2]}}:
+        # Validate that all {{x[0]}} IDs exist
+        for {{x[0] | lower}}_id in {{ class.name | lower }}_data.{{x[2]}}:
+            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{x[0] | lower}}_id).first()
+            if not db_{{x[0] | lower}}:
+                raise HTTPException(status_code=400, detail=f"{{x[0]}} with id {% raw %}{{% endraw %}{{x[0] | lower}}_id{% raw %}}{% endraw %} not found")
+        
+        # Update the related entities with the new foreign key
+        database.query({{x[0]}}).filter({{x[0]}}.id.in_({{ class.name | lower }}_data.{{x[2]}})).update(
+            {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.id{{"}"}}, synchronize_session=False
+        )
+        database.commit()
+    {% endfor %}
+    {% endif %}
+
     {% if ns.end_name_multiple and not nested_creations %}
     {% for x in ns.end_name_multiple %}
     if {{ class.name | lower}}_data.{{x[3]}}:
@@ -693,8 +720,36 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
         if not db_{{x[2]}}:
             raise HTTPException(status_code=400, detail="{{x[0]}} not found")
         setattr(db_{{ class.name | lower }}, '{{x[2]}}_id', {{ class.name | lower }}_data.{{x[2]}})
+    {% if x[1] == 0 %}
+    else:
+        setattr(db_{{ class.name | lower }}, '{{x[2]}}_id', None)
+    {% endif -%}
     {% endif -%}
     {% endfor -%}
+    {% endif %}
+    {# Update one-to-many relationships -#}
+    {% if ns.one_to_many %}
+    {% for x in ns.one_to_many %}
+    {# x[0] = related class, x[1] = foreign key field name, x[2] = relationship name #}
+    if {{ class.name | lower }}_data.{{x[2]}} is not None:
+        # Clear all existing relationships (set foreign key to NULL)
+        database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower }}.id).update(
+            {{"{"}}{{x[0]}}.{{x[1]}}_id: None{{"}"}}, synchronize_session=False
+        )
+        
+        # Set new relationships if list is not empty
+        if {{ class.name | lower }}_data.{{x[2]}}:
+            # Validate that all IDs exist
+            for {{x[0] | lower}}_id in {{ class.name | lower }}_data.{{x[2]}}:
+                db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{x[0] | lower}}_id).first()
+                if not db_{{x[0] | lower}}:
+                    raise HTTPException(status_code=400, detail=f"{{x[0]}} with id {% raw %}{{% endraw %}{{x[0] | lower}}_id{% raw %}}{% endraw %} not found")
+            
+            # Update the related entities with the new foreign key
+            database.query({{x[0]}}).filter({{x[0]}}.id.in_({{ class.name | lower }}_data.{{x[2]}})).update(
+                {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.id{{"}"}}, synchronize_session=False
+            )
+    {% endfor %}
     {% endif %}
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}

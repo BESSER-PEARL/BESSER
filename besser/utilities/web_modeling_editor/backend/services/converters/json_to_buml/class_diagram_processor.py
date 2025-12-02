@@ -99,8 +99,17 @@ def process_class_diagram(json_data):
             for attr_id in element.get("attributes", []):
                 attr = elements.get(attr_id)
                 if attr:
-                    visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
-                    if name is None:  # Skip if no name was returned
+                    # Check for new format (separate visibility and attributeType properties)
+                    if "visibility" in attr and "attributeType" in attr:
+                        # New format - use separate properties
+                        visibility = attr.get("visibility", "public")
+                        name = attr.get("name", "").strip()
+                        attr_type = attr.get("attributeType", "str")
+                    else:
+                        # Legacy format - parse from name string
+                        visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
+                    
+                    if not name:  # Skip if no name was returned
                         continue
                     if name in attribute_names:
                         raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")

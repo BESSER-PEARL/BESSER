@@ -7,7 +7,8 @@ from fastapi import HTTPException
 
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Enumeration, Property, Method, BinaryAssociation,
-    Generalization, PrimitiveDataType, EnumerationLiteral, AssociationClass, Metadata
+    Generalization, PrimitiveDataType, EnumerationLiteral, AssociationClass, Metadata,
+    Multiplicity, UNLIMITED_MAX_MULTIPLICITY
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import (
     parse_attribute, parse_method, parse_multiplicity, process_ocl_constraints
@@ -115,6 +116,21 @@ def process_class_diagram(json_data):
                         raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
                     attribute_names.add(name)
                     
+                    # Parse multiplicity if present
+                    attr_multiplicity = None
+                    if "multiplicity" in attr:
+                        mult_data = attr["multiplicity"]
+                        mult_min = mult_data.get("min", 1)
+                        mult_max = mult_data.get("max", 1)
+                        
+                        # Handle '*' for unlimited
+                        if mult_max == '*':
+                            mult_max = UNLIMITED_MAX_MULTIPLICITY
+                        
+                        # Only create multiplicity if not default (1..1)
+                        if mult_min != 1 or mult_max != 1:
+                            attr_multiplicity = Multiplicity(min=int(mult_min), max=int(mult_max))
+                    
                     # Find the type in the domain model
                     type_obj = None
                     for t in domain_model.types:
@@ -126,6 +142,11 @@ def process_class_diagram(json_data):
                         property_ = Property(name=name, type=type_obj, visibility=visibility)
                     else:
                         property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility)
+                    
+                    # Set multiplicity if present
+                    if attr_multiplicity:
+                        property_.multiplicity = attr_multiplicity
+                    
                     cls.add_attribute(property_)
 
             # Add methods

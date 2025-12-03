@@ -115,8 +115,19 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             for attr in sort(cls.attributes):
                 attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
                 visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
+                
+                # Add multiplicity if not default (1..1)
+                multiplicity_str = ""
+                if hasattr(attr, 'multiplicity') and attr.multiplicity:
+                    mult = attr.multiplicity
+                    is_default = (mult.min == 1 and (mult.max == 1 or mult.max == "1"))
+                    if not is_default:
+                        # Use "*" for unlimited max
+                        max_val = '"*"' if mult.max == 9999 or mult.max == "*" else mult.max
+                        multiplicity_str = f', multiplicity=Multiplicity({mult.min}, {max_val})'
+                
                 f.write(f"{cls_var_name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
-                       f"type={attr_type}{visibility_str})\n")
+                       f"type={attr_type}{visibility_str}{multiplicity_str})\n")
 
             # Write methods
             for method in sort(cls.methods):
@@ -224,8 +235,19 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                 for attr in sort(ac.attributes):
                     attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
                     visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
+                    
+                    # Add multiplicity if not default (1..1)
+                    multiplicity_str = ""
+                    if hasattr(attr, 'multiplicity') and attr.multiplicity:
+                        mult = attr.multiplicity
+                        is_default = (mult.min == 1 and (mult.max == 1 or mult.max == "1"))
+                        if not is_default:
+                            # Use "*" for unlimited max
+                            max_val = '"*"' if mult.max == 9999 or mult.max == "*" else mult.max
+                            multiplicity_str = f', multiplicity=Multiplicity({mult.min}, {max_val})'
+                    
                     f.write(f"{ac_var_name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
-                           f"type={attr_type}{visibility_str})\n")
+                           f"type={attr_type}{visibility_str}{multiplicity_str})\n")
 
                 # Write methods for the association class
                 for method in sort(ac.methods):

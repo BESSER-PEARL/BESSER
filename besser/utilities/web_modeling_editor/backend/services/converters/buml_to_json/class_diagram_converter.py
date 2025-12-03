@@ -150,7 +150,7 @@ def class_buml_to_json(domain_model):
                         attr.type.name if hasattr(attr.type, "name") else str(attr.type)
                     )
 
-                    elements[attr_id] = {
+                    attr_element = {
                         "id": attr_id,
                         "name": attr.name, 
                         "type": "ClassAttribute",
@@ -164,6 +164,20 @@ def class_buml_to_json(domain_model):
                         "visibility": attr.visibility,
                         "attributeType": attr_type,
                     }
+                    
+                    # Add multiplicity if not the default (1..1)
+                    if hasattr(attr, 'multiplicity') and attr.multiplicity:
+                        mult = attr.multiplicity
+                        mult_min = mult.min
+                        mult_max = '*' if mult.max == UNLIMITED_MAX_MULTIPLICITY or mult.max == 9999 else mult.max
+                        # Only add if not default
+                        if mult_min != 1 or mult_max != 1:
+                            attr_element["multiplicity"] = {
+                                "min": mult_min,
+                                "max": mult_max
+                            }
+
+                    elements[attr_id] = attr_element
                     attribute_ids.append(attr_id)
                     y_offset += 30
 

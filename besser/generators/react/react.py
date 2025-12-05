@@ -48,7 +48,7 @@ from besser.BUML.metamodel.gui.events_actions import (
     Transition,
     Update,
 )
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel, Enumeration
 from besser.generators import GeneratorInterface
 
 
@@ -500,7 +500,15 @@ class ReactGenerator(GeneratorInterface):
                 if isinstance(col, FieldColumn):
                     column_dict["column_type"] = "field"
                     column_dict["field"] = col.field.name if hasattr(col.field, "name") else str(col.field)
-                    column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
+
+                    # Check if the field type is an Enumeration
+                    field_type = getattr(col.field, "type", None)
+                    if isinstance(field_type, Enumeration):
+                        column_dict["type"] = "enum"
+                        # Extract enumeration literal names as options
+                        column_dict["options"] = sorted([literal.name for literal in field_type.literals])
+                    else:
+                        column_dict["type"] = field_type.name if hasattr(field_type, "name") else "str"
 
                 elif isinstance(col, LookupColumn):
                     column_dict["column_type"] = "lookup"

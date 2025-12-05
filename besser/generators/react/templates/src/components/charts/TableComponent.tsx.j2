@@ -10,6 +10,7 @@ interface TableColumn {
   columnType?: string;
   path?: string;
   entity?: string;
+  options?: string[];
   lookupField?: string;
   relationshipKey?: string;
 }
@@ -145,7 +146,7 @@ export const TableComponent: React.FC<Props> = ({
   const columns: TableColumn[] = useMemo(() => {
     if (resolvedOptions.columns.length > 0) {
       return resolvedOptions.columns
-        .filter((col): col is { field: string; label?: string; type?: string; column_type?: string; path?: string; entity?: string } | string => Boolean(col))
+        .filter((col): col is { field: string; label?: string; type?: string; column_type?: string; path?: string; entity?: string; options?: string[] } | string => Boolean(col))
         .map((col) => {
           if (typeof col === "string") {
             return { field: col, label: humanize(col), type: "string" };
@@ -168,6 +169,7 @@ export const TableComponent: React.FC<Props> = ({
             columnType: col.column_type,
             path: col.path,
             entity: col.entity,
+            options: col.options,
             lookupField: col.column_type === "lookup" ? col.field : undefined,  // Store the nested field (e.g., "name")
             relationshipKey: relationshipKey,  // API relationship key (e.g., "customer")
           };
@@ -590,6 +592,37 @@ export const TableComponent: React.FC<Props> = ({
                   }
                   
                   // For regular fields, render input
+                  // For enum fields, use dropdown
+                  if (col.type === 'enum' && col.options && col.options.length > 0) {
+                    return (
+                      <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                        <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
+                          {col.label}
+                        </label>
+                        <select
+                          id={`modal-input-${col.field}`}
+                          value={formValues[col.field] ?? ""}
+                          onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.value }))}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid #cbd5f5",
+                            fontSize: "15px",
+                            color: "#1e293b",
+                            background: "#f8fafc",
+                          }}
+                        >
+                          <option value="">-- Select {col.label} --</option>
+                          {col.options.map((option: string) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  }
+                  
                   // For boolean fields, use checkbox
                   if (col.type === 'bool' || col.type === 'boolean') {
                     return (

@@ -146,16 +146,13 @@ def class_buml_to_json(domain_model):
             if isinstance(type_obj, Class):
                 for attr in type_obj.attributes:
                     attr_id = str(uuid.uuid4())
-                    visibility_symbol = next(
-                        k for k, v in VISIBILITY_MAP.items() if v == attr.visibility
-                    )
                     attr_type = (
                         attr.type.name if hasattr(attr.type, "name") else str(attr.type)
                     )
 
                     elements[attr_id] = {
                         "id": attr_id,
-                        "name": f"{visibility_symbol} {attr.name}: {attr_type}",
+                        "name": attr.name, 
                         "type": "ClassAttribute",
                         "owner": element_id,
                         "bounds": {
@@ -164,6 +161,8 @@ def class_buml_to_json(domain_model):
                             "width": 159,
                             "height": 30,
                         },
+                        "visibility": attr.visibility,
+                        "attributeType": attr_type,
                     }
                     attribute_ids.append(attr_id)
                     y_offset += 30
@@ -203,7 +202,7 @@ def class_buml_to_json(domain_model):
                         )
                         method_signature += f": {return_type}"
 
-                    elements[method_id] = {
+                    method_element = {
                         "id": method_id,
                         "name": method_signature,
                         "type": "ClassMethod",
@@ -215,6 +214,12 @@ def class_buml_to_json(domain_model):
                             "height": 30,
                         },
                     }
+                    
+                    # Add code attribute if it exists and is not empty
+                    if hasattr(method, "code") and method.code:
+                        method_element["code"] = method.code
+
+                    elements[method_id] = method_element
                     method_ids.append(method_id)
                     y_offset += 30
 

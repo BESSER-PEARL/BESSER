@@ -488,6 +488,7 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {# Validate that all related entities exist BEFORE creating the main entity #}
     if {{ class.name | lower}}_data.{{x[3]}}:
         for id in {{ class.name | lower}}_data.{{x[3]}}:
+            # Entity already validated before creation
             db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == id).first()
             if not db_{{x[1] | lower}}:
                 raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {id} not found")
@@ -899,3 +900,7 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port={% if port %}{{ port }}{%else%}8000{%endif%})
+
+
+
+

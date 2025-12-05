@@ -12,6 +12,7 @@ from besser.BUML.metamodel.gui import (
 from besser.BUML.metamodel.gui.dashboard import (
     AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn
 )
+from besser.BUML.metamodel.gui.dashboard import AgentComponent
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
 

@@ -70,4 +70,31 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
         return str(self.{{ first_attr.name }})
 
     {%- endif %}
+
+    {#- Generate methods with code #}
+    {%- for method in sort_by_timestamp(class_obj.methods) %}
+    {%- if method.code %}
+    {#- If method has code, use it directly (it should contain the full function definition) #}
+{{ method.code | indent(4, first=true) }}
+    {%- else %}
+    {#- Otherwise generate method signature from metadata #}
+    {%- set param_list = [] %}
+    {%- for param in method.parameters %}
+        {%- set param_str = param.name %}
+        {%- if param.type %}
+            {%- set param_str = param_str ~ ': ' ~ param.type.name %}
+        {%- endif %}
+        {%- if param.default_value is defined and param.default_value is not none %}
+            {%- set param_str = param_str ~ ' = ' ~ param.default_value %}
+        {%- endif %}
+        {%- set _ = param_list.append(param_str) %}
+    {%- endfor %}
+    def {{ method.name }}(self{% if param_list %}, {{ param_list | join(', ') }}{% endif %}){% if method.type %} -> {{ method.type.name }}{% endif %}:
+        """
+        {{ method.name }} method for {{ class_obj.name }}.
+        """
+        pass
+    {%- endif %}
+
+    {%- endfor %}
 {% endfor %}

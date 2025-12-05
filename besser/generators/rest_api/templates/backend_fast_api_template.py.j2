@@ -293,12 +293,12 @@ def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = 
             {% if ns.end_name_multiple or ns.one_to_many %}
             # Add many-to-many and one-to-many relationship objects (full details)
             {% for x in ns.end_name_multiple %}
-            {{x[1] | lower}}_list = database.query({{x[0]}}).join({{x[4]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
-            item_dict['{{x[2]}}'] = []
+            {{x[1] | lower}}_list = database.query({{x[1]}}).join({{x[4]}}, {{x[1]}}.id == {{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
+            item_dict['{{x[3]}}'] = []
             for {{x[1] | lower}}_obj in {{x[1] | lower}}_list:
                 {{x[1] | lower}}_dict = {{x[1] | lower}}_obj.__dict__.copy()
                 {{x[1] | lower}}_dict.pop('_sa_instance_state', None)
-                item_dict['{{x[2]}}'].append({{x[1] | lower}}_dict)
+                item_dict['{{x[3]}}'].append({{x[1] | lower}}_dict)
             {% endfor %}
             {% for x in ns.one_to_many %}
             {{x[0] | lower}}_list = database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()

@@ -223,7 +223,7 @@ def get_statistics(database: Session = Depends(get_db)):
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), lns.end2.multiplicity.min, lns.end2.multiplicity.max)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max > 1 %}
             {# 1:N relationship - Library has many Books #}
-            {% do ns.one_to_many.append((class2_name, name_end1, class2_name.lower())) %}
+            {% do ns.one_to_many.append((class2_name, name_end1, name_end2)) %}
         {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max == 1 %}
@@ -248,7 +248,7 @@ def get_statistics(database: Session = Depends(get_db)):
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), plns.end2.multiplicity.min, plns.end2.multiplicity.max)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max > 1 %}
             {# 1:N inherited relationship #}
-            {% do ns.one_to_many.append((class2_name, name_end1, class2_name.lower())) %}
+            {% do ns.one_to_many.append((class2_name, name_end1, name_end2)) %}
         {% elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 %}

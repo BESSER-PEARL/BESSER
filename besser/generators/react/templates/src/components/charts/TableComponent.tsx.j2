@@ -9,6 +9,7 @@ interface TableColumn {
   type?: string;
   columnType?: string;
   path?: string;
+  entity?: string;
   lookupField?: string;
   relationshipKey?: string;
 }
@@ -144,7 +145,7 @@ export const TableComponent: React.FC<Props> = ({
   const columns: TableColumn[] = useMemo(() => {
     if (resolvedOptions.columns.length > 0) {
       return resolvedOptions.columns
-        .filter((col): col is { field: string; label?: string; type?: string; column_type?: string; path?: string } | string => Boolean(col))
+        .filter((col): col is { field: string; label?: string; type?: string; column_type?: string; path?: string; entity?: string } | string => Boolean(col))
         .map((col) => {
           if (typeof col === "string") {
             return { field: col, label: humanize(col), type: "string" };
@@ -166,6 +167,7 @@ export const TableComponent: React.FC<Props> = ({
             type: col.type || "string",
             columnType: col.column_type,
             path: col.path,
+            entity: col.entity,
             lookupField: col.column_type === "lookup" ? col.field : undefined,  // Store the nested field (e.g., "name")
             relationshipKey: relationshipKey,  // API relationship key (e.g., "customer")
           };
@@ -256,17 +258,18 @@ export const TableComponent: React.FC<Props> = ({
         const backendBase = "http://localhost:8000";
         
         for (const col of columns) {
-          if (col.columnType === 'lookup' && col.path) {
+          if (col.columnType === 'lookup' && col.entity) {
+            const endpoint = col.entity.toLowerCase();
             try {
-              const response = await axios.get(`${backendBase}/${col.path}/`);
+              const response = await axios.get(`${backendBase}/${endpoint}/`);
               if (Array.isArray(response.data)) {
-                options[col.path] = response.data;
+                options[endpoint] = response.data;
               } else if (response.data && typeof response.data === 'object') {
-                options[col.path] = Array.isArray(response.data.results) ? response.data.results : [response.data];
+                options[endpoint] = Array.isArray(response.data.results) ? response.data.results : [response.data];
               }
             } catch (err) {
-              console.error(`Error fetching ${col.path} options:`, err);
-              options[col.path] = [];
+              console.error(`Error fetching ${endpoint} options:`, err);
+              options[endpoint] = [];
             }
           }
         }
@@ -472,8 +475,9 @@ export const TableComponent: React.FC<Props> = ({
               >
                 {columns.map(col => {
                   // For lookup columns, render a select dropdown
-                  if (col.columnType === 'lookup' && col.path) {
-                    const options = lookupOptions[col.path] || [];
+                  if (col.columnType === 'lookup' && col.entity) {
+                    const endpoint = col.entity.toLowerCase();
+                    const options = lookupOptions[endpoint] || [];
                     
                     // For list-type lookups (1:N), use multi-select
                     if (col.type === 'list') {
@@ -514,7 +518,7 @@ export const TableComponent: React.FC<Props> = ({
                     }
                     
                     // For single lookups (N:1), use regular select
-                    const fkField = `${col.path}_id`;
+                    const fkField = `${endpoint}_id`;
                     
                     return (
                       <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>

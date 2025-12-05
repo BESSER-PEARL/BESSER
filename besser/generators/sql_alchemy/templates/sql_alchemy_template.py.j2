@@ -108,7 +108,7 @@ class {{ class.name }}(
             {#- Foreign Key #}
             {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}
     {{end.name}}_id: Mapped[int] = mapped_column(ForeignKey("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
-            {%- if end.multiplicity.min > 0 %}, nullable=False{% endif %}
+            {%- if end.multiplicity.min == 0 %}, nullable=True{%- endif %}
             {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
         {%- endif %}
     {%- endfor %}

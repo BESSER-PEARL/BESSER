@@ -2,6 +2,47 @@ from typing import Optional, Sequence
 
 from besser.BUML.metamodel.gui.graphical_ui import ViewComponent
 from besser.BUML.metamodel.gui.style import Alignment
+from besser.BUML.metamodel.structural import Property
+
+
+class AgentComponent(ViewComponent):
+    """Represents a BESSER Agent component in the GUI.
+    
+    Args:
+        name (str): The name of the agent component.
+        agent_name (str | None): The name of the agent diagram to reference.
+        agent_title (str | None): Display title for the agent component.
+    """
+    
+    def __init__(
+        self,
+        name: str,
+        agent_name: Optional[str] = None,
+        agent_title: Optional[str] = None,
+        **kwargs,
+    ):
+        super().__init__(name, **kwargs)
+        self.agent_name = agent_name
+        self.agent_title = agent_title
+
+    
+    @property
+    def agent_name(self) -> Optional[str]:
+        """Optional[str]: Name of the agent diagram to reference."""
+        return self._agent_name
+    
+    @agent_name.setter
+    def agent_name(self, value: Optional[str]):
+        self._agent_name = value
+    
+    @property
+    def agent_title(self) -> Optional[str]:
+        """Optional[str]: Display title for the agent component."""
+        return self._agent_title
+    
+    @agent_title.setter
+    def agent_title(self, value: Optional[str]):
+        self._agent_title = value
 
 
 class AgentComponent(ViewComponent):
@@ -810,16 +851,142 @@ class RadialBarChart(Chart):
             f"end_angle={self.end_angle}, inner_radius={self.inner_radius})"
         )
 
-class TableChart(Chart):
-    """Represents a tabular chart component in the dashboard.
+class Column:
+    """Represents a column in a table.
 
     Args:
-        name (str): The name of the table chart.
+        label (str): The display label of the column.
+    
+    Attributes:
+        label (str): The display label of the column.
+    """
+    def __init__(self, label: str):
+        self.label = label
+
+    @property
+    def label(self) -> str:
+        """Property: Get the label of the column."""
+        return self._label
+
+    @label.setter
+    def label(self, value: str):
+        """Property: Set the label of the column."""
+        self._label = value
+
+class FieldColumn(Column):
+    """Represents a field column in a table.
+
+    Args:
+        label (str): The display label of the column.
+        field (Property): The property representing the field.
+    Attributes:
+        label (str): The display label of the column.
+        field (Property): The property representing the field.
+    """
+
+    def __init__(self, label: str, field: Property):
+        super().__init__(label)
+        self.field = field
+
+    @property
+    def field(self) -> Property:
+        """Property: Get the field property of the column."""
+        return self._field
+
+    @field.setter
+    def field(self, value: Property):
+        """Property: Set the field property of the column."""
+        self._field = value
+
+    def __repr__(self):
+        return f"FieldColumn(label={self.label}, field={self.field.name})"
+
+class LookupColumn(Column):
+    """Represents a lookup column in a table.
+
+    Args:
+        label (str): The display label of the column.
+        path (Property): The property representing the lookup path.
+        field (Property): The property representing the lookup field.
+        
+    Attributes:
+        label (str): The display label of the column.
+        path (Property): The property representing the lookup path.
+        field (Property): The property representing the lookup field.
+    """
+
+    def __init__(
+        self,
+        label: str,
+        path: Property,
+        field: Property
+    ):
+        super().__init__(label)
+        self.path = path
+        self.field = field
+
+    @property
+    def path(self) -> Property:
+        """Property: Get the path property of the lookup column."""
+        return self._path
+
+    @path.setter
+    def path(self, value: Property):
+        """Property: Set the path property of the lookup column."""
+        self._path = value
+
+    @property
+    def field(self) -> Property:
+        """Property: Get the field property of the lookup column."""
+        return self._field
+
+    @field.setter
+    def field(self, value: Property):
+        """Property: Set the field property of the lookup column."""
+        self._field = value
+
+    def __repr__(self):
+        return f"LookupColumn(label={self.label}, field={self.field.name})"
+
+class ExpressionColumn(Column):
+    """Represents an expression column in a table.
+
+    Args:
+        label (str): The display label of the column.
+        expression (str): The expression used to compute the column value.
+        
+    Attributes:
+        label (str): The display label of the column.
+        expression (str): The expression used to compute the column value.
+    """
+
+    def __init__(self, label: str, expression: str):
+        super().__init__(label)
+        self.expression = expression
+
+    @property
+    def expression(self) -> str:
+        """Property: Get the expression of the column."""
+        return self._expression
+
+    @expression.setter
+    def expression(self, value: str):
+        """Property: Set the expression of the column."""
+        self._expression = value
+
+    def __repr__(self):
+        return f"ExpressionColumn(label={self.label}, expression={self.expression})"
+
+class Table(ViewComponent):
+    """Represents a table component in the dashboard.
+
+    Args:
+        name (str): The name of the table.
         show_header (bool): Whether to render the table header.
         striped_rows (bool): Whether to alternate row background colors.
         show_pagination (bool): Whether to display pagination information.
         rows_per_page (int): Number of rows shown per page.
-        title (str | None): Optional title of the table chart.
+        title (str | None): Optional title of the table.
         primary_color (str | None): Optional primary color used for the header/background.
 
     Attributes:
@@ -838,15 +1005,39 @@ class TableChart(Chart):
         rows_per_page: int = 5,
         title: Optional[str] = None,
         primary_color: Optional[str] = None,
-        columns: Optional[Sequence[str]] = None,
+        columns: Optional[Sequence[Column]] = None,
+        action_buttons: bool = False,
         **kwargs,
     ):
-        super().__init__(name, title=title, primary_color=primary_color, **kwargs)
+        super().__init__(name, **kwargs)
+        self.title = title
+        self.primary_color = primary_color
         self.show_header = show_header
         self.striped_rows = striped_rows
         self.show_pagination = show_pagination
         self.rows_per_page = rows_per_page
         self.columns = list(columns or [])
+        self.action_buttons = action_buttons
+
+    @property
+    def title(self) -> Optional[str]:
+        """Property: Get the title of the table."""
+        return self._title
+
+    @title.setter
+    def title(self, value: Optional[str]):
+        """Property: Set the title of the table."""
+        self._title = value
+
+    @property
+    def primary_color(self) -> Optional[str]:
+        """Property: Get the primary color of the table."""
+        return self._primary_color
+
+    @primary_color.setter
+    def primary_color(self, value: Optional[str]):
+        """Property: Set the primary color of the table."""
+        self._primary_color = value
 
     @property
     def show_header(self) -> bool:
@@ -893,23 +1084,33 @@ class TableChart(Chart):
         self._rows_per_page = max(1, int_value)
 
     @property
-    def columns(self) -> list[str]:
+    def columns(self) -> list[Column]:
         """Property: Get the configured column names."""
         return self._columns
 
     @columns.setter
-    def columns(self, value: Sequence[str]):
+    def columns(self, value: Sequence[Column]):
         """Property: Set the configured column names."""
         if value is None:
             self._columns = []
             return
-        self._columns = [str(item) for item in value if item]
+        self._columns = [item for item in value if item]
+
+    @property
+    def action_buttons(self) -> bool:
+        """Property: Get whether action buttons are displayed."""
+        return self._action_buttons
+
+    @action_buttons.setter
+    def action_buttons(self, value: bool):
+        """Property: Set whether action buttons are displayed."""
+        self._action_buttons = bool(value)
 
     def __repr__(self):
         return (
-            f"TableChart(name={self.name}, show_header={self.show_header}, "
+            f"Table(name={self.name}, show_header={self.show_header}, "
             f"striped_rows={self.striped_rows}, rows_per_page={self.rows_per_page}, "
-            f"columns={self.columns})"
+            f"columns={self.columns}, action_buttons={self.action_buttons})"
         )
 
 class MetricCard(ViewComponent):

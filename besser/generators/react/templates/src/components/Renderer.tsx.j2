@@ -8,9 +8,9 @@ import { PieChartComponent } from "./charts/PieChartComponent";
 import { RadialBarChartComponent } from "./charts/RadialBarChartComponent";
 import { RadarChartComponent } from "./charts/RadarChartComponent";
 import { MetricCardComponent } from "./charts/MetricCardComponent";
-import { TableChartComponent } from "./charts/TableChartComponent";
+import { TableComponent } from "./charts/TableComponent";
 import { AgentComponent } from "./AgentComponent";
-import "./charts/TableChartComponent.css";
+import "./charts/TableComponent.css";
 
 export interface RendererProps {
   component: any;
@@ -38,21 +38,27 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
 
   // Chart and metric card data fetching effect
   useEffect(() => {
-    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card", "table-chart"].includes(component.type)) {
+    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card", "table"].includes(component.type)) {
       const endpoint = component.data_binding?.endpoint;
       if (endpoint) {
         setLoading(true);
         setError(null);
         // Always use backend base URL for relative endpoints
         const backendBase = "http://localhost:8000";
-        const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
         
-        // Backend returns flat entities by default (perfect for charts)
-        // Use ?detailed=true if you need relationships included
+        // Check if table has lookup columns - if so, request detailed data with joins
+        const hasLookupColumns = component.chart?.columns?.some(
+          (col: any) => typeof col === 'object' && col.column_type === 'lookup'
+        );
+        
+        // Add detailed=true query param if there are lookup columns
+        const urlParams = hasLookupColumns ? '?detailed=true' : '';
+        const url = endpoint.startsWith("/") 
+          ? backendBase + endpoint + urlParams
+          : endpoint + urlParams;
         
         axios.get(url)
           .then((res) => {
-            console.log("API response:", res.data); // Debug log
             let data: any[] = [];
             
             // If response is already an array, use it directly
@@ -518,15 +524,20 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     );
   }
 
-  if (component.type === "table-chart") {
+  if (component.type === "table") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
+    // Merge action-buttons from attributes into options
+    const options = {
+      ...(component.chart || {}),
+      actionButtons: component.attributes?.["action-buttons"] ?? false,
+    };
     return (
-      <TableChartComponent
+      <TableComponent
         id={component.id}
         title={component.title || component.name}
         data={chartData}
-        options={component.chart || {}}
+        options={options}
         styles={style}
         dataBinding={component.data_binding}
       />

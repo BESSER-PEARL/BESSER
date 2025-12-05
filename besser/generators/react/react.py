@@ -29,12 +29,15 @@ from besser.BUML.metamodel.gui import (
 from besser.BUML.metamodel.gui.dashboard import (
     AgentComponent,
     BarChart,
+    FieldColumn,
+    LookupColumn,
+    ExpressionColumn,
     LineChart,
     MetricCard,
     PieChart,
     RadarChart,
     RadialBarChart,
-    TableChart,
+    Table,
 )
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
@@ -475,7 +478,7 @@ class ReactGenerator(GeneratorInterface):
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
 
-        if isinstance(element, TableChart):
+        if isinstance(element, Table):
             node["title"] = element.title or self._humanize(element.name)
             node["chart"] = self._clean_dict(
                 {
@@ -483,20 +486,51 @@ class ReactGenerator(GeneratorInterface):
                     "stripedRows": element.striped_rows,
                     "showPagination": element.show_pagination,
                     "rowsPerPage": element.rows_per_page,
+                    "actionButtons": getattr(element, "action_buttons", False),
                 }
             )
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("background") or "#2c3e50"
-            columns = [
-                {
-                    "field": column,
-                    "label": self._humanize(column),
-                }
-                for column in getattr(element, "columns", []) or []
-                if isinstance(column, str) and column
-            ]
+
+            # Serialize columns from Column objects
+            columns = []
+            for col in getattr(element, "columns", []) or []:
+                column_dict = {"label": col.label}
+
+                if isinstance(col, FieldColumn):
+                    column_dict["column_type"] = "field"
+                    column_dict["field"] = col.field.name if hasattr(col.field, "name") else str(col.field)
+                    column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
+
+                elif isinstance(col, LookupColumn):
+                    column_dict["column_type"] = "lookup"
+                    column_dict["path"] = col.path.name if hasattr(col.path, "name") else str(col.path)
+                    column_dict["entity"] = col.path.type.name if hasattr(col.path, "type") and hasattr(col.path.type, "name") else ""
+                    column_dict["field"] = col.field.name if hasattr(col.field, "name") else str(col.field)
+                    # Determine type based on path multiplicity
+                    if hasattr(col.path, "multiplicity") and hasattr(col.path.multiplicity, "max"):
+                        is_list = col.path.multiplicity.max > 1 or col.path.multiplicity.max == "*"
+                        if is_list:
+                            column_dict["type"] = "list"
+                        else:
+                            column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
+                    else:
+                        column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
+
+                elif isinstance(col, ExpressionColumn):
+                    column_dict["column_type"] = "expression"
+                    column_dict["field"] = col.label
+                    column_dict["expression"] = col.expression
+                    column_dict["type"] = "computed"
+
+                columns.append(column_dict)
+
             if columns:
                 node["chart"]["columns"] = columns
+            
+            # Remove raw GrapesJS columns from attributes - we use the processed columns in chart
+            if "attributes" in node and isinstance(node["attributes"], dict) and "columns" in node["attributes"]:
+                node["attributes"] = {k: v for k, v in node["attributes"].items() if k != "columns"}
 
         if isinstance(element, MetricCard):
             node["title"] = element.metric_title or self._humanize(element.name)
@@ -901,8 +935,8 @@ class ReactGenerator(GeneratorInterface):
             return "radar-chart"
         if isinstance(element, RadialBarChart):
             return "radial-bar-chart"
-        if isinstance(element, TableChart):
-            return "table-chart"
+        if isinstance(element, Table):
+            return "table"
         if isinstance(element, MetricCard):
             return "metric-card"
         if isinstance(element, AgentComponent):

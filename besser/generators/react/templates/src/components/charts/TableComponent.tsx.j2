@@ -221,17 +221,18 @@ export const TableComponent: React.FC<Props> = ({
           // For lookup columns in edit mode, use the FK ID
           if (col.columnType === 'lookup') {
             if (col.type === 'list') {
-              // For list-type lookups (1:N), get array of IDs from related objects
+              // For list-type lookups (1:N or N:M), get array of IDs from related objects
               const relatedArray = editRowData[col.relationshipKey || col.field];
               if (Array.isArray(relatedArray)) {
-                initialValues[col.field] = relatedArray.map(item => item.id);
+                initialValues[col.field] = relatedArray.map((item: any) => String(item.id));
               } else {
                 initialValues[col.field] = [];
               }
             } else {
-              // For single lookups (N:1), use the FK ID field
-              const fkField = `${col.field}_id`;
-              initialValues[fkField] = editRowData[fkField] ?? "";
+              // For single lookups (N:1), use the path as the field name
+              const fkField = col.path || col.field;
+              const fkIdField = `${fkField}_id`;
+              initialValues[col.field] = editRowData[fkIdField] ?? "";
             }
           } else {
             const value = editRowData[col.field];
@@ -418,18 +419,17 @@ export const TableComponent: React.FC<Props> = ({
                   // Process form values based on column types
                   const processedValues: Record<string, any> = {};
                   columns.forEach(col => {
-                    // For lookup columns, use the FK field name (path_id)
+                    // For lookup columns, use the path as the API field name
                     if (col.columnType === 'lookup' && col.path) {
                       if (col.type === 'list') {
-                        // For list-type lookups (1:N), send array of IDs
+                        // For list-type lookups (N:M or 1:N), send array of IDs
                         const value = formValues[col.field];
                         processedValues[col.path] = Array.isArray(value) 
                           ? value.map(v => parseInt(v, 10)).filter(v => !isNaN(v))
                           : [];
                       } else {
-                        // For single lookups (N:1), send single FK ID
-                        const fkField = `${col.path}_id`;
-                        const value = formValues[fkField];
+                        // For single lookups (N:1), send single FK ID using the field from form
+                        const value = formValues[col.field];
                         processedValues[col.path] = (value && value !== "") ? parseInt(value, 10) : null;
                       }
                     } else {
@@ -443,8 +443,15 @@ export const TableComponent: React.FC<Props> = ({
                         // Convert to integer
                         const intValue = parseInt(value, 10);
                         processedValues[col.field] = isNaN(intValue) ? 0 : intValue;
+                      } else if (col.type === 'float') {
+                        // Convert to float
+                        const floatValue = parseFloat(value);
+                        processedValues[col.field] = isNaN(floatValue) ? 0 : floatValue;
+                      } else if (col.type === 'bool' || col.type === 'boolean') {
+                        // Convert to boolean
+                        processedValues[col.field] = Boolean(value);
                       } else {
-                        // Keep as string
+                        // Keep as string (includes date, datetime, time, text)
                         processedValues[col.field] = value;
                       }
                     }
@@ -457,6 +464,9 @@ export const TableComponent: React.FC<Props> = ({
                       await fetchTableData();
                     } catch (err) {
                       console.error("Error saving data:", err);
+                      if (axios.isAxiosError(err) && err.response) {
+                        console.error("Response data:", err.response.data);
+                      }
                     }
                   } else if (modalMode === 'edit') {
                     const rowId = getRowId(editRowData);
@@ -550,17 +560,15 @@ export const TableComponent: React.FC<Props> = ({
                     }
                     
                     // For single lookups (N:1), use regular select
-                    const fkField = `${endpoint}_id`;
-                    
                     return (
                       <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                        <label htmlFor={`modal-input-${fkField}`} style={{ fontWeight: 500, color: "#334155" }}>
+                        <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
                           {col.label}
                         </label>
                         <select
-                          id={`modal-input-${fkField}`}
-                          value={formValues[fkField] ?? ""}
-                          onChange={e => setFormValues(fv => ({ ...fv, [fkField]: e.target.value }))}
+                          id={`modal-input-${col.field}`}
+                          value={formValues[col.field] ?? ""}
+                          onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.value }))}
                           style={{
                             padding: "8px 12px",
                             borderRadius: "6px",
@@ -741,10 +749,10 @@ export const TableComponent: React.FC<Props> = ({
                     // For lookup columns, get nested value using the API relationship key
                     let cellValue;
                     if (column.columnType === 'lookup' && column.lookupField) {
-                      // Check if this is a list type (1:N relationship)
+                      // Check if this is a list type (1:N or N:M relationship)
                       if (column.type === 'list') {
-                        // Get the array of related objects
-                        const relatedArray = row[column.relationshipKey || column.field];
+                        // Get the array of related objects using the field name
+                        const relatedArray = row[column.field];
                         if (Array.isArray(relatedArray) && column.lookupField) {
                           // Extract the field values from each object and join them
                           cellValue = relatedArray

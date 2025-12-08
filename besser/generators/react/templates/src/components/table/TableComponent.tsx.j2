@@ -11,6 +11,7 @@ interface TableColumn {
   path?: string;
   entity?: string;
   options?: string[];
+  required?: boolean;
   lookupField?: string;
   relationshipKey?: string;
 }
@@ -146,7 +147,7 @@ export const TableComponent: React.FC<Props> = ({
   const columns: TableColumn[] = useMemo(() => {
     if (resolvedOptions.columns.length > 0) {
       return resolvedOptions.columns
-        .filter((col): col is { field: string; label?: string; type?: string; column_type?: string; path?: string; entity?: string; options?: string[] } | string => Boolean(col))
+        .filter((col): col is { field: string; label?: string; type?: string; column_type?: string; path?: string; entity?: string; options?: string[]; required?: boolean } | string => Boolean(col))
         .map((col) => {
           if (typeof col === "string") {
             return { field: col, label: humanize(col), type: "string" };
@@ -170,6 +171,7 @@ export const TableComponent: React.FC<Props> = ({
             path: col.path,
             entity: col.entity,
             options: col.options,
+            required: col.required ?? false,
             lookupField: col.column_type === "lookup" ? col.field : undefined,  // Store the nested field (e.g., "name")
             relationshipKey: relationshipKey,  // API relationship key (e.g., "customer")
           };
@@ -209,6 +211,7 @@ export const TableComponent: React.FC<Props> = ({
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [editRowData, setEditRowData] = useState<any>(null);
   const [lookupOptions, setLookupOptions] = useState<Record<string, any[]>>({});
+  const [validationError, setValidationError] = useState<string>("");
 
   useEffect(() => {
     setCurrentPage(1);
@@ -217,6 +220,7 @@ export const TableComponent: React.FC<Props> = ({
   // Reset form values when modal opens
   useEffect(() => {
     if (showModal) {
+      setValidationError("");
       const initialValues: Record<string, any> = {};
       columns.forEach(col => {
         if (modalMode === 'edit' && editRowData) {
@@ -412,9 +416,54 @@ export const TableComponent: React.FC<Props> = ({
               <h4 style={{ margin: 0, marginBottom: "18px", color: "#1e293b" }}>
                 {modalMode === 'edit' ? `Edit ${dataBinding?.entity || 'Register'}` : `Add ${dataBinding?.entity || 'Register'}`}
               </h4>
+              {validationError && (
+                <div style={{
+                  padding: "12px",
+                  marginBottom: "16px",
+                  backgroundColor: "#fee2e2",
+                  border: "1px solid #fecaca",
+                  borderRadius: "6px",
+                  color: "#991b1b",
+                  fontSize: "14px",
+                }}>
+                  {validationError}
+                </div>
+              )}
               <form
                 onSubmit={async e => {
                   e.preventDefault();
+                  
+                  // Validate required fields
+                  const missingFields: string[] = [];
+                  columns.forEach(col => {
+                    if (col.required) {
+                      if (col.columnType === 'lookup') {
+                        if (col.type === 'list') {
+                          const value = formValues[col.field];
+                          if (!value || (Array.isArray(value) && value.length === 0)) {
+                            missingFields.push(col.label);
+                          }
+                        } else {
+                          const value = formValues[col.field];
+                          if (!value || value === "") {
+                            missingFields.push(col.label);
+                          }
+                        }
+                      } else {
+                        const value = formValues[col.field];
+                        if (value === undefined || value === null || value === "") {
+                          missingFields.push(col.label);
+                        }
+                      }
+                    }
+                  });
+                  
+                  if (missingFields.length > 0) {
+                    setValidationError(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+                    return;
+                  }
+                  
+                  setValidationError("");
                   const endpoint = getEndpoint();
                   const backendBase = "http://localhost:8000";
                   
@@ -499,6 +548,7 @@ export const TableComponent: React.FC<Props> = ({
                         <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
                           <label style={{ fontWeight: 500, color: "#334155" }}>
                             {col.label}
+                            {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
                             <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>
                               ({selectedValues.length} selected)
                             </span>
@@ -550,7 +600,7 @@ export const TableComponent: React.FC<Props> = ({
                                       }}
                                     />
                                     <span style={{ fontSize: "14px", color: "#1e293b" }}>
-                                      {option.name || option.title || option.email || option.city || option.street || `ID: ${option.id}`}
+                                      {{% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
                                     </span>
                                   </div>
                                 );
@@ -566,6 +616,7 @@ export const TableComponent: React.FC<Props> = ({
                       <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                         <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
                           {col.label}
+                          {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
                         </label>
                         <select
                           id={`modal-input-${col.field}`}
@@ -583,7 +634,7 @@ export const TableComponent: React.FC<Props> = ({
                           <option value="">-- Select {col.label} --</option>
                           {options.map((option: any) => (
                             <option key={option.id} value={option.id}>
-                              {option.name || option.title || option.email || option.city || option.street || `ID: ${option.id}`}
+                              {{% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
                             </option>
                           ))}
                         </select>
@@ -598,6 +649,7 @@ export const TableComponent: React.FC<Props> = ({
                       <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                         <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
                           {col.label}
+                          {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
                         </label>
                         <select
                           id={`modal-input-${col.field}`}
@@ -640,6 +692,7 @@ export const TableComponent: React.FC<Props> = ({
                         />
                         <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155", cursor: "pointer" }}>
                           {col.label}
+                          {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
                         </label>
                       </div>
                     );
@@ -649,6 +702,7 @@ export const TableComponent: React.FC<Props> = ({
                     <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                       <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
                         {col.label}
+                        {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
                         {col.type && col.type !== 'string' && (
                           <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>({col.type === 'list' ? 'comma-separated' : col.type})</span>
                         )}

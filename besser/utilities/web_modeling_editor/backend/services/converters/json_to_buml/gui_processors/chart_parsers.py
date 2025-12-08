@@ -495,9 +495,9 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
             field_name = field_name.lstrip('+ ').strip()
             
             if domain_class and field_name:
-                # Find the attribute in the domain class
+                # Find the attribute in the domain class (including inherited attributes)
                 field_attr = None
-                for attr in domain_class.attributes:
+                for attr in domain_class.all_attributes():
                     if attr.name == field_name:
                         field_attr = attr
                         break
@@ -513,26 +513,26 @@ def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column
             lookup_field_name = col_data.get('lookupField', '')
             
             if domain_class and lookup_path:
-                # Find the relationship end (path)
+                # Find the relationship end (path) - including inherited associations
                 path_end = None
-                for end in domain_class.association_ends():
+                for end in domain_class.all_association_ends():
                     if end.name == lookup_path:
                         path_end = end
                         break
                 
                 if path_end and path_end.type:
                     target_class = path_end.type
-                    # Find the lookup field in the target class
+                    # Find the lookup field in the target class (including inherited attributes)
                     lookup_field_attr = None
                     if lookup_field_name:
-                        for attr in target_class.attributes:
+                        for attr in target_class.all_attributes():
                             if attr.name == lookup_field_name:
                                 lookup_field_attr = attr
                                 break
                     
                     # If no lookup field specified, use first attribute
-                    if not lookup_field_attr and target_class.attributes:
-                        lookup_field_attr = list(target_class.attributes)[0]
+                    if not lookup_field_attr and target_class.all_attributes():
+                        lookup_field_attr = list(target_class.all_attributes())[0]
                     
                     if lookup_field_attr:
                         column = LookupColumn(

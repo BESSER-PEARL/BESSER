@@ -1,247 +1,116 @@
 """
-BUML Structural Class Diagram for Quantum Metamodel
+BUML Structural Class Diagram for Quantum Metamodel V2
 This file defines the Quantum Circuit metamodel using BUML's structural classes.
 """
 
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Multiplicity, Enumeration, EnumerationLiteral,
-    DataType, PrimitiveDataType, BinaryAssociation, Generalization, Method, Parameter
+    DataType, PrimitiveDataType, BinaryAssociation, Generalization, Method, Parameter,NamedElement
 )
+
 
 def create_quantum_metamodel():
     """
     Creates the quantum circuit metamodel as a BUML structural domain model.
-    
+
     Returns:
         DomainModel: The quantum circuit domain model
     """
-    
+
     # Create the domain model
     model = DomainModel(name="QuantumCircuitMetamodel")
-    
+
     # ============================================
-    # Enumeration: ControlState
+    # Base Classes from Structural Metamodel
     # ============================================
-    control_state_enum = Enumeration(
-        name="ControlState",
-        literals={
-            EnumerationLiteral("CONTROL"),
-            EnumerationLiteral("ANTI_CONTROL")
-        }
-    )
-    
+
+
+
+    # Target class (abstract)
+    target = Class(name="Target", is_abstract=True)
+
+    # Hardware class
+    hardware = Class(name="Hardware", is_abstract=False, attributes={
+            Property(name="name", type="str")
+        })
+
+    # Simulator class
+    simulator = Class(name="Simulator", is_abstract=False, attributes={
+            Property(name="name", type="str")
+        })
+
     # ============================================
-    # Classes (Abstract Base Classes)
+    # Main Quantum Classes
     # ============================================
-    
-    # QuantumCircuit class (inherits from Model)
-    quantum_circuit_class = Class(
+
+    # QuantumCircuit class
+    quantum_circuit = Class(
         name="QuantumCircuit",
         is_abstract=False,
-        attributes={
-            Property(name="name", type="str"),
-        }
+
     )
-    
+
     # QuantumRegister class
-    quantum_register_class = Class(
+    quantum_register = Class(
         name="QuantumRegister",
         is_abstract=False,
         attributes={
-            Property(name="name", type="str"),
             Property(name="size", type="int")
         }
     )
-    
+
     # ClassicalRegister class
-    classical_register_class = Class(
+    classical_register = Class(
         name="ClassicalRegister",
         is_abstract=False,
         attributes={
-            Property(name="name", type="str"),
             Property(name="size", type="int")
         }
     )
-    
-    # QuantumOperation class (abstract)
-    quantum_operation_class = Class(
-        name="QuantumOperation",
-        is_abstract=True,
+
+    # Qubit class
+    qubit = Class(
+        name="qubit",
+        is_abstract=False,
         attributes={
-            Property(name="name", type="str"),
-            Property(name="target_qubits", type="str"),  # List[int] represented as str
-            Property(name="control_qubits", type="str"),  # List[int] represented as str
-            Property(name="control_states", type="str")   # List[ControlState] represented as str
+            Property(name="id", type="int"),
+            Property(name="index", type="int")
         }
     )
-    
-    # Gate class (abstract, inherits from QuantumOperation)
-    gate_class = Class(
-        name="Gate",
+
+    # ClassicalBit class
+    classical_bit = Class(
+        name="classical_bit",
+        is_abstract=False,
+        attributes={
+            Property(name="id", type="int"),
+            Property(name="index", type="int")
+        }
+    )
+
+    # QuantumOracle class
+    quantum_oracle = Class(
+        name="QuantumOracle",
+        is_abstract=False,
+        attributes={
+            Property(name="specification", type="str")
+        }
+    )
+
+
+
+    # ============================================
+    # QuantumOperation hierarchy
+    # ============================================
+
+    # QuantumOperation class (abstract)
+    quantum_operation = Class(
+        name="QuantumOperation",
         is_abstract=True
     )
-    
-    # ============================================
-    # Concrete Gate Classes
-    # ============================================
-    
-    # PrimitiveGate
-    primitive_gate_class = Class(
-        name="PrimitiveGate",
-        is_abstract=False,
-        attributes={
-            Property(name="type_name", type="str")
-        }
-    )
-    
-    # ParametricGate
-    parametric_gate_class = Class(
-        name="ParametricGate",
-        is_abstract=False,
-        attributes={
-            Property(name="type_name", type="str"),
-            Property(name="parameter", type="float")
-        }
-    )
-    
-    # ArithmeticGate
-    arithmetic_gate_class = Class(
-        name="ArithmeticGate",
-        is_abstract=False,
-        attributes={
-            Property(name="operation", type="str"),
-            Property(name="input_qubits", type="str")  # List[int]
-        }
-    )
-    
-    # ModularArithmeticGate
-    modular_arithmetic_gate_class = Class(
-        name="ModularArithmeticGate",
-        is_abstract=False,
-        attributes={
-            Property(name="operation", type="str"),
-            Property(name="modulo", type="int"),
-            Property(name="input_qubits", type="str")  # List[int]
-        }
-    )
-    
-    # ComparisonGate
-    comparison_gate_class = Class(
-        name="ComparisonGate",
-        is_abstract=False,
-        attributes={
-            Property(name="operation", type="str"),
-            Property(name="input_qubits", type="str")  # List[int]
-        }
-    )
-    
-    # QFTGate
-    qft_gate_class = Class(
-        name="QFTGate",
-        is_abstract=False,
-        attributes={
-            Property(name="inverse", type="bool")
-        }
-    )
-    
-    # PhaseGradientGate
-    phase_gradient_gate_class = Class(
-        name="PhaseGradientGate",
-        is_abstract=False,
-        attributes={
-            Property(name="inverse", type="bool")
-        }
-    )
-    
-    # InputGate
-    input_gate_class = Class(
-        name="InputGate",
-        is_abstract=False,
-        attributes={
-            Property(name="input_type", type="str"),
-            Property(name="value", type="int")
-        }
-    )
-    
-    # OrderGate
-    order_gate_class = Class(
-        name="OrderGate",
-        is_abstract=False,
-        attributes={
-            Property(name="order_type", type="str")
-        }
-    )
-    
-    # ScalarGate
-    scalar_gate_class = Class(
-        name="ScalarGate",
-        is_abstract=False,
-        attributes={
-            Property(name="scalar_type", type="str")
-        }
-    )
-    
-    # CustomGate
-    custom_gate_class = Class(
-        name="CustomGate",
-        is_abstract=False,
-        attributes={
-            Property(name="definition", type="str")  # QuantumCircuit reference
-        }
-    )
-    
-    # TimeDependentGate
-    time_dependent_gate_class = Class(
-        name="TimeDependentGate",
-        is_abstract=False,
-        attributes={
-            Property(name="type_name", type="str"),
-            Property(name="parameter_expr", type="str")
-        }
-    )
-    
-    # SpacerGate
-    spacer_gate_class = Class(
-        name="SpacerGate",
-        is_abstract=False
-    )
-    
-    # ============================================
-    # Specific Primitive Gates
-    # ============================================
-    
-    hadamard_gate_class = Class(name="HadamardGate", is_abstract=False)
-    pauli_x_gate_class = Class(name="PauliXGate", is_abstract=False)
-    pauli_y_gate_class = Class(name="PauliYGate", is_abstract=False)
-    pauli_z_gate_class = Class(name="PauliZGate", is_abstract=False)
-    swap_gate_class = Class(name="SwapGate", is_abstract=False)
-    s_gate_class = Class(name="SGate", is_abstract=False)
-    t_gate_class = Class(name="TGate", is_abstract=False)
-    
-    # ============================================
-    # Specific Parametric Gates
-    # ============================================
-    
-    rx_gate_class = Class(name="RXGate", is_abstract=False)
-    ry_gate_class = Class(name="RYGate", is_abstract=False)
-    rz_gate_class = Class(name="RZGate", is_abstract=False)
-    phase_gate_class = Class(name="PhaseGate", is_abstract=False)
-    
-    # ============================================
-    # Operation Classes
-    # ============================================
-    
-    # DisplayOperation
-    display_operation_class = Class(
-        name="DisplayOperation",
-        is_abstract=False,
-        attributes={
-            Property(name="display_type", type="str")
-        }
-    )
-    
-    # Measurement
-    measurement_class = Class(
+
+    # Measurement class
+    measurement = Class(
         name="Measurement",
         is_abstract=False,
         attributes={
@@ -249,234 +118,436 @@ def create_quantum_metamodel():
             Property(name="basis", type="str")
         }
     )
-    
-    # PostSelection
-    post_selection_class = Class(
-        name="PostSelection",
+
+    # ============================================
+    # Gate Hierarchy
+    # ============================================
+
+    # Gate class (abstract)
+    gate = Class(
+        name="Gate",
+        is_abstract=True
+    )
+
+    # GateDefinition class
+    gate_definition = Class(
+        name="GateDefinition",
+        is_abstract=False
+    )
+
+    # CustomGate class
+    custom_gate = Class(
+        name="CustomGate",
         is_abstract=False,
         attributes={
-            Property(name="value", type="int"),
-            Property(name="basis", type="str")
+            Property(name="definition", type="str")        }
+    )
+
+    # InputGate class
+    input_gate = Class(
+        name="InputGate",
+        is_abstract=False,
+        attributes={
+            Property(name="input_type", type="str"),
+            Property(name="value", type="str")
         }
     )
-    
+
+    # ============================================
+    # Abstract Gate Categories
+    # ============================================
+
+    # SingleBitGate (abstract)
+    single_bit_gate = Class(
+        name="SingleBitGate",
+        is_abstract=True
+    )
+
+    # MultiBitGate (abstract)
+    multi_bit_gate = Class(
+        name="MultiBitGate",
+        is_abstract=True
+    )
+
+    # ArithmeticGate (abstract)
+    arithmetic_gate = Class(
+        name="ArithmeticGate",
+        is_abstract=True,
+        attributes={
+            Property(name="operation_type", type="str")
+        }
+    )
+
+    # ComparisonGate class
+    comparison_gate = Class(
+        name="ComparisonGate",
+        is_abstract=False,
+        attributes={
+            Property(name="operation", type="str")
+        }
+    )
+
+    # ============================================
+    # Single Bit Gates
+    # ============================================
+
+    # Pauli Gates
+    pauli_z_gate = Class(name="PauliZGate", is_abstract=False)
+    pauli_y_gate = Class(name="PauliYGate", is_abstract=False)
+    pauli_x_gate = Class(name="PauliXGate", is_abstract=False)
+
+    # Hadamard Gate
+    hadamard_gate = Class(name="HadamardGate", is_abstract=False)
+
+    # Phase Gates
+    phase_gate_t = Class(name="PhaseGateT", is_abstract=False)
+    phase_gate_s = Class(name="PhaseGateS", is_abstract=False)
+    phase_gate_z = Class(name="PhaseGateZ", is_abstract=False)
+
+    # Rotation Gates
+    rx_gate = Class(
+        name="RXGate",
+        is_abstract=False,
+        attributes={
+            Property(name="theta", type="float")
+        }
+    )
+    ry_gate = Class(
+        name="RYGate",
+        is_abstract=False,
+        attributes={
+            Property(name="theta", type="float")
+        }
+    )
+    rz_gate = Class(
+        name="RZGate",
+        is_abstract=False,
+        attributes={
+            Property(name="theta", type="float")
+        }
+    )
+
+    # Identity Gate
+    identity_gate = Class(name="IdentityGate", is_abstract=False)
+
+    # ============================================
+    # Multi Bit Gates
+    # ============================================
+
+    # CNOT Gate
+    cnot_gate = Class(name="CNOT", is_abstract=False)
+
+    # C-Phase Gate
+    c_phase_gate = Class(
+        name="CPhaseGate",
+        is_abstract=False,
+        attributes={
+            Property(name="theta", type="float")
+        }
+    )
+
+    # CY Gate
+    cy_gate = Class(name="CYGate", is_abstract=False)
+
+    # CZ Gate
+    cz_gate = Class(name="CZGate", is_abstract=False)
+
+    # CX Gate
+    cx_gate = Class(name="CXGate", is_abstract=False)
+
+    # CH Gate
+    ch_gate = Class(name="CHGate", is_abstract=False)
+
+    # QFT Gate
+    qft_gate = Class(
+        name="QFTGate",
+        is_abstract=False,
+        attributes={
+            Property(name="inverse", type="bool")
+        }
+    )
+
+    # RXX Gate
+    rxx_gate = Class(
+        name="RXXGate",
+        is_abstract=False,
+        attributes={
+            Property(name="theta", type="float")
+        }
+    )
+
+    # RZZ Gate
+    rzz_gate = Class(name="RZZGate", is_abstract=False)
+
+    # CRX Gate
+    crx_gate = Class(
+        name="CRXGate",
+        is_abstract=False,
+        attributes={
+            Property(name="theta", type="float")
+        }
+    )
+
+    # CRZ Gate
+    crz_gate = Class(
+        name="CRZGate",
+        is_abstract=False,
+        attributes={
+            Property(name="theta", type="float")
+        }
+    )
+
+    # CRY Gate
+    cry_gate = Class(
+        name="CRYGate",
+        is_abstract=False,
+        attributes={
+            Property(name="theta", type="float")
+        }
+    )
+
+    # Bell Gate
+    bell_gate = Class(name="BellGate", is_abstract=False)
+
+    # iSwap Gate
+    iswap_gate = Class(name="iSwapGate", is_abstract=False)
+
+    # Swap Gate
+    swap_gate = Class(name="SwapGate", is_abstract=False)
+
+    # Sqrt Swap Gate
+    sqrt_swap_gate = Class(name="SqrtSwapGate", is_abstract=False)
+
+    # RYY Gate
+    ryy_gate = Class(
+        name="RYYGate",
+        is_abstract=False,
+        attributes={
+            Property(name="theta", type="float")
+        }
+    )
+
+    # RZX Gate
+    rzx_gate = Class(
+        name="RZXGate",
+        is_abstract=False,
+        attributes={
+            Property(name="theta", type="float")
+        }
+    )
+
     # ============================================
     # Add all types to the model
     # ============================================
-    
+
     model.types = {
-        # Enumerations
-        control_state_enum,
-        
-        # Main classes
-        quantum_circuit_class,
-        quantum_register_class,
-        classical_register_class,
-        quantum_operation_class,
-        gate_class,
-        
-        # Gate subclasses
-        primitive_gate_class,
-        parametric_gate_class,
-        arithmetic_gate_class,
-        modular_arithmetic_gate_class,
-        comparison_gate_class,
-        qft_gate_class,
-        phase_gradient_gate_class,
-        input_gate_class,
-        order_gate_class,
-        scalar_gate_class,
-        custom_gate_class,
-        time_dependent_gate_class,
-        spacer_gate_class,
-        
-        # Specific gates
-        hadamard_gate_class,
-        pauli_x_gate_class,
-        pauli_y_gate_class,
-        pauli_z_gate_class,
-        swap_gate_class,
-        s_gate_class,
-        t_gate_class,
-        rx_gate_class,
-        ry_gate_class,
-        rz_gate_class,
-        phase_gate_class,
-        
-        # Operations
-        display_operation_class,
-        measurement_class,
-        post_selection_class
+        # Base structural classes
+        model,
+        target,
+        hardware,
+        simulator,
+
+        # Main quantum classes
+        quantum_circuit,
+        quantum_register,
+        classical_register,
+        qubit,
+        classical_bit,
+        quantum_oracle,
+
+        # Operation hierarchy
+        quantum_operation,
+        measurement,
+
+        # Gate hierarchy
+        gate,
+        gate_definition,
+        custom_gate,
+        input_gate,
+
+        # Abstract gate categories
+        single_bit_gate,
+        multi_bit_gate,
+        arithmetic_gate,
+        comparison_gate,
+
+        # Single bit gates
+        pauli_z_gate,
+        pauli_y_gate,
+        pauli_x_gate,
+        hadamard_gate,
+        phase_gate_t,
+        phase_gate_s,
+        phase_gate_z,
+        rx_gate,
+        ry_gate,
+        rz_gate,
+        identity_gate,
+
+        # Multi bit gates
+        cnot_gate,
+        c_phase_gate,
+        cy_gate,
+        cz_gate,
+        cx_gate,
+        ch_gate,
+        qft_gate,
+        rxx_gate,
+        rzz_gate,
+        crx_gate,
+        crz_gate,
+        cry_gate,
+        bell_gate,
+        iswap_gate,
+        swap_gate,
+        sqrt_swap_gate,
+        ryy_gate,
+        rzx_gate
     }
-    
+
     # ============================================
     # Associations
     # ============================================
-    
-    # QuantumCircuit has QuantumRegisters
+
+    # QuantumCircuit has QuantumRegisters (qregs)
     qc_qreg_assoc = BinaryAssociation(
         name="QuantumCircuit_QuantumRegister",
         ends={
             Property(
                 name="qregs",
-                type=quantum_register_class,
-                owner=quantum_circuit_class,
+                type=quantum_register,
+                owner=quantum_circuit,
                 multiplicity=Multiplicity(0, "*"),
                 is_composite=True
             ),
             Property(
                 name="circuit",
-                type=quantum_circuit_class,
-                owner=quantum_register_class,
+                type=quantum_circuit,
+                owner=quantum_register,
                 multiplicity=Multiplicity(0, 1)
             )
         }
     )
-    
-    # QuantumCircuit has ClassicalRegisters
+
+    # QuantumCircuit has ClassicalRegisters (cregs)
     qc_creg_assoc = BinaryAssociation(
-        name="QuantumCircuit_ClassicalRegister",
+        name="QuantumCircuiticalRegister",
         ends={
             Property(
                 name="cregs",
-                type=classical_register_class,
-                owner=quantum_circuit_class,
+                type=classical_register,
+                owner=quantum_circuit,
                 multiplicity=Multiplicity(0, "*"),
                 is_composite=True
             ),
             Property(
                 name="circuit",
-                type=quantum_circuit_class,
-                owner=classical_register_class,
+                type=quantum_circuit,
+                owner=classical_register,
                 multiplicity=Multiplicity(0, 1)
             )
         }
     )
-    
+
     # QuantumCircuit has QuantumOperations
     qc_op_assoc = BinaryAssociation(
         name="QuantumCircuit_QuantumOperation",
         ends={
             Property(
                 name="operations",
-                type=quantum_operation_class,
-                owner=quantum_circuit_class,
+                type=quantum_operation,
+                owner=quantum_circuit,
                 multiplicity=Multiplicity(0, "*"),
                 is_composite=True
             ),
             Property(
                 name="circuit",
-                type=quantum_circuit_class,
-                owner=quantum_operation_class,
+                type=quantum_circuit,
+                owner=quantum_operation,
                 multiplicity=Multiplicity(0, 1)
             )
         }
     )
-    
-    # CustomGate references QuantumCircuit (definition)
+
+    # CustomGate has GateDefinition
     custom_gate_def_assoc = BinaryAssociation(
-        name="CustomGate_Definition",
+        name="CustomGate_GateDefinition",
         ends={
             Property(
                 name="definition",
-                type=quantum_circuit_class,
-                owner=custom_gate_class,
-                multiplicity=Multiplicity(0, 1)
+                type=gate_definition,
+                owner=custom_gate,
+                multiplicity=Multiplicity(1, 1)
             ),
             Property(
-                name="custom_gates",
-                type=custom_gate_class,
-                owner=quantum_circuit_class,
-                multiplicity=Multiplicity(0, "*")
+                name="custom_gate",
+                type=custom_gate,
+                owner=gate_definition,
+                multiplicity=Multiplicity(0, 1)
             )
         }
     )
-    
+
     model.associations = {
         qc_qreg_assoc,
         qc_creg_assoc,
         qc_op_assoc,
         custom_gate_def_assoc
     }
-    
+
     # ============================================
     # Generalizations (Inheritance)
     # ============================================
-    
-    # Gate inherits from QuantumOperation
-    gate_inherits_op = Generalization(
-        general=quantum_operation_class,
-        specific=gate_class
-    )
-    
-    # All gate types inherit from Gate
-    primitive_inherits_gate = Generalization(general=gate_class, specific=primitive_gate_class)
-    parametric_inherits_gate = Generalization(general=gate_class, specific=parametric_gate_class)
-    arithmetic_inherits_gate = Generalization(general=gate_class, specific=arithmetic_gate_class)
-    modular_arith_inherits_gate = Generalization(general=gate_class, specific=modular_arithmetic_gate_class)
-    comparison_inherits_gate = Generalization(general=gate_class, specific=comparison_gate_class)
-    qft_inherits_gate = Generalization(general=gate_class, specific=qft_gate_class)
-    phase_grad_inherits_gate = Generalization(general=gate_class, specific=phase_gradient_gate_class)
-    input_inherits_gate = Generalization(general=gate_class, specific=input_gate_class)
-    order_inherits_gate = Generalization(general=gate_class, specific=order_gate_class)
-    scalar_inherits_gate = Generalization(general=gate_class, specific=scalar_gate_class)
-    custom_inherits_gate = Generalization(general=gate_class, specific=custom_gate_class)
-    time_dep_inherits_gate = Generalization(general=gate_class, specific=time_dependent_gate_class)
-    spacer_inherits_gate = Generalization(general=gate_class, specific=spacer_gate_class)
-    
-    # Specific primitive gates inherit from PrimitiveGate
-    hadamard_inherits_primitive = Generalization(general=primitive_gate_class, specific=hadamard_gate_class)
-    pauli_x_inherits_primitive = Generalization(general=primitive_gate_class, specific=pauli_x_gate_class)
-    pauli_y_inherits_primitive = Generalization(general=primitive_gate_class, specific=pauli_y_gate_class)
-    pauli_z_inherits_primitive = Generalization(general=primitive_gate_class, specific=pauli_z_gate_class)
-    swap_inherits_primitive = Generalization(general=primitive_gate_class, specific=swap_gate_class)
-    s_inherits_primitive = Generalization(general=primitive_gate_class, specific=s_gate_class)
-    t_inherits_primitive = Generalization(general=primitive_gate_class, specific=t_gate_class)
-    
-    # Specific parametric gates inherit from ParametricGate
-    rx_inherits_parametric = Generalization(general=parametric_gate_class, specific=rx_gate_class)
-    ry_inherits_parametric = Generalization(general=parametric_gate_class, specific=ry_gate_class)
-    rz_inherits_parametric = Generalization(general=parametric_gate_class, specific=rz_gate_class)
-    phase_inherits_parametric = Generalization(general=parametric_gate_class, specific=phase_gate_class)
-    
-    # Other operations inherit from QuantumOperation
-    display_inherits_op = Generalization(general=quantum_operation_class, specific=display_operation_class)
-    measurement_inherits_op = Generalization(general=quantum_operation_class, specific=measurement_class)
-    post_sel_inherits_op = Generalization(general=quantum_operation_class, specific=post_selection_class)
-    
-    model.generalizations = {
-        gate_inherits_op,
-        primitive_inherits_gate,
-        parametric_inherits_gate,
-        arithmetic_inherits_gate,
-        modular_arith_inherits_gate,
-        comparison_inherits_gate,
-        qft_inherits_gate,
-        phase_grad_inherits_gate,
-        input_inherits_gate,
-        order_inherits_gate,
-        scalar_inherits_gate,
-        custom_inherits_gate,
-        time_dep_inherits_gate,
-        spacer_inherits_gate,
-        hadamard_inherits_primitive,
-        pauli_x_inherits_primitive,
-        pauli_y_inherits_primitive,
-        pauli_z_inherits_primitive,
-        swap_inherits_primitive,
-        s_inherits_primitive,
-        t_inherits_primitive,
-        rx_inherits_parametric,
-        ry_inherits_parametric,
-        rz_inherits_parametric,
-        phase_inherits_parametric,
-        display_inherits_op,
-        measurement_inherits_op,
-        post_sel_inherits_op
-    }
-    
-    return model
 
+    generalizations = []
+
+
+
+
+    # Target inheritance
+    generalizations.append(Generalization(general=target, specific=hardware))
+    generalizations.append(Generalization(general=target, specific=simulator))
+
+    # Gate and Measurement inherit from QuantumOperation
+    generalizations.append(Generalization(general=quantum_operation, specific=gate))
+    generalizations.append(Generalization(general=quantum_operation, specific=measurement))
+
+    # CustomGate and InputGate inherit from Gate
+    generalizations.append(Generalization(general=gate, specific=custom_gate))
+    generalizations.append(Generalization(general=gate, specific=input_gate))
+
+    # SingleBitGate and MultiBitGate inherit from Gate
+    generalizations.append(Generalization(general=gate, specific=single_bit_gate))
+    generalizations.append(Generalization(general=gate, specific=multi_bit_gate))
+
+    # ArithmeticGate and ComparisonGate inherit from Gate
+    generalizations.append(Generalization(general=gate, specific=arithmetic_gate))
+    generalizations.append(Generalization(general=gate, specific=comparison_gate))
+
+    # Single bit gates inherit from SingleBitGate
+    single_bit_gates = [
+        pauli_z_gate, pauli_y_gate, pauli_x_gate,
+        hadamard_gate, phase_gate_t, phase_gate_s,
+        phase_gate_z, rx_gate, ry_gate, rz_gate,
+        identity_gate
+    ]
+    for gate in single_bit_gates:
+        generalizations.append(Generalization(general=single_bit_gate, specific=gate))
+
+    # Multi bit gates inherit from MultiBitGate
+    multi_bit_gates = [
+        cnot_gate, c_phase_gate, cy_gate, cz_gate,
+        cx_gate, ch_gate, qft_gate, rxx_gate,
+        rzz_gate, crx_gate, crz_gate, cry_gate,
+        bell_gate, iswap_gate, swap_gate, sqrt_swap_gate,
+        ryy_gate, rzx_gate
+    ]
+    for gate in multi_bit_gates:
+        generalizations.append(Generalization(general=multi_bit_gate, specific=gate))
+
+    model.generalizations = set(generalizations)
+
+    return model
 
 if __name__ == "__main__":
     print("=" * 70)

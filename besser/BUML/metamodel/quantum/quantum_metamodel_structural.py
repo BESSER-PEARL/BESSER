@@ -200,8 +200,9 @@ def create_quantum_metamodel():
     hadamard_gate = Class(name="HadamardGate", is_abstract=False)
 
     # Phase Gates
-    phase_gate_t = Class(name="PhaseGateT", is_abstract=False)
-    phase_gate_s = Class(name="PhaseGateS", is_abstract=False)
+    # Phase Gates
+    t_gate = Class(name="TGate", is_abstract=False)
+    s_gate = Class(name="SGate", is_abstract=False)
     phase_gate_z = Class(name="PhaseGateZ", is_abstract=False)
 
     # Rotation Gates
@@ -337,6 +338,95 @@ def create_quantum_metamodel():
     )
 
     # ============================================
+    # Missing Gate Classes (Added for Builder Compatibility)
+    # ============================================
+
+    phase_gate = Class(
+        name="PhaseGate",
+        is_abstract=False,
+        attributes={
+            Property(name="angle", type="float")
+        }
+    )
+
+    phase_gradient_gate = Class(
+        name="PhaseGradientGate",
+        is_abstract=False,
+        attributes={
+            Property(name="inverse", type="bool")
+        }
+    )
+
+    modular_arithmetic_gate = Class(
+        name="ModularArithmeticGate",
+        is_abstract=False,
+        attributes={
+            Property(name="modulo", type="int")
+        }
+    )
+
+    display_operation = Class(
+        name="DisplayOperation",
+        is_abstract=False,
+        attributes={
+            Property(name="display_type", type="str")
+        }
+    )
+
+    time_dependent_gate = Class(
+        name="TimeDependentGate",
+        is_abstract=False,
+        attributes={
+            Property(name="type_name", type="str"),
+            Property(name="parameter_expr", type="str")
+        }
+    )
+
+    spacer_gate = Class(name="SpacerGate", is_abstract=False)
+
+    post_selection = Class(
+        name="PostSelection",
+        is_abstract=False,
+        attributes={
+            Property(name="value", type="int"),
+            Property(name="basis", type="str")
+        }
+    )
+
+    primitive_gate = Class(
+        name="PrimitiveGate",
+        is_abstract=False,
+        attributes={
+            Property(name="type_name", type="str")
+        }
+    )
+
+    parametric_gate = Class(
+        name="ParametricGate",
+        is_abstract=False,
+        attributes={
+            Property(name="type_name", type="str"),
+            Property(name="parameter", type="float")
+        }
+    )
+
+    order_gate = Class(
+        name="OrderGate",
+        is_abstract=False,
+        attributes={
+            Property(name="order_type", type="str")
+        }
+    )
+
+    scalar_gate = Class(
+        name="ScalarGate",
+        is_abstract=False,
+        attributes={
+            Property(name="scalar_type", type="str")
+        }
+    )
+
+    # ============================================
     # Add all types to the model
     # ============================================
 
@@ -376,8 +466,10 @@ def create_quantum_metamodel():
         pauli_y_gate,
         pauli_x_gate,
         hadamard_gate,
-        phase_gate_t,
-        phase_gate_s,
+        pauli_x_gate,
+        hadamard_gate,
+        t_gate,
+        s_gate,
         phase_gate_z,
         rx_gate,
         ry_gate,
@@ -402,7 +494,21 @@ def create_quantum_metamodel():
         swap_gate,
         sqrt_swap_gate,
         ryy_gate,
-        rzx_gate
+        ryy_gate,
+        rzx_gate,
+        
+        # New gates
+        phase_gate,
+        phase_gradient_gate,
+        modular_arithmetic_gate,
+        display_operation,
+        time_dependent_gate,
+        spacer_gate,
+        post_selection,
+        primitive_gate,
+        parametric_gate,
+        order_gate,
+        scalar_gate
     }
 
     # ============================================
@@ -527,7 +633,7 @@ def create_quantum_metamodel():
     # Single bit gates inherit from SingleBitGate
     single_bit_gates = [
         pauli_z_gate, pauli_y_gate, pauli_x_gate,
-        hadamard_gate, phase_gate_t, phase_gate_s,
+        hadamard_gate, t_gate, s_gate,
         phase_gate_z, rx_gate, ry_gate, rz_gate,
         identity_gate
     ]
@@ -544,6 +650,19 @@ def create_quantum_metamodel():
     ]
     for gate in multi_bit_gates:
         generalizations.append(Generalization(general=multi_bit_gate, specific=gate))
+
+    # Generalizations for new gates
+    generalizations.append(Generalization(general=single_bit_gate, specific=phase_gate))
+    generalizations.append(Generalization(general=multi_bit_gate, specific=phase_gradient_gate))
+    generalizations.append(Generalization(general=arithmetic_gate, specific=modular_arithmetic_gate))
+    generalizations.append(Generalization(general=quantum_operation, specific=display_operation))
+    generalizations.append(Generalization(general=gate, specific=time_dependent_gate))
+    generalizations.append(Generalization(general=gate, specific=spacer_gate))
+    generalizations.append(Generalization(general=quantum_operation, specific=post_selection))
+    generalizations.append(Generalization(general=gate, specific=primitive_gate))
+    generalizations.append(Generalization(general=gate, specific=parametric_gate))
+    generalizations.append(Generalization(general=gate, specific=order_gate))
+    generalizations.append(Generalization(general=quantum_operation, specific=scalar_gate))
 
     model.generalizations = set(generalizations)
 

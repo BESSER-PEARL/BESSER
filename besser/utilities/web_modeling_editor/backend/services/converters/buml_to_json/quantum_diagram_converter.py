@@ -9,7 +9,9 @@ from besser.BUML.metamodel.quantum.quantum import (
     InputGate, OrderGate, ScalarGate, CustomGate, TimeDependentGate,
     SpacerGate, HadamardGate, PauliXGate, PauliYGate, PauliZGate,
     SwapGate, SGate, TGate, RXGate, RYGate, RZGate, PhaseGate,
-    ControlState
+    ControlState, RXXGate, RZZGate, RZXGate, RYYGate, BellGate, iSwapGate, SqrtSwapGate,
+    CXGate, CYGate, CZGate, CHGate, CRXGate, CRYGate, CRZGate, CPhaseGate,
+    FunctionGate
 )
 
 
@@ -31,20 +33,23 @@ def quantum_circuit_to_json(circuit: QuantumCircuit) -> dict:
     # Group operations by column (we'll need to infer columns from operation order)
     # For simplicity, each operation gets its own column unless it shares qubits with controls
     
+    gate_metadata = {}
+    
     for op in circuit.operations:
-        col = _operation_to_column(op, num_qubits)
+        col = _operation_to_column(op, num_qubits, gate_metadata, len(cols))
         if col:
             cols.append(col)
     
     return {
         "title": circuit.name,
         "model": {
-            "cols": cols
+            "cols": cols,
+            "gateMetadata": gate_metadata
         }
     }
 
 
-def _operation_to_column(op: QuantumOperation, num_qubits: int) -> list:
+def _operation_to_column(op: QuantumOperation, num_qubits: int, gate_metadata: dict, col_index: int) -> list:
     """
     Convert a single operation to a column array.
     
@@ -71,9 +76,31 @@ def _operation_to_column(op: QuantumOperation, num_qubits: int) -> list:
                 col[ctrl_qubit] = "◦"  # Empty circle for anti-control
     
     # Place the gate on target qubits
+    metadata_added = False  # Track if we've already added metadata for this CustomGate
     for target in op.target_qubits:
         if target < num_qubits:
             col[target] = symbol
+            
+            # Handle CustomGate or FunctionGate with definition (Nested Circuit)
+            # Only add metadata once (for the first target) to avoid duplicates
+            if isinstance(op, (CustomGate, FunctionGate)) and not metadata_added:
+                metadata_key = f"{col_index}_{target}"
+                metadata = {
+                    "label": op.name,
+                    "type": "FUNCTION", # Or derive from op
+                    "isFunctionGate": True
+                }
+                
+                if hasattr(op, 'definition') and op.definition and op.definition.circuit:
+                    # Recursively convert the nested circuit
+                    nested_json = quantum_circuit_to_json(op.definition.circuit)
+                    metadata["nestedCircuit"] = nested_json['model']
+                elif hasattr(op, 'gates') and op.gates:
+                    # Serialize list of gates into new columns format
+                    metadata["nestedCircuit"] = _serialize_gates_to_columns(op.gates)
+                
+                gate_metadata[metadata_key] = metadata
+                metadata_added = True
     
     # Handle special cases
     if isinstance(op, SwapGate) and len(op.target_qubits) >= 2:
@@ -108,7 +135,33 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
         return "T"
     if isinstance(op, SwapGate):
         return "Swap"
+    if isinstance(op, SwapGate):
+        return "Swap"
+    if isinstance(op, SqrtSwapGate):
+        return "SqrtSwap"
+    if isinstance(op, iSwapGate):
+        return "iSwap"
+    if isinstance(op, BellGate):
+        return "Bell"
     
+    # === Controlled Gates (Map to base symbol) ===
+    if isinstance(op, CXGate):
+        return "X"
+    if isinstance(op, CYGate):
+        return "Y"
+    if isinstance(op, CZGate):
+        return "Z"
+    if isinstance(op, CHGate):
+        return "H"
+    if isinstance(op, CRXGate):
+        return "Rx"
+    if isinstance(op, CRYGate):
+        return "Ry"
+    if isinstance(op, CRZGate):
+        return "Rz"
+    if isinstance(op, CPhaseGate):
+        return "Phase"
+
     # === Parametric Gates ===
     if isinstance(op, RXGate):
         return "Rx"
@@ -118,6 +171,14 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
         return "Rz"
     if isinstance(op, PhaseGate):
         return "Phase"
+    if isinstance(op, RXXGate):
+        return "RXX"
+    if isinstance(op, RZZGate):
+        return "RZZ"
+    if isinstance(op, RZXGate):
+        return "RZX"
+    if isinstance(op, RYYGate):
+        return "RYY"
     
     if isinstance(op, ParametricGate):
         type_name = op.type_name
@@ -314,5 +375,66 @@ def quantum_circuit_to_editor_json(circuit: QuantumCircuit) -> dict:
         "version": "1.0.0",
         "title": circuit.name,
         "cols": quirk_data["model"]["cols"],
+        "gateMetadata": quirk_data["model"].get("gateMetadata", {}),
         "gates": []  # Custom gates would go here
+    }
+
+
+def _serialize_gates_to_columns(gates):
+    """
+    Serialize a list of gates into the columns/gates JSON format.
+    
+    Args:
+        gates: List of Gate objects
+        
+    Returns:
+        Dict with 'columns', 'qubitCount', and 'initialStates'
+    """
+    if not gates:
+        return {"columns": [], "qubitCount": 0, "initialStates": []}
+        
+    # Determine number of qubits
+    max_qubit = 0
+    for gate in gates:
+        for q in gate.target_qubits:
+            max_qubit = max(max_qubit, q)
+            
+    num_qubits = max_qubit + 1
+    
+    # Organize gates into columns
+    # This is a simplified placement: one column per gate
+    # A more sophisticated layout algorithm could be used if needed
+    columns = []
+    
+    for gate in gates:
+        col_gates = [None] * num_qubits
+        
+        # Get gate symbol and type
+        symbol = _get_gate_symbol(gate)
+        gate_type = symbol # Use symbol as type for now, or map back if needed
+        
+        # Create gate object for JSON
+        gate_obj = {
+            "type": symbol,
+            "label": symbol,
+            "id": f"{symbol}-{id(gate)}", # Generate a unique ID
+            "height": 1,
+            "canResize": False
+        }
+        
+        # Handle multi-qubit gates if needed (though nested circuits usually have single qubit gates in this format?)
+        # The example showed "gates": [null, {type: H}, ...]
+        # If a gate targets multiple qubits, it might need special handling in this format
+        # For now, place it on the first target qubit
+        if gate.target_qubits:
+            target = gate.target_qubits[0]
+            if target < num_qubits:
+                col_gates[target] = gate_obj
+                
+        columns.append({"gates": col_gates})
+        
+    return {
+        "columns": columns,
+        "qubitCount": num_qubits,
+        "initialStates": ["|0⟩"] * num_qubits
     }

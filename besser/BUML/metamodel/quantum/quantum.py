@@ -218,13 +218,35 @@ class GateDefinition(NamedElement):
 class CustomGate(Gate):
     """
     Represents a user-defined or custom gate.
+    
+    Args:
+        name: The name/label of the custom gate
+        target_qubits: List of target qubit indices
+        definition: Optional GateDefinition with a full circuit
+        gates: Optional list of Gate objects (alternative to definition)
+        control_qubits: Optional list of control qubit indices
+        control_states: Optional list of control states
     """
-    def __init__(self, name: str, target_qubits: List[int], definition: GateDefinition = None, control_qubits: List[int] = None, control_states: List[ControlState] = None):
+    def __init__(self, name: str, target_qubits: List[int], definition: GateDefinition = None, gates: List['Gate'] = None, control_qubits: List[int] = None, control_states: List[ControlState] = None):
         super().__init__(name, target_qubits, control_qubits, control_states)
         self.definition: GateDefinition = definition
+        self.gates: List['Gate'] = gates if gates else []
 
     def __repr__(self):
-        return f"CustomGate(name='{self.name}', targets={self.target_qubits})"
+        return f"CustomGate(name='{self.name}', targets={self.target_qubits}, gates={len(self.gates)})"
+
+
+class FunctionGate(Gate):
+    """
+    Represents a function gate defined by a nested circuit.
+    """
+    def __init__(self, name: str, target_qubits: List[int], definition: GateDefinition = None, gates: List['Gate'] = None, control_qubits: List[int] = None, control_states: List[ControlState] = None):
+        super().__init__(name, target_qubits, control_qubits, control_states)
+        self.definition: GateDefinition = definition
+        self.gates: List['Gate'] = gates if gates else []
+
+    def __repr__(self):
+        return f"FunctionGate(name='{self.name}', targets={self.target_qubits}, gates={len(self.gates)})"
 
 
 class InputGate(Gate):
@@ -322,22 +344,22 @@ class HadamardGate(SingleBitGate):
         return f"HadamardGate(target={self.target_qubits[0]})"
 
 
-class PhaseGateT(SingleBitGate):
+class TGate(SingleBitGate):
     """T gate (π/4 phase gate)."""
     def __init__(self, target_qubit: int, control_qubits: List[int] = None, control_states: List[ControlState] = None):
         super().__init__("T", target_qubit, control_qubits, control_states)
 
     def __repr__(self):
-        return f"PhaseGateT(target={self.target_qubits[0]})"
+        return f"TGate(target={self.target_qubits[0]})"
 
 
-class PhaseGateS(SingleBitGate):
+class SGate(SingleBitGate):
     """S gate (π/2 phase gate)."""
     def __init__(self, target_qubit: int, control_qubits: List[int] = None, control_states: List[ControlState] = None):
         super().__init__("S", target_qubit, control_qubits, control_states)
 
     def __repr__(self):
-        return f"PhaseGateS(target={self.target_qubits[0]})"
+        return f"SGate(target={self.target_qubits[0]})"
 
 
 class PhaseGateZ(SingleBitGate):
@@ -562,3 +584,116 @@ class RZXGate(MultiBitGate):
 
     def __repr__(self):
         return f"RZXGate(qubits={self.target_qubits}, theta={self.theta})"
+
+
+class PhaseGate(SingleBitGate):
+    """General Phase gate."""
+    def __init__(self, target_qubit: int, angle: float, control_qubits: List[int] = None, control_states: List[ControlState] = None):
+        super().__init__("Phase", target_qubit, control_qubits, control_states)
+        self.parameter: float = angle
+
+    def __repr__(self):
+        return f"PhaseGate(target={self.target_qubits[0]}, angle={self.parameter})"
+
+
+class PhaseGradientGate(MultiBitGate):
+    """Phase Gradient gate."""
+    def __init__(self, target_qubits: List[int], inverse: bool = False):
+        name = "PhaseGradient_DAG" if inverse else "PhaseGradient"
+        super().__init__(name, target_qubits)
+        self.inverse: bool = inverse
+
+    def __repr__(self):
+        return f"PhaseGradientGate(targets={self.target_qubits}, inverse={self.inverse})"
+
+
+class ModularArithmeticGate(ArithmeticGate):
+    """Modular Arithmetic gate."""
+    def __init__(self, operation: str, target_qubits: List[int], modulo: int, input_qubits: List[int] = None, control_qubits: List[int] = None, control_states: List[ControlState] = None):
+        super().__init__(operation, target_qubits, input_qubits, control_qubits, control_states)
+        self.modulo: int = modulo
+
+    def __repr__(self):
+        return f"ModularArithmeticGate(op='{self.operation_type}', targets={self.target_qubits}, mod={self.modulo})"
+
+
+class DisplayOperation(QuantumOperation):
+    """Display operation (Bloch sphere, Density matrix, etc.)."""
+    def __init__(self, display_type: str, target_qubits: List[int]):
+        super().__init__(display_type, target_qubits)
+        self.display_type: str = display_type
+
+    def __repr__(self):
+        return f"DisplayOperation(type='{self.display_type}', targets={self.target_qubits})"
+
+
+class TimeDependentGate(Gate):
+    """Time-dependent gate."""
+    def __init__(self, type_name: str, target_qubits: List[int], parameter_expr: str, control_qubits: List[int] = None, control_states: List[ControlState] = None):
+        super().__init__(type_name, target_qubits, control_qubits, control_states)
+        self.type_name: str = type_name
+        self.parameter_expr: str = parameter_expr
+
+    def __repr__(self):
+        return f"TimeDependentGate(type='{self.type_name}', targets={self.target_qubits}, expr='{self.parameter_expr}')"
+
+
+class SpacerGate(Gate):
+    """Spacer gate (visual only)."""
+    def __init__(self, target_qubits: List[int]):
+        super().__init__("Spacer", target_qubits)
+
+    def __repr__(self):
+        return f"SpacerGate(targets={self.target_qubits})"
+
+
+class PostSelection(QuantumOperation):
+    """Post-selection operation."""
+    def __init__(self, target_qubit: int, value: int, basis: str = 'Z'):
+        super().__init__(f"PostSelect_{value}", [target_qubit])
+        self.value: int = value
+        self.basis: str = basis
+
+    def __repr__(self):
+        return f"PostSelection(qubit={self.target_qubits[0]}, val={self.value}, basis='{self.basis}')"
+
+
+class PrimitiveGate(Gate):
+    """Generic primitive gate."""
+    def __init__(self, type_name: str, target_qubits: List[int]):
+        super().__init__(type_name, target_qubits)
+        self.type_name: str = type_name
+
+    def __repr__(self):
+        return f"PrimitiveGate(type='{self.type_name}', targets={self.target_qubits})"
+
+
+class ParametricGate(Gate):
+    """Generic parametric gate."""
+    def __init__(self, type_name: str, target_qubits: List[int], parameter: float, control_qubits: List[int] = None, control_states: List[ControlState] = None):
+        super().__init__(type_name, target_qubits, control_qubits, control_states)
+        self.type_name: str = type_name
+        self.parameter: float = parameter
+
+    def __repr__(self):
+        return f"ParametricGate(type='{self.type_name}', targets={self.target_qubits}, param={self.parameter})"
+
+
+class OrderGate(Gate):
+    """Order gate (for QFT ordering etc)."""
+    def __init__(self, order_type: str, target_qubits: List[int]):
+        super().__init__(order_type, target_qubits)
+        self.order_type: str = order_type
+
+    def __repr__(self):
+        return f"OrderGate(type='{self.order_type}', targets={self.target_qubits})"
+
+
+class ScalarGate(QuantumOperation):
+    """Scalar gate (global phase etc)."""
+    def __init__(self, scalar_type: str):
+        super().__init__(scalar_type, [])
+        self.scalar_type: str = scalar_type
+
+    def __repr__(self):
+        return f"ScalarGate(type='{self.scalar_type}')"

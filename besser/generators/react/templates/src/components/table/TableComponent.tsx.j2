@@ -600,7 +600,7 @@ export const TableComponent: React.FC<Props> = ({
                                       }}
                                     />
                                     <span style={{ fontSize: "14px", color: "#1e293b" }}>
-                                      {{% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
+                                      {(col.lookupField && option[col.lookupField]) || {% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
                                     </span>
                                   </div>
                                 );
@@ -634,7 +634,7 @@ export const TableComponent: React.FC<Props> = ({
                           <option value="">-- Select {col.label} --</option>
                           {options.map((option: any) => (
                             <option key={option.id} value={option.id}>
-                              {{% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
+                              {(col.lookupField && option[col.lookupField]) || {% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
                             </option>
                           ))}
                         </select>

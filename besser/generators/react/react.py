@@ -1030,6 +1030,7 @@ class ReactGenerator(GeneratorInterface):
     def _collect_all_table_fields(self) -> List[str]:
         """
         Collect all unique field names from FieldColumns across all Tables in the GUI model.
+        Recursively searches through all ViewContainers to find nested Tables.
         These will be used to generate dynamic option display logic in the template.
         
         Returns:
@@ -1037,46 +1038,66 @@ class ReactGenerator(GeneratorInterface):
         """
         field_names = set()
         
-        # Iterate through all modules and screens to find Tables
+        def scan_element_for_tables(element):
+            """Recursively scan an element and its children for Tables."""
+            if isinstance(element, Table):
+                # Extract field names from FieldColumns
+                for col in getattr(element, "columns", []) or []:
+                    if isinstance(col, FieldColumn):
+                        field_name = col.field.name if hasattr(col.field, "name") else str(col.field)
+                        field_names.add(field_name)
+            
+            # Recursively scan children if this is a ViewContainer
+            if isinstance(element, ViewContainer):
+                for child in element.view_elements:
+                    scan_element_for_tables(child)
+        
+        # Iterate through all modules and screens to find Tables (including nested ones)
         for module in self.gui_model.modules:
             for screen in module.screens:
                 for element in screen.view_elements:
-                    if isinstance(element, Table):
-                        # Extract field names from FieldColumns
-                        for col in getattr(element, "columns", []) or []:
-                            if isinstance(col, FieldColumn):
-                                field_name = col.field.name if hasattr(col.field, "name") else str(col.field)
-                                field_names.add(field_name)
+                    scan_element_for_tables(element)
         
         return sorted(field_names)
 
     def _get_used_component_types(self) -> set:
         """
         Scan the GUI model to determine which component types are actually used.
+        Recursively searches through all ViewContainers to find nested components.
         
         Returns:
             Set of component type names (e.g., 'LineChart', 'BarChart', 'Table', etc.)
         """
         used_types = set()
         
+        def scan_element(element):
+            """Recursively scan an element and its children for component types."""
+            # Map component instances to their type names
+            if isinstance(element, LineChart):
+                used_types.add('LineChart')
+            elif isinstance(element, BarChart):
+                used_types.add('BarChart')
+            elif isinstance(element, PieChart):
+                used_types.add('PieChart')
+            elif isinstance(element, RadarChart):
+                used_types.add('RadarChart')
+            elif isinstance(element, RadialBarChart):
+                used_types.add('RadialBarChart')
+            elif isinstance(element, Table):
+                used_types.add('Table')
+            elif isinstance(element, MetricCard):
+                used_types.add('MetricCard')
+            
+            # Recursively scan children if this is a ViewContainer
+            if isinstance(element, ViewContainer):
+                for child in element.view_elements:
+                    scan_element(child)
+        
+        # Scan all screens and their children
         for module in self.gui_model.modules:
             for screen in module.screens:
                 for element in screen.view_elements:
-                    # Map component instances to their type names
-                    if isinstance(element, LineChart):
-                        used_types.add('LineChart')
-                    elif isinstance(element, BarChart):
-                        used_types.add('BarChart')
-                    elif isinstance(element, PieChart):
-                        used_types.add('PieChart')
-                    elif isinstance(element, RadarChart):
-                        used_types.add('RadarChart')
-                    elif isinstance(element, RadialBarChart):
-                        used_types.add('RadialBarChart')
-                    elif isinstance(element, Table):
-                        used_types.add('Table')
-                    elif isinstance(element, MetricCard):
-                        used_types.add('MetricCard')
+                    scan_element(element)
         
         return used_types
 

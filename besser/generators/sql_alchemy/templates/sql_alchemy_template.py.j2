@@ -113,6 +113,21 @@ class {{ class.name }}(
         {%- endif %}
     {%- endfor %}
 
+    {#- Class methods #}
+    {%- if class.methods %}
+    {%- for method in class.methods %}
+    {%- set is_class_method = '(self' not in method.code and '(self,' not in method.code %}
+    {%- if is_class_method %}
+
+    @staticmethod
+{{ method.code | indent(4, first=True) }}
+    {%- else %}
+
+{{ method.code | indent(4, first=True) }}
+    {%- endif %}
+    {%- endfor %}
+    {%- endif %}
+
     {#- Polymorphic configuration #}
     {%- if (class.specializations()|length > 0
        and class.name not in concrete_parents) %}

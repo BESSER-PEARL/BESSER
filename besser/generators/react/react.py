@@ -319,6 +319,48 @@ class ReactGenerator(GeneratorInterface):
             events = self._serialize_events(element)
             if events:
                 node["events"] = events
+            
+            # Check for method execution configuration in custom attributes
+            if attributes:
+                action_type = attributes.get('data-action-type')
+                if action_type == 'execute-method':
+                    method_entity = attributes.get('data-method-entity')
+                    method_name = attributes.get('data-method-name')
+                    method_entity_id = attributes.get('data-method-entity-id')
+                    method_parameters = attributes.get('data-method-parameters')
+                    is_static = attributes.get('data-method-is-static') == 'true'
+                    
+                    if method_entity and method_name:
+                        # Get entity name from class options if it's an ID
+                        entity_name = self._get_entity_name_from_id(method_entity)
+                        
+                        method_config = {
+                            'entity_type': entity_name.lower() if entity_name else method_entity.lower(),
+                            'method_name': method_name,
+                            'is_class_method': is_static,
+                        }
+                        
+                        if method_entity_id:
+                            try:
+                                method_config['entity_id'] = int(method_entity_id)
+                            except (ValueError, TypeError):
+                                method_config['entity_id'] = method_entity_id
+                        
+                        if method_parameters:
+                            try:
+                                import json
+                                params = json.loads(method_parameters)
+                                # Convert params dict to parameter list format
+                                method_config['parameters'] = [
+                                    {'name': k, 'type': self._infer_type(v), 'default': v}
+                                    for k, v in params.items()
+                                ]
+                            except (json.JSONDecodeError, TypeError):
+                                pass
+                        else:
+                            method_config['parameters'] = []
+                        
+                        node['method_config'] = method_config
 
         if isinstance(element, InputField):
             node["input_type"] = self._enum_value(getattr(element, "field_type", None))
@@ -969,6 +1011,33 @@ class ReactGenerator(GeneratorInterface):
         if isinstance(value, Enum):
             return value.value if hasattr(value, "value") else value.name
         return str(value)
+    
+    def _get_entity_name_from_id(self, entity_id: str) -> Optional[str]:
+        """Get entity name from the structural model by ID"""
+        if not hasattr(self, 'model') or not self.model:
+            return None
+        
+        # Search for class with matching name or component_id
+        for cls in self.model.get_classes():
+            if cls.name == entity_id or getattr(cls, 'component_id', None) == entity_id:
+                return cls.name
+        
+        # If not found, return the ID as-is (it might already be a name)
+        return entity_id
+    
+    @staticmethod
+    def _infer_type(value: Any) -> str:
+        """Infer parameter type from value"""
+        if isinstance(value, bool):
+            return 'boolean'
+        elif isinstance(value, int):
+            return 'number'
+        elif isinstance(value, float):
+            return 'number'
+        elif isinstance(value, str):
+            return 'string'
+        else:
+            return 'string'
 
     @staticmethod
     def _convert_style_keys(style: Dict[str, Any]) -> Dict[str, Any]:

@@ -112,17 +112,56 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
     target_screen_id = None
     action_button_type = None
     crud_entity = None
+    method_entity = None
+    method_name = None
+    method_entity_id = None
+    method_parameters = None
+    is_static_method = False
     
     # Check both component level and attributes (GrapesJS stores target-screen at component level)
     target_screen_id = component.get("target-screen") or component.get("data-target-screen")
     action_button_type = component.get("action-type") or component.get("data-action-type")
     crud_entity = component.get("crud-entity") or component.get("data-crud-entity")
+    method_entity = component.get("method-entity") or component.get("data-method-entity")
+    method_name = component.get("method-name") or component.get("data-method-name")
+    method_entity_id = component.get("method-entity-id") or component.get("data-method-entity-id")
+    method_parameters_str = component.get("method-parameters") or component.get("data-method-parameters")
+    is_static_str = component.get("method-is-static") or component.get("data-method-is-static")
+    
+    # Parse method parameters if present
+    if method_parameters_str:
+        try:
+            import json
+            method_parameters = json.loads(method_parameters_str)
+        except (json.JSONDecodeError, TypeError):
+            method_parameters = {}
+    
+    # Parse is_static flag
+    if is_static_str:
+        is_static_method = is_static_str.lower() == 'true'
     
     # Also check attributes object as fallback
     if isinstance(attributes, dict):
         target_screen_id = target_screen_id or attributes.get("target-screen") or attributes.get("data-target-screen")
         action_button_type = action_button_type or attributes.get("action-type") or attributes.get("data-action-type")
         crud_entity = crud_entity or attributes.get("crud-entity") or attributes.get("data-crud-entity")
+        method_entity = method_entity or attributes.get("method-entity") or attributes.get("data-method-entity")
+        method_name = method_name or attributes.get("method-name") or attributes.get("data-method-name")
+        method_entity_id = method_entity_id or attributes.get("method-entity-id") or attributes.get("data-method-entity-id")
+        
+        if not method_parameters_str:
+            method_parameters_str = attributes.get("method-parameters") or attributes.get("data-method-parameters")
+            if method_parameters_str:
+                try:
+                    import json
+                    method_parameters = json.loads(method_parameters_str)
+                except (json.JSONDecodeError, TypeError):
+                    method_parameters = {}
+        
+        if not is_static_str:
+            is_static_str = attributes.get("method-is-static") or attributes.get("data-method-is-static")
+            if is_static_str:
+                is_static_method = is_static_str.lower() == 'true'
         
         # Generate default label based on action
         if not label:
@@ -211,6 +250,7 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
         html_type = str(attributes.get("type", "")).lower()
     action_type = BUTTON_ACTION_BY_HTML_TYPE.get(html_type, ButtonActionType.Send)
     
+    # Create Button with method execution configuration
     button = Button(
         name=name,
         description="Button component",
@@ -218,7 +258,16 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
         buttonType=ButtonType.CustomizableButton,
         actionType=action_type,
         styling=styling,
+        method_entity=None,  # Will be resolved later in processor
+        method_name=method_name,
+        method_entity_id=method_entity_id,
+        method_parameters=method_parameters or {},
+        is_class_method=is_static_method,
     )
+    
+    # Store method entity name for later resolution
+    if method_entity:
+        setattr(button, '_method_entity_name', method_entity)
     
     # Set events on button and triggered_by on actions
     if events:

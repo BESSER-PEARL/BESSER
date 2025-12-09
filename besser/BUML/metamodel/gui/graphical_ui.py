@@ -704,16 +704,38 @@ class DataList(ViewComponent):
 class Button(ViewComponent):
     """
     Represents a button component and encapsulates specific properties of a button, such as its name and label.
+    
+    Args:
+        name (str): The name of the button.
+        description (str): The description of the button.
+        label (str): The display label of the button.
+        buttonType (ButtonType): The visual type of the button.
+        actionType (ButtonActionType): The action performed when clicked.
+        targetScreen (Screen | None): Target screen for navigation actions.
+        method_entity (Class | None): Target class for method execution.
+        method_name (str | None): Name of the method to execute.
+        method_entity_id (int | str | None): Entity ID for instance methods.
+        method_parameters (dict | None): Parameters to pass to the method.
+        is_class_method (bool): Whether the method is static/class method.
+        timestamp (int | None): Creation timestamp.
+        visibility (str): Visibility level.
+        styling (Styling | None): Visual styling configuration.
     """
 
     def __init__(self, name: str, description: str, label: str, buttonType: ButtonType, actionType: ButtonActionType,
-                 targetScreen: Screen = None, timestamp: int = None, visibility: str = "public",
-                 styling: Styling = None):
+                 targetScreen: Screen = None, method_entity: Class = None, method_name: str = None,
+                 method_entity_id = None, method_parameters: dict = None, is_class_method: bool = False,
+                 timestamp: int = None, visibility: str = "public", styling: Styling = None):
         super().__init__(name, description, visibility, timestamp, styling=styling)
         self.label = label
         self.buttonType = buttonType
         self.actionType = actionType
         self.targetScreen = targetScreen
+        self.method_entity = method_entity
+        self.method_name = method_name
+        self.method_entity_id = method_entity_id
+        self.method_parameters = method_parameters or {}
+        self.is_class_method = is_class_method
 
     @property
     def label(self) -> str:
@@ -749,6 +771,56 @@ class Button(ViewComponent):
             if not isinstance(targetScreen, Screen):
                 print("Error: For 'Navigate' actionType, targetScreen must be a Screen object.")
         self.__targetScreen = targetScreen
+
+    @property
+    def method_entity(self) -> Class:
+        """Get the target class for method execution."""
+        return self.__method_entity
+
+    @method_entity.setter
+    def method_entity(self, method_entity: Class):
+        """Set the target class for method execution."""
+        self.__method_entity = method_entity
+
+    @property
+    def method_name(self) -> str:
+        """Get the name of the method to execute."""
+        return self.__method_name
+
+    @method_name.setter
+    def method_name(self, method_name: str):
+        """Set the name of the method to execute."""
+        self.__method_name = method_name
+
+    @property
+    def method_entity_id(self):
+        """Get the entity ID for instance method execution."""
+        return self.__method_entity_id
+
+    @method_entity_id.setter
+    def method_entity_id(self, method_entity_id):
+        """Set the entity ID for instance method execution."""
+        self.__method_entity_id = method_entity_id
+
+    @property
+    def method_parameters(self) -> dict:
+        """Get the parameters to pass to the method."""
+        return self.__method_parameters
+
+    @method_parameters.setter
+    def method_parameters(self, method_parameters: dict):
+        """Set the parameters to pass to the method."""
+        self.__method_parameters = method_parameters or {}
+
+    @property
+    def is_class_method(self) -> bool:
+        """Check if the method is a static/class method."""
+        return self.__is_class_method
+
+    @is_class_method.setter
+    def is_class_method(self, is_class_method: bool):
+        """Set whether the method is a static/class method."""
+        self.__is_class_method = is_class_method
 
     def __repr__(self):
         return (

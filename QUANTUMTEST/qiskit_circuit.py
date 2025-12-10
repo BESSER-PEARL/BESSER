@@ -35,26 +35,70 @@ class PhaseGradient(QuantumCircuit):
             self.p(lam, i)
 
 # Function Gate Definitions
-{% for func_code in function_gates_code %}
-{{ func_code }}
-{% endfor %}
+
+def _function_gate_Uf(num_qubits):
+    """Custom gate: Uf"""
+    qc_func = QuantumCircuit(num_qubits, name='Uf')
+    qc_func.x(2)
+    qc_func.h(2)
+    qc_func.x(2)
+    qc_func.h(2)
+    qc_func.x(2)
+    return qc_func.to_instruction()
+
+
+def _function_gate_V(num_qubits):
+    """Custom gate: V"""
+    qc_func = QuantumCircuit(num_qubits, name='V')
+    qc_func.h(0)
+    qc_func.h(1)
+    qc_func.h(2)
+    qc_func.x(2)
+    qc_func.h(2)
+    qc_func.x(2)
+    qc_func.h(0)
+    qc_func.h(1)
+    qc_func.h(2)
+    qc_func.x(2)
+    qc_func.h(2)
+    return qc_func.to_instruction()
+
+
 
 
 # Initialize Registers
-{% for qreg in circuit.qregs %}
-{{ qreg.name }} = QuantumRegister({{ qreg.size }}, '{{ qreg.name }}')
-{% endfor %}
-{% for creg in circuit.cregs %}
-{{ creg.name }} = ClassicalRegister({{ creg.size }}, '{{ creg.name }}')
-{% endfor %}
+
+q = QuantumRegister(15, 'q')
+
+
+c = ClassicalRegister(15, 'c')
+
 
 # Initialize Circuit
-qc = QuantumCircuit({% for qreg in circuit.qregs %}{{ qreg.name }}, {% endfor %}{% for creg in circuit.cregs %}{{ creg.name }}{% if not loop.last %}, {% endif %}{% endfor %})
+qc = QuantumCircuit(q, c)
 
 # Operations
-{% for line in operations_code %}
-{{ line }}
-{% endfor %}
+
+qc.append(HGate(), [q[0]])
+
+qc.append(HGate(), [q[1]])
+
+qc.append(HGate(), [q[2]])
+
+qc.append(_function_gate_Uf(3), [q[0], q[1], q[2]])
+
+qc.append(_function_gate_V(3), [q[0], q[1], q[2]])
+
+qc.append(_function_gate_Uf(3), [q[0], q[1], q[2]])
+
+qc.append(_function_gate_V(3), [q[0], q[1], q[2]])
+
+qc.measure(q[0], c[0])
+
+qc.measure(q[1], c[1])
+
+qc.measure(q[2], c[2])
+
 
 # Draw
 print(qc.draw())

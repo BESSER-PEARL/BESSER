@@ -42,8 +42,3 @@ New Features and Improvements
 * Added CSV upload functionality for reverse engineering domain models directly from the editor interface.
 * Enhanced GUI diagram support with improved table component modeling capabilities.
 * Added support for page duplication in the GrapesJS editor.
-
-Fixes
------
-
-* Fixed issue: `#364 <https://github.com/BESSER-PEARL/BESSER/issues/364>`_ - Enhanced table component functionality

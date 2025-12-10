@@ -398,12 +398,14 @@ def _serialize_gates_to_columns(gates):
     for gate in gates:
         for q in gate.target_qubits:
             max_qubit = max(max_qubit, q)
+        if hasattr(gate, 'control_qubits') and gate.control_qubits:
+            for q in gate.control_qubits:
+                max_qubit = max(max_qubit, q)
             
     num_qubits = max_qubit + 1
     
     # Organize gates into columns
     # This is a simplified placement: one column per gate
-    # A more sophisticated layout algorithm could be used if needed
     columns = []
     
     for gate in gates:
@@ -411,21 +413,32 @@ def _serialize_gates_to_columns(gates):
         
         # Get gate symbol and type
         symbol = _get_gate_symbol(gate)
-        gate_type = symbol # Use symbol as type for now, or map back if needed
         
         # Create gate object for JSON
         gate_obj = {
             "type": symbol,
             "label": symbol,
-            "id": f"{symbol}-{id(gate)}", # Generate a unique ID
+            "id": f"{symbol}-{id(gate)}",
             "height": 1,
             "canResize": False
         }
         
-        # Handle multi-qubit gates if needed (though nested circuits usually have single qubit gates in this format?)
-        # The example showed "gates": [null, {type: H}, ...]
-        # If a gate targets multiple qubits, it might need special handling in this format
-        # For now, place it on the first target qubit
+        # Place control qubits first
+        if hasattr(gate, 'control_qubits') and gate.control_qubits:
+            for i, ctrl_qubit in enumerate(gate.control_qubits):
+                if ctrl_qubit < num_qubits:
+                    ctrl_state = gate.control_states[i] if i < len(gate.control_states) else ControlState.CONTROL
+                    ctrl_type = "CONTROL" if ctrl_state == ControlState.CONTROL else "ANTI_CONTROL"
+                    ctrl_obj = {
+                        "type": ctrl_type,
+                        "label": "•" if ctrl_state == ControlState.CONTROL else "◦",
+                        "id": f"{ctrl_type}-{id(gate)}-{i}",
+                        "height": 1,
+                        "isControl": True
+                    }
+                    col_gates[ctrl_qubit] = ctrl_obj
+        
+        # Place the gate on target qubit
         if gate.target_qubits:
             target = gate.target_qubits[0]
             if target < num_qubits:

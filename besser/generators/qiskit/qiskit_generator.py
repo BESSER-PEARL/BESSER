@@ -94,10 +94,18 @@ class QiskitGenerator(GeneratorInterface):
             # Check if this is a controlled gate
             if gate.control_qubits:
                 ctrl_str = ", ".join([str(c) for c in gate.control_qubits])
+                # Generate ctrl_state string if needed
+                ctrl_state_str = self._get_control_state_string(gate.control_states)
                 if len(gate.control_qubits) == 1:
-                    return f"qc_func.cx({gate.control_qubits[0]}, {gate.target_qubits[0]})"
+                    if ctrl_state_str == "1":
+                        return f"qc_func.cx({gate.control_qubits[0]}, {gate.target_qubits[0]})"
+                    else:
+                        return f"qc_func.cx({gate.control_qubits[0]}, {gate.target_qubits[0]})  # Note: ctrl_state='{ctrl_state_str}' requires gate.control() wrapper"
                 else:
-                    return f"qc_func.mcx([{ctrl_str}], {gate.target_qubits[0]})"
+                    if ctrl_state_str == "1" * len(gate.control_qubits):
+                        return f"qc_func.mcx([{ctrl_str}], {gate.target_qubits[0]})"
+                    else:
+                        return f"qc_func.mcx([{ctrl_str}], {gate.target_qubits[0]}, ctrl_state='{ctrl_state_str}')"
             else:
                 return f"qc_func.x({gate.target_qubits[0]})"
         elif isinstance(gate, PauliYGate):

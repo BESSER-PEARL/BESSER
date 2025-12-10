@@ -180,8 +180,11 @@ def process_quantum_diagram(json_data):
             
             gate = None
             
-            # Check if this is a function gate (symbol starts with __FUNC__)
-            is_func_gate = isinstance(symbol, str) and symbol.startswith('__FUNC__')
+            # Check if this is a function gate:
+            # - Old format: symbol starts with __FUNC__
+            # - New format: metadata indicates isFunctionGate=true
+            is_func_gate = (isinstance(symbol, str) and symbol.startswith('__FUNC__')) or \
+                          (metadata and metadata.get('isFunctionGate'))
             
             if metadata and metadata.get('nestedCircuit'):
                 # This is a custom function gate with a nested circuit
@@ -265,7 +268,10 @@ def process_quantum_diagram(json_data):
                 if found_metadata and found_metadata.get('nestedCircuit'):
                     nested_circuit_data = found_metadata['nestedCircuit']
                     gate_name = sanitize_name(found_metadata.get('label', func_name))
+                    
+                    # Check format: 'columns' (old internal format) or 'cols' (Quirk format)
                     if 'columns' in nested_circuit_data:
+                        # Old internal format with full gate objects
                         nested_gates = _parse_nested_columns(nested_circuit_data)
                         gate = FunctionGate(
                             name=gate_name, 
@@ -275,12 +281,14 @@ def process_quantum_diagram(json_data):
                             control_states=[c[1] for c in controls]
                         )
                     else:
+                        # New Quirk format - recursively process as a circuit
                         nested_qc = process_quantum_diagram(nested_circuit_data)
-                        gate_def = GateDefinition(name=gate_name, circuit=nested_qc)
+                        # Extract gates from nested circuit and create FunctionGate
+                        nested_gates = nested_qc.operations
                         gate = FunctionGate(
                             name=gate_name, 
                             target_qubits=target_qubits, 
-                            definition=gate_def, 
+                            gates=nested_gates,
                             control_qubits=[c[0] for c in controls], 
                             control_states=[c[1] for c in controls]
                         )
@@ -324,41 +332,61 @@ def _parse_nested_columns(nested_data):
     
     for col in columns:
         col_gates = col.get('gates', [])
+        
+        # First pass: collect control qubits in this column
+        controls = []
+        for qubit_idx, gate_data in enumerate(col_gates):
+            if gate_data is None:
+                continue
+            gate_type = gate_data.get('type', '')
+            if gate_type == 'CONTROL':
+                controls.append((qubit_idx, ControlState.CONTROL))
+            elif gate_type == 'ANTI_CONTROL':
+                controls.append((qubit_idx, ControlState.ANTI_CONTROL))
+        
+        # Second pass: create gates with control information
         for qubit_idx, gate_data in enumerate(col_gates):
             if gate_data is None:
                 continue
             
             gate_type = gate_data.get('type', '')
             
+            # Skip control gates as they've been processed
+            if gate_type in ('CONTROL', 'ANTI_CONTROL'):
+                continue
+            
             # Create the appropriate gate based on type
-            gate = _create_gate_from_type(gate_type, qubit_idx)
+            gate = _create_gate_from_type(gate_type, qubit_idx, controls)
             if gate:
                 gates_list.append(gate)
     
     return gates_list
 
 
-def _create_gate_from_type(gate_type, target_qubit):
+def _create_gate_from_type(gate_type, target_qubit, controls=None):
     """Create a gate from a type string (used for nested circuit parsing)."""
+    control_qubits = [c[0] for c in controls] if controls else []
+    control_states = [c[1] for c in controls] if controls else []
+    
     # Map simple gate types to gate classes
     if gate_type == 'H':
-        return HadamardGate(target_qubit)
+        return HadamardGate(target_qubit, control_qubits=control_qubits, control_states=control_states)
     elif gate_type == 'X':
-        return PauliXGate(target_qubit)
+        return PauliXGate(target_qubit, control_qubits=control_qubits, control_states=control_states)
     elif gate_type == 'Y':
-        return PauliYGate(target_qubit)
+        return PauliYGate(target_qubit, control_qubits=control_qubits, control_states=control_states)
     elif gate_type == 'Z':
-        return PauliZGate(target_qubit)
+        return PauliZGate(target_qubit, control_qubits=control_qubits, control_states=control_states)
     elif gate_type == 'S':
-        return SGate(target_qubit)
+        return SGate(target_qubit, control_qubits=control_qubits, control_states=control_states)
     elif gate_type == 'T':
-        return TGate(target_qubit)
+        return TGate(target_qubit, control_qubits=control_qubits, control_states=control_states)
     elif gate_type in ('Rx', 'RX'):
-        return RXGate(target_qubit, theta=0)  # Default theta
+        return RXGate(target_qubit, theta=0, control_qubits=control_qubits, control_states=control_states)
     elif gate_type in ('Ry', 'RY'):
-        return RYGate(target_qubit, theta=0)
+        return RYGate(target_qubit, theta=0, control_qubits=control_qubits, control_states=control_states)
     elif gate_type in ('Rz', 'RZ'):
-        return RZGate(target_qubit, theta=0)
+        return RZGate(target_qubit, theta=0, control_qubits=control_qubits, control_states=control_states)
     elif gate_type == 'Measure':
         return Measurement(target_qubit)
     # Add more gate types as needed

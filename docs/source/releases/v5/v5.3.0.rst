@@ -1,0 +1,49 @@
+Version 5.3.0
+=============
+
+This release introduces enhancements to the table component in the GUI editor, reverse engineering capabilities from CSV files, and improvements to the React code generator with optimized conditional component generation.
+
+New Features and Improvements
+-----------------------------
+
+**Reverse Engineering**
+
+* Added **CSV to B-UML domain model conversion** functionality for reverse engineering class diagrams from CSV files.
+* Introduced ``csv_to_domain_model()`` utility that automatically infers data types, detects foreign key relationships, and generates complete domain models with classes, attributes, and associations.
+* Added endpoint for CSV file upload and conversion in the Web Modeling Editor backend.
+
+**Table Component System**
+
+* Refactored ``TableChart`` to **``Table``** component with columns support.
+* Introduced flexible **Column architecture** with three specialized types:
+    * ``FieldColumn``: Direct mapping to entity attributes
+    * ``LookupColumn``: Display values from related entities via associations
+    * ``ExpressionColumn``: Computed values using custom expressions (this special type of column is supported in the GUI editor, but not yet in the code generators)
+* Enhanced table functionality with **action buttons** (view, edit, delete) for VRUD operations in the generated application.
+
+**React Code Generator**
+
+* Added recursive detection of nested components within ``ViewContainers`` to ensure all required components are generated.
+* Implemented **unique table field name collection** across all nesting levels for accurate data binding.
+* Enhanced ``TableComponent`` renderer to support:
+    * Entity-based lookups with proper relationship handling
+    * Enumeration fields with selection options
+    * List-type lookups for complex relationships
+
+**Backend REST API Generator**
+
+* Fixed **many-to-many relationship queries** in ``get_all`` functions for accurate data retrieval.
+* Corrected **one-to-many relationship handling** in statistics generation.
+* Enhanced GET endpoints with **detailed lookups and eager loading** of relationships.
+* Improved data fetching for tables with support for detailed lookups and relationship keys.
+
+**Web Modeling Editor**
+
+* Added CSV upload functionality for reverse engineering domain models directly from the editor interface.
+* Enhanced GUI diagram support with improved table component modeling capabilities.
+* Added support for page duplication in the GrapesJS editor.
+
+Fixes
+-----
+
+* Fixed issue: `#364 <https://github.com/BESSER-PEARL/BESSER/issues/364>`_ - Enhanced table component functionality

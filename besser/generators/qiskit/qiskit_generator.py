@@ -10,12 +10,21 @@ from besser.BUML.metamodel.quantum import (
     TimeDependentGate, PhaseGradientGate, OrderGate, ScalarGate, PostSelection
 )
 
+VALID_BACKENDS = {"aer_simulator", "fake_backend", "ibm_quantum"}
+
 class QiskitGenerator(GeneratorInterface):
     """
     Generates Qiskit code from a BESSER QuantumCircuit model.
     """
-    def __init__(self, model: QuantumCircuit, output_dir: str = None):
+    def __init__(self, model: QuantumCircuit, output_dir: str = None, 
+                 backend_type: str = "aer_simulator", shots: int = 1024):
         super().__init__(model, output_dir)
+        if backend_type not in VALID_BACKENDS:
+            raise ValueError(
+                f"Invalid backend: '{backend_type}'. Valid backends are: {VALID_BACKENDS}"
+            )
+        self.backend_type = backend_type
+        self.shots = shots
 
     def generate(self):
         """
@@ -42,7 +51,9 @@ class QiskitGenerator(GeneratorInterface):
             generated_code = template.render(
                 circuit=self.model,
                 function_gates_code=function_gates_code,
-                operations_code=operations_code
+                operations_code=operations_code,
+                backend_type=self.backend_type,
+                shots=self.shots
             )
             f.write(generated_code)
         

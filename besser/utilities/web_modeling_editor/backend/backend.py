@@ -635,7 +635,16 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
     print(f"[Qiskit Gen] qregs: {quantum_model.qregs}")
     print(f"[Qiskit Gen] operations count: {len(quantum_model.operations)}")
     
-    generator_instance = generator_class(quantum_model, output_dir=temp_dir)
+    # Extract Qiskit config
+    backend_type = config.get('backend', 'aer_simulator') if config else 'aer_simulator'
+    shots = config.get('shots', 1024) if config else 1024
+    
+    generator_instance = generator_class(
+        quantum_model, 
+        output_dir=temp_dir,
+        backend_type=backend_type,
+        shots=shots
+    )
     generator_instance.generate()
     
     return _create_file_response(temp_dir, "qiskit")

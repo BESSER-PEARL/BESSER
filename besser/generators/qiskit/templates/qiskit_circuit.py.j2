@@ -6,7 +6,14 @@ sys.path = [p.strip() for p in sys.path if p]
 
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
 from qiskit.circuit import Instruction
+{% if backend_type == 'aer_simulator' %}
 from qiskit_aer import AerSimulator
+{% elif backend_type == 'fake_backend' %}
+from qiskit_aer import AerSimulator
+from qiskit_ibm_runtime.fake_provider import FakeManilaV2
+{% elif backend_type == 'ibm_quantum' %}
+from qiskit_ibm_runtime import QiskitRuntimeService, SamplerV2 as Sampler
+{% endif %}
 from qiskit.circuit.library import *
 from qiskit.circuit.library.standard_gates import GlobalPhaseGate
 import numpy as np
@@ -59,10 +66,48 @@ qc = QuantumCircuit({% for qreg in circuit.qregs %}{{ qreg.name }}, {% endfor %}
 # Draw
 print(qc.draw())
 
-# Execution (Simulation)
-print("Simulating circuit...")
+{% if backend_type == 'aer_simulator' %}
+# Execution (Local Aer Simulator)
+print("Simulating circuit with Aer Simulator...")
 simulator = AerSimulator()
 transpiled_qc = transpile(qc, simulator)
-result = simulator.run(transpiled_qc, shots=1024).result()
+result = simulator.run(transpiled_qc, shots={{ shots }}).result()
 counts = result.get_counts()
 print("Counts:", counts)
+{% elif backend_type == 'fake_backend' %}
+# Execution (Fake Backend - simulates real hardware noise)
+print("Simulating circuit with Fake Backend (FakeManilaV2)...")
+fake_backend = FakeManilaV2()
+# Note: Fake backends simulate noise characteristics of real hardware
+transpiled_qc = transpile(qc, fake_backend)
+simulator = AerSimulator.from_backend(fake_backend)
+result = simulator.run(transpiled_qc, shots={{ shots }}).result()
+counts = result.get_counts()
+print("Counts:", counts)
+{% elif backend_type == 'ibm_quantum' %}
+# Execution (IBM Quantum Hardware)
+print("Running circuit on IBM Quantum Hardware...")
+
+# Initialize the service (requires IBMQ account setup)
+# To save your credentials: QiskitRuntimeService.save_account(channel="ibm_quantum", token="YOUR_TOKEN")
+service = QiskitRuntimeService()
+
+# Get the least busy backend that can handle this circuit
+backend = service.least_busy(operational=True, simulator=False, min_num_qubits=qc.num_qubits)
+print(f"Using backend: {backend.name}")
+
+# Transpile for the target backend
+transpiled_qc = transpile(qc, backend)
+
+# Run using the Sampler primitive
+sampler = Sampler(mode=backend)
+job = sampler.run([transpiled_qc], shots={{ shots }})
+print(f"Job ID: {job.job_id()}")
+
+# Wait for results
+result = job.result()
+# Get quasi-distribution from the first pub result
+pub_result = result[0]
+counts = pub_result.data.meas.get_counts()
+print("Counts:", counts)
+{% endif %}

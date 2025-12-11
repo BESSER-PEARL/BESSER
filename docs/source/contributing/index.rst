@@ -13,7 +13,7 @@ repeatable steps when extending BESSER (from the B-UML language to the code gene
 
    areas
    create_generator
-   create_subdsl
+   create_dsl
 
 Our Team
 --------

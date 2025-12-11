@@ -4,7 +4,6 @@ from besser.BUML.metamodel.gui.graphical_ui import ViewComponent
 from besser.BUML.metamodel.gui.style import Alignment
 from besser.BUML.metamodel.structural import Property
 
-
 class AgentComponent(ViewComponent):
     """Represents a BESSER Agent component in the GUI.
     
@@ -13,7 +12,7 @@ class AgentComponent(ViewComponent):
         agent_name (str | None): The name of the agent diagram to reference.
         agent_title (str | None): Display title for the agent component.
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -25,61 +24,21 @@ class AgentComponent(ViewComponent):
         self.agent_name = agent_name
         self.agent_title = agent_title
 
-    
+
     @property
     def agent_name(self) -> Optional[str]:
         """Optional[str]: Name of the agent diagram to reference."""
         return self._agent_name
-    
+
     @agent_name.setter
     def agent_name(self, value: Optional[str]):
         self._agent_name = value
-    
+
     @property
     def agent_title(self) -> Optional[str]:
         """Optional[str]: Display title for the agent component."""
         return self._agent_title
-    
-    @agent_title.setter
-    def agent_title(self, value: Optional[str]):
-        self._agent_title = value
 
-
-class AgentComponent(ViewComponent):
-    """Represents a BESSER Agent component in the GUI.
-    
-    Args:
-        name (str): The name of the agent component.
-        agent_name (str | None): The name of the agent diagram to reference.
-        agent_title (str | None): Display title for the agent component.
-    """
-    
-    def __init__(
-        self,
-        name: str,
-        agent_name: Optional[str] = None,
-        agent_title: Optional[str] = None,
-        **kwargs,
-    ):
-        super().__init__(name, **kwargs)
-        self.agent_name = agent_name
-        self.agent_title = agent_title
-
-    
-    @property
-    def agent_name(self) -> Optional[str]:
-        """Optional[str]: Name of the agent diagram to reference."""
-        return self._agent_name
-    
-    @agent_name.setter
-    def agent_name(self, value: Optional[str]):
-        self._agent_name = value
-    
-    @property
-    def agent_title(self) -> Optional[str]:
-        """Optional[str]: Display title for the agent component."""
-        return self._agent_title
-    
     @agent_title.setter
     def agent_title(self, value: Optional[str]):
         self._agent_title = value

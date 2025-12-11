@@ -146,16 +146,13 @@ def class_buml_to_json(domain_model):
             if isinstance(type_obj, Class):
                 for attr in type_obj.attributes:
                     attr_id = str(uuid.uuid4())
-                    visibility_symbol = next(
-                        k for k, v in VISIBILITY_MAP.items() if v == attr.visibility
-                    )
                     attr_type = (
                         attr.type.name if hasattr(attr.type, "name") else str(attr.type)
                     )
 
                     elements[attr_id] = {
                         "id": attr_id,
-                        "name": f"{visibility_symbol} {attr.name}: {attr_type}",
+                        "name": attr.name, 
                         "type": "ClassAttribute",
                         "owner": element_id,
                         "bounds": {
@@ -164,6 +161,8 @@ def class_buml_to_json(domain_model):
                             "width": 159,
                             "height": 30,
                         },
+                        "visibility": attr.visibility,
+                        "attributeType": attr_type,
                     }
                     attribute_ids.append(attr_id)
                     y_offset += 30

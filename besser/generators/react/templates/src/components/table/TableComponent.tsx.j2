@@ -9,6 +9,9 @@ interface TableColumn {
   type?: string;
   columnType?: string;
   path?: string;
+  entity?: string;
+  options?: string[];
+  required?: boolean;
   lookupField?: string;
   relationshipKey?: string;
 }
@@ -144,7 +147,7 @@ export const TableComponent: React.FC<Props> = ({
   const columns: TableColumn[] = useMemo(() => {
     if (resolvedOptions.columns.length > 0) {
       return resolvedOptions.columns
-        .filter((col): col is { field: string; label?: string; type?: string; column_type?: string; path?: string } | string => Boolean(col))
+        .filter((col): col is { field: string; label?: string; type?: string; column_type?: string; path?: string; entity?: string; options?: string[]; required?: boolean } | string => Boolean(col))
         .map((col) => {
           if (typeof col === "string") {
             return { field: col, label: humanize(col), type: "string" };
@@ -166,6 +169,9 @@ export const TableComponent: React.FC<Props> = ({
             type: col.type || "string",
             columnType: col.column_type,
             path: col.path,
+            entity: col.entity,
+            options: col.options,
+            required: col.required ?? false,
             lookupField: col.column_type === "lookup" ? col.field : undefined,  // Store the nested field (e.g., "name")
             relationshipKey: relationshipKey,  // API relationship key (e.g., "customer")
           };
@@ -205,6 +211,7 @@ export const TableComponent: React.FC<Props> = ({
   const [modalMode, setModalMode] = useState<'add' | 'edit'>('add');
   const [editRowData, setEditRowData] = useState<any>(null);
   const [lookupOptions, setLookupOptions] = useState<Record<string, any[]>>({});
+  const [validationError, setValidationError] = useState<string>("");
 
   useEffect(() => {
     setCurrentPage(1);
@@ -213,23 +220,25 @@ export const TableComponent: React.FC<Props> = ({
   // Reset form values when modal opens
   useEffect(() => {
     if (showModal) {
+      setValidationError("");
       const initialValues: Record<string, any> = {};
       columns.forEach(col => {
         if (modalMode === 'edit' && editRowData) {
           // For lookup columns in edit mode, use the FK ID
           if (col.columnType === 'lookup') {
             if (col.type === 'list') {
-              // For list-type lookups (1:N), get array of IDs from related objects
+              // For list-type lookups (1:N or N:M), get array of IDs from related objects
               const relatedArray = editRowData[col.relationshipKey || col.field];
               if (Array.isArray(relatedArray)) {
-                initialValues[col.field] = relatedArray.map(item => item.id);
+                initialValues[col.field] = relatedArray.map((item: any) => String(item.id));
               } else {
                 initialValues[col.field] = [];
               }
             } else {
-              // For single lookups (N:1), use the FK ID field
-              const fkField = `${col.field}_id`;
-              initialValues[fkField] = editRowData[fkField] ?? "";
+              // For single lookups (N:1), use the path as the field name
+              const fkField = col.path || col.field;
+              const fkIdField = `${fkField}_id`;
+              initialValues[col.field] = editRowData[fkIdField] ?? "";
             }
           } else {
             const value = editRowData[col.field];
@@ -256,17 +265,18 @@ export const TableComponent: React.FC<Props> = ({
         const backendBase = "http://localhost:8000";
         
         for (const col of columns) {
-          if (col.columnType === 'lookup' && col.path) {
+          if (col.columnType === 'lookup' && col.entity) {
+            const endpoint = col.entity.toLowerCase();
             try {
-              const response = await axios.get(`${backendBase}/${col.path}/`);
+              const response = await axios.get(`${backendBase}/${endpoint}/`);
               if (Array.isArray(response.data)) {
-                options[col.path] = response.data;
+                options[endpoint] = response.data;
               } else if (response.data && typeof response.data === 'object') {
-                options[col.path] = Array.isArray(response.data.results) ? response.data.results : [response.data];
+                options[endpoint] = Array.isArray(response.data.results) ? response.data.results : [response.data];
               }
             } catch (err) {
-              console.error(`Error fetching ${col.path} options:`, err);
-              options[col.path] = [];
+              console.error(`Error fetching ${endpoint} options:`, err);
+              options[endpoint] = [];
             }
           }
         }
@@ -406,27 +416,71 @@ export const TableComponent: React.FC<Props> = ({
               <h4 style={{ margin: 0, marginBottom: "18px", color: "#1e293b" }}>
                 {modalMode === 'edit' ? `Edit ${dataBinding?.entity || 'Register'}` : `Add ${dataBinding?.entity || 'Register'}`}
               </h4>
+              {validationError && (
+                <div style={{
+                  padding: "12px",
+                  marginBottom: "16px",
+                  backgroundColor: "#fee2e2",
+                  border: "1px solid #fecaca",
+                  borderRadius: "6px",
+                  color: "#991b1b",
+                  fontSize: "14px",
+                }}>
+                  {validationError}
+                </div>
+              )}
               <form
                 onSubmit={async e => {
                   e.preventDefault();
+                  
+                  // Validate required fields
+                  const missingFields: string[] = [];
+                  columns.forEach(col => {
+                    if (col.required) {
+                      if (col.columnType === 'lookup') {
+                        if (col.type === 'list') {
+                          const value = formValues[col.field];
+                          if (!value || (Array.isArray(value) && value.length === 0)) {
+                            missingFields.push(col.label);
+                          }
+                        } else {
+                          const value = formValues[col.field];
+                          if (!value || value === "") {
+                            missingFields.push(col.label);
+                          }
+                        }
+                      } else {
+                        const value = formValues[col.field];
+                        if (value === undefined || value === null || value === "") {
+                          missingFields.push(col.label);
+                        }
+                      }
+                    }
+                  });
+                  
+                  if (missingFields.length > 0) {
+                    setValidationError(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+                    return;
+                  }
+                  
+                  setValidationError("");
                   const endpoint = getEndpoint();
                   const backendBase = "http://localhost:8000";
                   
                   // Process form values based on column types
                   const processedValues: Record<string, any> = {};
                   columns.forEach(col => {
-                    // For lookup columns, use the FK field name (path_id)
+                    // For lookup columns, use the path as the API field name
                     if (col.columnType === 'lookup' && col.path) {
                       if (col.type === 'list') {
-                        // For list-type lookups (1:N), send array of IDs
+                        // For list-type lookups (N:M or 1:N), send array of IDs
                         const value = formValues[col.field];
                         processedValues[col.path] = Array.isArray(value) 
                           ? value.map(v => parseInt(v, 10)).filter(v => !isNaN(v))
                           : [];
                       } else {
-                        // For single lookups (N:1), send single FK ID
-                        const fkField = `${col.path}_id`;
-                        const value = formValues[fkField];
+                        // For single lookups (N:1), send single FK ID using the field from form
+                        const value = formValues[col.field];
                         processedValues[col.path] = (value && value !== "") ? parseInt(value, 10) : null;
                       }
                     } else {
@@ -440,8 +494,15 @@ export const TableComponent: React.FC<Props> = ({
                         // Convert to integer
                         const intValue = parseInt(value, 10);
                         processedValues[col.field] = isNaN(intValue) ? 0 : intValue;
+                      } else if (col.type === 'float') {
+                        // Convert to float
+                        const floatValue = parseFloat(value);
+                        processedValues[col.field] = isNaN(floatValue) ? 0 : floatValue;
+                      } else if (col.type === 'bool' || col.type === 'boolean') {
+                        // Convert to boolean
+                        processedValues[col.field] = Boolean(value);
                       } else {
-                        // Keep as string
+                        // Keep as string (includes date, datetime, time, text)
                         processedValues[col.field] = value;
                       }
                     }
@@ -454,6 +515,9 @@ export const TableComponent: React.FC<Props> = ({
                       await fetchTableData();
                     } catch (err) {
                       console.error("Error saving data:", err);
+                      if (axios.isAxiosError(err) && err.response) {
+                        console.error("Response data:", err.response.data);
+                      }
                     }
                   } else if (modalMode === 'edit') {
                     const rowId = getRowId(editRowData);
@@ -472,59 +536,92 @@ export const TableComponent: React.FC<Props> = ({
               >
                 {columns.map(col => {
                   // For lookup columns, render a select dropdown
-                  if (col.columnType === 'lookup' && col.path) {
-                    const options = lookupOptions[col.path] || [];
+                  if (col.columnType === 'lookup' && col.entity) {
+                    const endpoint = col.entity.toLowerCase();
+                    const options = lookupOptions[endpoint] || [];
                     
-                    // For list-type lookups (1:N), use multi-select
+                    // For list-type lookups (1:N or N:M), use checkbox list
                     if (col.type === 'list') {
                       const selectedValues = formValues[col.field] || [];
                       
                       return (
-                        <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                          <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
+                        <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+                          <label style={{ fontWeight: 500, color: "#334155" }}>
                             {col.label}
-                            <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>(multi-select)</span>
+                            {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
+                            <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>
+                              ({selectedValues.length} selected)
+                            </span>
                           </label>
-                          <select
-                            id={`modal-input-${col.field}`}
-                            multiple
-                            value={selectedValues}
-                            onChange={e => {
-                              const selected = Array.from(e.target.selectedOptions).map(opt => opt.value);
-                              setFormValues(fv => ({ ...fv, [col.field]: selected }));
-                            }}
-                            style={{
-                              padding: "8px 12px",
-                              borderRadius: "6px",
-                              border: "1px solid #cbd5f5",
-                              fontSize: "15px",
-                              color: "#1e293b",
-                              background: "#f8fafc",
-                              minHeight: "100px",
-                            }}
-                          >
-                            {options.map((option: any) => (
-                              <option key={option.id} value={option.id}>
-                                {option.name || option.title || option.email || option.city || option.street || `ID: ${option.id}`}
-                              </option>
-                            ))}
-                          </select>
+                          <div style={{
+                            maxHeight: "160px",
+                            overflowY: "auto",
+                            border: "1px solid #cbd5f5",
+                            borderRadius: "6px",
+                            padding: "8px",
+                            background: "#f8fafc",
+                          }}>
+                            {options.length === 0 ? (
+                              <div style={{ padding: "8px", color: "#64748b", fontSize: "14px" }}>
+                                No options available
+                              </div>
+                            ) : (
+                              options.map((option: any) => {
+                                const isChecked = selectedValues.includes(String(option.id));
+                                return (
+                                  <div 
+                                    key={option.id} 
+                                    style={{ 
+                                      display: "flex", 
+                                      alignItems: "center", 
+                                      gap: "8px",
+                                      padding: "6px 4px",
+                                      cursor: "pointer",
+                                      borderRadius: "4px",
+                                    }}
+                                    onMouseEnter={(e) => e.currentTarget.style.background = "#e0e7ff"}
+                                    onMouseLeave={(e) => e.currentTarget.style.background = "transparent"}
+                                    onClick={() => {
+                                      const valueStr = String(option.id);
+                                      const newSelected = isChecked
+                                        ? selectedValues.filter((v: string) => v !== valueStr)
+                                        : [...selectedValues, valueStr];
+                                      setFormValues(fv => ({ ...fv, [col.field]: newSelected }));
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={isChecked}
+                                      onChange={() => {}} // Handled by parent div onClick
+                                      style={{
+                                        width: "16px",
+                                        height: "16px",
+                                        cursor: "pointer",
+                                      }}
+                                    />
+                                    <span style={{ fontSize: "14px", color: "#1e293b" }}>
+                                      {(col.lookupField && option[col.lookupField]) || {% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
+                                    </span>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
                         </div>
                       );
                     }
                     
                     // For single lookups (N:1), use regular select
-                    const fkField = `${col.path}_id`;
-                    
                     return (
                       <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                        <label htmlFor={`modal-input-${fkField}`} style={{ fontWeight: 500, color: "#334155" }}>
+                        <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
                           {col.label}
+                          {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
                         </label>
                         <select
-                          id={`modal-input-${fkField}`}
-                          value={formValues[fkField] ?? ""}
-                          onChange={e => setFormValues(fv => ({ ...fv, [fkField]: e.target.value }))}
+                          id={`modal-input-${col.field}`}
+                          value={formValues[col.field] ?? ""}
+                          onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.value }))}
                           style={{
                             padding: "8px 12px",
                             borderRadius: "6px",
@@ -537,7 +634,7 @@ export const TableComponent: React.FC<Props> = ({
                           <option value="">-- Select {col.label} --</option>
                           {options.map((option: any) => (
                             <option key={option.id} value={option.id}>
-                              {option.name || option.title || option.email || option.city || option.street || `ID: ${option.id}`}
+                              {(col.lookupField && option[col.lookupField]) || {% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
                             </option>
                           ))}
                         </select>
@@ -546,17 +643,80 @@ export const TableComponent: React.FC<Props> = ({
                   }
                   
                   // For regular fields, render input
+                  // For enum fields, use dropdown
+                  if (col.type === 'enum' && col.options && col.options.length > 0) {
+                    return (
+                      <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                        <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
+                          {col.label}
+                          {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
+                        </label>
+                        <select
+                          id={`modal-input-${col.field}`}
+                          value={formValues[col.field] ?? ""}
+                          onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.value }))}
+                          style={{
+                            padding: "8px 12px",
+                            borderRadius: "6px",
+                            border: "1px solid #cbd5f5",
+                            fontSize: "15px",
+                            color: "#1e293b",
+                            background: "#f8fafc",
+                          }}
+                        >
+                          <option value="">-- Select {col.label} --</option>
+                          {col.options.map((option: string) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  }
+                  
+                  // For boolean fields, use checkbox
+                  if (col.type === 'bool' || col.type === 'boolean') {
+                    return (
+                      <div key={col.field} style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <input
+                          id={`modal-input-${col.field}`}
+                          type="checkbox"
+                          checked={formValues[col.field] ?? false}
+                          onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.checked }))}
+                          style={{
+                            width: "18px",
+                            height: "18px",
+                            cursor: "pointer",
+                          }}
+                        />
+                        <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155", cursor: "pointer" }}>
+                          {col.label}
+                          {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
+                        </label>
+                      </div>
+                    );
+                  }
+                  
                   return (
                     <div key={col.field} style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
                       <label htmlFor={`modal-input-${col.field}`} style={{ fontWeight: 500, color: "#334155" }}>
                         {col.label}
+                        {col.required && <span style={{ color: "#ef4444", marginLeft: "4px" }}>*</span>}
                         {col.type && col.type !== 'string' && (
                           <span style={{ fontSize: "11px", color: "#64748b", marginLeft: "6px" }}>({col.type === 'list' ? 'comma-separated' : col.type})</span>
                         )}
                       </label>
                       <input
                         id={`modal-input-${col.field}`}
-                        type={col.type === 'int' ? 'number' : 'text'}
+                        type={
+                          col.type === 'int' || col.type === 'float' ? 'number' : 
+                          col.type === 'date' ? 'date' : 
+                          col.type === 'datetime' ? 'datetime-local' : 
+                          col.type === 'time' ? 'time' : 
+                          'text'
+                        }
+                        step={col.type === 'float' ? 'any' : undefined}
                         value={formValues[col.field] ?? ""}
                         onChange={e => setFormValues(fv => ({ ...fv, [col.field]: e.target.value }))}
                         placeholder={col.type === 'list' ? 'item1, item2, item3' : ''}
@@ -676,10 +836,10 @@ export const TableComponent: React.FC<Props> = ({
                     // For lookup columns, get nested value using the API relationship key
                     let cellValue;
                     if (column.columnType === 'lookup' && column.lookupField) {
-                      // Check if this is a list type (1:N relationship)
+                      // Check if this is a list type (1:N or N:M relationship)
                       if (column.type === 'list') {
-                        // Get the array of related objects
-                        const relatedArray = row[column.relationshipKey || column.field];
+                        // Get the array of related objects using the field name
+                        const relatedArray = row[column.field];
                         if (Array.isArray(relatedArray) && column.lookupField) {
                           // Extract the field values from each object and join them
                           cellValue = relatedArray

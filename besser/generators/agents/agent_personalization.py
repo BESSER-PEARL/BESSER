@@ -10,6 +10,7 @@ import json
 
 
 # Initialize OpenAI API key from environment variable or config
+OPENAI_API_KEY = ""
 if not OPENAI_API_KEY:
     raise RuntimeError('OPENAI_API_KEY environment variable not set.')
 

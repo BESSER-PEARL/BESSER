@@ -9,6 +9,12 @@ from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.structural import Method
 from besser.generators import GeneratorInterface
 
+from besser.generators.agents.agent_personalization import personalize_agent, configure_agent
+
+# BESSER utilities
+from besser.utilities.buml_code_builder import (
+    agent_model_to_code, 
+)
 
 class BAFGenerator(GeneratorInterface):
     """
@@ -19,8 +25,13 @@ class BAFGenerator(GeneratorInterface):
         model (Agent): A agent model.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
-    def __init__(self, model: Agent, output_dir: str = None):
+    def __init__(self, model: Agent, output_dir: str = None, config_path: str = None):
         super().__init__(model, output_dir)
+        self.config = None
+        if config_path:
+            print("Loading config from:", config_path)
+            with open(config_path, 'r', encoding='utf-8') as f:
+                self.config = json.load(f)
 
     def generate(self):
         """
@@ -61,11 +72,30 @@ class BAFGenerator(GeneratorInterface):
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
-        with open(agent_path, mode="w", encoding="utf-8") as f:
-            # todo: how to handle llm variable names that are used in bodies?
-            generated_code = agent_template.render(agent=self.model)
-            f.write(generated_code)
-            print("Agent script generated in the location: " + agent_path)
+        personalized_messages = {}
+        if self.config:
+            if 'personalizationrules' in self.config:
+                personalize_agent(self.model, self.config['personalizationrules'], personalized_messages)
+                
+            else:
+                configure_agent(self.model, self.config)
+                personalized_agent_path = self.build_generation_path(file_name=f"personalized_agent_model.py")
+                agent_model_to_code(self.model, personalized_agent_path)
+
+        if personalized_messages == {}:
+            
+            with open(agent_path, mode="w", encoding="utf-8") as f:
+                # todo: how to handle llm variable names that are used in bodies?
+                generated_code = agent_template.render(agent=self.model, config=self.config)
+                f.write(generated_code)
+                print("Agent script generated in the location: " + agent_path)
+        else: 
+            with open(agent_path, mode="w", encoding="utf-8") as f:
+                print(self.config['personalizationrules'])
+                print(personalized_messages)
+                generated_code = agent_template.render(agent=self.model, config=self.config, personalized_messages=personalized_messages)
+                f.write(generated_code)
+                print("Agent script generated in the location: " + agent_path)
         config_template = env.get_template('baf_config_template.py.j2')
         config_path = self.build_generation_path(file_name="config.ini")
         with open(config_path, mode="w", encoding="utf-8") as f:
@@ -79,4 +109,3 @@ class BAFGenerator(GeneratorInterface):
             generated_code = readme_template.render(agent=self.model)
             f.write(generated_code)
             print("Agent readme file generated in the location: " + readme_path)
-

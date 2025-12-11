@@ -5,6 +5,11 @@
 import logging
 import operator
 
+{% if personalized_messages is defined and personalized_messages %}
+import json as json
+{% endif %}
+
+
 from besser.agent.core.agent import Agent
 from besser.agent.nlp.llm.llm_huggingface import LLMHuggingFace
 from besser.agent.nlp.llm.llm_huggingface_api import LLMHuggingFaceAPI
@@ -17,6 +22,7 @@ from besser.agent.nlp.text2speech.openai_text2speech import OpenAIText2Speech
 
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
+
 
 # Create the bot
 agent = Agent('{{ agent.name }}')
@@ -32,12 +38,151 @@ telegram_platform = agent.use_telegram_platform()
 {% endif -%}
 {% endfor -%}
 
+
+
+
+{% if personalized_messages is defined and personalized_messages %}
+personalized_messages = json.loads(r'''{{ personalized_messages | tojson(indent=2) }}''')
+
+# load the personalization rules from the generator context into a Python variable called `rules`
+rules = json.loads(r'''{{ config['personalizationrules'] | tojson(indent=2) }}''')
+{% endif %}
+
+
+
+def evaluate_rules(session: Session):
+    """Evaluate rules and return a dict of applied targets -> values.
+
+    rules_list: list of feature-rule dicts like the `rules` variable.
+    user: dict of user features.
+    Returns: dict mapping target names (e.g. 'agentStyle') -> targetValue (e.g. 'informal')
+    """
+
+    rules_list = rules
+    applied = {}
+    for feature_block in rules_list:
+        feature = feature_block.get('feature')
+        for r in feature_block.get('rules', []):
+            # If the user doesn't have this feature, skip
+            if session.get(feature) is None:
+                continue
+            user_val = session.get(feature)
+            op = r.get('operator')
+            rule_val = r.get('value')
+
+            matched = False
+            try:
+                # numeric comparisons if possible
+                if op in {'<', '<=', '>', '>=', '==', '!='}:
+                    uv = float(user_val)
+                    rv = float(rule_val)
+                    if op == '<':
+                        matched = uv < rv
+                    elif op == '<=':
+                        matched = uv <= rv
+                    elif op == '>':
+                        matched = uv > rv
+                    elif op == '>=':
+                        matched = uv >= rv
+                    elif op == '==':
+                        matched = uv == rv
+                    elif op == '!=':
+                        matched = uv != rv
+                elif op == 'is':
+                    # string equality, case-insensitive
+                    matched = str(user_val).lower() == str(rule_val).lower()
+                else:
+                    # unknown operator: try python eval-style fallback for safety
+                    matched = False
+            except Exception:
+                # If conversion failed, try string comparison for equality-like ops
+                if op == 'is':
+                    matched = str(user_val).lower() == str(rule_val).lower()
+                else:
+                    matched = False
+
+            if matched:
+                applied[r.get('target')] = r.get('targetValue')
+
+    return applied
+
+
+def select_variant_for_message(variants_mapping, applied_targets):
+    """Select the best variant from variants_mapping given applied target values.
+
+    variants_mapping: dict where keys are variant selectors (e.g. 'formal', 'french', '["french","informal"]')
+    applied_targets: dict mapping target names -> values (e.g. {'agentStyle':'informal','agentLanguage':'french'})
+
+    Selection strategy:
+      1) Prefer a JSON-list key whose elements (as a set) equal the set of applied target values.
+      2) Otherwise prefer a single-key match where the key equals one of the applied values.
+      3) Otherwise fallback to a 'formal' key if present, then any available variant, else None.
+    """
+    values = list(applied_targets.values()) if applied_targets else []
+    values_set = set(values)
+
+    best_key = None
+    best_score = 0
+
+    for k, v in variants_mapping.items():
+        score = 0
+        # try list-like keys first
+        if isinstance(k, str) and k.startswith('[') and k.endswith(']'):
+            try:
+                parsed = json.loads(k)
+                if isinstance(parsed, list):
+                    parsed_set = set(parsed)
+                    # exact list match (all applied values match the list)
+                    if parsed_set == values_set and len(parsed) == len(values):
+                        score = 1000 + len(parsed)
+                    else:
+                        # partial overlap counts lightly
+                        score = len(parsed_set & values_set)
+            except Exception:
+                score = 0
+        else:
+            # simple key match gets higher priority than partial list overlaps
+            if k in values_set:
+                score = 500
+
+        if score > best_score:
+            best_score = score
+            best_key = k
+
+    if best_key is not None:
+        return variants_mapping[best_key]
+
+
+
+    return None
+
+
+
+def choose_variant_for_message(base_msg, session: Session, applied=None):
+    """Choose a single best variant for `base_msg` given `user` and `rules_list`.
+
+    If `applied` (dict of applied targets) is provided it will be reused; otherwise
+    the function will evaluate the rules for the user.
+    Returns the selected message string (or the base message if no variant found).
+    """
+
+    if applied is None:
+        applied = evaluate_rules(session)
+    variants = personalized_messages.get(base_msg)
+    if not variants or len(applied) == 0:
+        return base_msg
+    choice = select_variant_for_message(variants, applied)
+    return choice if choice is not None else base_msg
+ 
+
+{% set has_speech_output = config and config.outputModalities and 'speech' in config.outputModalities | map('lower') %}
+
 {% set platform_name = config['agentPlatform'] if config and 'agentPlatform' in config else None %}
-{% if platform_name == 'websocket' %}
+{% if platform_name == 'websocket' -%}
 platform = agent.use_websocket_platform()
-{% elif platform_name == 'telegram' %}
+{% elif platform_name == 'telegram' -%}
 platform = agent.use_telegram_platform()
-{% elif platform_name == 'streamlit' %}
+{% elif platform_name == 'streamlit' -%}
 platform = agent.use_streamlit_platform(use_ui=True)
 {% elif agent.platforms and agent.platforms|length > 0 %}
     {% set found_platform = false %}
@@ -60,42 +205,39 @@ platform = agent.use_websocket_platform(use_ui=True)
 {% endif %}
 
 # LLM instantiation based on config['llm']
-{% if config and 'llm' in config and config['llm'] %}
-    {% if config['llm']['provider'] == 'openai' %}
+{% if config and 'llm' in config and config['llm'] -%}
+    {%- if config['llm']['provider'] == 'openai' -%}
 gpt = LLMOpenAI(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
-    {% elif config['llm']['provider'] == 'huggingface' %}
+    {%- elif config['llm']['provider'] == 'huggingface' -%}
 hf_llm = LLMHuggingFace(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
-    {% elif config['llm']['provider'] == 'huggingfaceapi' %}
+    {%- elif config['llm']['provider'] == 'huggingfaceapi' -%}
 hf_llm_api = LLMHuggingFaceAPI(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
-    {% elif config['llm']['provider'] == 'replicate' %}
+    {%- elif config['llm']['provider'] == 'replicate' -%}
 replicate_llm = LLMReplicate(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
-    {% endif %}
+    {%- endif -%}
 {% endif %}
-
-
-{% if config and 'inputModalities' in config and 'speech' in config['inputModalities'] %}
+{% if config and 'inputModalities' in config and 'speech' in config['inputModalities'] -%}
 stt = OpenAISpeech2Text(agent=agent, model_name="whisper-1")
-{% endif %}
-
-{% if config and 'outputModalities' in config and 'speech' in config['outputModalities'] %}
+{% endif -%}
+{% if config and 'outputModalities' in config and 'speech' in config['outputModalities'] -%}
 tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
-{% endif %}
+{% endif -%}
 
 {% macro write_ic_config(ic_config) -%}
 {% if is_class(ic_config, 'SimpleIntentClassifierConfiguration') -%}SimpleIntentClassifierConfiguration(
@@ -207,12 +349,22 @@ from besser.agent.library.entity.base_entities import {{ entity.name }}
 {% if state.body.actions and is_class(state.body.actions[0], 'AgentReply') %}
 def {{ state.body.name }}(session: Session):
     {% for action in state.body.actions -%}
+    {% if personalized_messages is defined and personalized_messages %}
+    session.reply(choose_variant_for_message('{{ action.message }}', session))
+    {% else %}
     session.reply('{{ action.message }}')
+    {% endif %}
+    {% if has_speech_output %}
+    platform.reply_speech('{{ action.message }}')
+    {% endif %}
     {% endfor -%}
 {% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
 def {{ state.body.name }}(session: Session):
     message = llm.predict(session.event.message)
     session.reply(message)
+    {% if has_speech_output %}
+    platform.reply_speech(message)
+    {% endif %}
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.body) }}
 {% endif %}
@@ -226,11 +378,17 @@ def {{ state.body.name }}(session: Session):
 def {{ state.fallback_body.name }}(session: Session):
     {% for action in state.fallback_body.actions -%}
     session.reply('{{ action.message }}')
+    {% if has_speech_output -%}
+    platform.reply_speech('{{ action.message }}')
+    {% endif -%}
     {% endfor %}
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}
 def {{ state.fallback_body.name }}(session: Session):
     message = llm.predict(session.event.message)
     session.reply(message)
+    {% if has_speech_output %}
+    platform.reply_speech(message)
+    {% endif %}
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.fallback_body) }}
 {% endif %}

@@ -1,0 +1,802 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Generated JSON Schema",
+    "type": "object",
+    "properties": {
+        "PreferredLanguage": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "style": {
+                        "$ref": "#/definitions/StylesEnum"
+                    },
+                    "iso639_1": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Output_Modality": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "$ref": "#/definitions/OutputEnum"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Knowledge": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "score": {
+                        "type": "string"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    },
+                    "knowledgeOn": {
+                        "$ref": "#/definitions/Topic"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Input_Modality": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "$ref": "#/definitions/InputEnum"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Content": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "PreferredLanguage_end": {
+                        "$ref": "#/definitions/PreferredLanguage"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Design": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "colorScheme": {
+                        "type": "string"
+                    },
+                    "police": {
+                        "type": "string"
+                    },
+                    "brightness": {
+                        "type": "integer"
+                    },
+                    "contentContrast": {
+                        "type": "integer"
+                    },
+                    "textSize": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Disability": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string"
+                    },
+                    "affects": {
+                        "$ref": "#/definitions/AspectsEnum"
+                    },
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Education": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "providedBy": {
+                        "type": "string"
+                    },
+                    "degreeType": {
+                        "$ref": "#/definitions/DegreeEnum"
+                    },
+                    "fieldOfDegree": {
+                        "type": "string"
+                    },
+                    "degreeName": {
+                        "type": "string"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Interaction_Modality": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Output_Modality_end": {
+                        "$ref": "#/definitions/Output_Modality"
+                    },
+                    "Input_Modality_end": {
+                        "$ref": "#/definitions/Input_Modality"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Topic": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Knowledge_end": {
+                        "$ref": "#/definitions/Knowledge"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Skill": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "score": {
+                        "type": "string"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Experience": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "startDate": {
+                        "type": "string"
+                    },
+                    "endDate": {
+                        "type": "string"
+                    },
+                    "roleName": {
+                        "type": "string"
+                    },
+                    "companyName": {
+                        "type": "string"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Language": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "level": {
+                        "$ref": "#/definitions/CEFR"
+                    },
+                    "iso693_3": {
+                        "type": "string"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Culture": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "religion": {
+                        "$ref": "#/definitions/ReligionEnum"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Accessibility": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Disability_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Disability"
+                        }
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Preference": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Content_end": {
+                        "$ref": "#/definitions/Content"
+                    },
+                    "Interaction_Modality_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Interaction_Modality"
+                        }
+                    },
+                    "Design_end": {
+                        "$ref": "#/definitions/Design"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Competence": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Language_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Language"
+                        }
+                    },
+                    "Education_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Education"
+                        }
+                    },
+                    "Experience_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Experience"
+                        }
+                    },
+                    "Knowledge_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Knowledge"
+                        }
+                    },
+                    "Skill_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Skill"
+                        }
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Personal_Information": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "age": {
+                        "type": "integer"
+                    },
+                    "firstName": {
+                        "type": "string"
+                    },
+                    "gender": {
+                        "$ref": "#/definitions/GenderEnum"
+                    },
+                    "lastName": {
+                        "type": "string"
+                    },
+                    "nationality_iso3166": {
+                        "type": "string"
+                    },
+                    "address": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "User": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Personal_Information_end": {
+                        "$ref": "#/definitions/Personal_Information"
+                    },
+                    "Accessibility_end": {
+                        "$ref": "#/definitions/Accessibility"
+                    },
+                    "Preference_end": {
+                        "$ref": "#/definitions/Preference"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    },
+                    "Culture_end": {
+                        "$ref": "#/definitions/Culture"
+                    }
+                    
+                },
+                "required": [
+                ]
+            }
+        ]}
+    },
+    "definitions": {
+        "CEFR": {
+            "type": "string",
+            "enum": [
+                "C1", 
+                "B2", 
+                "B1", 
+                "A1", 
+                "C2", 
+                "A2"
+            ]
+        },
+        "InputEnum": {
+            "type": "string",
+            "enum": [
+                "text", 
+                "click", 
+                "image", 
+                "voice", 
+                "video"
+            ]
+        },
+        "AspectsEnum": {
+            "type": "string",
+            "enum": [
+                "Hearing", 
+                "Cognitive", 
+                "Sight", 
+                "Learning", 
+                "Social_Relationships", 
+                "Mobility", 
+                "Memory", 
+                "Mental_Health", 
+                "Speech"
+            ]
+        },
+        "GenderEnum": {
+            "type": "string",
+            "enum": [
+                "Male", 
+                "Female", 
+                "Other"
+            ]
+        },
+        "DegreeEnum": {
+            "type": "string",
+            "enum": [
+                "Masters_degree", 
+                "Bachelors_degree", 
+                "Doctorates_degree", 
+                "Certificate", 
+                "High-school_diploma"
+            ]
+        },
+        "ReligionEnum": {
+            "type": "string",
+            "enum": [
+                "Christianity", 
+                "Buddhism", 
+                "Other", 
+                "Islam", 
+                "Folk_Religion", 
+                "Irreligion", 
+                "Hinduism"
+            ]
+        },
+        "OutputEnum": {
+            "type": "string",
+            "enum": [
+                "audio", 
+                "video", 
+                "image", 
+                "text"
+            ]
+        },
+        "StylesEnum": {
+            "type": "string",
+            "enum": [
+                "informal", 
+                "formal"
+            ]
+        },
+        "PreferredLanguage": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "style": {
+                        "$ref": "#/definitions/StylesEnum"
+                    },
+                    "iso639_1": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Output_Modality": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "$ref": "#/definitions/OutputEnum"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Knowledge": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "score": {
+                        "type": "string"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    },
+                    "knowledgeOn": {
+                        "$ref": "#/definitions/Topic"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Input_Modality": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "value": {
+                        "$ref": "#/definitions/InputEnum"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Content": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "PreferredLanguage_end": {
+                        "$ref": "#/definitions/PreferredLanguage"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Design": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "colorScheme": {
+                        "type": "string"
+                    },
+                    "police": {
+                        "type": "string"
+                    },
+                    "brightness": {
+                        "type": "integer"
+                    },
+                    "contentContrast": {
+                        "type": "integer"
+                    },
+                    "textSize": {
+                        "type": "integer"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Disability": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string"
+                    },
+                    "affects": {
+                        "$ref": "#/definitions/AspectsEnum"
+                    },
+                    "name": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Education": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "providedBy": {
+                        "type": "string"
+                    },
+                    "degreeType": {
+                        "$ref": "#/definitions/DegreeEnum"
+                    },
+                    "fieldOfDegree": {
+                        "type": "string"
+                    },
+                    "degreeName": {
+                        "type": "string"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Interaction_Modality": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Output_Modality_end": {
+                        "$ref": "#/definitions/Output_Modality"
+                    },
+                    "Input_Modality_end": {
+                        "$ref": "#/definitions/Input_Modality"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Topic": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Knowledge_end": {
+                        "$ref": "#/definitions/Knowledge"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Skill": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string"
+                    },
+                    "score": {
+                        "type": "string"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Experience": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "startDate": {
+                        "type": "string"
+                    },
+                    "endDate": {
+                        "type": "string"
+                    },
+                    "roleName": {
+                        "type": "string"
+                    },
+                    "companyName": {
+                        "type": "string"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Language": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "level": {
+                        "$ref": "#/definitions/CEFR"
+                    },
+                    "iso693_3": {
+                        "type": "string"
+                    },
+                    "Competence_end": {
+                        "$ref": "#/definitions/Competence"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Culture": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "religion": {
+                        "$ref": "#/definitions/ReligionEnum"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Accessibility": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Disability_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Disability"
+                        }
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Preference": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Content_end": {
+                        "$ref": "#/definitions/Content"
+                    },
+                    "Interaction_Modality_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Interaction_Modality"
+                        }
+                    },
+                    "Design_end": {
+                        "$ref": "#/definitions/Design"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Competence": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Language_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Language"
+                        }
+                    },
+                    "Education_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Education"
+                        }
+                    },
+                    "Experience_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Experience"
+                        }
+                    },
+                    "Knowledge_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Knowledge"
+                        }
+                    },
+                    "Skill_end": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/definitions/Skill"
+                        }
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "Personal_Information": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "age": {
+                        "type": "integer"
+                    },
+                    "firstName": {
+                        "type": "string"
+                    },
+                    "gender": {
+                        "$ref": "#/definitions/GenderEnum"
+                    },
+                    "lastName": {
+                        "type": "string"
+                    },
+                    "nationality_iso3166": {
+                        "type": "string"
+                    },
+                    "address": {
+                        "type": "string"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]},
+        "User": {
+            "allOf": [{
+                "type": "object",
+                "properties": {
+                    "Personal_Information_end": {
+                        "$ref": "#/definitions/Personal_Information"
+                    },
+                    "Accessibility_end": {
+                        "$ref": "#/definitions/Accessibility"
+                    }
+                },
+                "required": [
+                ]
+            }
+        ]}
+    }
+}

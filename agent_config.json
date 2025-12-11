@@ -1,0 +1,16 @@
+{
+  "agentLanguage": "english",
+  "inputModalities": [
+    "text"
+  ],
+  "outputModalities": [
+    "text"
+  ],
+  "agentPlatform": "streamlit",
+  "responseTiming": "instant",
+  "agentStyle": "formal",
+  "llm": {
+    "provider": "openai",
+    "model": "gpt-5"
+  }
+}

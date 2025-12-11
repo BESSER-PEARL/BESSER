@@ -12,7 +12,7 @@ def sanitize_text(text):
     # Normalize and strip accents or special symbols
     text = unicodedata.normalize("NFKD", text)
     text = text.encode("ascii", "ignore").decode("ascii")
-    #text = text.replace("'", "\\'")
-    text = text.replace("'", " ")
+    text = text.replace("'", "\\'")
+    #text = text.replace("'", " ")
     # Escape single quotes for code safety
     return text

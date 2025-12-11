@@ -147,7 +147,7 @@ def test_simple_generator(simple_model, tmpdir):
     api_markers = [
         "@app.get(\"/name1/\"",
         "def get_all_name1(detailed: bool = False, database: Session = Depends(get_db))",
-        "name1_list = database.query(name1).all()"
+        "return database.query(name1).all()"
     ]
     
     for marker in api_markers:
@@ -178,11 +178,25 @@ def test_relationship_fk_placement(relationship_model, tmpdir):
 
     # Test 2: Sensor should have dt_id FK (N:1 mandatory)
     assert "class Sensor(Base):" in sqlalchemy_code
-    assert "dt_id: Mapped[int] = mapped_column(ForeignKey(\"digitaltwin.id\"), nullable=False)" in sqlalchemy_code
+    # When multiplicity.min > 0, nullable is not explicitly set (defaults to False)
+    # When multiplicity.min == 0, nullable=True is explicitly set
+    assert "dt_id: Mapped[int] = mapped_column(ForeignKey(\"digitaltwin.id\")" in sqlalchemy_code
+    # Verify it's NOT nullable (shouldn't have nullable=True)
+    sensor_section = sqlalchemy_code.split("class Sensor(Base):")[1].split("class ")[0]
+    assert "dt_id" in sensor_section
+    # If it's mandatory (min > 0), it should not have nullable=True
+    dt_id_line = [line for line in sensor_section.split('\n') if 'dt_id' in line and 'mapped_column' in line][0]
+    assert "nullable=True" not in dt_id_line, "Mandatory FK should not have nullable=True"
 
     # Test 3: DigitalTwin should have p_asset_id FK (1:1 mandatory)
     assert "class DigitalTwin(Base):" in sqlalchemy_code
-    assert "p_asset_id: Mapped[int] = mapped_column(ForeignKey(\"physicalasset.id\"), nullable=False, unique=True)" in sqlalchemy_code
+    # For 1:1 mandatory relationships, nullable is not explicitly set (defaults to False), but unique=True is set
+    assert "p_asset_id: Mapped[int] = mapped_column(ForeignKey(\"physicalasset.id\")" in sqlalchemy_code
+    # Verify it has unique=True for 1:1 relationship
+    digitaltwin_section = sqlalchemy_code.split("class DigitalTwin(Base):")[1].split("class ")[0]
+    p_asset_id_line = [line for line in digitaltwin_section.split('\n') if 'p_asset_id' in line and 'mapped_column' in line][0]
+    assert "unique=True" in p_asset_id_line, "1:1 relationship should have unique=True"
+    assert "nullable=True" not in p_asset_id_line, "Mandatory FK should not have nullable=True"
 
 
 def test_pydantic_multiplicity_constraints(relationship_model, tmpdir):

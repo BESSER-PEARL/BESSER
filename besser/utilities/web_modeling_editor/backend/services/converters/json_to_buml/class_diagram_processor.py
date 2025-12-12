@@ -7,7 +7,8 @@ from fastapi import HTTPException
 
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Enumeration, Property, Method, BinaryAssociation,
-    Generalization, PrimitiveDataType, EnumerationLiteral, AssociationClass, Metadata
+    Generalization, PrimitiveDataType, EnumerationLiteral, AssociationClass,
+    Metadata, Parameter
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import (
     parse_attribute, parse_method, parse_multiplicity, process_ocl_constraints
@@ -152,10 +153,9 @@ def process_class_diagram(json_data):
                         if not param_type_obj:
                             param_type_obj = PrimitiveDataType(param_type_name)
                             
-                        param_obj = Property(
+                        param_obj = Parameter(
                             name=param['name'],
-                            type=param_type_obj,
-                            visibility='public'
+                            type=param_type_obj
                         )
                         if 'default' in param:
                             param_obj.default_value = param['default']

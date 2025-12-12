@@ -901,13 +901,13 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 {% set method_params = [] %}
 {% for param in method.parameters %}
 {% set param_type = 'Any' %}
-{% if param.type.__class__.__name__ == 'StringType' %}{% set param_type = 'str' %}
-{% elif param.type.__class__.__name__ == 'IntegerType' %}{% set param_type = 'int' %}
-{% elif param.type.__class__.__name__ == 'FloatType' %}{% set param_type = 'float' %}
-{% elif param.type.__class__.__name__ == 'BooleanType' %}{% set param_type = 'bool' %}
-{% elif param.type.__class__.__name__ == 'DateType' %}{% set param_type = 'date' %}
-{% elif param.type.__class__.__name__ == 'DateTimeType' %}{% set param_type = 'datetime' %}
-{% elif param.type.__class__.__name__ == 'TimeType' %}{% set param_type = 'time' %}
+{% if param.type.name == 'str' %}{% set param_type = 'str' %}
+{% elif param.type.name == 'int' %}{% set param_type = 'int' %}
+{% elif param.type.name == 'float' %}{% set param_type = 'float' %}
+{% elif param.type.name == 'bool' %}{% set param_type = 'bool' %}
+{% elif param.type.name == 'date' %}{% set param_type = 'date' %}
+{% elif param.type.name == 'datetime' %}{% set param_type = 'datetime' %}
+{% elif param.type.name == 'time' %}{% set param_type = 'time' %}
 {% endif %}
 {% do method_params.append((param.name, param_type, param.default_value)) %}
 {% endfor %}
@@ -919,7 +919,7 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 {% if is_class_method %}
 {# Class-level method - no entity ID required #}
 @app.post("/{{ class.name | lower }}/methods/{{ method.name }}/", response_model=None, tags=["{{ class.name }} Methods"])
-async def execute_{{ class.name | lower }}_{{ method.name }}(
+async def {{ class.name | lower }}_{{ method.name }}(
     {% if method_params %}
     params: dict = Body(default=None, embed=True),
     {% endif %}
@@ -947,7 +947,7 @@ async def execute_{{ class.name | lower }}_{{ method.name }}(
         # Extract parameters from request body
         params = params or {}
         {% for param in method_params %}
-        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %})
+        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not None %}, {{ param[2] }}{% endif %})
         {% endfor %}
         
         # Call the class method
@@ -991,51 +991,45 @@ async def execute_{{ class.name | lower }}_{{ method.name }}(
 @app.post("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/methods/{{ method.name }}/", response_model=None, tags=["{{ class.name }} Methods"])
 async def execute_{{ class.name | lower }}_{{ method.name }}(
     {{ class.name | lower }}_id: int,
-    {% if method_params %}
-    request_body: dict = Body(...),
-    {% endif %}
+    {% for param in method_params %}
+    {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} = {{ param[2] }}{% endif %},
+    {% endfor %}
     database: Session = Depends(get_db)
 ):
     """
     Execute the {{ method.name }} method on a {{ class.name }} instance.
     {% if method_params %}
     
-    Parameters (pass as JSON body):
+    Parameters:
     {% for param in method_params %}
     - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
     {% endfor %}
     {% endif %}
     """
     # Retrieve the entity from the database
-    db_{{ class.name | lower }} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower }}_id).first()
-    if db_{{ class.name | lower }} is None:
+    _{{ class.name | lower }}_object = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower }}_id).first()
+    if _{{ class.name | lower }}_object is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
     
     # Execute the method
-    try:
+    try:        
         # Capture stdout to include print outputs in the response
         import io
         import sys
         captured_output = io.StringIO()
         sys.stdout = captured_output
-        
-        {% if method_params %}
-        # Extract parameters from request body
-        params = request_body or {}
-        {% for param in method_params %}
-        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %})
-        {% endfor %}
-        
-        # Call the method on the entity
-        result = db_{{ class.name | lower }}.{{ method.name }}({% for param in method_params %}{{ param[0] }}{% if not loop.last %}, {% endif %}{% endfor %})
-        {% else %}
-        # Call the method on the entity
-        result = db_{{ class.name | lower }}.{{ method.name }}()
-        {% endif %}
+        {% set method_lines = method.code.split('\n') %}
+        {% set method_body = '\n'.join(method_lines[1:]) %}
+        {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
+
+{{ method_body_replaced | indent(4, first=True) }}
         
         # Restore stdout
         sys.stdout = sys.__stdout__
         output = captured_output.getvalue()
+        
+        # Determine result (last statement or None)
+        result = None
         
         return {
             "{{ class.name | lower }}_id": {{ class.name | lower }}_id,

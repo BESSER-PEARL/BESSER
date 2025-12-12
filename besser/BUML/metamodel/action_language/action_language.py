@@ -917,7 +917,7 @@ class RangeLiteral(Literal):
 
 
     def accept(self, bal_visitor: BALVisitor[ContextType, ReturnType], context: ContextType) -> ReturnType:
-        return bal_visitor.visit_SequenceLiteral(self, context)
+        return bal_visitor.visit_RangeLiteral(self, context)
 
 
 class BoolLiteral(Literal):

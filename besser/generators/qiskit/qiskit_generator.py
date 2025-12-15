@@ -66,29 +66,38 @@ class QiskitGenerator(GeneratorInterface):
         """
         function_gates = {}
         
-        # Collect all unique function gates
+        # Collect all unique function gates by their unique ID (not just name)
+        # This handles cases where gates with same name have different implementations
         for op in self.model.operations:
             if isinstance(op, FunctionGate):
-                gate_name = op.name.replace(' ', '_').replace('-', '_')
-                if gate_name not in function_gates:
-                    function_gates[gate_name] = op
+                # Use id() to ensure unique gates are captured
+                gate_key = f"{op.name}_{id(op)}"
+                if gate_key not in function_gates:
+                    function_gates[gate_key] = op
         
         # Generate function definitions
         functions = []
-        for gate_name, gate in function_gates.items():
+        for gate_key, gate in function_gates.items():
+            gate_name = gate.name.replace(' ', '_').replace('-', '_')
             num_qubits = len(gate.target_qubits)
             func_lines = [
-                f"def _function_gate_{gate_name}(num_qubits):",
+                f"def _function_gate_{gate_name}_{id(gate)}(num_qubits):",
                 f"    \"\"\"Custom gate: {gate.name}\"\"\"",
                 f"    qc_func = QuantumCircuit(num_qubits, name='{gate.name}')"
             ]
             
+            # Get nested operations from definition.circuit or gates list
+            nested_operations = []
+            if gate.definition and gate.definition.circuit:
+                nested_operations = gate.definition.circuit.operations
+            elif gate.gates:
+                nested_operations = gate.gates
+            
             # Add nested gates
-            if gate.gates:
-                for nested_gate in gate.gates:
-                    gate_code = self._get_nested_gate_code(nested_gate)
-                    if gate_code:
-                        func_lines.append(f"    {gate_code}")
+            for nested_gate in nested_operations:
+                gate_code = self._get_nested_gate_code(nested_gate)
+                if gate_code:
+                    func_lines.append(f"    {gate_code}")
             
             func_lines.append("    return qc_func.to_instruction()")
             func_lines.append("")  # Empty line after function
@@ -100,8 +109,10 @@ class QiskitGenerator(GeneratorInterface):
     def _get_nested_gate_code(self, gate) -> str:
         """Generate Qiskit code for gates inside a FunctionGate."""
         if isinstance(gate, HadamardGate):
-            return f"qc_func.h({gate.target_qubits[0]})"
+            target = gate.target_qubits[0] if gate.target_qubits else gate.target_qubit
+            return f"qc_func.h({target})"
         elif isinstance(gate, PauliXGate):
+            target = gate.target_qubits[0] if gate.target_qubits else gate.target_qubit
             # Check if this is a controlled gate
             if gate.control_qubits:
                 ctrl_str = ", ".join([str(c) for c in gate.control_qubits])
@@ -109,34 +120,46 @@ class QiskitGenerator(GeneratorInterface):
                 ctrl_state_str = self._get_control_state_string(gate.control_states)
                 if len(gate.control_qubits) == 1:
                     if ctrl_state_str == "1":
-                        return f"qc_func.cx({gate.control_qubits[0]}, {gate.target_qubits[0]})"
+                        return f"qc_func.cx({gate.control_qubits[0]}, {target})"
                     else:
-                        return f"qc_func.cx({gate.control_qubits[0]}, {gate.target_qubits[0]})  # Note: ctrl_state='{ctrl_state_str}' requires gate.control() wrapper"
+                        # Use XGate().control() with ctrl_state for anti-control
+                        return f"qc_func.append(XGate().control({len(gate.control_qubits)}, ctrl_state='{ctrl_state_str}'), [{ctrl_str}, {target}])"
                 else:
-                    if ctrl_state_str == "1" * len(gate.control_qubits):
-                        return f"qc_func.mcx([{ctrl_str}], {gate.target_qubits[0]})"
-                    else:
-                        return f"qc_func.mcx([{ctrl_str}], {gate.target_qubits[0]}, ctrl_state='{ctrl_state_str}')"
+                    # Multi-controlled X with ctrl_state
+                    return f"qc_func.append(XGate().control({len(gate.control_qubits)}, ctrl_state='{ctrl_state_str}'), [{ctrl_str}, {target}])"
             else:
-                return f"qc_func.x({gate.target_qubits[0]})"
+                return f"qc_func.x({target})"
         elif isinstance(gate, PauliYGate):
+            target = gate.target_qubits[0] if gate.target_qubits else gate.target_qubit
             if gate.control_qubits and len(gate.control_qubits) == 1:
-                return f"qc_func.cy({gate.control_qubits[0]}, {gate.target_qubits[0]})"
-            return f"qc_func.y({gate.target_qubits[0]})"
+                return f"qc_func.cy({gate.control_qubits[0]}, {target})"
+            return f"qc_func.y({target})"
         elif isinstance(gate, PauliZGate):
+            target = gate.target_qubits[0] if gate.target_qubits else gate.target_qubit
             if gate.control_qubits and len(gate.control_qubits) == 1:
-                return f"qc_func.cz({gate.control_qubits[0]}, {gate.target_qubits[0]})"
-            return f"qc_func.z({gate.target_qubits[0]})"
+                return f"qc_func.cz({gate.control_qubits[0]}, {target})"
+            return f"qc_func.z({target})"
         elif isinstance(gate, SGate):
-            return f"qc_func.s({gate.target_qubits[0]})"
+            target = gate.target_qubits[0] if gate.target_qubits else gate.target_qubit
+            return f"qc_func.s({target})"
         elif isinstance(gate, TGate):
-            return f"qc_func.t({gate.target_qubits[0]})"
+            target = gate.target_qubits[0] if gate.target_qubits else gate.target_qubit
+            return f"qc_func.t({target})"
+        elif isinstance(gate, SwapGate):
+            targets = gate.target_qubits
+            return f"qc_func.swap({targets[0]}, {targets[1]})"
         elif isinstance(gate, RXGate):
-            return f"qc_func.rx({gate.theta}, {gate.target_qubits[0]})"
+            target = gate.target_qubits[0] if gate.target_qubits else gate.target_qubit
+            return f"qc_func.rx({gate.theta}, {target})"
         elif isinstance(gate, RYGate):
-            return f"qc_func.ry({gate.theta}, {gate.target_qubits[0]})"
+            target = gate.target_qubits[0] if gate.target_qubits else gate.target_qubit
+            return f"qc_func.ry({gate.theta}, {target})"
         elif isinstance(gate, RZGate):
-            return f"qc_func.rz({gate.theta}, {gate.target_qubits[0]})"
+            target = gate.target_qubits[0] if gate.target_qubits else gate.target_qubit
+            return f"qc_func.rz({gate.theta}, {target})"
+        elif isinstance(gate, PhaseGate):
+            target = gate.target_qubits[0] if gate.target_qubits else gate.target_qubit
+            return f"qc_func.p({gate.parameter}, {target})"
         else:
             return f"# Unsupported nested gate: {type(gate).__name__}"
 
@@ -246,9 +269,8 @@ class QiskitGenerator(GeneratorInterface):
             num_qubits = len(gate.target_qubits)
             gate_name = gate.name.replace(' ', '_').replace('-', '_')
             
-            # Create inline circuit definition
-            # We'll generate this as a helper function call
-            return f"_function_gate_{gate_name}({num_qubits})"
+            # Use unique ID to match the generated function name
+            return f"_function_gate_{gate_name}_{id(gate)}({num_qubits})"
         
         elif isinstance(gate, PrimitiveGate):
             if gate.type_name == 'H':

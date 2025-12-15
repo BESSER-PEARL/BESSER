@@ -48,15 +48,19 @@ class InputFieldType(Enum):
 class ButtonActionType(Enum):
     """Represents a button action type.
     """
+    Navigate = "navigate"  # Navigate to another screen
+    RunMethod = "run-method"  # Execute a class method
+    Create = "create"  # Create entity instance
+    Update = "update"  # Update entity instance
+    Delete = "delete"  # Delete entity instance
+    # Legacy action types (kept for backward compatibility)
     Add = "Add"
     ShowList = "Show List"
     OpenForm = "Open Form"
     SubmitForm = "Submit Form"
     Cancel = "Cancel"
     Save = "Save"
-    Delete = "Delete"
     Confirm = "Confirm"
-    Navigate = "Navigate"
     Search = "Search"
     Filter = "Filter"
     Sort = "Sort"
@@ -70,7 +74,7 @@ class ButtonActionType(Enum):
     Login = "Login"
     Logout = "Sign Out"
     Help = "Help"
-    About= "About"
+    About = "About"
     Exit = "Exit"
     Edit = "Edit"
 
@@ -712,30 +716,44 @@ class Button(ViewComponent):
         buttonType (ButtonType): The visual type of the button.
         actionType (ButtonActionType): The action performed when clicked.
         targetScreen (Screen | None): Target screen for navigation actions.
-        method_entity (Class | None): Target class for method execution.
-        method_name (str | None): Name of the method to execute.
-        method_entity_id (int | str | None): Entity ID for instance methods.
-        method_parameters (dict | None): Parameters to pass to the method.
+        method_btn (Method | None): The actual Method object to execute (Run Method action).
+        entity_class (Class | None): Target class for CRUD operations (Create/Update/Delete actions).
+        instance_source (ViewComponent | str | None): Table/component providing instance data, or component ID.
         is_class_method (bool): Whether the method is static/class method.
+        confirmation_required (bool): Whether to show confirmation dialog before action.
+        confirmation_message (str | None): Custom confirmation message text.
         timestamp (int | None): Creation timestamp.
         visibility (str): Visibility level.
         styling (Styling | None): Visual styling configuration.
     """
 
     def __init__(self, name: str, description: str, label: str, buttonType: ButtonType, actionType: ButtonActionType,
-                 targetScreen: Screen = None, method_entity: Class = None, method_name: str = None,
-                 method_entity_id = None, method_parameters: dict = None, is_class_method: bool = False,
-                 timestamp: int = None, visibility: str = "public", styling: Styling = None):
+                 targetScreen: Screen = None, method_btn = None,
+                 entity_class: Class = None, instance_source = None, is_class_method: bool = False,
+                 confirmation_required: bool = False, confirmation_message: str = None,
+                 timestamp: int = None, visibility: str = "public", styling: Styling = None,
+                 # Legacy parameters (kept for backward compatibility)
+                 method_entity: Class = None, method_entity_id = None, method_parameters: dict = None,
+                 method_class: Class = None, method_name: str = None, method = None):
         super().__init__(name, description, visibility, timestamp, styling=styling)
         self.label = label
         self.buttonType = buttonType
         self.actionType = actionType
         self.targetScreen = targetScreen
-        self.method_entity = method_entity
-        self.method_name = method_name
-        self.method_entity_id = method_entity_id
-        self.method_parameters = method_parameters or {}
+        # Method execution properties
+        self.method_btn = method_btn or method  # Support new name and legacy 'method'
+        # CRUD properties
+        self.entity_class = entity_class
+        # Instance source can be ViewComponent object or string ID
+        self.instance_source = instance_source or method_entity_id  # Support both old and new names
+        # Other properties
         self.is_class_method = is_class_method
+        self.confirmation_required = confirmation_required
+        self.confirmation_message = confirmation_message
+        # Legacy support (kept for backward compatibility but not used in new code)
+        self._method_class = method_class or method_entity
+        self._method_name = method_name
+        self._method_parameters = method_parameters or {}
 
     @property
     def label(self) -> str:
@@ -773,44 +791,64 @@ class Button(ViewComponent):
         self.__targetScreen = targetScreen
 
     @property
-    def method_entity(self) -> Class:
-        """Get the target class for method execution."""
-        return self.__method_entity
+    def method_btn(self):
+        """Get the actual Method object to execute."""
+        return self.__method_btn
 
-    @method_entity.setter
-    def method_entity(self, method_entity: Class):
-        """Set the target class for method execution."""
-        self.__method_entity = method_entity
+    @method_btn.setter
+    def method_btn(self, method_btn):
+        """Set the actual Method object to execute."""
+        self.__method_btn = method_btn
 
     @property
-    def method_name(self) -> str:
-        """Get the name of the method to execute."""
-        return self.__method_name
+    def entity_class(self) -> Class:
+        """Get the target class for CRUD operations."""
+        return self.__entity_class
 
-    @method_name.setter
-    def method_name(self, method_name: str):
-        """Set the name of the method to execute."""
-        self.__method_name = method_name
+    @entity_class.setter
+    def entity_class(self, entity_class: Class):
+        """Set the target class for CRUD operations."""
+        self.__entity_class = entity_class
+
+    @property
+    def instance_source(self):
+        """Get the component providing instance data (ViewComponent object or string ID)."""
+        return self.__instance_source
+
+    @instance_source.setter
+    def instance_source(self, instance_source):
+        """Set the component providing instance data (ViewComponent object or string ID)."""
+        self.__instance_source = instance_source
 
     @property
     def method_entity_id(self):
-        """Get the entity ID for instance method execution."""
-        return self.__method_entity_id
+        """Legacy alias for instance_source."""
+        return self.__instance_source
 
     @method_entity_id.setter
     def method_entity_id(self, method_entity_id):
-        """Set the entity ID for instance method execution."""
-        self.__method_entity_id = method_entity_id
+        """Legacy alias for instance_source."""
+        self.__instance_source = method_entity_id
 
     @property
-    def method_parameters(self) -> dict:
-        """Get the parameters to pass to the method."""
-        return self.__method_parameters
+    def confirmation_required(self) -> bool:
+        """Check if confirmation is required before executing action."""
+        return self.__confirmation_required
 
-    @method_parameters.setter
-    def method_parameters(self, method_parameters: dict):
-        """Set the parameters to pass to the method."""
-        self.__method_parameters = method_parameters or {}
+    @confirmation_required.setter
+    def confirmation_required(self, confirmation_required: bool):
+        """Set whether confirmation is required."""
+        self.__confirmation_required = confirmation_required
+
+    @property
+    def confirmation_message(self) -> str:
+        """Get the confirmation message text."""
+        return self.__confirmation_message
+
+    @confirmation_message.setter
+    def confirmation_message(self, confirmation_message: str):
+        """Set the confirmation message text."""
+        self.__confirmation_message = confirmation_message
 
     @property
     def is_class_method(self) -> bool:

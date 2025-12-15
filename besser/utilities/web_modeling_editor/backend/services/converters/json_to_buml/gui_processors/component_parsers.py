@@ -107,61 +107,73 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
         label = extract_text_content(component)
     if not label:
         label = component.get("content", "")
-    
+
     # Extract action configuration
     target_screen_id = None
     action_button_type = None
-    crud_entity = None
-    method_entity = None
+    entity_class = None  # For CRUD operations (Create/Update/Delete)
+    method_class = None  # For Run Method action
     method_name = None
-    method_entity_id = None
-    method_parameters = None
+    instance_source = None  # Table component ID providing instance data
+    confirmation_required = False
+    confirmation_message = None
     is_static_method = False
-    
+
     # Check both component level and attributes (GrapesJS stores target-screen at component level)
     target_screen_id = component.get("target-screen") or component.get("data-target-screen")
     action_button_type = component.get("action-type") or component.get("data-action-type")
-    crud_entity = component.get("crud-entity") or component.get("data-crud-entity")
-    method_entity = component.get("method-entity") or component.get("data-method-entity")
-    method_name = component.get("method-name") or component.get("data-method-name")
-    method_entity_id = component.get("method-entity-id") or component.get("data-method-entity-id")
-    method_parameters_str = component.get("method-parameters") or component.get("data-method-parameters")
+
+    # New naming convention (method-class, entity-class, instance-source)
+    entity_class = component.get("entity-class") or component.get("data-entity-class")
+    method_class = component.get("method-class") or component.get("data-method-class")
+    instance_source = component.get("instance-source") or component.get("data-instance-source")
+
+    # Legacy naming support (crud-entity, method-entity, method-entity-id)
+    entity_class = entity_class or component.get("crud-entity") or component.get("data-crud-entity")
+    method_class = method_class or component.get("method-entity") or component.get("data-method-entity")
+    instance_source = instance_source or component.get("method-entity-id") or component.get("data-method-entity-id")
+
+    # Other button attributes (note: 'method' now stores method ID, not method name)
+    method_name = component.get("method") or component.get("data-method") or component.get("method-name") or component.get("data-method-name")
+    confirmation_required_str = component.get("confirmation-required") or component.get("data-confirmation-required")
+    confirmation_message = component.get("confirmation-message") or component.get("data-confirmation-message")
     is_static_str = component.get("method-is-static") or component.get("data-method-is-static")
-    
-    # Parse method parameters if present
-    if method_parameters_str:
-        try:
-            import json
-            method_parameters = json.loads(method_parameters_str)
-        except (json.JSONDecodeError, TypeError):
-            method_parameters = {}
-    
+
+    # Parse confirmation_required flag
+    if confirmation_required_str:
+        confirmation_required = confirmation_required_str.lower() in ('true', '1', 'yes')
+
     # Parse is_static flag
     if is_static_str:
-        is_static_method = is_static_str.lower() == 'true'
-    
+        is_static_method = is_static_str.lower() in ('true', '1', 'yes')
+
     # Also check attributes object as fallback
     if isinstance(attributes, dict):
         target_screen_id = target_screen_id or attributes.get("target-screen") or attributes.get("data-target-screen")
         action_button_type = action_button_type or attributes.get("action-type") or attributes.get("data-action-type")
-        crud_entity = crud_entity or attributes.get("crud-entity") or attributes.get("data-crud-entity")
-        method_entity = method_entity or attributes.get("method-entity") or attributes.get("data-method-entity")
-        method_name = method_name or attributes.get("method-name") or attributes.get("data-method-name")
-        method_entity_id = method_entity_id or attributes.get("method-entity-id") or attributes.get("data-method-entity-id")
         
-        if not method_parameters_str:
-            method_parameters_str = attributes.get("method-parameters") or attributes.get("data-method-parameters")
-            if method_parameters_str:
-                try:
-                    import json
-                    method_parameters = json.loads(method_parameters_str)
-                except (json.JSONDecodeError, TypeError):
-                    method_parameters = {}
+        # New naming convention
+        entity_class = entity_class or attributes.get("entity-class") or attributes.get("data-entity-class")
+        method_class = method_class or attributes.get("method-class") or attributes.get("data-method-class")
+        instance_source = instance_source or attributes.get("instance-source") or attributes.get("data-instance-source")
+        
+        # Legacy naming support
+        entity_class = entity_class or attributes.get("crud-entity") or attributes.get("data-crud-entity")
+        method_class = method_class or attributes.get("method-entity") or attributes.get("data-method-entity")
+        instance_source = instance_source or attributes.get("method-entity-id") or attributes.get("data-method-entity-id")
+        
+        method_name = method_name or attributes.get("method") or attributes.get("data-method") or attributes.get("method-name") or attributes.get("data-method-name")
+        confirmation_message = confirmation_message or attributes.get("confirmation-message") or attributes.get("data-confirmation-message")
+        
+        if not confirmation_required_str:
+            confirmation_required_str = attributes.get("confirmation-required") or attributes.get("data-confirmation-required")
+            if confirmation_required_str:
+                confirmation_required = confirmation_required_str.lower() in ('true', '1', 'yes')
         
         if not is_static_str:
             is_static_str = attributes.get("method-is-static") or attributes.get("data-method-is-static")
             if is_static_str:
-                is_static_method = is_static_str.lower() == 'true'
+                is_static_method = is_static_str.lower() in ('true', '1', 'yes')
         
         # Generate default label based on action
         if not label:
@@ -188,6 +200,15 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
         
         action_obj = None
         
+        # Map action-type to ButtonActionType enum
+        action_type_map = {
+            "navigate": ButtonActionType.Navigate,
+            "run-method": ButtonActionType.RunMethod,
+            "create": ButtonActionType.Create,
+            "update": ButtonActionType.Update,
+            "delete": ButtonActionType.Delete,
+        }
+        
         if action_button_type == "navigate" and target_screen_id:
             # Create Transition action for navigation
             action_obj = Transition(
@@ -198,43 +219,43 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
             )
             setattr(action_obj, '_target_screen_id', target_screen_id)
         
-        elif action_button_type == "read" and crud_entity:
+        elif action_button_type == "read" and entity_class:
             # Create Read action for fetching/displaying data
             action_obj = Read(
-                name=f"read_{crud_entity}",
-                description=f"Read/Load {crud_entity}",
+                name=f"read_{entity_class}",
+                description=f"Read/Load {entity_class}",
                 target_class=None,  # Will be resolved later
                 parameters=parameters if parameters else None
             )
-            setattr(action_obj, '_target_class_name', crud_entity)
+            setattr(action_obj, '_target_class_name', entity_class)
             
-        elif action_button_type == "create" and crud_entity:
+        elif action_button_type == "create" and entity_class:
             # Create Create action for adding new entity
             action_obj = Create(
-                name=f"create_{crud_entity}",
-                description=f"Create new {crud_entity}",
+                name=f"create_{entity_class}",
+                description=f"Create new {entity_class}",
                 target_class=None,  # Will be resolved later
                 parameters=parameters if parameters else None
             )
-            setattr(action_obj, '_target_class_name', crud_entity)
+            setattr(action_obj, '_target_class_name', entity_class)
             
-        elif action_button_type == "update" and crud_entity:
+        elif action_button_type == "update" and entity_class:
             action_obj = Update(
-                name=f"update_{crud_entity}",
-                description=f"Update {crud_entity}",
+                name=f"update_{entity_class}",
+                description=f"Update {entity_class}",
                 target_class=None,  # Will be resolved later
                 parameters=parameters if parameters else None
             )
-            setattr(action_obj, '_target_class_name', crud_entity)
+            setattr(action_obj, '_target_class_name', entity_class)
             
-        elif action_button_type == "delete" and crud_entity:
+        elif action_button_type == "delete" and entity_class:
             action_obj = Delete(
-                name=f"delete_{crud_entity}",
-                description=f"Delete {crud_entity}",
+                name=f"delete_{entity_class}",
+                description=f"Delete {entity_class}",
                 target_class=None,  # Will be resolved later
                 parameters=parameters if parameters else None
             )
-            setattr(action_obj, '_target_class_name', crud_entity)
+            setattr(action_obj, '_target_class_name', entity_class)
         
         # Create onClick Event if we have an action
         if action_obj:
@@ -244,11 +265,25 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
                 actions={action_obj}
             ))
     
-    # Determine button action type from HTML type
-    html_type = ""
-    if isinstance(attributes, dict):
-        html_type = str(attributes.get("type", "")).lower()
-    action_type = BUTTON_ACTION_BY_HTML_TYPE.get(html_type, ButtonActionType.Send)
+    # Determine button action type from action-type attribute or HTML type
+    action_type = ButtonActionType.Navigate  # Default
+    
+    if action_button_type:
+        # Map action-type string to ButtonActionType enum
+        action_type_map = {
+            "navigate": ButtonActionType.Navigate,
+            "run-method": ButtonActionType.RunMethod,
+            "create": ButtonActionType.Create,
+            "update": ButtonActionType.Update,
+            "delete": ButtonActionType.Delete,
+        }
+        action_type = action_type_map.get(action_button_type, ButtonActionType.Navigate)
+    else:
+        # Fallback to HTML type mapping
+        html_type = ""
+        if isinstance(attributes, dict):
+            html_type = str(attributes.get("type", "")).lower()
+        action_type = BUTTON_ACTION_BY_HTML_TYPE.get(html_type, ButtonActionType.Navigate)
     
     # Create Button with method execution configuration
     button = Button(
@@ -258,16 +293,21 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
         buttonType=ButtonType.CustomizableButton,
         actionType=action_type,
         styling=styling,
-        method_entity=None,  # Will be resolved later in processor
-        method_name=method_name,
-        method_entity_id=method_entity_id,
-        method_parameters=method_parameters or {},
+        method_btn=None,  # Will be resolved later in processor
+        entity_class=None,  # Will be resolved later in processor
+        instance_source=instance_source,
         is_class_method=is_static_method,
+        confirmation_required=confirmation_required,
+        confirmation_message=confirmation_message,
     )
     
-    # Store method entity name for later resolution
-    if method_entity:
-        setattr(button, '_method_entity_name', method_entity)
+    # Store IDs for later resolution (class ID + method ID)
+    if method_class:
+        setattr(button, '_method_class_id', method_class)
+    if method_name:
+        setattr(button, '_method_id', method_name)
+    if entity_class:
+        setattr(button, '_entity_class_id', entity_class)
     
     # Set events on button and triggered_by on actions
     if events:
@@ -387,7 +427,7 @@ def parse_form(component: Dict[str, Any], styling, name: str, meta: Dict, parse_
                 form.events = form.events or set()
                 form.events.add(Event(
                     name=f"onSubmit_{name}",
-                    type=EventType.OnSubmit,
+                    event_type=EventType.OnSubmit,
                     actions=event.actions
                 ))
     

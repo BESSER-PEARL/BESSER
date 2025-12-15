@@ -719,7 +719,7 @@ class Button(ViewComponent):
         method_btn (Method | None): The actual Method object to execute (Run Method action).
         entity_class (Class | None): Target class for CRUD operations (Create/Update/Delete actions).
         instance_source (ViewComponent | str | None): Table/component providing instance data, or component ID.
-        is_class_method (bool): Whether the method is static/class method.
+        is_instance_method (bool): Whether the method is an instance method (has self parameter).
         confirmation_required (bool): Whether to show confirmation dialog before action.
         confirmation_message (str | None): Custom confirmation message text.
         timestamp (int | None): Creation timestamp.
@@ -729,7 +729,7 @@ class Button(ViewComponent):
 
     def __init__(self, name: str, description: str, label: str, buttonType: ButtonType, actionType: ButtonActionType,
                  targetScreen: Screen = None, method_btn = None,
-                 entity_class: Class = None, instance_source = None, is_class_method: bool = False,
+                 entity_class: Class = None, instance_source = None, is_instance_method: bool = False,
                  confirmation_required: bool = False, confirmation_message: str = None,
                  timestamp: int = None, visibility: str = "public", styling: Styling = None,
                  # Legacy parameters (kept for backward compatibility)
@@ -747,7 +747,7 @@ class Button(ViewComponent):
         # Instance source can be ViewComponent object or string ID
         self.instance_source = instance_source or method_entity_id  # Support both old and new names
         # Other properties
-        self.is_class_method = is_class_method
+        self.is_instance_method = is_instance_method
         self.confirmation_required = confirmation_required
         self.confirmation_message = confirmation_message
         # Legacy support (kept for backward compatibility but not used in new code)
@@ -851,14 +851,14 @@ class Button(ViewComponent):
         self.__confirmation_message = confirmation_message
 
     @property
-    def is_class_method(self) -> bool:
-        """Check if the method is a static/class method."""
-        return self.__is_class_method
+    def is_instance_method(self) -> bool:
+        """Check if the method is an instance method (has self parameter)."""
+        return self.__is_instance_method
 
-    @is_class_method.setter
-    def is_class_method(self, is_class_method: bool):
-        """Set whether the method is a static/class method."""
-        self.__is_class_method = is_class_method
+    @is_instance_method.setter
+    def is_instance_method(self, is_instance_method: bool):
+        """Set whether the method is an instance method."""
+        self.__is_instance_method = is_instance_method
 
     def __repr__(self):
         return (

@@ -383,8 +383,8 @@ def _write_button(f, var_name, button, created_vars, pending_button_events):
             # Fallback: convert to string
             params.append(f'instance_source="{_escape_string(str(button.instance_source))}"')
     
-    if hasattr(button, 'is_class_method') and button.is_class_method:
-        params.append(f'is_class_method={button.is_class_method}')
+    if hasattr(button, 'is_instance_method') and button.is_instance_method:
+        params.append(f'is_instance_method={button.is_instance_method}')
     
     if hasattr(button, 'confirmation_required') and button.confirmation_required:
         params.append(f'confirmation_required={button.confirmation_required}')

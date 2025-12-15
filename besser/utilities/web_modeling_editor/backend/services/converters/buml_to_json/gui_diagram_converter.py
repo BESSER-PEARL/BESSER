@@ -364,8 +364,8 @@ def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
         import json
         attrs["data-method-parameters"] = json.dumps(button.method_parameters)
     
-    if hasattr(button, 'is_class_method') and button.is_class_method:
-        attrs["data-method-is-static"] = "true" if button.is_class_method else "false"
+    if hasattr(button, 'is_instance_method'):
+        attrs["instance-method"] = "true" if button.is_instance_method else "false"
     
     crud_entity = attrs.get("crud-entity") or attrs.get("data-crud-entity")
     if not crud_entity:

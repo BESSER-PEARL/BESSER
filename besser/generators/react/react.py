@@ -364,48 +364,46 @@ class ReactGenerator(GeneratorInterface):
             events = self._serialize_events(element)
             if events:
                 node["events"] = events
-            
-            # Check for method execution configuration in custom attributes
-            if attributes:
-                action_type = attributes.get('data-action-type')
-                if action_type == 'execute-method':
-                    method_entity = attributes.get('data-method-entity')
-                    method_name = attributes.get('data-method-name')
-                    method_entity_id = attributes.get('data-method-entity-id')
-                    method_parameters = attributes.get('data-method-parameters')
-                    is_static = attributes.get('data-method-is-static') == 'true'
-                    
-                    if method_entity and method_name:
-                        # Get entity name from class options if it's an ID
-                        entity_name = self._get_entity_name_from_id(method_entity)
-                        
-                        method_config = {
-                            'entity_type': entity_name.lower() if entity_name else method_entity.lower(),
-                            'method_name': method_name,
-                            'is_class_method': is_static,
-                        }
-                        
-                        if method_entity_id:
-                            try:
-                                method_config['entity_id'] = int(method_entity_id)
-                            except (ValueError, TypeError):
-                                method_config['entity_id'] = method_entity_id
-                        
-                        if method_parameters:
-                            try:
-                                import json
-                                params = json.loads(method_parameters)
-                                # Convert params dict to parameter list format
-                                method_config['parameters'] = [
-                                    {'name': k, 'type': self._infer_type(v), 'default': v}
-                                    for k, v in params.items()
-                                ]
-                            except (json.JSONDecodeError, TypeError):
-                                pass
-                        else:
-                            method_config['parameters'] = []
-                        
-                        node['method_config'] = method_config
+
+            # Handle method execution using method_btn (Method object reference)
+            method_btn = getattr(element, "method_btn", None)
+            if method_btn:
+                # Get method name and class from the Method object
+                method_name = method_btn.name
+                method_class = method_btn.owner
+                class_name = method_class.name if method_class else None
+
+                if method_name and class_name:
+                    # Clean the method name (remove visibility and parameters if present)
+                    clean_method_name = method_name.split('(')[0] if '(' in method_name else method_name
+
+                    # Update attributes with clean names (not IDs)
+                    if 'data-method-name' in attributes:
+                        attributes['method-name'] = clean_method_name
+                        del attributes['data-method-name']
+
+                    if 'data-method-class' in attributes:
+                        attributes['method-class'] = class_name
+                        del attributes['data-method-class']
+
+                    # Generate endpoint URL for method execution
+                    # Format: /book/{book_id}/methods/decrease_stock/
+                    class_name_lower = class_name.lower()
+                    endpoint = f"/{class_name_lower}/{{{class_name_lower}_id}}/methods/{clean_method_name}/"
+                    attributes['endpoint'] = endpoint
+
+                    # Use is_instance_method from Button object
+                    is_instance = getattr(element, "is_instance_method", False)
+                    attributes['is-instance-method'] = str(is_instance).lower()
+
+            # Output instance_source (table/component ID providing instance data)
+            instance_source = getattr(element, "instance_source", None)
+            if instance_source:
+                # If it's a ViewComponent object, get its component_id; otherwise use the string ID
+                if hasattr(instance_source, 'component_id'):
+                    attributes['instance-source'] = instance_source.component_id
+                elif isinstance(instance_source, str):
+                    attributes['instance-source'] = instance_source
 
         if isinstance(element, InputField):
             node["input_type"] = self._enum_value(getattr(element, "field_type", None))

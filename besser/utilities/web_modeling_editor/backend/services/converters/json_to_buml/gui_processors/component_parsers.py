@@ -117,7 +117,7 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
     instance_source = None  # Table component ID providing instance data
     confirmation_required = False
     confirmation_message = None
-    is_static_method = False
+    is_instance_method = False
 
     # Check both component level and attributes (GrapesJS stores target-screen at component level)
     target_screen_id = component.get("target-screen") or component.get("data-target-screen")
@@ -137,15 +137,19 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
     method_name = component.get("method") or component.get("data-method") or component.get("method-name") or component.get("data-method-name")
     confirmation_required_str = component.get("confirmation-required") or component.get("data-confirmation-required")
     confirmation_message = component.get("confirmation-message") or component.get("data-confirmation-message")
-    is_static_str = component.get("method-is-static") or component.get("data-method-is-static")
+    is_instance_str = component.get("instance-method") or component.get("data-instance-method")
+    
+    print(f"DEBUG PARSER: is_instance_str from component level = {is_instance_str}")
 
     # Parse confirmation_required flag
     if confirmation_required_str:
         confirmation_required = confirmation_required_str.lower() in ('true', '1', 'yes')
 
-    # Parse is_static flag
-    if is_static_str:
-        is_static_method = is_static_str.lower() in ('true', '1', 'yes')
+    # Parse instance_method flag
+    if is_instance_str:
+        is_instance_method = is_instance_str.lower() in ('true', '1', 'yes')
+        
+    print(f"DEBUG PARSER: is_instance_method parsed = {is_instance_method}")
 
     # Also check attributes object as fallback
     if isinstance(attributes, dict):
@@ -156,6 +160,14 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
         entity_class = entity_class or attributes.get("entity-class") or attributes.get("data-entity-class")
         method_class = method_class or attributes.get("method-class") or attributes.get("data-method-class")
         instance_source = instance_source or attributes.get("instance-source") or attributes.get("data-instance-source")
+        is_instance_str = is_instance_str or attributes.get("instance-method") or attributes.get("data-instance-method")
+        
+        print(f"DEBUG PARSER: is_instance_str from attributes = {is_instance_str}")
+        
+        # Re-parse instance_method flag if found in attributes
+        if is_instance_str and not is_instance_method:
+            is_instance_method = is_instance_str.lower() in ('true', '1', 'yes')
+            print(f"DEBUG PARSER: is_instance_method re-parsed from attributes = {is_instance_method}")
         
         # Legacy naming support
         entity_class = entity_class or attributes.get("crud-entity") or attributes.get("data-crud-entity")
@@ -170,10 +182,10 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
             if confirmation_required_str:
                 confirmation_required = confirmation_required_str.lower() in ('true', '1', 'yes')
         
-        if not is_static_str:
-            is_static_str = attributes.get("method-is-static") or attributes.get("data-method-is-static")
-            if is_static_str:
-                is_static_method = is_static_str.lower() in ('true', '1', 'yes')
+        if not is_instance_str:
+            is_instance_str = attributes.get("instance-method") or attributes.get("data-instance-method")
+            if is_instance_str:
+                is_instance_method = is_instance_str.lower() in ('true', '1', 'yes')
         
         # Generate default label based on action
         if not label:
@@ -296,7 +308,7 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
         method_btn=None,  # Will be resolved later in processor
         entity_class=None,  # Will be resolved later in processor
         instance_source=instance_source,
-        is_class_method=is_static_method,
+        is_instance_method=is_instance_method,
         confirmation_required=confirmation_required,
         confirmation_message=confirmation_message,
     )

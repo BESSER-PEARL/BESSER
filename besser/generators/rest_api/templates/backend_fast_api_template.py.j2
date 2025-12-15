@@ -1023,7 +1023,10 @@ async def execute_{{ class.name | lower }}_{{ method.name }}(
         {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
 
 {{ method_body_replaced | indent(4, first=True) }}
-        
+        # Commit DB
+        database.commit()
+        database.refresh(_{{ class.name | lower }}_object)
+
         # Restore stdout
         sys.stdout = sys.__stdout__
         output = captured_output.getvalue()

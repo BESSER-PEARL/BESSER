@@ -1,37 +1,30 @@
 import React from "react";
-import { Routes, Route, Link } from "react-router-dom";
+import { Routes, Route } from "react-router-dom";
 import Home from "./pages/Home";
 import { TableProvider } from "./contexts/TableContext";
+import componentsData from "./data/ui_components.json";
 
 function App() {
+  // Dynamically extract all routes from pages
+  const pages = componentsData?.pages ?? [];
+  const routes = pages
+    .filter((page: any) => page.route_path)
+    .map((page: any) => page.route_path);
+
   return (
     <TableProvider>
       <div className="app-container">
-        {/* Navigation Menu 
-        <nav className="app-nav">
-          <ul className="nav-list">
-            <li className="nav-item">
-              <Link to="/home" className="nav-link">
-                Home
-              </Link>
-            </li>
-            <li className="nav-item">
-              <Link to="/about" className="nav-link">
-                About
-              </Link>
-            </li>
-          </ul>
-        </nav>*/}
-
         {/* Page Routes */}
         <main className="app-main">
           <Routes>
-            <Route path="/home" element={<Home />} />
-            <Route path="/about" element={<Home />} />
-            {/* Redirect root to main page */}
+            {/* Dynamically generate routes from JSON */}
+            {routes.map((route: string) => (
+              <Route key={route} path={route} element={<Home />} />
+            ))}
+            {/* Redirect root to first page or home */}
             <Route path="/" element={<Home />} />
-        </Routes>
-      </main>
+          </Routes>
+        </main>
       </div>
     </TableProvider>
   );

@@ -90,7 +90,7 @@ class ReactGenerator(GeneratorInterface):
             'PieChart': ['PieChartComponent.tsx.j2'],
             'RadarChart': ['RadarChartComponent.tsx.j2'],
             'RadialBarChart': ['RadialBarChartComponent.tsx.j2'],
-            'Table': ['TableComponent.tsx.j2', 'TableComponent.css.j2'],
+            'Table': ['TableComponent.tsx.j2', 'TableComponent.css.j2', 'ColumnFilter.tsx.j2', 'ColumnSort.tsx.j2'],
             'MetricCard': ['MetricCardComponent.tsx.j2'],
         }
 

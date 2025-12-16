@@ -173,6 +173,12 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
       console.log(`[MethodButton] Method executed successfully:`, response.data);
       setResult(response.data);
       
+      // Refresh the source table if this is an instance method
+      if (isInstanceMethod && instanceSourceTableId) {
+        console.log(`[MethodButton] Refreshing table: ${instanceSourceTableId}`);
+        tableContext.refreshTable(instanceSourceTableId);
+      }
+      
       if (onSuccess) {
         onSuccess(response.data);
       }

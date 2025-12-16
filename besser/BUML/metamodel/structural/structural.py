@@ -996,7 +996,7 @@ class Class(Type):
         else:
             self.__methods = set()
 
-    def add_method(self, method: Method):
+    def add_method(self, new_method: Method):
         """
         Method: Add a method to the set of class methods.
         
@@ -1004,10 +1004,25 @@ class Class(Type):
             ValueError: if the method name already exist.
         """
         if self.methods is not None:
-            if method.name in [method.name for method in self.methods]:
-                raise ValueError(f"A class cannot have two methods with the same name: '{method.name}'")
-        method.owner = self
-        self.methods.add(method)
+            if new_method.name in [method.name for method in self.methods]:
+                if self.check_parameters (new_method, self.methods):
+                    raise ValueError(f"A class cannot have two methods with the same name: '{new_method.name}'")
+        new_method.owner = self
+        self.methods.add(new_method)
+    def check_parameters(self,method, all_methods):
+        """
+                to verify if the same named method have different parameters to support function overloading.
+        """
+        for m in all_methods:
+            if m.name == method.name:
+                if len(m.parameters) != len(method.parameters):
+                    return False
+                for p1 in m.parameters:
+                    p2 = next((p for p in method.parameters if p.name ==p1.name),None)
+                    if p2 == None or p2.type != p1.type:
+                        return False
+
+        return True
 
     def all_attributes(self) -> set[Property]:
         """set[Property]: Get all attributes, including inherited ones."""

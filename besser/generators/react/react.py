@@ -396,6 +396,18 @@ class ReactGenerator(GeneratorInterface):
                     is_instance = getattr(element, "is_instance_method", False)
                     attributes['is-instance-method'] = str(is_instance).lower()
 
+                    # Extract input parameters from the method
+                    if hasattr(method_btn, 'parameters') and method_btn.parameters:
+                        input_params = {}
+                        for param in method_btn.parameters:
+                            # Skip 'self' and 'session' parameters
+                            if param.name.lower() not in ('self', 'session'):
+                                param_type = param.type.name if param.type else 'any'
+                                input_params[param.name] = param_type
+                        
+                        if input_params:
+                            attributes['input-parameters'] = input_params
+
             # Output instance_source (table/component ID providing instance data)
             instance_source = getattr(element, "instance_source", None)
             if instance_source:

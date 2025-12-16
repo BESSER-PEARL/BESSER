@@ -1,35 +1,38 @@
 import React from "react";
 import { Routes, Route, Link } from "react-router-dom";
 import Home from "./pages/Home";
+import { TableProvider } from "./contexts/TableContext";
 
 function App() {
   return (
-    <div className="app-container">
-      {/* Navigation Menu 
-      <nav className="app-nav">
-        <ul className="nav-list">
-          {% for page in pages_meta %}
-          <li className="nav-item">
-            <Link to="[[page.route_path]]" className="nav-link">
-              [[page.name]]
-            </Link>
-          </li>
-          {% endfor %}
-        </ul>
-      </nav>*/}
+    <TableProvider>
+      <div className="app-container">
+        {/* Navigation Menu 
+        <nav className="app-nav">
+          <ul className="nav-list">
+            <li className="nav-item">
+              <Link to="/home" className="nav-link">
+                Home
+              </Link>
+            </li>
+            <li className="nav-item">
+              <Link to="/about" className="nav-link">
+                About
+              </Link>
+            </li>
+          </ul>
+        </nav>*/}
 
-      {/* Page Routes */}
-      <main className="app-main">
-        <Routes>
-          {% for page in pages_meta %}
-          <Route path="[[page.route_path]]" element={<Home />} />
-          {% endfor %}
-          {/* Redirect root to main page */}
-          <Route path="/" element={<Home />} />
+        {/* Page Routes */}
+        <main className="app-main">
+          <Routes>
+            <Route path="/home" element={<Home />} />
+            <Route path="/about" element={<Home />} />
+            {/* Redirect root to main page */}
+            <Route path="/" element={<Home />} />
         </Routes>
       </main>
-    </div>
+      </div>
+    </TableProvider>
   );
-}
-
-export default App;
+}export default App;

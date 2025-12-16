@@ -170,7 +170,37 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   }
 
   if (component.type === "button" || component.type === "action-button") {
-    // Check if this is a method button
+    // Check if this is a method button (from JSON attributes)
+    const actionType = component.attributes?.["data-action-type"] || component.action_type;
+    
+    if (actionType === "run-method") {
+      const isInstanceMethod = component.attributes?.["is-instance-method"] === "true" || component.attributes?.["is-instance-method"] === true;
+      const instanceSource = component.attributes?.["instance-source"];
+      const endpoint = component.attributes?.endpoint || "";
+      const inputParameters = component.attributes?.["input-parameters"] || {};
+      
+      // Convert input parameters from JSON format to MethodParameter array
+      const parameters = Object.entries(inputParameters).map(([name, type]) => ({
+        name,
+        type: String(type),
+        required: true,
+      }));
+      
+      return (
+        <MethodButton
+          endpoint={endpoint}
+          label={component.attributes?.["button-label"] || component.label || component.name || "Execute"}
+          parameters={parameters}
+          isInstanceMethod={isInstanceMethod}
+          instanceSourceTableId={instanceSource}
+          className={component.class_list?.join(' ')}
+          style={style}
+          backendUrl="http://localhost:8000"
+        />
+      );
+    }
+    
+    // Check if this is a method button (legacy method_config)
     if (component.method_config) {
       const methodConfig = component.method_config;
       return (

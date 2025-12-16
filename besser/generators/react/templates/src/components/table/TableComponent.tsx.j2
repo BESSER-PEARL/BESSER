@@ -1,6 +1,7 @@
 import React, { CSSProperties, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { createPortal } from "react-dom";
+import { useTableContext } from "../../contexts/TableContext";
 import "./TableComponent.css";
 
 interface TableColumn {
@@ -76,6 +77,8 @@ export const TableComponent: React.FC<Props> = ({
 }) => {
   // Local state for table data
   const [tableData, setTableData] = useState<any[]>(data ?? []);
+  const { setSelectedRow } = useTableContext();
+  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
 
   // Fetch table data from backend
   const fetchTableData = async () => {
@@ -600,7 +603,7 @@ export const TableComponent: React.FC<Props> = ({
                                       }}
                                     />
                                     <span style={{ fontSize: "14px", color: "#1e293b" }}>
-                                      {(col.lookupField && option[col.lookupField]) || {% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
+                                      {(col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`}
                                     </span>
                                   </div>
                                 );
@@ -634,7 +637,7 @@ export const TableComponent: React.FC<Props> = ({
                           <option value="">-- Select {col.label} --</option>
                           {options.map((option: any) => (
                             <option key={option.id} value={option.id}>
-                              {(col.lookupField && option[col.lookupField]) || {% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
+                              {(col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`}
                             </option>
                           ))}
                         </select>
@@ -821,15 +824,40 @@ export const TableComponent: React.FC<Props> = ({
               </thead>
             )}
             <tbody>
-              {visibleRows.map((row, rowIndex) => (
+              {visibleRows.map((row, rowIndex) => {
+                const actualRowIndex = (currentPage - 1) * pageSize + rowIndex;
+                const isSelected = selectedRowIndex === actualRowIndex;
+                
+                return (
                 <tr
                   key={`${id}-row-${rowIndex}`}
+                  onClick={() => {
+                    setSelectedRowIndex(actualRowIndex);
+                    setSelectedRow(id, row);
+                    console.log(`[TableComponent] Row selected in table ${id}:`, row);
+                  }}
                   style={{
-                    backgroundColor:
-                      resolvedOptions.stripedRows && rowIndex % 2 === 1
+                    backgroundColor: isSelected
+                      ? "#dbeafe"
+                      : resolvedOptions.stripedRows && rowIndex % 2 === 1
                         ? "#f8fafc"
                         : "#ffffff",
                     borderBottom: "1px solid #e2e8f0",
+                    cursor: "pointer",
+                    transition: "background-color 0.2s",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = "#f1f5f9";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = 
+                        resolvedOptions.stripedRows && rowIndex % 2 === 1
+                          ? "#f8fafc"
+                          : "#ffffff";
+                    }
                   }}
                 >
                   {columns.map((column) => {
@@ -936,7 +964,8 @@ export const TableComponent: React.FC<Props> = ({
                     </td>
                   )}
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
           </table>
         </div>

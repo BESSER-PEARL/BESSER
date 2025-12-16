@@ -947,7 +947,7 @@ async def {{ class.name | lower }}_{{ method.name }}(
         # Extract parameters from request body
         params = params or {}
         {% for param in method_params %}
-        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not None %}, {{ param[2] }}{% endif %})
+        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %})
         {% endfor %}
         
         # Call the class method
@@ -991,9 +991,7 @@ async def {{ class.name | lower }}_{{ method.name }}(
 @app.post("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/methods/{{ method.name }}/", response_model=None, tags=["{{ class.name }} Methods"])
 async def execute_{{ class.name | lower }}_{{ method.name }}(
     {{ class.name | lower }}_id: int,
-    {% for param in method_params %}
-    {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} = {{ param[2] }}{% endif %},
-    {% endfor %}
+    params: dict = Body(default=None, embed=True),
     database: Session = Depends(get_db)
 ):
     """
@@ -1011,6 +1009,11 @@ async def execute_{{ class.name | lower }}_{{ method.name }}(
     if _{{ class.name | lower }}_object is None:
         raise HTTPException(status_code=404, detail="{{ class.name }} not found")
     
+    # Prepare method parameters
+    {% for param in method_params %}
+    {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %})
+    {% endfor %}
+
     # Execute the method
     try:        
         # Capture stdout to include print outputs in the response

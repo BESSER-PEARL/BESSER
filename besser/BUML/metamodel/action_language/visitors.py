@@ -1,14 +1,14 @@
 from abc import ABC, abstractmethod
 from typing import TypeVar, Generic
 
-from besser.BUML.metamodel.action_language.action_language import AssignTarget, Parameter, FunctionDefinition, AnyType, \
-    Multiplicity, ObjectType, SequenceType, Type, NaturalType, RealType, StringType, IntType, EnumType, BoolType, \
-    Assignment, Statements, NameDecl, ExplicitDecl, ImplicitDecl, For, Expression, Boolean, BinaryBoolean, LessEq, And, \
-    Or, Equal, Greater, Less, Unequal, GreaterEq, Not, Call, New, FunctionCall, This, FieldAccess, Bitwise, Complement, \
-    BinaryBitwise, BitAnd, BitOr, BitXor, Cast, NullCoalessing, Ternary, Arithmetic, UnaryMinus, BinaryArithmetic, Div, \
-    Remain, Mult, Plus, Minus, Concatenation, InstanceOf, Reference, Literal, IntLiteral, StringLiteral, BoolLiteral, \
-    RealLiteral, NullLiteral, EnumLiteral, SequenceLiteral, RangeLiteral, Iterator, CondLoop, While, \
-    DoWhile, ConditionalBranch, Block, Condition, ArrayAccess
+from besser.BUML.metamodel.action_language.action_language import Parameter, FunctionDefinition, AnyType, Multiplicity, \
+    ObjectType, SequenceType, Type, NaturalType, RealType, StringType, IntType, EnumType, BoolType, Assignment, \
+    Statements, NameDecl, ExplicitDecl, ImplicitDecl, For, Expression, Boolean, BinaryBoolean, LessEq, And, Or, Equal, \
+    Greater, Less, Unequal, GreaterEq, Not, Call, New, This, FieldAccess, Cast, NullCoalessing, Ternary, Arithmetic, \
+    UnaryMinus, BinaryArithmetic, Div, Remain, Mult, Plus, Minus, Concatenation, InstanceOf, Reference, Literal, \
+    IntLiteral, StringLiteral, BoolLiteral, RealLiteral, NullLiteral, EnumLiteral, SequenceLiteral, RangeLiteral, \
+    Iterator, CondLoop, While, DoWhile, ConditionalBranch, Block, Condition, ArrayAccess, MethodCall, StandardLibCall, \
+    Return, AssignTarget
 
 ContextType = TypeVar('ContextType')
 ReturnType = TypeVar('ReturnType')
@@ -95,6 +95,10 @@ class BALVisitor(ABC, Generic[ContextType, ReturnType]):
         pass
 
     @abstractmethod
+    def visit_Return(self, node: Return, context: ContextType) -> ReturnType:
+        pass
+
+    @abstractmethod
     def visit_Expression(self, node: Expression, context: ContextType) -> ReturnType:
         pass
 
@@ -151,7 +155,11 @@ class BALVisitor(ABC, Generic[ContextType, ReturnType]):
         pass
 
     @abstractmethod
-    def visit_FunctionCall(self, node: FunctionCall, context: ContextType) -> ReturnType:
+    def visit_MethodCall(self, node: MethodCall, context: ContextType) -> ReturnType:
+        pass
+
+    @abstractmethod
+    def visit_StandardLibCall(self, node: StandardLibCall, context: ContextType) -> ReturnType:
         pass
 
     @abstractmethod
@@ -164,30 +172,6 @@ class BALVisitor(ABC, Generic[ContextType, ReturnType]):
 
     @abstractmethod
     def visit_ArrayAccess(self, node: ArrayAccess, context: ContextType) -> ReturnType:
-        pass
-
-    @abstractmethod
-    def visit_Bitwise(self, node: Bitwise, context: ContextType) -> ReturnType:
-        pass
-
-    @abstractmethod
-    def visit_Complement(self, node: Complement, context: ContextType) -> ReturnType:
-        pass
-
-    @abstractmethod
-    def visit_BinaryBitwise(self, node: BinaryBitwise, context: ContextType) -> ReturnType:
-        pass
-
-    @abstractmethod
-    def visit_BitAnd(self, node: BitAnd, context: ContextType) -> ReturnType:
-        pass
-
-    @abstractmethod
-    def visit_BitOr(self, node: BitOr, context: ContextType) -> ReturnType:
-        pass
-
-    @abstractmethod
-    def visit_BitXor(self, node: BitXor, context: ContextType) -> ReturnType:
         pass
 
     @abstractmethod

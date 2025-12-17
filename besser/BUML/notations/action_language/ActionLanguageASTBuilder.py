@@ -5,28 +5,44 @@ from win32comext.mapi.mapi import FORCE_SAVE
 from ...metamodel.action_language.action_language import FunctionDefinition, Parameter, While, DoWhile, For, Iterator, \
     Statements, Block, Condition, AnyType, SequenceType, RealType, StringType, IntType, BoolType, Assignment, Ternary, \
     Or, And, Equal, LessEq, InstanceOf, Plus, Remain, Mult, Not, UnaryMinus, Cast, NullCoalessing, ArrayAccess, \
-    FunctionCall, FieldAccess, This, New, IntLiteral, StringLiteral, BoolLiteral, RealLiteral, NullLiteral, EnumLiteral, \
-    SequenceLiteral, RangeLiteral, NameDecl, Reference, ImplicitDecl, Unequal, Greater, GreaterEq, Less, Minus, Div
-from ...metamodel.structural import DomainModel
+    FieldAccess, This, New, IntLiteral, StringLiteral, BoolLiteral, RealLiteral, NullLiteral, EnumLiteral, \
+    SequenceLiteral, RangeLiteral, NameDecl, Reference, ImplicitDecl, Unequal, Greater, GreaterEq, Less, Minus, Div, \
+    ObjectType, EnumType, MethodCall, StandardLibCall, Concatenation, Multiplicity, Return, ExplicitDecl
+from ...metamodel.structural import DomainModel, Class, Enumeration
 
 if "." in __name__:
     from .BESSERActionLanguageParser import BESSERActionLanguageParser
 else:
     from BESSERActionLanguageParser import BESSERActionLanguageParser
 
+base_classes = {'int': IntType,
+                'float': RealType,
+                'str': StringType,
+                'bool': BoolType,
+                'time': AnyType,
+                'date': AnyType,
+                'datetime': AnyType,
+                'timedelta': AnyType,
+                'any': AnyType}
+
+
 # This class defines a complete generic visitor for a parse tree produced by BESSERActionLanguageParser.
 
 class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
-    def __init__(self, domain_model: DomainModel):
+    def __init__(self, domain_model: DomainModel, context_class: Class):
         self.__symbols:dict[str, NameDecl] = {}
         self.__model = domain_model
+        self.__method_class = context_class
+        self.__current_type = ObjectType(context_class)
+
 
     # Visit a parse tree produced by BESSERActionLanguageParser#function_definition.
     def visitFunction_definition(self, ctx:BESSERActionLanguageParser.Function_definitionContext):
         parameters:list[Parameter] = []
         for param in ctx.params:
             parameters.append(self.visit(param))
+        self.__current_type = None
 
         return FunctionDefinition(
             ctx.name.text,
@@ -38,7 +54,14 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BESSERActionLanguageParser#parameter.
     def visitParameter(self, ctx:BESSERActionLanguageParser.ParameterContext):
-        return Parameter(self.visit(ctx.name), self.visit(ctx.declared_type))
+        the_type = self.visit(ctx.declared_type)
+        default = None
+        if ctx.expr is not None:
+            default = self.visit(ctx.expr)
+        param =  Parameter(ctx.name.text, the_type, default)
+        self.__symbols[ctx.name.text] = param
+        self.__current_type = None
+        return param
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#statements.
@@ -71,7 +94,13 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BESSERActionLanguageParser#iterator.
     def visitIterator(self, ctx:BESSERActionLanguageParser.IteratorContext):
-        return Iterator(self.visit(ctx.var_name), self.visit(ctx.sequence))
+        var_name = self.visit(ctx.var_name)
+        sequence = self.visit(ctx.sequence)
+        if isinstance(self.__current_type, SequenceType):
+            var_name.declared_type = self.__current_type.elementsType
+            var_name.multiplicity = Multiplicity(True, False)
+        self.__current_type = None
+        return Iterator(var_name, sequence)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#conditional_branch.
@@ -84,6 +113,7 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         children: list[Statements] = list()
         for elem in ctx.stmts:
             children.append(self.visit(elem))
+        self.__current_type = None
         return Block(children)
 
 
@@ -92,7 +122,15 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         elze = None
         if ctx.elze is not None:
             elze = self.visit(ctx.elze)
+        self.__current_type = None
         return Condition(self.visit(ctx.cond), self.visit(ctx.then), elze)
+
+
+    # Visit a parse tree produced by BESSERActionLanguageParser#return.
+    def visitReturn(self, ctx: BESSERActionLanguageParser.ReturnContext):
+        expr = self.visit(ctx.expr)
+        self.__current_type = None
+        return Return(expr)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#type.
@@ -112,8 +150,12 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BESSERActionLanguageParser#classifier_type.
     def visitClassifier_type(self, ctx:BESSERActionLanguageParser.Classifier_typeContext):
-        # TODO: Find Class or Enum in model
-        return self.visitChildren(ctx)
+        model_type = self.__model.get_type_by_name(ctx.name.text)
+        if isinstance(model_type, Class):
+            return ObjectType(model_type)
+        elif isinstance(model_type, Enumeration):
+            return EnumType(model_type)
+        return None
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#sequence_type.
@@ -151,18 +193,37 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BESSERActionLanguageParser#explicit_declaration.
+    def visitExplicit_declaration(self, ctx: BESSERActionLanguageParser.Explicit_declarationContext):
+        the_type = self.visit(ctx.declared_type)
+        mult = Multiplicity(True, isinstance(the_type, SequenceType))
+        decl = ExplicitDecl(ctx.name.text, the_type, mult)
+        self.__symbols[ctx.name.text] = decl
+        self.__current_type = None
+        return decl
+
+
     # Visit a parse tree produced by BESSERActionLanguageParser#assignment.
     def visitAssignment(self, ctx:BESSERActionLanguageParser.AssignmentContext):
         if ctx.target is None or ctx.assignee is None:
             return  self.visitChildren(ctx)
-        return Assignment(self.visit(ctx.target), self.visit(ctx.assignee))
+        target = self.visit(ctx.target)
+        assignee = self.visit(ctx.assignee)
+        if isinstance(target, NameDecl):
+            if target.declared_type is None:
+                target.declared_type = self.__current_type
+                target.multiplicity = Multiplicity(True, isinstance(self.__current_type, SequenceType))
+        return Assignment(target, assignee)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#ternary.
     def visitTernary(self, ctx:BESSERActionLanguageParser.TernaryContext):
         if ctx.expr is None:
             return self.visitChildren(ctx)
-        return Ternary(self.visit(ctx.expr), self.visit(ctx.then), self.visit(ctx.elze))
+        expr = self.visit(ctx.expr)
+        elze = self.visit(ctx.elze)
+        then = self.visit(ctx.then)
+        return Ternary(expr, then, elze)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#boolean.
@@ -188,32 +249,39 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
     def visitEquality(self, ctx:BESSERActionLanguageParser.EqualityContext):
         if ctx.left is None or ctx.right is None:
             return self.visitChildren(ctx)
-        match ctx.op:
+        left = self.visit(ctx.left)
+        right = self.visit(ctx.right)
+        self.__current_type = BoolType()
+        match ctx.op.text:
             case "==":
-                return Equal(self.visit(ctx.left), self.visit(ctx.right))
+                return Equal(left, right)
             case "!=":
-                return Unequal(self.visit(ctx.left), self.visit(ctx.right))
+                return Unequal(left, right)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#comparison.
     def visitComparison(self, ctx:BESSERActionLanguageParser.ComparisonContext):
         if ctx.left is None or ctx.right is None:
             return self.visitChildren(ctx)
-        match ctx.op:
+        left = self.visit(ctx.left)
+        right = self.visit(ctx.right)
+        self.__current_type = BoolType()
+        match ctx.op.text:
             case "<":
-                return Less(self.visit(ctx.left), self.visit(ctx.right))
+                return Less(left, right)
             case "<=":
-                return LessEq(self.visit(ctx.left), self.visit(ctx.right))
+                return LessEq(left, right)
             case ">":
-                return Greater(self.visit(ctx.left), self.visit(ctx.right))
+                return Greater(left, right)
             case ">=":
-                return GreaterEq(self.visit(ctx.left), self.visit(ctx.right))
+                return GreaterEq(left, right)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#instanceof.
     def visitInstanceof(self, ctx:BESSERActionLanguageParser.InstanceofContext):
         if ctx.instance is None or ctx.the_type is None:
             return self.visitChildren(ctx)
+        self.__current_type = BoolType()
         return InstanceOf(self.visit(ctx.instance), self.visit(ctx.the_type))
 
 
@@ -226,29 +294,51 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
     def visitPlus_minus(self, ctx:BESSERActionLanguageParser.Plus_minusContext):
         if ctx.left is None or ctx.right is None:
             return self.visitChildren(ctx)
-        match ctx.op:
+        left = self.visit(ctx.left)
+        left_type = self.__current_type
+        right = self.visit(ctx.right)
+        right_type = self.__current_type
+        match ctx.op.text:
             case '+':
-                return Plus(self.visit(ctx.left), self.visit(ctx.right))
+                if isinstance(left_type, StringType) or isinstance(right_type, StringType):
+                    self.__current_type = StringType
+                    return Concatenation(left, right)
+                elif isinstance(left_type, RealType):
+                    self.__current_type = RealType
+                return Plus(left, right)
+
             case '-':
-                return Minus(self.visit(ctx.left), self.visit(ctx.right))
+                if isinstance(left_type, StringType) or isinstance(right_type, StringType):
+                    return None
+                elif isinstance(left_type, RealType):
+                    self.__current_type = RealType
+                return Minus(left, right)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#mult_div.
     def visitMult_div(self, ctx:BESSERActionLanguageParser.Mult_divContext):
         if ctx.left is None or ctx.right is None:
             return self.visitChildren(ctx)
-        match ctx.op:
+        left = self.visit(ctx.left)
+        left_type = self.__current_type
+        right = self.visit(ctx.right)
+        if isinstance(left_type, RealType):
+            self.__current_type = RealType
+        match ctx.op.text:
             case '*':
-                return Mult(self.visit(ctx.left), self.visit(ctx.right))
+                return Mult(left, right)
             case '/':
-                return Div(self.visit(ctx.left), self.visit(ctx.right))
+                return Div(left, right)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#remain.
     def visitRemain(self, ctx:BESSERActionLanguageParser.RemainContext):
         if ctx.left is None or ctx.right is None:
             return self.visitChildren(ctx)
-        return Remain(self.visit(ctx.left), self.visit(ctx.right))
+        left = self.visit(ctx.left)
+        right = self.visit(ctx.right)
+        self.__current_type = IntType()
+        return Remain(left, right)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#primary.
@@ -268,17 +358,26 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BESSERActionLanguageParser#cast.
     def visitCast(self, ctx:BESSERActionLanguageParser.CastContext):
-        return Cast(self.visit(ctx.expr), self.visit(ctx.as_))
+        expr = self.visit(ctx.expr)
+        as_type = self.visit(ctx.as_)
+        self.__current_type = as_type
+        return Cast(expr, as_type)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#null_coalessing.
     def visitNull_coalessing(self, ctx:BESSERActionLanguageParser.Null_coalessingContext):
-        return NullCoalessing(self.visit(ctx.nullable), self.visit(ctx.elze))
+        elze = self.visit(ctx.elze)
+        nullable = self.visit(ctx.nullable)
+        return NullCoalessing(nullable, elze)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#ArrayAccess.
     def visitArrayAccess(self, ctx:BESSERActionLanguageParser.ArrayAccessContext):
-        return ArrayAccess(self.visit(ctx.receiver), self.visit(ctx.index))
+        index = self.visit(ctx.index)
+        receiver = self.visit(ctx.receiver)
+        if isinstance(self.__current_type, SequenceType):
+            self.__current_type = self.__current_type.elementsType
+        return ArrayAccess(receiver, index)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#FunctionCall.
@@ -286,16 +385,56 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         args = list()
         for arg in ctx.args:
             args.append(self.visit(arg))
-        # TODO : Add method retrieval
-        method = ctx.name.text
-        return FunctionCall(self.visit(ctx.receiver), None, args)
+
+        receiver = self.visit(ctx.receiver)
+        if isinstance(self.__current_type, SequenceType):
+            return StandardLibCall(receiver, ctx.name.text, args)
+        elif isinstance(self.__current_type, Class):
+            method = ctx.name.text
+            methods = {m for m in self.__current_type.methods if m.name == method}
+            if len(methods) > 0:
+                method_obj = next(iter(methods))
+                return_type = method_obj.type
+                the_type = None
+                if isinstance(return_type, Class):
+                    the_type = ObjectType(return_type)
+                elif isinstance(return_type, Enumeration):
+                    the_type = EnumType(return_type)
+                elif return_type.name in base_classes:
+                    the_type = base_classes[return_type.name]
+                self.__current_type = the_type
+                return MethodCall(receiver, method_obj, args)
+            return MethodCall(receiver, None, args)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#FieldAccess.
     def visitFieldAccess(self, ctx:BESSERActionLanguageParser.FieldAccessContext):
-        # TODO : add property retrieval
-        field = ctx.field.text
-        return FieldAccess(self.visit(ctx.receiver), None)
+        receiver = self.visit(ctx.receiver)
+        prop = None
+        if isinstance(self.__current_type, ObjectType):
+            clazz = self.__current_type.clazz
+            field = ctx.field.text
+            for attr in clazz.all_attributes():
+                if attr.name == field:
+                    prop = attr
+            for end in clazz.all_association_ends():
+                if end.name == field:
+                    prop = end
+        if prop is not None:
+            prop_type = prop.type
+            the_type = None
+            if isinstance(prop_type, Class):
+                the_type = ObjectType(prop_type)
+            elif isinstance(prop_type, Enumeration):
+                the_type = EnumType(prop_type)
+            elif prop_type.name in base_classes:
+                the_type = base_classes[prop_type.name]
+
+            if prop.multiplicity.max > 1:
+                the_type = SequenceType(the_type)
+            self.__current_type = the_type
+
+        return FieldAccess(receiver, prop)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#Atom.
@@ -305,14 +444,41 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BESSERActionLanguageParser#field_access.
     def visitField_access(self, ctx:BESSERActionLanguageParser.Field_accessContext):
-        # TODO : add property retrieval
-        field = ctx.field.text
-        return FieldAccess(self.visit(ctx.receiver), None)
+        receiver = self.visit(ctx.receiver)
+        prop = None
+        if isinstance(self.__current_type, ObjectType):
+            clazz = self.__current_type.clazz
+            field = ctx.field.text
+            for attr in clazz.all_attributes():
+                if attr.name == field:
+                    prop = attr
+            for end in clazz.all_association_ends():
+                if end.name == field:
+                    prop = end
+        if prop is not None:
+            prop_type = prop.type
+            the_type = None
+            if isinstance(prop_type, Class):
+                the_type = ObjectType(prop_type)
+            elif isinstance(prop_type, Enumeration):
+                the_type = EnumType(prop_type)
+            elif prop_type.name in base_classes:
+                the_type = base_classes[prop_type.name]
+
+            if prop.multiplicity.max > 1:
+                the_type = SequenceType(the_type)
+            self.__current_type = the_type
+
+        return FieldAccess(receiver, prop)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#array_access.
     def visitArray_access(self, ctx:BESSERActionLanguageParser.Array_accessContext):
-        return ArrayAccess(self.visit(ctx.receiver), self.visit(ctx.index))
+        index = self.visit(ctx.index)
+        receiver = self.visit(ctx.receiver)
+        if isinstance(self.__current_type, SequenceType):
+            self.__current_type = self.__current_type.elementsType
+        return ArrayAccess(receiver, index)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#function_call.
@@ -320,9 +486,26 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         args = list()
         for arg in ctx.args:
             args.append(self.visit(arg))
-        # TODO : Add method retrieval
-        method = ctx.name.text
-        return FunctionCall(self.visit(ctx.receiver), None, args)
+
+        receiver = self.visit(ctx.receiver)
+        if isinstance(self.__current_type, SequenceType):
+            return StandardLibCall(receiver, ctx.name.text, args)
+        elif isinstance(self.__current_type, Class):
+            method = ctx.name.text
+            methods = {m for m in self.__current_type.methods if m.name == method}
+            if len(methods) > 0:
+                method_obj = next(iter(methods))
+                return_type = method_obj.type
+                the_type = None
+                if isinstance(return_type, Class):
+                    the_type = ObjectType(return_type)
+                elif isinstance(return_type, Enumeration):
+                    the_type = EnumType(return_type)
+                elif return_type.name in base_classes:
+                    the_type = base_classes[return_type.name]
+                self.__current_type = the_type
+                return MethodCall(receiver, method_obj, args)
+            return MethodCall(receiver, None, args)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#atomic.
@@ -334,6 +517,7 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BESSERActionLanguageParser#this.
     def visitThis(self, ctx:BESSERActionLanguageParser.ThisContext):
+        self.__current_type = ObjectType(self.__method_class)
         return This()
 
 
@@ -342,7 +526,9 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         args = list()
         for arg in ctx.args:
             args.append(self.visit(arg))
-        return New(self.visit(ctx.clazz), args)
+        obj_type = self.visit(ctx.clazz)
+        self.__current_type = obj_type
+        return New(obj_type, args)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#literal.
@@ -357,34 +543,44 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BESSERActionLanguageParser#int_literal.
     def visitInt_literal(self, ctx:BESSERActionLanguageParser.Int_literalContext):
+        self.__current_type = IntType()
         return IntLiteral(int(ctx.value.text))
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#string_literal.
     def visitString_literal(self, ctx:BESSERActionLanguageParser.String_literalContext):
+        self.__current_type = StringType()
         return StringLiteral(ctx.value.text)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#bool_literal.
     def visitBool_literal(self, ctx:BESSERActionLanguageParser.Bool_literalContext):
+        self.__current_type = BoolType()
         return BoolLiteral(ctx.value.text == "true")
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#real_literal.
     def visitReal_literal(self, ctx:BESSERActionLanguageParser.Real_literalContext):
+        self.__current_type = RealType()
         return RealLiteral(float(ctx.value.text))
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#null_literal.
     def visitNull_literal(self, ctx:BESSERActionLanguageParser.Null_literalContext):
-        return NullLiteral
+        self.__current_type = None
+        return NullLiteral()
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#enum_literal.
     def visitEnum_literal(self, ctx:BESSERActionLanguageParser.Enum_literalContext):
-        # TODO : check literal exist in enum
-        lit = ctx.name.text
-        return EnumLiteral(self.visit(ctx.enum), ctx.name.text)
+        enum: EnumType = self.visit(ctx.enum)
+        valid = False
+        for literal in enum.enum.literals:
+            if literal.name == ctx.name.text:
+                valid = True
+        # TODO : raise typechecking error if not valid
+        self.__current_type = enum
+        return EnumLiteral(enum, ctx.name.text)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#sequence_literal.
@@ -392,11 +588,14 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         values = list()
         for val in ctx.values:
             values.append(self.visit(val))
-        return SequenceLiteral(self.visit(ctx.the_type), values)
+        value_type = self.visit(ctx.the_type)
+        self.__current_type = SequenceType(value_type)
+        return SequenceLiteral(value_type, values)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#range_literal.
     def visitRange_literal(self, ctx:BESSERActionLanguageParser.Range_literalContext):
+        self.__current_type = SequenceType(IntType())
         return RangeLiteral(self.visit(ctx.first), self.visit(ctx.last))
 
 
@@ -404,6 +603,7 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
     def visitSymbol(self, ctx:BESSERActionLanguageParser.SymbolContext):
         if ctx.name.text in self.__symbols:
             decl = self.__symbols[ctx.name.text]
+            self.__current_type = decl.declared_type
             return Reference(decl)
         else:
             decl = ImplicitDecl(ctx.name.text, None, None)

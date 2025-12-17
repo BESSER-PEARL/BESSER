@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from enum import Enum
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -26,13 +27,17 @@ from besser.BUML.metamodel.gui import (
     ViewContainer,
 )
 from besser.BUML.metamodel.gui.dashboard import (
+    AgentComponent,
     BarChart,
+    FieldColumn,
+    LookupColumn,
+    ExpressionColumn,
     LineChart,
     MetricCard,
     PieChart,
     RadarChart,
     RadialBarChart,
-    TableChart,
+    Table,
 )
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
@@ -43,7 +48,7 @@ from besser.BUML.metamodel.gui.events_actions import (
     Transition,
     Update,
 )
-from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.structural import DomainModel, Enumeration
 from besser.generators import GeneratorInterface
 
 
@@ -72,9 +77,40 @@ class ReactGenerator(GeneratorInterface):
         """
         Generates React TS code based on the provided BUML and GUI models.
         Generates all files from the templates directory, preserving structure and file names (removing .j2 extension).
+        Only generates chart component files that are actually used in the GUI model.
         """
 
         context = self._build_generation_context()
+        used_component_types = self._get_used_component_types()
+
+        # Map component types to their template file patterns
+        component_template_map = {
+            'LineChart': ['LineChartComponent.tsx.j2'],
+            'BarChart': ['BarChartComponent.tsx.j2'],
+            'PieChart': ['PieChartComponent.tsx.j2'],
+            'RadarChart': ['RadarChartComponent.tsx.j2'],
+            'RadialBarChart': ['RadialBarChartComponent.tsx.j2'],
+            'Table': ['TableComponent.tsx.j2', 'TableComponent.css.j2', 'ColumnFilter.tsx.j2', 'ColumnSort.tsx.j2'],
+            'MetricCard': ['MetricCardComponent.tsx.j2'],
+        }
+
+        def should_generate_file(rel_path: str) -> bool:
+            """Determine if a file should be generated based on component usage."""
+            # Always generate non-chart component files
+            if 'charts' + os.sep not in rel_path and 'table' + os.sep not in rel_path:
+                return True
+            
+            # Check if this is a chart/table component file
+            file_name = os.path.basename(rel_path)
+            
+            # Check each component type
+            for component_type, template_files in component_template_map.items():
+                if file_name in template_files:
+                    # Only generate if this component type is used
+                    return component_type in used_component_types
+            
+            # Generate other files in charts/table folders (like index files, utilities, etc.)
+            return True
 
         def generate_file_from_template(rel_template_path: str):
             if rel_template_path.endswith(".j2"):
@@ -98,16 +134,36 @@ class ReactGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         for root, _, files in os.walk(templates_path):
             for file_name in files:
+                abs_template_path = os.path.join(root, file_name)
+                rel_template_path = os.path.relpath(abs_template_path, templates_path)
+                
+                # Skip files that aren't needed based on component usage
+                if not should_generate_file(rel_template_path):
+                    # print(f"Skipping unused component: {rel_template_path}")
+                    continue
+                
                 if file_name.endswith(".j2"):
-                    abs_template_path = os.path.join(root, file_name)
-                    rel_template_path = os.path.relpath(abs_template_path, templates_path)
+                    # Template files - render with Jinja2
                     generate_file_from_template(rel_template_path)
+                else:
+                    # Static files (images, etc.) - copy directly
+                    rel_output_path = rel_template_path
+                    dest_path = self.build_generation_path(file_name=rel_output_path)
+                    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+                    shutil.copy2(abs_template_path, dest_path)
 
     # --------------------------------------------------------------------- #
     # Context builders
     # --------------------------------------------------------------------- #
     def _build_generation_context(self) -> Dict[str, Any]:
         components_payload, styles_payload, meta = self._serialize_gui_model()
+        
+        # Collect all unique field names from all FieldColumns across all Tables
+        all_table_fields = self._collect_all_table_fields()
+        
+        # Get used component types for conditional rendering in templates
+        used_component_types = self._get_used_component_types()
+        
         return {
             "model": self.gui_model,
             "components_json": self._to_pretty_json(components_payload),
@@ -116,6 +172,8 @@ class ReactGenerator(GeneratorInterface):
             "main_page_name": meta.get("main_page_name"),
             "pages_meta": meta.get("pages", []),
             "module_name": meta.get("module_name"),
+            "all_table_fields": all_table_fields,
+            "used_components": used_component_types,
         }
 
     def _serialize_gui_model(self) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
@@ -307,6 +365,58 @@ class ReactGenerator(GeneratorInterface):
             if events:
                 node["events"] = events
 
+            # Handle method execution using method_btn (Method object reference)
+            method_btn = getattr(element, "method_btn", None)
+            if method_btn:
+                # Get method name and class from the Method object
+                method_name = method_btn.name
+                method_class = method_btn.owner
+                class_name = method_class.name if method_class else None
+
+                if method_name and class_name:
+                    # Clean the method name (remove visibility and parameters if present)
+                    clean_method_name = method_name.split('(')[0] if '(' in method_name else method_name
+
+                    # Update attributes with clean names (not IDs)
+                    if 'data-method-name' in attributes:
+                        attributes['method-name'] = clean_method_name
+                        del attributes['data-method-name']
+
+                    if 'data-method-class' in attributes:
+                        attributes['method-class'] = class_name
+                        del attributes['data-method-class']
+
+                    # Generate endpoint URL for method execution
+                    # Format: /book/{book_id}/methods/decrease_stock/
+                    class_name_lower = class_name.lower()
+                    endpoint = f"/{class_name_lower}/{{{class_name_lower}_id}}/methods/{clean_method_name}/"
+                    attributes['endpoint'] = endpoint
+
+                    # Use is_instance_method from Button object
+                    is_instance = getattr(element, "is_instance_method", False)
+                    attributes['is-instance-method'] = str(is_instance).lower()
+
+                    # Extract input parameters from the method
+                    if hasattr(method_btn, 'parameters') and method_btn.parameters:
+                        input_params = {}
+                        for param in method_btn.parameters:
+                            # Skip 'self' and 'session' parameters
+                            if param.name.lower() not in ('self', 'session'):
+                                param_type = param.type.name if param.type else 'any'
+                                input_params[param.name] = param_type
+                        
+                        if input_params:
+                            attributes['input-parameters'] = input_params
+
+            # Output instance_source (table/component ID providing instance data)
+            instance_source = getattr(element, "instance_source", None)
+            if instance_source:
+                # If it's a ViewComponent object, get its component_id; otherwise use the string ID
+                if hasattr(instance_source, 'component_id'):
+                    attributes['instance-source'] = instance_source.component_id
+                elif isinstance(instance_source, str):
+                    attributes['instance-source'] = instance_source
+
         if isinstance(element, InputField):
             node["input_type"] = self._enum_value(getattr(element, "field_type", None))
             node["validation"] = getattr(element, "validationRules", None)
@@ -465,7 +575,7 @@ class ReactGenerator(GeneratorInterface):
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
 
-        if isinstance(element, TableChart):
+        if isinstance(element, Table):
             node["title"] = element.title or self._humanize(element.name)
             node["chart"] = self._clean_dict(
                 {
@@ -473,20 +583,71 @@ class ReactGenerator(GeneratorInterface):
                     "stripedRows": element.striped_rows,
                     "showPagination": element.show_pagination,
                     "rowsPerPage": element.rows_per_page,
+                    "actionButtons": getattr(element, "action_buttons", False),
                 }
             )
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("background") or "#2c3e50"
-            columns = [
-                {
-                    "field": column,
-                    "label": self._humanize(column),
-                }
-                for column in getattr(element, "columns", []) or []
-                if isinstance(column, str) and column
-            ]
+
+            # Serialize columns from Column objects
+            columns = []
+            for col in getattr(element, "columns", []) or []:
+                column_dict = {"label": col.label}
+
+                if isinstance(col, FieldColumn):
+                    column_dict["column_type"] = "field"
+                    column_dict["field"] = col.field.name if hasattr(col.field, "name") else str(col.field)
+
+                    # Check if the field type is an Enumeration
+                    field_type = getattr(col.field, "type", None)
+                    if isinstance(field_type, Enumeration):
+                        column_dict["type"] = "enum"
+                        # Extract enumeration literal names as options
+                        column_dict["options"] = sorted([literal.name for literal in field_type.literals])
+                    else:
+                        column_dict["type"] = field_type.name if hasattr(field_type, "name") else "str"
+                    
+                    # Check if the field is required based on minimum multiplicity
+                    if hasattr(col.field, "multiplicity") and hasattr(col.field.multiplicity, "min"):
+                        column_dict["required"] = col.field.multiplicity.min > 0
+                    else:
+                        column_dict["required"] = False
+
+                elif isinstance(col, LookupColumn):
+                    column_dict["column_type"] = "lookup"
+                    column_dict["path"] = col.path.name if hasattr(col.path, "name") else str(col.path)
+                    column_dict["entity"] = col.path.type.name if hasattr(col.path, "type") and hasattr(col.path.type, "name") else ""
+                    column_dict["field"] = col.field.name if hasattr(col.field, "name") else str(col.field)
+                    # Determine type based on path multiplicity
+                    if hasattr(col.path, "multiplicity") and hasattr(col.path.multiplicity, "max"):
+                        is_list = col.path.multiplicity.max > 1 or col.path.multiplicity.max == "*"
+                        if is_list:
+                            column_dict["type"] = "list"
+                        else:
+                            column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
+                    else:
+                        column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
+                    
+                    # Check if the lookup path is required based on minimum multiplicity
+                    if hasattr(col.path, "multiplicity") and hasattr(col.path.multiplicity, "min"):
+                        column_dict["required"] = col.path.multiplicity.min > 0
+                    else:
+                        column_dict["required"] = False
+
+                elif isinstance(col, ExpressionColumn):
+                    column_dict["column_type"] = "expression"
+                    column_dict["field"] = col.label
+                    column_dict["expression"] = col.expression
+                    column_dict["type"] = "computed"
+
+                columns.append(column_dict)
+
             if columns:
                 node["chart"]["columns"] = columns
+            
+            # Remove raw GrapesJS columns from attributes - we use the processed columns in chart
+            if "attributes" in node and isinstance(node["attributes"], dict) and "columns" in node["attributes"]:
+                node["attributes"] = {k: v for k, v in node["attributes"].items() if k != "columns"}
 
         if isinstance(element, MetricCard):
             node["title"] = element.metric_title or self._humanize(element.name)
@@ -504,6 +665,12 @@ class ReactGenerator(GeneratorInterface):
                 }
             )
             node["color"] = element.primary_color or element.value_color or "#2c3e50"
+
+        if isinstance(element, AgentComponent):
+            node["agent-name"] = element.agent_name or ""
+            node["agent-title"] = element.agent_title or "BESSER Agent"
+            node["agent_name"] = element.agent_name or ""
+            node["agent_title"] = element.agent_title or "BESSER Agent"
 
         binding_data = self._serialize_data_binding(getattr(element, "data_binding", None))
         if binding_data:
@@ -885,10 +1052,12 @@ class ReactGenerator(GeneratorInterface):
             return "radar-chart"
         if isinstance(element, RadialBarChart):
             return "radial-bar-chart"
-        if isinstance(element, TableChart):
-            return "table-chart"
+        if isinstance(element, Table):
+            return "table"
         if isinstance(element, MetricCard):
             return "metric-card"
+        if isinstance(element, AgentComponent):
+            return "agent-component"
         return "component"
 
     @staticmethod
@@ -910,6 +1079,80 @@ class ReactGenerator(GeneratorInterface):
             return ""
         return value.replace("_", " ").strip()
 
+    def _collect_all_table_fields(self) -> List[str]:
+        """
+        Collect all unique field names from FieldColumns across all Tables in the GUI model.
+        Recursively searches through all ViewContainers to find nested Tables.
+        These will be used to generate dynamic option display logic in the template.
+        
+        Returns:
+            List of unique field names sorted alphabetically
+        """
+        field_names = set()
+        
+        def scan_element_for_tables(element):
+            """Recursively scan an element and its children for Tables."""
+            if isinstance(element, Table):
+                # Extract field names from FieldColumns
+                for col in getattr(element, "columns", []) or []:
+                    if isinstance(col, FieldColumn):
+                        field_name = col.field.name if hasattr(col.field, "name") else str(col.field)
+                        field_names.add(field_name)
+            
+            # Recursively scan children if this is a ViewContainer
+            if isinstance(element, ViewContainer):
+                for child in element.view_elements:
+                    scan_element_for_tables(child)
+        
+        # Iterate through all modules and screens to find Tables (including nested ones)
+        for module in self.gui_model.modules:
+            for screen in module.screens:
+                for element in screen.view_elements:
+                    scan_element_for_tables(element)
+        
+        return sorted(field_names)
+
+    def _get_used_component_types(self) -> set:
+        """
+        Scan the GUI model to determine which component types are actually used.
+        Recursively searches through all ViewContainers to find nested components.
+        
+        Returns:
+            Set of component type names (e.g., 'LineChart', 'BarChart', 'Table', etc.)
+        """
+        used_types = set()
+        
+        def scan_element(element):
+            """Recursively scan an element and its children for component types."""
+            # Map component instances to their type names
+            if isinstance(element, LineChart):
+                used_types.add('LineChart')
+            elif isinstance(element, BarChart):
+                used_types.add('BarChart')
+            elif isinstance(element, PieChart):
+                used_types.add('PieChart')
+            elif isinstance(element, RadarChart):
+                used_types.add('RadarChart')
+            elif isinstance(element, RadialBarChart):
+                used_types.add('RadialBarChart')
+            elif isinstance(element, Table):
+                used_types.add('Table')
+            elif isinstance(element, MetricCard):
+                used_types.add('MetricCard')
+            
+            # Recursively scan children if this is a ViewContainer
+            if isinstance(element, ViewContainer):
+                for child in element.view_elements:
+                    scan_element(child)
+        
+        # Scan all screens and their children
+        for module in self.gui_model.modules:
+            for screen in module.screens:
+                for element in screen.view_elements:
+                    scan_element(element)
+        
+        return used_types
+
     @staticmethod
     def _enum_value(value: Any) -> Optional[str]:
         if value is None:
@@ -917,6 +1160,33 @@ class ReactGenerator(GeneratorInterface):
         if isinstance(value, Enum):
             return value.value if hasattr(value, "value") else value.name
         return str(value)
+    
+    def _get_entity_name_from_id(self, entity_id: str) -> Optional[str]:
+        """Get entity name from the structural model by ID"""
+        if not hasattr(self, 'model') or not self.model:
+            return None
+        
+        # Search for class with matching name or component_id
+        for cls in self.model.get_classes():
+            if cls.name == entity_id or getattr(cls, 'component_id', None) == entity_id:
+                return cls.name
+        
+        # If not found, return the ID as-is (it might already be a name)
+        return entity_id
+    
+    @staticmethod
+    def _infer_type(value: Any) -> str:
+        """Infer parameter type from value"""
+        if isinstance(value, bool):
+            return 'boolean'
+        elif isinstance(value, int):
+            return 'number'
+        elif isinstance(value, float):
+            return 'number'
+        elif isinstance(value, str):
+            return 'string'
+        else:
+            return 'string'
 
     @staticmethod
     def _convert_style_keys(style: Dict[str, Any]) -> Dict[str, Any]:

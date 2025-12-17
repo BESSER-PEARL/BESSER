@@ -102,6 +102,29 @@ def clean_attribute_name(attr_text: str) -> str:
     return text.strip()
 
 
+def clean_method_name(method_text: str) -> str:
+    """
+    Cleans method names by removing visibility, parameters, and return type annotations.
+    Extracts just the method name from signatures like "+ decrease_stock(qty: int)" -> "decrease_stock"
+    
+    Args:
+        method_text: Raw method text with possible visibility, parameters, and type annotations
+        
+    Returns:
+        Cleaned method name
+    """
+    if not method_text:
+        return method_text
+
+    # Remove visibility prefix (+ - #)
+    text = re.sub(r'^[\+\-\#]\s*', '', method_text)
+    # Remove parameters (everything from opening parenthesis onwards)
+    text = re.sub(r'\s*\(.*$', '', text)
+    # Remove type annotation if present before parameters were removed
+    text = re.sub(r'\s*:\s*.*$', '', text)
+    return text.strip()
+
+
 def get_element_by_id(class_model, element_id):
     """
     Resolve an element by its ID from the class_model.

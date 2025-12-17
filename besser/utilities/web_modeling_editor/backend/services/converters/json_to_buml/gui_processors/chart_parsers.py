@@ -1,14 +1,18 @@
 """
 Chart component parsers for GUI diagrams.
 """
+
 import json
-from typing import Dict, Any
+from typing import Dict, Any, List
 from besser.BUML.metamodel.gui import (
     Alignment, BarChart, DataBinding, LineChart,
-    PieChart, RadarChart, RadialBarChart, TableChart,
-    Color, Position, Size, Styling, DataAggregation, MetricCard,
+    PieChart, RadarChart, RadialBarChart, Table,
+    Color, Position, Size, Styling, MetricCard, DataAggregation
 )
-from besser.BUML.metamodel.gui.dashboard import Series
+from besser.BUML.metamodel.gui.dashboard import (
+    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn
+)
+from besser.BUML.metamodel.gui.dashboard import AgentComponent, Series
 from .styling import ensure_styling_parts
 from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
 
@@ -494,9 +498,112 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
     return radial_bar_chart
 
 
-def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> TableChart:
+def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column]:
     """
-    Parses a table chart component, resolving data binding and presentation options.
+    Parse the columns data from table traits into Column objects.
+    Handles both array (new format) and JSON string (legacy format).
+    
+    Args:
+        columns_json: Array or JSON string containing column definitions
+        domain_class: Domain class for resolving field references
+        class_model: Class model for object resolution
+        
+    Returns:
+        List of Column objects (FieldColumn, LookupColumn, or ExpressionColumn)
+    """
+    if not columns_json:
+        return []
+    
+    # Handle both array (new format) and string (legacy format)
+    if isinstance(columns_json, list):
+        columns_data = columns_json
+    elif isinstance(columns_json, str):
+        try:
+            columns_data = json.loads(columns_json)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    else:
+        return []
+    
+    if not isinstance(columns_data, list):
+        return []
+    
+    columns_list = []
+    
+    for col_data in columns_data:
+        if not isinstance(col_data, dict):
+            continue
+        
+        column_type = col_data.get('columnType', 'field').lower()
+        label = col_data.get('label', '')
+        
+        if column_type == 'field':
+            # Parse FieldColumn
+            field_name = col_data.get('field', '')
+            # Remove leading '+ ' if present
+            field_name = field_name.lstrip('+ ').strip()
+            
+            if domain_class and field_name:
+                # Find the attribute in the domain class (including inherited attributes)
+                field_attr = None
+                for attr in domain_class.all_attributes():
+                    if attr.name == field_name:
+                        field_attr = attr
+                        break
+                
+                if field_attr:
+                    column = FieldColumn(label=label, field=field_attr)
+                    columns_list.append(column)
+        
+        elif column_type == 'lookup':
+            # Parse LookupColumn
+            # GrapesJS stores the relationship path in 'field' for lookup columns
+            lookup_path = col_data.get('path') or col_data.get('field', '')
+            lookup_field_name = col_data.get('lookupField', '')
+            
+            if domain_class and lookup_path:
+                # Find the relationship end (path) - including inherited associations
+                path_end = None
+                for end in domain_class.all_association_ends():
+                    if end.name == lookup_path:
+                        path_end = end
+                        break
+                
+                if path_end and path_end.type:
+                    target_class = path_end.type
+                    # Find the lookup field in the target class (including inherited attributes)
+                    lookup_field_attr = None
+                    if lookup_field_name:
+                        for attr in target_class.all_attributes():
+                            if attr.name == lookup_field_name:
+                                lookup_field_attr = attr
+                                break
+                    
+                    # If no lookup field specified, use first attribute
+                    if not lookup_field_attr and target_class.all_attributes():
+                        lookup_field_attr = list(target_class.all_attributes())[0]
+                    
+                    if lookup_field_attr:
+                        column = LookupColumn(
+                            label=label,
+                            path=path_end,
+                            field=lookup_field_attr
+                        )
+                        columns_list.append(column)
+        
+        elif column_type == 'expression':
+            # Parse ExpressionColumn
+            expression = col_data.get('expression', '')
+            if expression:
+                column = ExpressionColumn(label=label, expression=expression)
+                columns_list.append(column)
+    
+    return columns_list
+
+
+def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:
+    """
+    Parses a table component, resolving data binding, columns, and presentation options.
     """
     attrs = view_comp.get('attributes', {})
 
@@ -507,10 +614,10 @@ def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> T
 
     raw_title = attrs.get('chart-title')
     title_value = raw_title.strip() if isinstance(raw_title, str) else None
-    name_seed = raw_title if isinstance(raw_title, str) else 'TableChart'
-    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('TableChart')
+    name_seed = raw_title if isinstance(raw_title, str) else 'Table'
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('Table')
     if not chart_title:
-        chart_title = 'TableChart'
+        chart_title = 'Table'
     if not title_value:
         title_value = chart_title.replace('_', ' ').title()
 
@@ -535,60 +642,25 @@ def parse_table_chart(view_comp: Dict[str, Any], class_model, domain_model) -> T
         except (TypeError, ValueError):
             return default
 
-    table_chart = TableChart(
+    # Parse columns from the JSON trait
+    columns_json = attrs.get('columns', '')
+    columns_list = _parse_table_columns(columns_json, domain_class, class_model)
+
+    table = Table(
         name=chart_title,
         show_header=_bool_attr('show-header', True),
         striped_rows=_bool_attr('striped-rows', False),
         show_pagination=_bool_attr('show-pagination', True),
         rows_per_page=_int_attr('rows-per-page', 5),
         title=title_value,
-        primary_color=primary_color
+        primary_color=primary_color,
+        columns=columns_list,
+        action_buttons=_bool_attr('action-buttons', False)
     )
 
-    if domain_class:
-        column_names = []
-        for attr in getattr(domain_class, "attributes", []) or []:
-            attr_name = getattr(attr, "name", None)
-            if isinstance(attr_name, str) and attr_name:
-                column_names.append(attr_name)
-        # Attempt to include association end roles if available
-        association_iterables = []
-        for candidate in ("association_ends", "associationEnds"):
-            attr_value = getattr(domain_class, candidate, None)
-            if not attr_value:
-                continue
-            try:
-                association_data = attr_value if callable(attr_value) else attr_value
-            except TypeError:
-                association_data = attr_value
-
-            if association_data is None:
-                continue
-            if isinstance(association_data, dict):
-                association_iterables.extend(association_data.values())
-            elif isinstance(association_data, (list, tuple, set)):
-                association_iterables.extend(list(association_data))
-            else:
-                association_iterables.append(association_data)
-
-        for association_end in association_iterables:
-            if association_end is None:
-                continue
-            end_name = None
-            if hasattr(association_end, "name"):
-                end_name = getattr(association_end, "name", None)
-            if not end_name and hasattr(association_end, "role"):
-                end_name = getattr(association_end, "role", None)
-            if isinstance(end_name, str) and end_name:
-                column_names.append(end_name)
-
-        if column_names:
-            table_chart.columns = column_names
-
-    table_chart.data_binding = data_binding
-    _attach_chart_metadata(table_chart, view_comp)
-    return table_chart
-
+    table.data_binding = data_binding
+    _attach_chart_metadata(table, view_comp)
+    return table
 
 def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
     """
@@ -619,7 +691,7 @@ def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
         element.styling.color.line_color = color_value
     elif isinstance(element, RadialBarChart):
         element.styling.color.bar_color = color_value
-    elif isinstance(element, TableChart):
+    elif isinstance(element, Table):
         element.styling.color.background_color = color_value
 
 
@@ -680,3 +752,35 @@ def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> M
     _attach_chart_metadata(metric_card, view_comp)
     
     return metric_card
+
+
+def parse_agent_component(view_comp: Dict[str, Any], class_model, domain_model) -> AgentComponent:
+    """
+    Parse an agent component from JSON to BUML AgentComponent.
+    
+    Args:
+        view_comp: Component dictionary from GrapesJS JSON
+        class_model: Class diagram model (not used for agent, but kept for consistency)
+        domain_model: Domain model (not used for agent, but kept for consistency)
+        
+    Returns:
+        AgentComponent instance
+    """
+    attrs = view_comp.get("attributes", {})
+    
+    # Parse agent component properties
+    agent_name = attrs.get('agent-name', '')
+    agent_title = attrs.get('agent-title', 'BESSER Agent')
+
+    
+    # Create agent component
+    agent_component = AgentComponent(
+        name=sanitize_name(agent_title or 'AgentComponent'),
+        agent_name=agent_name,
+        agent_title=agent_title,
+        description=f"Agent component for {agent_name or 'agent'}",
+    )
+    
+    _attach_chart_metadata(agent_component, view_comp)
+    
+    return agent_component

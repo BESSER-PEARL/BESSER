@@ -1,11 +1,19 @@
 import uvicorn
 import os, json
-from fastapi import Depends, FastAPI, HTTPException
+import time as time_module
+import logging
+from fastapi import Depends, FastAPI, HTTPException, Request, status, Body
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError
 from pydantic_classes import *
 from sql_alchemy import *
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 ############################################
 #
@@ -15,12 +23,37 @@ from sql_alchemy import *
 
 def init_db():
     SQLALCHEMY_DATABASE_URL = "sqlite:///./{{name}}.db"
-    engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+    engine = create_engine(
+        SQLALCHEMY_DATABASE_URL, 
+        connect_args={"check_same_thread": False},
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+        echo=False
+    )
     SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     Base.metadata.create_all(bind=engine)
     return SessionLocal
 
-app = FastAPI()
+app = FastAPI(
+    title="{{name}} API",
+    description="Auto-generated REST API with full CRUD operations, relationship management, and advanced features",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_tags=[
+        {"name": "System", "description": "System health and statistics"},
+        {% for class in classes %}
+        {"name": "{{ class.name }}", "description": "Operations for {{ class.name }} entities"},
+        {% if class.associations %}
+        {"name": "{{ class.name }} Relationships", "description": "Manage {{ class.name }} relationships"},
+        {% endif %}
+        {% if class.methods %}
+        {"name": "{{ class.name }} Methods", "description": "Execute {{ class.name }} methods"},
+        {% endif %}
+        {% endfor %}
+    ]
+)
 
 # Enable CORS for all origins (for development)
 app.add_middleware(
@@ -31,6 +64,95 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+############################################
+#
+#   Middleware
+#
+############################################
+
+# Request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all incoming requests and responses."""
+    logger.info(f"Incoming request: {request.method} {request.url.path}")
+    response = await call_next(request)
+    logger.info(f"Response status: {response.status_code}")
+    return response
+
+# Request timing middleware
+@app.middleware("http")
+async def add_process_time_header(request: Request, call_next):
+    """Add processing time header to all responses."""
+    start_time = time_module.time()
+    response = await call_next(request)
+    process_time = time_module.time() - start_time
+    response.headers["X-Process-Time"] = str(process_time)
+    return response
+
+############################################
+#
+#   Exception Handlers
+#
+############################################
+
+# Global exception handlers
+@app.exception_handler(ValueError)
+async def value_error_handler(request: Request, exc: ValueError):
+    """Handle ValueError exceptions."""
+    return JSONResponse(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        content={
+            "error": "Bad Request",
+            "message": str(exc),
+            "detail": "Invalid input data provided"
+        }
+    )
+
+
+@app.exception_handler(IntegrityError)
+async def integrity_error_handler(request: Request, exc: IntegrityError):
+    """Handle database integrity errors."""
+    logger.error(f"Database integrity error: {exc}")
+    
+    # Extract more detailed error information
+    error_detail = str(exc.orig) if hasattr(exc, 'orig') else str(exc)
+    
+    return JSONResponse(
+        status_code=status.HTTP_409_CONFLICT,
+        content={
+            "error": "Conflict",
+            "message": "Data conflict occurred",
+            "detail": error_detail
+        }
+    )
+
+
+@app.exception_handler(SQLAlchemyError)
+async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError):
+    """Handle general SQLAlchemy errors."""
+    logger.error(f"Database error: {exc}")
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": "Internal Server Error", 
+            "message": "Database operation failed",
+            "detail": "An internal database error occurred"
+        }
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handle HTTP exceptions with consistent format."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": exc.detail if isinstance(exc.detail, str) else "HTTP Error",
+            "message": exc.detail,
+            "detail": f"HTTP {exc.status_code} error occurred"
+        }
+    )
+
 # Initialize database session
 SessionLocal = init_db()
 # Dependency to get DB session
@@ -38,8 +160,49 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        logger.error("Database session rollback due to exception")
+        raise
     finally:
         db.close()
+
+############################################
+#
+#   Global API endpoints
+#
+############################################
+
+@app.get("/", tags=["System"])
+def root():
+    """Root endpoint - API information"""
+    return {
+        "name": "{{name}} API",
+        "version": "1.0.0",
+        "status": "running"
+    }
+
+
+@app.get("/health", tags=["System"])
+def health_check():
+    """Health check endpoint for monitoring"""
+    from datetime import datetime
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "database": "connected"
+    }
+
+
+@app.get("/statistics", tags=["System"])
+def get_statistics(database: Session = Depends(get_db)):
+    """Get database statistics for all entities"""
+    stats = {}
+    {% for class in classes %}
+    stats["{{class.name|lower}}_count"] = database.query({{class.name}}).count()
+    {% endfor %}
+    stats["total_entities"] = sum(stats.values())
+    return stats
 
 {% for class in classes %}
 ############################################
@@ -47,7 +210,7 @@ def get_db():
 #   {{ class.name }} functions
 #
 ############################################
-{% set ns = namespace(end_name_one=[], end_name_multiple=[], manytomany_associations=[]) %}
+{% set ns = namespace(end_name_one=[], end_name_multiple=[], one_to_many=[]) %}
 {% for association in class.associations %}
     {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
         {% set lns = namespace(end1=None, end2=None) %}
@@ -60,21 +223,191 @@ def get_db():
         {% set name_end1 = lns.end1.name %} 
         {% set name_end2 = lns.end2.name %}
         {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
-            {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower())) %}
+            {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), lns.end2.multiplicity.min, lns.end2.multiplicity.max)) %}
+        {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max > 1 %}
+            {# 1:N relationship - Library has many Books #}
+            {% do ns.one_to_many.append((class2_name, name_end1, name_end2)) %}
         {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
-            {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2)) %}
+            {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
         {% endif %}
     {% endif %}
 {% endfor %}
+{# Include inherited associations from parent classes #}
+{% for parent in class.parents() %}
+{% for association in parent.associations %}
+    {% if association.ends|length == 2 %}
+        {% set plns = namespace(end1=None, end2=None) %}
+        {% for end in association.ends %}
+            {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+            {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+        {% endfor %}
+        {% set class1_name = plns.end1.type.name %} 
+        {% set class2_name = plns.end2.type.name %}
+        {% set name_end1 = plns.end1.name %} 
+        {% set name_end2 = plns.end2.name %}
+        {% if plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max > 1 %}
+            {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), plns.end2.multiplicity.min, plns.end2.multiplicity.max)) %}
+        {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max > 1 %}
+            {# 1:N inherited relationship #}
+            {% do ns.one_to_many.append((class2_name, name_end1, name_end2)) %}
+        {% elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 %}
+            {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% endif %}
+    {% endif %}
+{% endfor %}
+{% endfor %}
 
 {% if "GET" in http_methods %}
-@app.get("/{{ class.name | lower}}/", response_model=None)
-def get_all_{{ class.name | lower}}(database: Session = Depends(get_db)) -> list[{{ class.name }}]:
-    {{ class.name | lower}}_list = database.query({{ class.name }}).all()
-    return {{ class.name | lower}}_list
+@app.get("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
+def get_all_{{ class.name | lower}}(detailed: bool = False, database: Session = Depends(get_db)) -> list:
+    from sqlalchemy.orm import joinedload
+    
+    {% if ns.end_name_one or ns.end_name_multiple or ns.one_to_many %}
+    # Use detailed=true to get entities with eagerly loaded relationships (for tables with lookup columns)
+    if detailed:
+        # Eagerly load all relationships to avoid N+1 queries
+        query = database.query({{ class.name }})
+        {% for x in ns.end_name_one %}
+        query = query.options(joinedload({{ class.name }}.{{ x[2] }}))
+        {% endfor %}
+        {{ class.name | lower}}_list = query.all()
+        
+        # Serialize with relationships included
+        result = []
+        for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
+            item_dict = {{ class.name | lower}}_item.__dict__.copy()
+            item_dict.pop('_sa_instance_state', None)
+            
+            # Add many-to-one relationships (foreign keys for lookup columns)
+            {% for x in ns.end_name_one %}
+            if {{ class.name | lower}}_item.{{ x[2] }}:
+                related_obj = {{ class.name | lower}}_item.{{ x[2] }}
+                related_dict = related_obj.__dict__.copy()
+                related_dict.pop('_sa_instance_state', None)
+                item_dict['{{ x[2] }}'] = related_dict
+            else:
+                item_dict['{{ x[2] }}'] = None
+            {% endfor %}
+            
+            {% if ns.end_name_multiple or ns.one_to_many %}
+            # Add many-to-many and one-to-many relationship objects (full details)
+            {% for x in ns.end_name_multiple %}
+            {{x[1] | lower}}_list = database.query({{x[1]}}).join({{x[4]}}, {{x[1]}}.id == {{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
+            item_dict['{{x[3]}}'] = []
+            for {{x[1] | lower}}_obj in {{x[1] | lower}}_list:
+                {{x[1] | lower}}_dict = {{x[1] | lower}}_obj.__dict__.copy()
+                {{x[1] | lower}}_dict.pop('_sa_instance_state', None)
+                item_dict['{{x[3]}}'].append({{x[1] | lower}}_dict)
+            {% endfor %}
+            {% for x in ns.one_to_many %}
+            {{x[0] | lower}}_list = database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()
+            item_dict['{{x[2]}}'] = []
+            for {{x[0] | lower}}_obj in {{x[0] | lower}}_list:
+                {{x[0] | lower}}_dict = {{x[0] | lower}}_obj.__dict__.copy()
+                {{x[0] | lower}}_dict.pop('_sa_instance_state', None)
+                item_dict['{{x[2]}}'].append({{x[0] | lower}}_dict)
+            {% endfor %}
+            {% endif %}
+            
+            result.append(item_dict)
+        return result
+    else:
+        # Default: return flat entities (faster for charts/widgets without lookup columns)
+        return database.query({{ class.name }}).all()
+    {% else %}
+    return database.query({{ class.name }}).all()
+    {% endif %}
 
 
-@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
+@app.get("/{{ class.name | lower}}/count/", response_model=None, tags=["{{ class.name }}"])
+def get_count_{{ class.name | lower}}(database: Session = Depends(get_db)) -> dict:
+    """Get the total count of {{ class.name }} entities"""
+    count = database.query({{ class.name }}).count()
+    return {"count": count}
+
+
+@app.get("/{{ class.name | lower}}/paginated/", response_model=None, tags=["{{ class.name }}"])
+def get_paginated_{{ class.name | lower}}(skip: int = 0, limit: int = 100, detailed: bool = False, database: Session = Depends(get_db)) -> dict:
+    """Get paginated list of {{ class.name }} entities"""
+    total = database.query({{ class.name }}).count()
+    {{ class.name | lower}}_list = database.query({{ class.name }}).offset(skip).limit(limit).all()
+    {% if ns.end_name_multiple or ns.one_to_many %}
+    # By default, return flat entities (for charts/widgets)
+    # Use detailed=true to get entities with relationships
+    if not detailed:
+        return {
+            "total": total,
+            "skip": skip,
+            "limit": limit,
+            "data": {{ class.name | lower}}_list
+        }
+    
+    result = []
+    for {{ class.name | lower}}_item in {{ class.name | lower}}_list:
+        {% for x in ns.end_name_multiple %}
+        {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_item.id).all()
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_item.id).all()
+        {% endfor %}
+        item_data = {
+            "{{class.name | lower}}": {{ class.name | lower}}_item,
+            {% for x in ns.end_name_multiple %}
+            "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+            {% endfor %}
+            {% for x in ns.one_to_many %}
+            "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+            {% endfor %}
+        }
+        result.append(item_data)
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "data": result
+    }
+    {% else %}
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "data": {{ class.name | lower}}_list
+    }
+    {% endif %}
+
+
+@app.get("/{{ class.name | lower}}/search/", response_model=None, tags=["{{ class.name }}"])
+def search_{{ class.name | lower}}(
+    {% for attribute in class.attributes %}
+    {% if attribute.type.__class__.__name__ in ['StringType', 'IntegerType', 'FloatType', 'BooleanType'] %}
+    {{attribute.name}}: {% if attribute.type.__class__.__name__ == 'StringType' %}str{% elif attribute.type.__class__.__name__ == 'IntegerType' %}int{% elif attribute.type.__class__.__name__ == 'FloatType' %}float{% elif attribute.type.__class__.__name__ == 'BooleanType' %}bool{% endif %} = None,
+    {% endif %}
+    {% endfor %}
+    database: Session = Depends(get_db)
+) -> list:
+    """Search {{ class.name }} entities by attributes"""
+    query = database.query({{ class.name }})
+    
+    {% for attribute in class.attributes %}
+    {% if attribute.type.__class__.__name__ in ['StringType', 'IntegerType', 'FloatType', 'BooleanType'] %}
+    if {{attribute.name}} is not None:
+        {% if attribute.type.__class__.__name__ == 'StringType' %}
+        query = query.filter({{ class.name }}.{{attribute.name}}.ilike(f"%{% raw %}{{% endraw %}{{attribute.name}}{% raw %}}{% endraw %}%"))
+        {% else %}
+        query = query.filter({{ class.name }}.{{attribute.name}} == {{attribute.name}})
+        {% endif %}
+    {% endif %}
+    {% endfor %}
+    
+    results = query.all()
+    return results
+
+
+@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)) -> {{ class.name }}:
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
@@ -82,13 +415,21 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
 
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
-    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]|lower}}).filter({{x[4]}}.c.{{x[2]|lower}} == db_{{ class.name | lower}}.id).all()
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    {% endif %}
+    {% if ns.one_to_many %}
+    {% for x in ns.one_to_many %}
+    {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.id).all()
     {% endfor %}
     {% endif %}
     response_data = {
         "{{class.name | lower}}": db_{{ class.name | lower}},
         {% for x in ns.end_name_multiple %}
-        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids]{% if not loop.last %},{% endif %}
+        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
         {% endfor -%}
     }
     return response_data
@@ -97,11 +438,13 @@ async def get_{{ class.name | lower}}({{ class.name | lower}}_id: int, database:
 
 
 {% if "POST" in http_methods %}
-@app.post("/{{ class.name | lower}}/", response_model=None)
+@app.post("/{{ class.name | lower}}/", response_model=None, tags=["{{ class.name }}"])
 async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
 
     {% if ns.end_name_one %}
     {% for x in ns.end_name_one %}
+    {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+    {% if has_fk %}
     if {{ class.name | lower}}_data.{{x[2]}} {% if x[1]==1 %}is not None{%endif%}:
         db_{{x[2]}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{ class.name | lower}}_data.{{x[2]}}).first()
         if not db_{{x[2]}}:
@@ -109,44 +452,122 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {%if x[1] == 1 %}
     else:
         raise HTTPException(status_code=400, detail="{{x[0]}} ID is required")
-    {% endif -%}{% endfor -%}
+    {% endif -%}
+    {% endif -%}
+    {% endfor -%}
     {%- endif %}
-
-    {% if class.attributes %}
-    db_{{ class.name | lower}} = {{ class.name }}(
-        {% for attribute in class.attributes %}
-        {{attribute.name}}={{ class.name | lower}}_data.{{attribute.name}}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
-        {% endfor %}
-        {% if ns.end_name_one %}
-        {% for x in ns.end_name_one %}, {{x[2]}}=db_{{x[2]}}{% endfor %}
-        {% endif %}
-        )
-    {% else %}
+    {# Validate inherited mandatory relationships #}
     {% for parent in class.parents() %}
-    db_{{ class.name | lower}} = {{ class.name }}(
-        {% for attrparent in parent.attributes %}
-        {{attrparent.name}}={{ class.name | lower}}_data.{{attrparent.name}}{% if attrparent.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %}, {% endif %}
-        {% endfor %}
-        {% if ns.end_name_one %}
-        {% for x in ns.end_name_one %}, {{x[1]|lower}}_id={{ class.name | lower}}_data.{{x[1]|lower}}_id{% endfor %}
+    {% for association in parent.associations %}
+        {% if association.ends|length == 2 %}
+            {% set plns = namespace(end1=None, end2=None) %}
+            {% for end in association.ends %}
+                {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+            {% endfor %}
+            {%- if (plns.end1.multiplicity.max == 1 or plns.end1.multiplicity.max > 1) and plns.end2.multiplicity.max == 1 -%}
+                {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                {% if parent_has_fk %}
+    if {{ class.name | lower}}_data.{{plns.end2.name}} {% if plns.end2.multiplicity.min==1 %}is not None{%endif%}:
+        db_{{plns.end2.name}} = database.query({{plns.end2.type.name}}).filter({{plns.end2.type.name}}.id == {{ class.name | lower}}_data.{{plns.end2.name}}).first()
+        if not db_{{plns.end2.name}}:
+            raise HTTPException(status_code=400, detail="{{plns.end2.type.name}} not found")
+    {%if plns.end2.multiplicity.min == 1 %}
+    else:
+        raise HTTPException(status_code=400, detail="{{plns.end2.type.name}} ID is required")
+    {% endif -%}
+                {% endif -%}
+            {%- endif -%}
         {% endif %}
-    )
+    {% endfor %}
+    {% endfor %}
+    {% if ns.end_name_multiple %}
+    {% for x in ns.end_name_multiple %}
+    {# x[5] = min multiplicity, x[3] = relationship name #}
+    {% if x[5] > 0 %}
+    if not {{ class.name | lower}}_data.{{x[3]}} or len({{ class.name | lower}}_data.{{x[3]}}) < {{x[5]}}:
+        raise HTTPException(status_code=400, detail="At least {{x[5]}} {{x[1]}}(s) required")
+    {% endif %}
+    {# Validate that all related entities exist BEFORE creating the main entity #}
+    if {{ class.name | lower}}_data.{{x[3]}}:
+        for id in {{ class.name | lower}}_data.{{x[3]}}:
+            # Entity already validated before creation
+            db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == id).first()
+            if not db_{{x[1] | lower}}:
+                raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {id} not found")
     {% endfor %}
     {% endif %}
+
+    db_{{ class.name | lower}} = {{ class.name }}(
+        {% for parent in class.parents() %}
+        {% for attrparent in parent.attributes %}
+        {{attrparent.name}}={{ class.name | lower}}_data.{{attrparent.name}}{% if attrparent.type.__class__.__name__ == 'Enumeration' %}.value{% endif %},
+        {% endfor %}
+        {% endfor %}
+        {% for attribute in class.attributes %}
+        {{attribute.name}}={{ class.name | lower}}_data.{{attribute.name}}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %},{% endif %}
+        {% endfor %}
+        {% if ns.end_name_one %}
+        {% for x in ns.end_name_one -%}
+        {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+        {% if has_fk %},
+        {{x[2]}}_id={{ class.name | lower}}_data.{{x[2]}}{% endif -%}
+        {% endfor %}
+        {% endif %}
+        {# Include parent FKs for inherited classes #}
+        {% for parent in class.parents() %}
+        {% for association in parent.associations %}
+            {% if association.ends|length == 2 %}
+                {% set plns = namespace(end1=None, end2=None) %}
+                {% for end in association.ends %}
+                    {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                    {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+                {% endfor %}
+                {%- if plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 -%}
+                    {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                    {% if parent_has_fk %},
+        {{plns.end2.name}}_id={{ class.name | lower}}_data.{{plns.end2.name}}{% endif -%}
+                {%- elif plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max == 1 -%}
+                    {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
+                    {% if parent_has_fk %},
+        {{plns.end2.name}}_id={{ class.name | lower}}_data.{{plns.end2.name}}{% endif -%}
+                {%- endif -%}
+            {% endif %}
+        {% endfor %}
+        {% endfor %}
+        )
 
     database.add(db_{{ class.name | lower}})
     database.commit()
     database.refresh(db_{{ class.name | lower}})
 
+    {# Set one-to-many relationships if provided #}
+    {% if ns.one_to_many %}
+    {% for x in ns.one_to_many %}
+    {# x[0] = related class, x[1] = foreign key field name, x[2] = relationship name #}
+    if {{ class.name | lower }}_data.{{x[2]}}:
+        # Validate that all {{x[0]}} IDs exist
+        for {{x[0] | lower}}_id in {{ class.name | lower }}_data.{{x[2]}}:
+            db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{x[0] | lower}}_id).first()
+            if not db_{{x[0] | lower}}:
+                raise HTTPException(status_code=400, detail=f"{{x[0]}} with id {% raw %}{{% endraw %}{{x[0] | lower}}_id{% raw %}}{% endraw %} not found")
+        
+        # Update the related entities with the new foreign key
+        database.query({{x[0]}}).filter({{x[0]}}.id.in_({{ class.name | lower }}_data.{{x[2]}})).update(
+            {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.id{{"}"}}, synchronize_session=False
+        )
+        database.commit()
+    {% endfor %}
+    {% endif %}
+
     {% if ns.end_name_multiple and not nested_creations %}
     {% for x in ns.end_name_multiple %}
     if {{ class.name | lower}}_data.{{x[3]}}:
         for id in {{ class.name | lower}}_data.{{x[3]}}:
+            # Entity already validated before creation
             db_{{x[1] | lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == id).first()
-            if not db_{{x[1] | lower}}:
-                raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {id} not found")
             # Create the association
-            association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ x[0]|lower }}.id, {{ x[3] }}=db_{{ x[1]|lower }}.id)
+            association = {{x[4]}}.insert().values({{ x[2] }}=db_{{ class.name | lower }}.id, {{ x[3] }}=db_{{ x[1]|lower }}.id)
             database.execute(association)
             database.commit()
     {% endfor -%}
@@ -179,13 +600,111 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% endfor %}
     {% endif %}
     
+    {% if ns.end_name_multiple or ns.one_to_many %}
+    {# Return response with relationship IDs like GET endpoint #}
+    {% for x in ns.end_name_multiple %}
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    {% for x in ns.one_to_many %}
+    {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    response_data = {
+        "{{class.name | lower}}": db_{{ class.name | lower}},
+        {% for x in ns.end_name_multiple %}
+        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+        {% endfor %}
+    }
+    return response_data
+    {% else %}
     return db_{{ class.name | lower}}
+    {% endif %}
 
+{% endif %}
+
+{% if "POST" in http_methods %}
+@app.post("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
+async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create], database: Session = Depends(get_db)) -> dict:
+    """Create multiple {{ class.name }} entities at once"""
+    created_items = []
+    errors = []
+    
+    for idx, item_data in enumerate(items):
+        try:
+            # Basic validation for each item
+            {% if ns.end_name_one %}
+            {% for x in ns.end_name_one %}
+            {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+            {% if has_fk and x[1] == 1 %}
+            if not item_data.{{x[2]}}:
+                raise ValueError("{{x[0]}} ID is required")
+            {% endif -%}
+            {% endfor -%}
+            {%- endif %}
+            
+            db_{{ class.name | lower}} = {{ class.name }}(
+                {% for parent in class.parents() %}
+                {% for attrparent in parent.attributes %}
+                {{attrparent.name}}=item_data.{{attrparent.name}}{% if attrparent.type.__class__.__name__ == 'Enumeration' %}.value{% endif %},
+                {% endfor %}
+                {% endfor %}
+                {% for attribute in class.attributes %}
+                {{attribute.name}}=item_data.{{attribute.name}}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %}{% if not loop.last %},{% endif %}
+                {% endfor %}
+                {% if ns.end_name_one %}
+                {% for x in ns.end_name_one -%}
+                {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+                {% if has_fk %},
+                {{x[2]}}_id=item_data.{{x[2]}}{% endif -%}
+                {% endfor %}
+                {% endif %}
+            )
+            database.add(db_{{ class.name | lower}})
+            database.flush()  # Get ID without committing
+            created_items.append(db_{{ class.name | lower}}.id)
+        except Exception as e:
+            errors.append({"index": idx, "error": str(e)})
+    
+    if errors:
+        database.rollback()
+        raise HTTPException(status_code=400, detail={"message": "Bulk creation failed", "errors": errors})
+    
+    database.commit()
+    return {
+        "created_count": len(created_items),
+        "created_ids": created_items,
+        "message": f"Successfully created {len(created_items)} {{ class.name }} entities"
+    }
+
+
+@app.delete("/{{ class.name | lower}}/bulk/", response_model=None, tags=["{{ class.name }}"])
+async def bulk_delete_{{ class.name | lower}}(ids: list[int], database: Session = Depends(get_db)) -> dict:
+    """Delete multiple {{ class.name }} entities at once"""
+    deleted_count = 0
+    not_found = []
+    
+    for item_id in ids:
+        db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == item_id).first()
+        if db_{{ class.name | lower}}:
+            database.delete(db_{{ class.name | lower}})
+            deleted_count += 1
+        else:
+            not_found.append(item_id)
+    
+    database.commit()
+    
+    return {
+        "deleted_count": deleted_count,
+        "not_found": not_found,
+        "message": f"Successfully deleted {deleted_count} {{ class.name }} entities"
+    }
 {% endif %}
 
 {% if class.is_read_only == False %}
 {% if "PUT" in http_methods %}
-@app.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/", response_model=None)
+@app.put("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ class.name | lower }}_data: {{ class.name }}Create, database: Session = Depends(get_db)) -> {{ class.name }}:
     db_{{ class.name | lower }} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower }}_id).first()
     if db_{{ class.name | lower }} is None:
@@ -195,34 +714,96 @@ async def update_{{ class.name | lower }}({{ class.name | lower }}_id: int, {{ c
     {% for attribute in class.attributes %}
     setattr(db_{{ class.name | lower }}, '{{ attribute.name }}', {{ class.name | lower }}_data.{{ attribute.name }}{% if attribute.type.__class__.__name__ == 'Enumeration' %}.value{% endif %})
     {% endfor %}
+    {# Update foreign key relationships -#}
+    {% if ns.end_name_one %}
+    {% for x in ns.end_name_one -%}
+    {%- set has_fk = (fkeys.get(x[3], [''])[0] == class.name) -%}
+    {% if has_fk %}
+    if {{ class.name | lower}}_data.{{x[2]}} is not None:
+        db_{{x[2]}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{ class.name | lower}}_data.{{x[2]}}).first()
+        if not db_{{x[2]}}:
+            raise HTTPException(status_code=400, detail="{{x[0]}} not found")
+        setattr(db_{{ class.name | lower }}, '{{x[2]}}_id', {{ class.name | lower }}_data.{{x[2]}})
+    {% if x[1] == 0 %}
+    else:
+        setattr(db_{{ class.name | lower }}, '{{x[2]}}_id', None)
+    {% endif -%}
+    {% endif -%}
+    {% endfor -%}
+    {% endif %}
+    {# Update one-to-many relationships -#}
+    {% if ns.one_to_many %}
+    {% for x in ns.one_to_many %}
+    {# x[0] = related class, x[1] = foreign key field name, x[2] = relationship name #}
+    if {{ class.name | lower }}_data.{{x[2]}} is not None:
+        # Clear all existing relationships (set foreign key to NULL)
+        database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower }}.id).update(
+            {{"{"}}{{x[0]}}.{{x[1]}}_id: None{{"}"}}, synchronize_session=False
+        )
+        
+        # Set new relationships if list is not empty
+        if {{ class.name | lower }}_data.{{x[2]}}:
+            # Validate that all IDs exist
+            for {{x[0] | lower}}_id in {{ class.name | lower }}_data.{{x[2]}}:
+                db_{{x[0] | lower}} = database.query({{x[0]}}).filter({{x[0]}}.id == {{x[0] | lower}}_id).first()
+                if not db_{{x[0] | lower}}:
+                    raise HTTPException(status_code=400, detail=f"{{x[0]}} with id {% raw %}{{% endraw %}{{x[0] | lower}}_id{% raw %}}{% endraw %} not found")
+            
+            # Update the related entities with the new foreign key
+            database.query({{x[0]}}).filter({{x[0]}}.id.in_({{ class.name | lower }}_data.{{x[2]}})).update(
+                {{"{"}}{{x[0]}}.{{x[1]}}_id: db_{{ class.name | lower }}.id{{"}"}}, synchronize_session=False
+            )
+    {% endfor %}
+    {% endif %}
     {% if ns.end_name_multiple  %}
     {% for x in ns.end_name_multiple %}
-    existing_{{x[1] | lower}}_ids = [assoc.{{x[3]|lower}} for assoc in database.execute(
-        {{x[4]}}.select().where({{x[4]}}.c.{{x[2]|lower}} == db_{{ class.name | lower }}.id))]
+    existing_{{x[1] | lower}}_ids = [assoc.{{x[3]}} for assoc in database.execute(
+        {{x[4]}}.select().where({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.id))]
     
     {{x[1]|lower}}s_to_remove = set(existing_{{x[1]|lower}}_ids) - set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%})
     for {{x[1]|lower}}_id in {{x[1]|lower}}s_to_remove:
         association = {{x[4]}}.delete().where(
-            {{x[4]}}.c.{{x[2]|lower}} == db_{{x[0]|lower}}.id and {{x[4]}}.c.{{x[1]|lower}}_id == {{x[1]|lower}}_id)
+            ({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower }}.id) & ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id))
         database.execute(association)
 
     new_{{x[1]|lower}}_ids = set({{ class.name | lower }}_data.{{x[3]}}{%if not nested_creations %}{%endif%}) - set(existing_{{x[1]|lower}}_ids)
     for {{x[1]|lower}}_id in new_{{x[1]|lower}}_ids:
-        db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[0]}}.id == {{x[0]|lower}}_id).first()
-        if db_{{x[0]|lower}} is None:
-            raise HTTPException(status_code=404, detail="{{x[0]}} with ID {{x[0]|lower}}_id not found")
-        association = {{x[4]}}.insert().values({{x[3]|lower}}=db_{{x[1]|lower}}.id, {{x[2]|lower}}=db_{{x[0]|lower}}.id)
+        db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == {{x[1]|lower}}_id).first()
+        if db_{{x[1]|lower}} is None:
+            raise HTTPException(status_code=404, detail=f"{{x[1]}} with ID {% raw %}{{% endraw %}{{x[1]|lower}}_id{% raw %}}{% endraw %} not found")
+        association = {{x[4]}}.insert().values({{x[3]}}=db_{{x[1]|lower}}.id, {{x[2]}}=db_{{ class.name | lower }}.id)
         database.execute(association)
     {% endfor %}
     {% endif %}
     database.commit()
     database.refresh(db_{{ class.name | lower }})
+    
+    {% if ns.end_name_multiple or ns.one_to_many %}
+    {# Return response with relationship IDs like GET endpoint #}
+    {% for x in ns.end_name_multiple %}
+    {{x[1] | lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    {% for x in ns.one_to_many %}
+    {{x[2]}}_ids = database.query({{x[0]}}.id).filter({{x[0]}}.{{x[1]}}_id == db_{{ class.name | lower}}.id).all()
+    {% endfor %}
+    response_data = {
+        "{{class.name | lower}}": db_{{ class.name | lower}},
+        {% for x in ns.end_name_multiple %}
+        "{{x[1] | lower}}_ids": [x[0] for x in {{x[1] | lower}}_ids],
+        {% endfor %}
+        {% for x in ns.one_to_many %}
+        "{{x[2]}}_ids": [x[0] for x in {{x[2]}}_ids]{% if not loop.last %},{% endif %}
+        {% endfor %}
+    }
+    return response_data
+    {% else %}
     return db_{{ class.name | lower }}
+    {% endif %}
 {% endif %}
 
 
 {% if "DELETE" in http_methods %}
-@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None)
+@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }}"])
 async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
     db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
     if db_{{ class.name | lower}} is None:
@@ -232,6 +813,244 @@ async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, databa
     return db_{{ class.name | lower}}
 {% endif %}
 
+{% if ns.end_name_multiple %}
+{# Add relationship-specific endpoints for N:M associations #}
+{% for x in ns.end_name_multiple %}
+@app.post("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{x[1]|lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def add_{{x[3]}}_to_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{x[1]|lower}}_id: int, database: Session = Depends(get_db)):
+    """Add a {{x[1]}} to this {{ class.name }}'s {{x[3]}} relationship"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    
+    db_{{x[1]|lower}} = database.query({{x[1]}}).filter({{x[1]}}.id == {{x[1]|lower}}_id).first()
+    if db_{{x[1]|lower}} is None:
+        raise HTTPException(status_code=404, detail="{{x[1]}} not found")
+    
+    # Check if relationship already exists
+    existing = database.query({{x[4]}}).filter(
+        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) & 
+        ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id)
+    ).first()
+    
+    if existing:
+        raise HTTPException(status_code=400, detail="Relationship already exists")
+    
+    # Create the association
+    association = {{x[4]}}.insert().values({{x[2]}}={{ class.name | lower}}_id, {{x[3]}}={{x[1]|lower}}_id)
+    database.execute(association)
+    database.commit()
+    
+    return {"message": "{{x[1]}} added to {{x[3]}} successfully"}
+
+
+@app.delete("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/{% raw %}{{% endraw %}{{x[1]|lower}}_id{% raw %}}{% endraw %}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def remove_{{x[3]}}_from_{{ class.name | lower}}({{ class.name | lower}}_id: int, {{x[1]|lower}}_id: int, database: Session = Depends(get_db)):
+    """Remove a {{x[1]}} from this {{ class.name }}'s {{x[3]}} relationship"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    
+    # Check if relationship exists
+    existing = database.query({{x[4]}}).filter(
+        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) & 
+        ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id)
+    ).first()
+    
+    if not existing:
+        raise HTTPException(status_code=404, detail="Relationship not found")
+    
+    # Delete the association
+    association = {{x[4]}}.delete().where(
+        ({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id) & 
+        ({{x[4]}}.c.{{x[3]}} == {{x[1]|lower}}_id)
+    )
+    database.execute(association)
+    database.commit()
+    
+    return {"message": "{{x[1]}} removed from {{x[3]}} successfully"}
+
+
+@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[3]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+    """Get all {{x[1]}} entities related to this {{ class.name }} through {{x[3]}}"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    
+    {{x[1]|lower}}_ids = database.query({{x[4]}}.c.{{x[3]}}).filter({{x[4]}}.c.{{x[2]}} == {{ class.name | lower}}_id).all()
+    {{x[1]|lower}}_list = database.query({{x[1]}}).filter({{x[1]}}.id.in_([id[0] for id in {{x[1]|lower}}_ids])).all()
+    
+    return {
+        "{{ class.name | lower}}_id": {{ class.name | lower}}_id,
+        "{{x[3]}}_count": len({{x[1]|lower}}_list),
+        "{{x[3]}}": {{x[1]|lower}}_list
+    }
+
+{% endfor %}
+{% endif %}
+
+{% endif %}
+
+{# Generate endpoints for class methods #}
+{% if class.methods %}
+############################################
+#   {{ class.name }} Method Endpoints
+############################################
+{% for method in class.methods %}
+{% set method_params = [] %}
+{% for param in method.parameters %}
+{% set param_type = 'Any' %}
+{% if param.type.name == 'str' %}{% set param_type = 'str' %}
+{% elif param.type.name == 'int' %}{% set param_type = 'int' %}
+{% elif param.type.name == 'float' %}{% set param_type = 'float' %}
+{% elif param.type.name == 'bool' %}{% set param_type = 'bool' %}
+{% elif param.type.name == 'date' %}{% set param_type = 'date' %}
+{% elif param.type.name == 'datetime' %}{% set param_type = 'datetime' %}
+{% elif param.type.name == 'time' %}{% set param_type = 'time' %}
+{% endif %}
+{% do method_params.append((param.name, param_type, param.default_value)) %}
+{% endfor %}
+
+{# Detect if method is class-level by checking if it does NOT have 'self' as first param #}
+{% set is_class_method = '(self' not in method.code and '(self,' not in method.code %}
+
+{% if "POST" in http_methods %}
+{% if is_class_method %}
+{# Class-level method - no entity ID required #}
+@app.post("/{{ class.name | lower }}/methods/{{ method.name }}/", response_model=None, tags=["{{ class.name }} Methods"])
+async def {{ class.name | lower }}_{{ method.name }}(
+    {% if method_params %}
+    params: dict = Body(default=None, embed=True),
+    {% endif %}
+    database: Session = Depends(get_db)
+):
+    """
+    Execute the {{ method.name }} class method on {{ class.name }}.
+    This method operates on all {{ class.name }} entities or performs class-level operations.
+    {% if method_params %}
+    
+    Parameters (pass as JSON body):
+    {% for param in method_params %}
+    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
+    {% endfor %}
+    {% endif %}
+    """
+    try:
+        # Capture stdout to include print outputs in the response
+        import io
+        import sys
+        captured_output = io.StringIO()
+        sys.stdout = captured_output
+        
+        {% if method_params %}
+        # Extract parameters from request body
+        params = params or {}
+        {% for param in method_params %}
+        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %})
+        {% endfor %}
+        
+        # Call the class method
+        result = {{ class.name }}.{{ method.name }}(database{% for param in method_params %}, {{ param[0] }}{% endfor %})
+        {% else %}
+        # Call the class method
+        result = {{ class.name }}.{{ method.name }}(database)
+        {% endif %}
+        
+        # Restore stdout
+        sys.stdout = sys.__stdout__
+        output = captured_output.getvalue()
+        
+        # Handle result serialization
+        if hasattr(result, '__iter__') and not isinstance(result, (str, dict)):
+            # It's a list of entities
+            result_data = []
+            for item in result:
+                if hasattr(item, '__dict__'):
+                    item_dict = {k: v for k, v in item.__dict__.items() if not k.startswith('_')}
+                    result_data.append(item_dict)
+                else:
+                    result_data.append(str(item))
+            result = result_data
+        elif hasattr(result, '__dict__'):
+            result = {k: v for k, v in result.__dict__.items() if not k.startswith('_')}
+        
+        return {
+            "class": "{{ class.name }}",
+            "method": "{{ method.name }}",
+            "status": "executed",
+            "result": result,
+            "output": output if output else None
+        }
+    except Exception as e:
+        sys.stdout = sys.__stdout__
+        raise HTTPException(status_code=500, detail=f"Method execution failed: {str(e)}")
+
+{% else %}
+{# Instance method - requires entity ID #}
+@app.post("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/methods/{{ method.name }}/", response_model=None, tags=["{{ class.name }} Methods"])
+async def execute_{{ class.name | lower }}_{{ method.name }}(
+    {{ class.name | lower }}_id: int,
+    params: dict = Body(default=None, embed=True),
+    database: Session = Depends(get_db)
+):
+    """
+    Execute the {{ method.name }} method on a {{ class.name }} instance.
+    {% if method_params %}
+    
+    Parameters:
+    {% for param in method_params %}
+    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
+    {% endfor %}
+    {% endif %}
+    """
+    # Retrieve the entity from the database
+    _{{ class.name | lower }}_object = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower }}_id).first()
+    if _{{ class.name | lower }}_object is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    
+    # Prepare method parameters
+    {% for param in method_params %}
+    {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %})
+    {% endfor %}
+
+    # Execute the method
+    try:        
+        # Capture stdout to include print outputs in the response
+        import io
+        import sys
+        captured_output = io.StringIO()
+        sys.stdout = captured_output
+        {% set method_lines = method.code.split('\n') %}
+        {% set method_body = '\n'.join(method_lines[1:]) %}
+        {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
+
+{{ method_body_replaced | indent(4, first=True) }}
+        # Commit DB
+        database.commit()
+        database.refresh(_{{ class.name | lower }}_object)
+
+        # Restore stdout
+        sys.stdout = sys.__stdout__
+        output = captured_output.getvalue()
+        
+        # Determine result (last statement or None)
+        result = None
+        
+        return {
+            "{{ class.name | lower }}_id": {{ class.name | lower }}_id,
+            "method": "{{ method.name }}",
+            "status": "executed",
+            "result": str(result) if result is not None else None,
+            "output": output if output else None
+        }
+    except Exception as e:
+        sys.stdout = sys.__stdout__
+        raise HTTPException(status_code=500, detail=f"Method execution failed: {str(e)}")
+{% endif %}
+{% endif %}
+
+{% endfor %}
 {% endif %}
 
 
@@ -244,15 +1063,7 @@ async def delete_{{ class.name | lower}}({{ class.name | lower}}_id: int, databa
 ############################################
 if __name__ == "__main__":
     import uvicorn
-    openapi_schema = app.openapi()
-    output_dir = os.path.join(os.getcwd(), 'output_backend')
-    os.makedirs(output_dir, exist_ok=True)
-    output_file = os.path.join(output_dir, 'openapi_specs.json')
-    print(f"Writing OpenAPI schema to {output_file}")
-    print("Swagger UI available at 0.0.0.0:8000/docs")
-    with open(output_file, 'w') as file:
-        json.dump(openapi_schema, file)
-    uvicorn.run(app, host="0.0.0.0", port= {% if port %}{{ port }}{%else%}8000{%endif%})
+    uvicorn.run(app, host="0.0.0.0", port={% if port %}{{ port }}{%else%}8000{%endif%})
 
 
 

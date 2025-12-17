@@ -2,14 +2,17 @@ import React, { CSSProperties, useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { applyStyle, StyleData } from "../utils/applyStyle";
-import { BarChartComponent } from "./charts/BarChartComponent";
-import { LineChartComponent } from "./charts/LineChartComponent";
-import { PieChartComponent } from "./charts/PieChartComponent";
-import { RadialBarChartComponent } from "./charts/RadialBarChartComponent";
-import { RadarChartComponent } from "./charts/RadarChartComponent";
-import { MetricCardComponent } from "./charts/MetricCardComponent";
-import { TableChartComponent } from "./charts/TableChartComponent";
-import "./charts/TableChartComponent.css";
+{% if 'BarChart' in used_components %}import { BarChartComponent } from "./charts/BarChartComponent";
+{% endif %}{% if 'LineChart' in used_components %}import { LineChartComponent } from "./charts/LineChartComponent";
+{% endif %}{% if 'PieChart' in used_components %}import { PieChartComponent } from "./charts/PieChartComponent";
+{% endif %}{% if 'RadialBarChart' in used_components %}import { RadialBarChartComponent } from "./charts/RadialBarChartComponent";
+{% endif %}{% if 'RadarChart' in used_components %}import { RadarChartComponent } from "./charts/RadarChartComponent";
+{% endif %}{% if 'MetricCard' in used_components %}import { MetricCardComponent } from "./charts/MetricCardComponent";
+{% endif %}{% if 'Table' in used_components %}import { TableComponent } from "./table/TableComponent";
+{% endif %}import { AgentComponent } from "./AgentComponent";
+import { MethodButton } from "./MethodButton";
+{% if 'Table' in used_components %}import "./table/TableComponent.css";
+{% endif %}
 
 export interface RendererProps {
   component: any;
@@ -37,17 +40,27 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
 
   // Chart and metric card data fetching effect
   useEffect(() => {
-    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card", "table-chart"].includes(component.type)) {
+    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card", "table"].includes(component.type)) {
       const endpoint = component.data_binding?.endpoint;
       if (endpoint) {
         setLoading(true);
         setError(null);
         // Always use backend base URL for relative endpoints
         const backendBase = "http://localhost:8000";
-        const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
+        
+        // Check if table has lookup columns - if so, request detailed data with joins
+        const hasLookupColumns = component.chart?.columns?.some(
+          (col: any) => typeof col === 'object' && col.column_type === 'lookup'
+        );
+        
+        // Add detailed=true query param if there are lookup columns
+        const urlParams = hasLookupColumns ? '?detailed=true' : '';
+        const url = endpoint.startsWith("/") 
+          ? backendBase + endpoint + urlParams
+          : endpoint + urlParams;
+        
         axios.get(url)
           .then((res) => {
-            console.log("API response:", res.data); // Debug log
             let data: any[] = [];
             
             // If response is already an array, use it directly
@@ -157,6 +170,54 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   }
 
   if (component.type === "button" || component.type === "action-button") {
+    // Check if this is a method button (from JSON attributes)
+    const actionType = component.attributes?.["data-action-type"] || component.action_type;
+    
+    if (actionType === "run-method") {
+      const isInstanceMethod = component.attributes?.["is-instance-method"] === "true" || component.attributes?.["is-instance-method"] === true;
+      const instanceSource = component.attributes?.["instance-source"];
+      const endpoint = component.attributes?.endpoint || "";
+      const inputParameters = component.attributes?.["input-parameters"] || {};
+      
+      // Convert input parameters from JSON format to MethodParameter array
+      const parameters = Object.entries(inputParameters).map(([name, type]) => ({
+        name,
+        type: String(type),
+        required: true,
+      }));
+      
+      return (
+        <MethodButton
+          endpoint={endpoint}
+          label={component.attributes?.["button-label"] || component.label || component.name || "Execute"}
+          parameters={parameters}
+          isInstanceMethod={isInstanceMethod}
+          instanceSourceTableId={instanceSource}
+          className={component.class_list?.join(' ')}
+          style={style}
+          backendUrl="http://localhost:8000"
+        />
+      );
+    }
+    
+    // Check if this is a method button (legacy method_config)
+    if (component.method_config) {
+      const methodConfig = component.method_config;
+      return (
+        <MethodButton
+          entityType={methodConfig.entity_type}
+          entityId={methodConfig.entity_id}
+          methodName={methodConfig.method_name}
+          label={component.label || component.name || methodConfig.method_name}
+          parameters={methodConfig.parameters || []}
+          isClassMethod={methodConfig.is_class_method || false}
+          className={component.class_list?.join(' ')}
+          style={style}
+          backendUrl="http://localhost:8000"
+        />
+      );
+    }
+
     const handleClick = () => {
       // Handle button events
       if (component.events && Array.isArray(component.events)) {
@@ -342,7 +403,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       />
     );
   }
-
+{% if 'RadarChart' in used_components %}
   if (component.type === "radar-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
@@ -388,7 +449,9 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       />
     );
   }
+{% endif %}
 
+{% if 'BarChart' in used_components %}
   if (component.type === "bar-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
@@ -434,7 +497,9 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       />
     );
   }
+{% endif %}
 
+{% if 'LineChart' in used_components %}
   if (component.type === "line-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
@@ -480,7 +545,9 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       />
     );
   }
+{% endif %}
 
+{% if 'PieChart' in used_components %}
   if (component.type === "pie-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
@@ -496,7 +563,9 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       />
     );
   }
+{% endif %}
 
+{% if 'RadialBarChart' in used_components %}
   if (component.type === "radial-bar-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
@@ -512,22 +581,30 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       />
     );
   }
+{% endif %}
 
-  if (component.type === "table-chart") {
+{% if 'Table' in used_components %}
+  if (component.type === "table") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
+    // Merge action-buttons from attributes into options
+    const options = {
+      ...(component.chart || {}),
+      actionButtons: component.attributes?.["action-buttons"] ?? false,
+    };
     return (
-      <TableChartComponent
+      <TableComponent
         id={component.id}
         title={component.title || component.name}
         data={chartData}
-        options={component.chart || {}}
+        options={options}
         styles={style}
         dataBinding={component.data_binding}
       />
     );
   }
-
+{% endif %}
+{% if 'MetricCard' in used_components %}
   if (component.type === "metric-card") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
@@ -567,6 +644,18 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         value={metricValue}
         trend={12}
         data_binding={component.data_binding}
+      />
+    );
+  }
+{% endif %}
+
+  if (component.type === "agent-component") {
+    return (
+      <AgentComponent
+        id={component.id}
+        agent-name={component["agent-name"] || component.agent_name || ""}
+        agent-title={component["agent-title"] || component.agent_title || "BESSER Agent"}
+        styles={style}
       />
     );
   }

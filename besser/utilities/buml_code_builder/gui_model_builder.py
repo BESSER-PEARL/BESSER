@@ -7,6 +7,7 @@ It creates executable Python code that can recreate the GUI model programmatical
 
 import os
 from besser.BUML.metamodel.gui import GUIModel
+from besser.utilities.buml_code_builder.common import safe_class_name
 from besser.BUML.metamodel.gui.graphical_ui import (
     ViewComponent,
     ViewContainer,
@@ -25,10 +26,10 @@ from besser.BUML.metamodel.gui.graphical_ui import (
     DataSourceElement,
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart
+    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent
 )
 from besser.BUML.metamodel.gui.events_actions import Event, Transition, Create, Read, Update, Delete
-from besser.utilities.buml_code_builder import domain_model_to_code
+from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 
 
 def _escape_string(value: str | None) -> str:
@@ -110,7 +111,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
         f.write("    UnitSize, PositionType, Alignment\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.dashboard import (\n")
-        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart\n")
+        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.events_actions import (\n")
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
@@ -283,8 +284,10 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
         _write_radar_chart(f, comp_var, component)
     elif isinstance(component, RadialBarChart):
         _write_radial_bar_chart(f, comp_var, component)
-    elif isinstance(component, TableChart):
-        _write_table_chart(f, comp_var, component)
+    elif isinstance(component, Table):
+        _write_table(f, comp_var, component)
+    elif isinstance(component, AgentComponent):
+        _write_agent_component(f, comp_var, component)
     elif isinstance(component, ViewContainer):
         _write_container(f, comp_var, component, created_vars, pending_button_events)
         # Metadata already written by _write_container
@@ -354,6 +357,40 @@ def _write_button(f, var_name, button, created_vars, pending_button_events):
         params.append(f'buttonType=ButtonType.{button.buttonType.name}')
     if hasattr(button, 'actionType') and button.actionType:
         params.append(f'actionType=ButtonActionType.{button.actionType.name}')
+    
+    # Add new button properties for method execution and CRUD
+    if hasattr(button, 'method_btn') and button.method_btn:
+        # Reference the actual method object using the same naming convention as domain_model_builder
+        # Use safe_class_name for the class (preserves case) and raw method name (split at '(' if present)
+        class_var = safe_class_name(button.method_btn.owner.name)
+        method_name = button.method_btn.name.split('(')[0] if '(' in button.method_btn.name else button.method_btn.name
+        method_var = f"{class_var}_m_{method_name}"
+        params.append(f'method_btn={method_var}')
+    
+    if hasattr(button, 'entity_class') and button.entity_class:
+        # TODO: Properly reference the class object
+        params.append(f'entity_class=None  # {button.entity_class.name}')
+    
+    if hasattr(button, 'instance_source') and button.instance_source:
+        # Handle instance_source as ViewComponent object or string
+        if isinstance(button.instance_source, str):
+            params.append(f'instance_source="{_escape_string(button.instance_source)}"')
+        elif hasattr(button.instance_source, 'name'):
+            # Reference the component variable
+            instance_var = safe_var_name(button.instance_source.name)
+            params.append(f'instance_source={instance_var}')
+        else:
+            # Fallback: convert to string
+            params.append(f'instance_source="{_escape_string(str(button.instance_source))}"')
+    
+    if hasattr(button, 'is_instance_method') and button.is_instance_method:
+        params.append(f'is_instance_method={button.is_instance_method}')
+    
+    if hasattr(button, 'confirmation_required') and button.confirmation_required:
+        params.append(f'confirmation_required={button.confirmation_required}')
+    
+    if hasattr(button, 'confirmation_message') and button.confirmation_message:
+        params.append(f'confirmation_message="{_escape_string(button.confirmation_message)}"')
     
     # Don't write targetScreen here - will be handled via events
     # This avoids forward reference issues
@@ -694,8 +731,8 @@ def _write_radial_bar_chart(f, var_name, chart):
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
-def _write_table_chart(f, var_name, chart):
-    """Write code for a TableChart component."""
+def _write_table(f, var_name, chart):
+    """Write code for a Table component."""
     params = [f'name="{chart.name}"']
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
@@ -710,10 +747,19 @@ def _write_table_chart(f, var_name, chart):
     if hasattr(chart, 'rows_per_page'):
         params.append(f'rows_per_page={chart.rows_per_page}')
     if hasattr(chart, 'columns') and chart.columns:
-        column_literals = ", ".join(f'"{_escape_string(col)}"' for col in chart.columns if col)
-        params.append(f'columns=[{column_literals}]')
+        # Handle columns as either strings or Column objects (FieldColumn, LookupColumn, etc.)
+        column_literals = []
+        for col in chart.columns:
+            if col:
+                if isinstance(col, str):
+                    column_literals.append(f'"{_escape_string(col)}"')
+                else:
+                    # Column object - represent as string for now
+                    column_literals.append(f'"{_escape_string(str(col))}"')
+        if column_literals:
+            params.append(f'columns=[{", ".join(column_literals)}]')
 
-    f.write(f'{var_name} = TableChart({", ".join(params)})\n')
+    f.write(f'{var_name} = Table({", ".join(params)})\n')
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 
@@ -887,11 +933,24 @@ def _write_styling(f, component_var, styling, created_vars):
     f.write(f'{component_var}.styling = {styling_var}\n')
 
 
+def _write_agent_component(f, var_name, agent):
+    """Write code for an AgentComponent."""
+    params = [f'name="{agent.name}"']
+    params.append(f'description="{agent.description or ""}"')
+    
+    if hasattr(agent, 'agent_name') and agent.agent_name:
+        params.append(f'agent_name="{_escape_string(agent.agent_name)}"')
+    
+    if hasattr(agent, 'agent_title') and agent.agent_title:
+        params.append(f'agent_title="{_escape_string(agent.agent_title)}"')
+    
+    f.write(f'{var_name} = AgentComponent({", ".join(params)})\n')
+
+
 def _write_data_binding_assignment(f, var_name, binding):
     if not binding:
         return
     binding_var = f"{var_name}_binding"
-    binding_name = _escape_string(getattr(binding, "name", binding_var))
     domain_name = _get_attr_name(getattr(binding, "domain_concept", None))
     label_name = _get_attr_name(getattr(binding, "label_field", None))
     data_name = _get_attr_name(getattr(binding, "data_field", None))

@@ -16,7 +16,6 @@ import importlib.util
 import sys
 import asyncio
 from datetime import datetime
-from typing import List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
@@ -30,11 +29,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 
 # BESSER utilities
-from besser.utilities.buml_code_builder import (
-    domain_model_to_code, 
-    agent_model_to_code, 
-    project_to_code
-)
+from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
+from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
+from besser.utilities.buml_code_builder.project_builder import project_to_code
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -71,6 +68,9 @@ from besser.utilities.web_modeling_editor.backend.services.deployment import (
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     cleanup_temp_resources,
     validate_generator,
+)
+from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
+    csv_to_domain_model,
 )
 
 # Backend configuration
@@ -304,7 +304,8 @@ async def generate_code_output(input_data: DiagramInput):
 
 
 async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):
-    """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram."""
+    """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram.
+    Optionally includes AgentDiagram if agent components are present in the GUI."""
     try:
         # Extract ClassDiagram
         class_diagram = input_data.diagrams.get("ClassDiagram")
@@ -329,10 +330,29 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
 
         gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
 
+        # Check if GUI model contains agent components
+        agent_diagram = None
+        agent_model = None
+        has_agent_components = _check_for_agent_components(gui_model)
+        
+        if has_agent_components:
+            # Extract AgentDiagram if present
+            agent_diagram = input_data.diagrams.get("AgentDiagram")
+            if agent_diagram and agent_diagram.model:
+                # Process agent diagram to BUML
+                # process_agent_diagram expects the full diagram structure with title, config, and model
+                agent_diagram_dict = agent_diagram.model_dump()
+                if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
+                    agent_model = process_agent_diagram(agent_diagram_dict)
+                else:
+                    print("Warning: AgentDiagram data is invalid. Agent components will not be functional.")
+            else:
+                print("Warning: GUI contains agent components but no AgentDiagram found. Agent components will not be functional.")
+
         # Generate Web App TypeScript project
         generator_class = generator_info.generator_class
 
-        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir)
+        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir, agent_model)
 
     except HTTPException:
         raise
@@ -560,9 +580,48 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
     else:
         return _create_file_response(temp_dir, "jsonschema")
 
-async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str):
-    """Generate web application files."""
-    generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir)
+def _check_for_agent_components(gui_model):
+    """Check if the GUI model contains any agent components."""
+    from besser.BUML.metamodel.gui.dashboard import AgentComponent
+    
+    if not gui_model or not gui_model.modules:
+        return False
+    
+    for module in gui_model.modules:
+        if not module.screens:
+            continue
+        for screen in module.screens:
+            if not screen.view_elements:
+                continue
+            for element in screen.view_elements:
+                if isinstance(element, AgentComponent):
+                    return True
+                # Check recursively in containers
+                from besser.BUML.metamodel.gui import ViewContainer
+                if isinstance(element, ViewContainer):
+                    if _check_container_for_agent_components(element):
+                        return True
+    return False
+
+def _check_container_for_agent_components(container):
+    """Recursively check a container for agent components."""
+    from besser.BUML.metamodel.gui.dashboard import AgentComponent
+    
+    if not container.view_elements:
+        return False
+    
+    for element in container.view_elements:
+        if isinstance(element, AgentComponent):
+            return True
+        from besser.BUML.metamodel.gui import ViewContainer
+        if isinstance(element, ViewContainer):
+            if _check_container_for_agent_components(element):
+                return True
+    return False
+
+async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str, agent_model=None):
+    """Generate web application files. Optionally includes agent model if agent components are present."""
+    generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir, agent_model=agent_model)
     generator_instance.generate()
     return _create_zip_response(temp_dir, "web_app")
 
@@ -993,6 +1052,57 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         print(f"Error in get_single_json_model: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process the uploaded file: {str(e)}")
 
+@app.post("/besser_api/csv-to-domain-model")
+async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
+    """
+    Accepts one or more CSV files and returns a B-UML domain model as JSON.
+    """
+    temp_dir = tempfile.mkdtemp(prefix="besser_csv_")
+    file_paths = []
+    try:
+        # Save uploaded files to temp dir
+        for file in files:
+            file_path = os.path.join(temp_dir, file.filename)
+            with open(file_path, "wb") as f:
+                f.write(await file.read())
+            file_paths.append(file_path)
+
+        # Generate DomainModel from CSVs
+        domain_model = csv_to_domain_model(file_paths, model_name="ClassDiagram")
+
+        # Parse domain model to JSON using the same logic as get_single_json_model
+        diagram_title = "ClassDiagram"
+        diagram_type = "ClassDiagram"
+        try:
+            # If not, parse_buml_content can be used if needed
+            if domain_model and hasattr(domain_model, "types") and len(domain_model.types) > 0:
+                diagram_json = class_buml_to_json(domain_model)
+                diagram_data = {
+                    "title": diagram_title,
+                    "model": diagram_json
+                }
+            else:
+                raise ValueError("No types found in domain model")
+        except Exception as class_error:
+            print(f"Class diagram parsing failed: {str(class_error)}")
+            raise HTTPException(status_code=500, detail=f"Class diagram parsing failed: {str(class_error)}")
+
+        # Return the diagram in the format expected by the frontend
+        return {
+            "title": diagram_title,
+            "model": {
+                **diagram_data.get("model", {}),
+                "type": diagram_type
+            },
+            "diagramType": diagram_type,
+            "exportedAt": datetime.utcnow().isoformat(),
+            "version": "2.0.0"
+        }
+    except Exception as e:
+        print(f"Error in csv_to_domain_model_endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process CSV files: {str(e)}")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 @app.post("/besser_api/get-json-model-from-image")
 async def get_json_model_from_image(
@@ -1202,7 +1312,6 @@ async def check_ocl(input_data: DiagramInput):
     """
     print("Warning: /check-ocl is deprecated. Use /validate-diagram instead.")
     return await validate_diagram(input_data)
-
 
 # Main application entry point
 if __name__ == "__main__":

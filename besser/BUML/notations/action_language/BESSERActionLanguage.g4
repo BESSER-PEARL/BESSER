@@ -1,14 +1,14 @@
 grammar BESSERActionLanguage;
 
 function_definition: 'def' name=ID '(' (params+=parameter (',' params+=parameter)*)? ')' '->' return_type=type body=block ;
-parameter: name=symbol ':' declared_type=type;
+parameter: name=ID ':' declared_type=type ('=' expr=expression)?;
 
 
 /********************************************************************************************************************
  *                                               STATEMENTS                                                         *
  *******************************************************************************************************************/
 
-statements: cond_loop | for | condition | expression ';';
+statements: cond_loop | for | condition | return | expression ';';
 
 cond_loop: while | do_while ;
 while: 'while' '(' cond=expression ')' body=block;
@@ -18,8 +18,9 @@ iterator: var_name=symbol 'in' sequence=expression ;
 
 conditional_branch: block | condition;
 block: '{' stmts+=statements* '}';
-condition: 'if' '(' cond=expression ')' then=block ('else' elze=conditional_branch) ;
+condition: 'if' '(' cond=expression ')' then=block ('else' elze=conditional_branch)? ;
 
+return: 'return' expr=expression ';';
 
 type:   single_type |
         sequence_type |
@@ -49,7 +50,9 @@ bool_type: 'bool';
 
 expression: assignment;
 
-assign_target: field_access | array_access | symbol;
+assign_target: field_access | array_access | symbol | explicit_declaration;
+
+explicit_declaration: name=ID ':' declared_type=type;
 
 assignment: target=assign_target '=' assignee=assignment | ternary;
 

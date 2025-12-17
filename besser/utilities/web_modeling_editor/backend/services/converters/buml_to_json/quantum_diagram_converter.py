@@ -30,6 +30,9 @@ def quantum_circuit_to_json(circuit: QuantumCircuit) -> dict:
     # Get total number of qubits
     num_qubits = sum(qreg.size for qreg in circuit.qregs) if circuit.qregs else 0
     
+    # Get total number of classical bits
+    num_clbits = sum(creg.size for creg in circuit.cregs) if circuit.cregs else 0
+    
     # Group operations by column (we'll need to infer columns from operation order)
     # For simplicity, each operation gets its own column unless it shares qubits with controls
     
@@ -44,7 +47,8 @@ def quantum_circuit_to_json(circuit: QuantumCircuit) -> dict:
         "title": circuit.name,
         "model": {
             "cols": cols,
-            "gateMetadata": gate_metadata
+            "gateMetadata": gate_metadata,
+            "classicalBitCount": num_clbits
         }
     }
 
@@ -196,13 +200,13 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
         # Eighth turns
         if type_name == 'T_DAG':
             return "T_DAG"
-        if type_name in ('X^1/4', 'SQRT_SQRT_X'):
+        if type_name in ('X^1_4', 'X^1/4', 'SQRT_SQRT_X'):
             return "SQRT_SQRT_X"
-        if type_name in ('X^-1/4', 'SQRT_SQRT_X_DAG'):
+        if type_name in ('X^_1_4', 'X^-1/4', 'SQRT_SQRT_X_DAG'):
             return "SQRT_SQRT_X_DAG"
-        if type_name in ('Y^1/4', 'SQRT_SQRT_Y'):
+        if type_name in ('Y^1_4', 'Y^1/4', 'SQRT_SQRT_Y'):
             return "SQRT_SQRT_Y"
-        if type_name in ('Y^-1/4', 'SQRT_SQRT_Y_DAG'):
+        if type_name in ('Y^_1_4', 'Y^-1/4', 'SQRT_SQRT_Y_DAG'):
             return "SQRT_SQRT_Y_DAG"
         # Generic parametric
         return type_name
@@ -231,7 +235,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             'CountOnes': 'COUNT_1S',
             'XOR': 'XOR',
         }
-        return op_map.get(op.operation, op.operation)
+        return op_map.get(op.operation_type, op.operation_type)
     
     # === Modular Arithmetic Gates ===
     if isinstance(op, ModularArithmeticGate):
@@ -245,7 +249,7 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
             'MultiplyB': 'MOD_MUL_B',
             'MultiplyBInverse': 'MOD_MUL_B_INV',
         }
-        return op_map.get(op.operation, f"MOD_{op.operation}")
+        return op_map.get(op.operation_type, f"MOD_{op.operation_type}")
     
     # === Comparison Gates ===
     if isinstance(op, ComparisonGate):

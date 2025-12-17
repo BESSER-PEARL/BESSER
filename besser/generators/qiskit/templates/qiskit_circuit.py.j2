@@ -1,9 +1,6 @@
 import sys
 import os
-
-# Sanitize sys.path to remove entries with newlines which cause OSError in stevedore
 sys.path = [p.strip() for p in sys.path if p]
-
 from qiskit import QuantumCircuit, QuantumRegister, ClassicalRegister, transpile
 from qiskit.circuit import Instruction
 {% if backend_type == 'aer_simulator' %}
@@ -18,12 +15,15 @@ from qiskit.circuit.library import *
 from qiskit.circuit.library.standard_gates import GlobalPhaseGate
 import numpy as np
 
+{% if 'create_placeholder' in helper_classes %}
 def create_placeholder(name, num_qubits):
     """Creates a placeholder instruction for unsupported gates."""
     qc_temp = QuantumCircuit(num_qubits, name=name)
     qc_temp.barrier()
     return qc_temp.to_instruction()
 
+{% endif %}
+{% if 'PhaseGradient' in helper_classes %}
 class PhaseGradient(QuantumCircuit):
     """Phase Gradient Gate: applies |x⟩ → exp(2πix/2^n)|x⟩"""
     def __init__(self, num_qubits, inverse=False):
@@ -34,6 +34,83 @@ class PhaseGradient(QuantumCircuit):
                 lam = -lam
             self.p(lam, i)
 
+{% endif %}
+{% if 'ReverseBits' in helper_classes %}
+class ReverseBits(QuantumCircuit):
+    """Reverses the order of qubits."""
+    def __init__(self, num_qubits):
+        super().__init__(num_qubits, name="ReverseBits")
+        for i in range(num_qubits // 2):
+            self.swap(i, num_qubits - 1 - i)
+
+{% endif %}
+{% if 'Interleave' in helper_classes %}
+class Interleave(QuantumCircuit):
+    """Interleaves qubits: [a0,a1,b0,b1] -> [a0,b0,a1,b1]"""
+    def __init__(self, num_qubits):
+        super().__init__(num_qubits, name="Interleave")
+        if num_qubits >= 4:
+            half = num_qubits // 2
+            for i in range(1, half):
+                for j in range(i, half):
+                    self.swap(half - j + i - 1, half - j + i)
+
+{% endif %}
+{% if 'Deinterleave' in helper_classes %}
+class Deinterleave(QuantumCircuit):
+    """Deinterleaves qubits: [a0,b0,a1,b1] -> [a0,a1,b0,b1]"""
+    def __init__(self, num_qubits):
+        super().__init__(num_qubits, name="Deinterleave")
+        if num_qubits >= 4:
+            half = num_qubits // 2
+            for i in range(half - 1, 0, -1):
+                for j in range(half - 1, i - 1, -1):
+                    self.swap(half - j + i - 1, half - j + i)
+
+{% endif %}
+{% if 'RotateBitsLeft' in helper_classes %}
+class RotateBitsLeft(QuantumCircuit):
+    """Rotates qubits left: [q0,q1,q2] -> [q1,q2,q0]"""
+    def __init__(self, num_qubits):
+        super().__init__(num_qubits, name="RotateLeft")
+        for i in range(num_qubits - 1):
+            self.swap(i, i + 1)
+
+{% endif %}
+{% if 'RotateBitsRight' in helper_classes %}
+class RotateBitsRight(QuantumCircuit):
+    """Rotates qubits right: [q0,q1,q2] -> [q2,q0,q1]"""
+    def __init__(self, num_qubits):
+        super().__init__(num_qubits, name="RotateRight")
+        for i in range(num_qubits - 1, 0, -1):
+            self.swap(i, i - 1)
+
+{% endif %}
+{% if 'Increment' in helper_classes %}
+class Increment(QuantumCircuit):
+    """Increments a quantum register: |x⟩ -> |x+1⟩"""
+    def __init__(self, num_qubits):
+        super().__init__(num_qubits, name="+1")
+        for i in range(num_qubits - 1, -1, -1):
+            self.mcx(list(range(i)), i) if i > 0 else self.x(0)
+
+{% endif %}
+{% if 'Decrement' in helper_classes %}
+class Decrement(QuantumCircuit):
+    """Decrements a quantum register: |x⟩ -> |x-1⟩"""
+    def __init__(self, num_qubits):
+        super().__init__(num_qubits, name="-1")
+        for i in range(num_qubits):
+            if i > 0:
+                for j in range(i):
+                    self.x(j)
+                self.mcx(list(range(i)), i)
+                for j in range(i):
+                    self.x(j)
+            else:
+                self.x(0)
+
+{% endif %}
 # Function Gate Definitions
 {% for func_code in function_gates_code %}
 {{ func_code }}

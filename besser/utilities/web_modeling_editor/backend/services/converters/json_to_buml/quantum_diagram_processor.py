@@ -56,6 +56,9 @@ def process_quantum_diagram(json_data):
     gate_metadata = model_data.get('gateMetadata', {})
 
     cols = model_data.get('cols', [])
+    
+    # Get classical bit count from the model data
+    classical_bit_count = model_data.get('classicalBitCount', 0)
 
     raw_title = json_data.get('title', 'Quantum_Circuit')
     title = raw_title.replace(' ', '_').replace('-', '_')
@@ -69,6 +72,11 @@ def process_quantum_diagram(json_data):
             num_qubits = len(col)
 
     qc = QuantumCircuit(name=title, qubits=num_qubits)
+    
+    # Add classical register if there are classical bits
+    if classical_bit_count > 0:
+        from besser.BUML.metamodel.quantum.quantum import ClassicalRegister
+        qc.add_creg(ClassicalRegister("c", classical_bit_count))
 
     for col_idx, col in enumerate(cols):
         col_gates = {}
@@ -427,13 +435,13 @@ def _create_gate(symbol, target_qubit, controls):
     if symbol in ('T_DAG', 'Z^-¼'):
         return ParametricGate('T_DAG', [target_qubit], -math.pi/4, control_qubits, control_states)
     if symbol in ('SQRT_SQRT_X', 'X^¼'):
-        return ParametricGate('X^1/4', [target_qubit], math.pi/4, control_qubits, control_states)
+        return ParametricGate('X^1_4', [target_qubit], math.pi/4, control_qubits, control_states)
     if symbol in ('SQRT_SQRT_X_DAG', 'X^-¼'):
-        return ParametricGate('X^-1/4', [target_qubit], -math.pi/4, control_qubits, control_states)
+        return ParametricGate('X^_1_4', [target_qubit], -math.pi/4, control_qubits, control_states)
     if symbol in ('SQRT_SQRT_Y', 'Y^¼'):
-        return ParametricGate('Y^1/4', [target_qubit], math.pi/4, control_qubits, control_states)
+        return ParametricGate('Y^1_4', [target_qubit], math.pi/4, control_qubits, control_states)
     if symbol in ('SQRT_SQRT_Y_DAG', 'Y^-¼'):
-        return ParametricGate('Y^-1/4', [target_qubit], -math.pi/4, control_qubits, control_states)
+        return ParametricGate('Y^_1_4', [target_qubit], -math.pi/4, control_qubits, control_states)
 
     # === Phase Gate ===
     if symbol in ('Phase', 'PHASE'):

@@ -47,17 +47,80 @@ class QiskitGenerator(GeneratorInterface):
         function_gates_code = self._generate_function_gates_code()
         operations_code = self._generate_operations_code()
         
-        with open(file_path, "w") as f:
+        # Determine which helper classes are needed
+        helper_classes = self._get_required_helper_classes()
+        
+        with open(file_path, "w", encoding="utf-8") as f:
             generated_code = template.render(
                 circuit=self.model,
                 function_gates_code=function_gates_code,
                 operations_code=operations_code,
                 backend_type=self.backend_type,
-                shots=self.shots
+                shots=self.shots,
+                helper_classes=helper_classes
             )
             f.write(generated_code)
         
         print(f"Qiskit code generated at: {file_path}")
+
+    def _get_required_helper_classes(self) -> set:
+        """
+        Analyzes the circuit and returns a set of helper class names that are needed.
+        """
+        needed = set()
+        
+        for op in self.model.operations:
+            if isinstance(op, PhaseGradientGate):
+                needed.add('PhaseGradient')
+            elif isinstance(op, OrderGate):
+                order_type = op.order_type
+                if order_type == 'Reverse':
+                    needed.add('ReverseBits')
+                elif order_type == 'Interleave':
+                    needed.add('Interleave')
+                elif order_type == 'Deinterleave':
+                    needed.add('Deinterleave')
+                elif order_type == 'RotateLeft':
+                    needed.add('RotateBitsLeft')
+                elif order_type == 'RotateRight':
+                    needed.add('RotateBitsRight')
+            elif isinstance(op, ArithmeticGate) and not isinstance(op, ModularArithmeticGate):
+                op_type = op.operation_type
+                if op_type == 'Increment':
+                    needed.add('Increment')
+                elif op_type == 'Decrement':
+                    needed.add('Decrement')
+        
+        # Check if any gate uses a placeholder
+        for op in self.model.operations:
+            if self._uses_placeholder(op):
+                needed.add('create_placeholder')
+        
+        return needed
+    
+    def _uses_placeholder(self, op) -> bool:
+        """Check if an operation will use the placeholder function."""
+        if isinstance(op, ModularArithmeticGate):
+            return True
+        if isinstance(op, ComparisonGate):
+            return True
+        if isinstance(op, CustomGate):
+            return True
+        if isinstance(op, ArithmeticGate):
+            op_type = op.operation_type
+            if op_type not in ('Add', 'Subtract', 'Multiply', 'Increment', 'Decrement'):
+                return True
+        if isinstance(op, OrderGate):
+            order_type = op.order_type
+            if order_type not in ('Reverse', 'Interleave', 'Deinterleave', 'RotateLeft', 'RotateRight'):
+                return True
+        if isinstance(op, TimeDependentGate):
+            # Check if it maps to a known gate
+            type_name = op.type_name
+            if not ('Exp' in type_name and any(x in type_name for x in ['X', 'Y', 'Z'])):
+                if not ('^' in type_name and any(x in type_name for x in ['X', 'Y', 'Z'])):
+                    return True
+        return False
 
     def _generate_function_gates_code(self) -> list[str]:
         """
@@ -178,15 +241,19 @@ class QiskitGenerator(GeneratorInterface):
         """
         # Handle Measurement
         if isinstance(op, Measurement):
-            # qc.measure(q[target], c[output])
-            # Assuming single register for simplicity in this generator version
-            # In a full version, we'd look up the register name based on the qubit index
-            # Here we assume 'q' and 'c' are the main registers
             target = op.target_qubits[0]
             output = op.output_bit if op.output_bit is not None else target
-            target = op.target_qubits[0]
-            output = op.output_bit if op.output_bit is not None else target
-            return f"qc.measure(q[{target}], c[{output}])"
+            basis = getattr(op, 'basis', 'Z')
+            
+            if basis == 'X':
+                # X-basis measurement: apply H before measuring
+                return f"qc.h(q[{target}]); qc.measure(q[{target}], c[{output}])"
+            elif basis == 'Y':
+                # Y-basis measurement: apply S†H before measuring
+                return f"qc.sdg(q[{target}]); qc.h(q[{target}]); qc.measure(q[{target}], c[{output}])"
+            else:
+                # Z-basis (standard) measurement
+                return f"qc.measure(q[{target}], c[{output}])"
 
         # Handle InputGate (State Initialization)
         if isinstance(op, InputGate):
@@ -314,13 +381,13 @@ class QiskitGenerator(GeneratorInterface):
             # Eighth turns
             if gate.type_name == 'T_DAG':
                 return "TdgGate()"
-            if gate.type_name in ('X^1/4', 'SQRT_SQRT_X'):
+            if gate.type_name in ('X^1_4', 'X^1/4', 'SQRT_SQRT_X'):
                 return f"PhaseGate({param})"
-            if gate.type_name in ('X^-1/4', 'SQRT_SQRT_X_DAG'):
+            if gate.type_name in ('X^_1_4', 'X^-1/4', 'SQRT_SQRT_X_DAG'):
                 return f"PhaseGate({param})"
-            if gate.type_name in ('Y^1/4', 'SQRT_SQRT_Y'):
+            if gate.type_name in ('Y^1_4', 'Y^1/4', 'SQRT_SQRT_Y'):
                 return f"RYGate({param})"
-            if gate.type_name in ('Y^-1/4', 'SQRT_SQRT_Y_DAG'):
+            if gate.type_name in ('Y^_1_4', 'Y^-1/4', 'SQRT_SQRT_Y_DAG'):
                 return f"RYGate({param})"
             return f"# Unsupported Parametric: {gate.type_name}"
             
@@ -339,24 +406,39 @@ class QiskitGenerator(GeneratorInterface):
             return "IGate()"
 
         elif isinstance(gate, ArithmeticGate):
-            # Try to map to known arithmetic gates or use generic instruction
-            if gate.operation == 'Add':
-                # DraperQFTAdder or similar if available
-                # DraperQFTAdder(num_state_qubits, kind='fixed', name='draper')
-                # It usually takes 2 registers.
-                return f"DraperQFTAdder({len(gate.target_qubits)}, kind='fixed').to_instruction()"
-            if gate.operation == 'Add':
-                # DraperQFTAdder or similar if available
-                # DraperQFTAdder(num_state_qubits, kind='fixed', name='draper')
-                # It usually takes 2 registers.
-                return f"DraperQFTAdder({len(gate.target_qubits)}, kind='fixed').to_instruction()"
-            return f"create_placeholder('{gate.operation}', {len(gate.target_qubits)})"
+            # Map to known arithmetic gate implementations
+            n_qubits = len(gate.target_qubits)
+            op_type = gate.operation_type
+            if op_type == 'Add':
+                return f"DraperQFTAdder({n_qubits}, kind='fixed').to_instruction()"
+            elif op_type == 'Increment':
+                return f"Increment({n_qubits}).to_instruction()"
+            elif op_type == 'Decrement':
+                return f"Decrement({n_qubits}).to_instruction()"
+            elif op_type == 'Subtract':
+                # Subtraction can be done with inverse adder
+                return f"DraperQFTAdder({n_qubits}, kind='fixed').inverse().to_instruction()"
+            elif op_type == 'Multiply':
+                # Use Qiskit's HRSCumulativeMultiplier if available
+                return f"HRSCumulativeMultiplier({n_qubits}).to_instruction()"
+            return f"create_placeholder('{gate.operation_type}', {n_qubits})"
 
         elif isinstance(gate, ModularArithmeticGate):
-            return f"create_placeholder('{gate.operation}_mod_{gate.modulo}', {len(gate.target_qubits)})"
+            # Modular arithmetic - some have Qiskit implementations
+            n_qubits = len(gate.target_qubits)
+            op_type = gate.operation_type
+            mod = gate.modulo
+            if op_type == 'Add':
+                return f"CDKMRippleCarryAdder({n_qubits}, kind='fixed').to_instruction()"
+            return f"create_placeholder('{op_type}_mod_{mod}', {n_qubits})"
             
         elif isinstance(gate, ComparisonGate):
-            return f"create_placeholder('{gate.operation}', {len(gate.target_qubits)})"
+            # Comparison gates - use IntegerComparator from Qiskit
+            n_qubits = len(gate.target_qubits)
+            op_type = gate.operation
+            # IntegerComparator(num_state_qubits, value, geq=False)
+            # We don't have a specific value, so use placeholder with proper structure
+            return f"create_placeholder('{op_type}', {n_qubits})"
             
         elif isinstance(gate, CustomGate):
             if gate.definition:
@@ -366,8 +448,27 @@ class QiskitGenerator(GeneratorInterface):
             return f"create_placeholder('{gate.name}', {len(gate.target_qubits)})"
 
         elif isinstance(gate, TimeDependentGate):
-            # Map to a generic Unitary or Instruction with the expression as label
-            return f"create_placeholder('{gate.type_name}({gate.parameter_expr})', {len(gate.target_qubits)})"
+            # Map time-dependent gates to parametric rotations where possible
+            type_name = gate.type_name
+            expr = gate.parameter_expr
+            # Common patterns: Exp(iXt), Exp(iYt), Exp(iZt), X^t, Y^t, Z^t
+            if 'Exp' in type_name:
+                # Exponential gates: Exp(iAt) -> R_A(2t)
+                if 'X' in type_name:
+                    return f"RXGate(2*{expr})"
+                elif 'Y' in type_name:
+                    return f"RYGate(2*{expr})"
+                elif 'Z' in type_name:
+                    return f"RZGate(2*{expr})"
+            elif '^' in type_name:
+                # Power gates: A^t -> R_A(π*t)
+                if 'X' in type_name:
+                    return f"RXGate(np.pi*{expr})"
+                elif 'Y' in type_name:
+                    return f"RYGate(np.pi*{expr})"
+                elif 'Z' in type_name:
+                    return f"RZGate(np.pi*{expr})"
+            return f"create_placeholder('{type_name}({expr})', {len(gate.target_qubits)})"
             
         elif isinstance(gate, DisplayOperation):
             # For AerSimulator, we can use save functions
@@ -386,14 +487,37 @@ class QiskitGenerator(GeneratorInterface):
 
         elif isinstance(gate, OrderGate):
             # OrderGate represents order manipulation (Interleave, Reverse, bit shifts, etc.)
-            # Qiskit doesn't have native order gates, so create a placeholder
-            return f"create_placeholder('{gate.order_type}', {len(gate.target_qubits) if gate.target_qubits else 1})"
+            n_qubits = len(gate.target_qubits) if gate.target_qubits else 1
+            order_type = gate.order_type
+            if order_type == 'Reverse':
+                return f"ReverseBits({n_qubits}).to_instruction()"
+            elif order_type == 'Interleave':
+                return f"Interleave({n_qubits}).to_instruction()"
+            elif order_type == 'Deinterleave':
+                return f"Deinterleave({n_qubits}).to_instruction()"
+            elif order_type == 'RotateLeft':
+                return f"RotateBitsLeft({n_qubits}).to_instruction()"
+            elif order_type == 'RotateRight':
+                return f"RotateBitsRight({n_qubits}).to_instruction()"
+            return f"create_placeholder('{gate.order_type}', {n_qubits})"
 
         elif isinstance(gate, ScalarGate):
             # ScalarGate applies a global phase or scalar multiplication
             # In Qiskit, global phase can be represented with GlobalPhaseGate
-            # The scalar_type might be a symbolic value like 'e^(iπ/4)'
-            return f"# GlobalPhase: {gate.scalar_type}"
+            scalar = gate.scalar_type
+            if scalar == 'i':
+                return "GlobalPhaseGate(np.pi/2)"
+            elif scalar == '-i':
+                return "GlobalPhaseGate(-np.pi/2)"
+            elif scalar == '√i':
+                return "GlobalPhaseGate(np.pi/4)"
+            elif scalar == '-√i':
+                return "GlobalPhaseGate(-np.pi/4)"
+            elif scalar == '-1':
+                return "GlobalPhaseGate(np.pi)"
+            elif scalar == '1':
+                return "GlobalPhaseGate(0)"
+            return f"GlobalPhaseGate(0)  # {gate.scalar_type}"
 
         elif isinstance(gate, PostSelection):
             # PostSelection is a measurement-based selection, not a standard gate

@@ -43,6 +43,12 @@ def _write_circuit(f, model: QuantumCircuit, var_name: str):
     total_qubits = sum(reg.size for reg in model.qregs)
     f.write(f"{var_name} = QuantumCircuit(name='{model.name}', qubits={total_qubits})\n\n")
     
+    # Add classical registers if any
+    if model.cregs:
+        for creg in model.cregs:
+            f.write(f"{var_name}.add_creg(ClassicalRegister('{creg.name}', {creg.size}))\n")
+        f.write("\n")
+    
     # Operations
     for op in model.operations:
         _write_operation(f, op, var_name)
@@ -100,10 +106,10 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
     # === Arithmetic Gates ===
     elif isinstance(op, ArithmeticGate):
         input_qubits_str = f", input_qubits={op.input_qubits}" if op.input_qubits else ""
-        f.write(f"{gate_var} = ArithmeticGate(operation='{op.operation}', target_qubits={op.target_qubits}{input_qubits_str})\n")
+        f.write(f"{gate_var} = ArithmeticGate(operation='{op.operation_type}', target_qubits={op.target_qubits}{input_qubits_str})\n")
     elif isinstance(op, ModularArithmeticGate):
         input_qubits_str = f", input_qubits={op.input_qubits}" if op.input_qubits else ""
-        f.write(f"{gate_var} = ModularArithmeticGate(operation='{op.operation}', target_qubits={op.target_qubits}, modulo={op.modulo}{input_qubits_str})\n")
+        f.write(f"{gate_var} = ModularArithmeticGate(operation='{op.operation_type}', target_qubits={op.target_qubits}, modulo={op.modulo}{input_qubits_str})\n")
     elif isinstance(op, ComparisonGate):
         input_qubits_str = f", input_qubits={op.input_qubits}" if op.input_qubits else ""
         f.write(f"{gate_var} = ComparisonGate(operation='{op.operation}', target_qubits={op.target_qubits}{input_qubits_str})\n")

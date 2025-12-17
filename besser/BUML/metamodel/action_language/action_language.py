@@ -4,7 +4,7 @@ from typing import TypeVar
 from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from besser.BUML.metamodel.action_language.visitors import BALVisitor
-    from besser.BUML.metamodel.structural import Method, Property
+    from besser.BUML.metamodel.structural import Method, Property, Class, Enumeration
 
 ContextType = TypeVar('ContextType')
 ReturnType = TypeVar('ReturnType')
@@ -53,15 +53,15 @@ class ObjectType(Type):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_ObjectType(self, context)
 
-    def __init__(self, clazz: any):
+    def __init__(self, clazz: 'Class'):
         self.__clazz = clazz
 
     @property
-    def clazz(self) -> any:
+    def clazz(self) -> 'Class':
         return self.__clazz
 
     @clazz.setter
-    def clazz(self, clazz: any):
+    def clazz(self, clazz: 'Class'):
         self.__clazz = clazz
 
 
@@ -110,15 +110,15 @@ class EnumType(Type):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_EnumType(self, context)
 
-    def __init__(self, enum: any):
+    def __init__(self, enum: 'Enumeration'):
         self.__enum = enum
 
     @property
-    def enum(self) -> any:
+    def enum(self) -> 'Enumeration':
         return self.__enum
 
     @enum.setter
-    def enum(self, enum: any):
+    def enum(self, enum: 'Enumeration'):
         self.__enum = enum
 
 
@@ -207,16 +207,9 @@ class Parameter(NameDecl):
         return bal_visitor.visit_Parameter(self, context)
 
     def __init__(self, name: str, declared_type: "Type" = None, default: "Expression" = None):
-        super().__init__(name, declared_type, None)
+        mult = Multiplicity(True, isinstance(declared_type, SequenceType))
+        super().__init__(name, declared_type, mult)
         self.__default = default
-
-    @property
-    def name(self) -> str:
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        self.__name = name
 
     @property
     def default(self):
@@ -225,14 +218,6 @@ class Parameter(NameDecl):
     @default.setter
     def default(self, value):
         self.__default = value
-
-    @property
-    def declared_type(self):
-        return self.__declared_type
-
-    @declared_type.setter
-    def declared_type(self, value):
-        self.__declared_type = value
 
 
 #=====================#
@@ -434,6 +419,22 @@ class For(Statements):
 
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_For(self, context)
+
+
+class Return(Statements):
+    def __init__(self, expr: Expression):
+        self.__expr = expr
+
+    @property
+    def expr(self) -> Expression:
+        return self.__expr
+
+    @expr.setter
+    def expr(self, expr: Expression):
+        self.__expr = expr
+
+    def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
+        return bal_visitor.visit_Return(self, context)
 
 
 #=====================#
@@ -866,7 +867,7 @@ class Call(Expression):
         return bal_visitor.visit_Call(self, context)
 
 
-class FunctionCall(Call):
+class MethodCall(Call):
     def __init__(self, receiver: Expression, method: 'Method', arguments: list[Expression]):
         super().__init__(arguments)
         self.__receiver = receiver
@@ -889,7 +890,7 @@ class FunctionCall(Call):
         self.__method = method
 
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
-        return bal_visitor.visit_FunctionCall(self, context)
+        return bal_visitor.visit_MethodCall(self, context)
 
 
 class New(Call):
@@ -907,6 +908,31 @@ class New(Call):
 
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_New(self, context)
+
+class StandardLibCall(Call):
+    def __init__(self, receiver: Expression, function: str, arguments: list[Expression]):
+        super().__init__(arguments)
+        self.__receiver = receiver
+        self.__function = function
+
+    @property
+    def receiver(self) -> Expression:
+        return self.__receiver
+
+    @receiver.setter
+    def receiver(self, receiver: Expression):
+        self.__receiver = receiver
+
+    @property
+    def function(self) -> str:
+        return self.__function
+
+    @function.setter
+    def function(self, function: str):
+        self.__function = function
+
+    def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
+        return bal_visitor.visit_StandardLibCall(self, context)
 
 
 # References Expressions #

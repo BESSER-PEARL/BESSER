@@ -621,19 +621,19 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
         )
     
     # Debug logging
-    print(f"[Qiskit Gen] json_data keys: {json_data.keys()}")
-    print(f"[Qiskit Gen] title: {json_data.get('title')}")
-    print(f"[Qiskit Gen] model keys: {model_data.keys() if isinstance(model_data, dict) else type(model_data)}")
-    cols = model_data.get('cols', []) if isinstance(model_data, dict) else []
-    print(f"[Qiskit Gen] cols length: {len(cols)}")
-    if cols:
-        print(f"[Qiskit Gen] first col: {cols[0]}")
+    # print(f"[Qiskit Gen] json_data keys: {json_data.keys()}")
+    # print(f"[Qiskit Gen] title: {json_data.get('title')}")
+    # print(f"[Qiskit Gen] model keys: {model_data.keys() if isinstance(model_data, dict) else type(model_data)}")
+    # cols = model_data.get('cols', []) if isinstance(model_data, dict) else []
+    # print(f"[Qiskit Gen] cols length: {len(cols)}")
+    # if cols:
+    #     print(f"[Qiskit Gen] first col: {cols[0]}")
     
     quantum_model = process_quantum_diagram(json_data)
     
-    print(f"[Qiskit Gen] quantum_model: {quantum_model}")
-    print(f"[Qiskit Gen] qregs: {quantum_model.qregs}")
-    print(f"[Qiskit Gen] operations count: {len(quantum_model.operations)}")
+    # print(f"[Qiskit Gen] quantum_model: {quantum_model}")
+    # print(f"[Qiskit Gen] qregs: {quantum_model.qregs}")
+    # print(f"[Qiskit Gen] operations count: {len(quantum_model.operations)}")
     
     # Extract Qiskit config
     backend_type = config.get('backend', 'aer_simulator') if config else 'aer_simulator'

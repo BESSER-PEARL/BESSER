@@ -46,3 +46,7 @@ New Features and Improvements
 * Extended project types to support ``QuantumCircuitDiagram`` alongside existing UML diagram types.
 * Added automatic diagram type detection for proper menu rendering in the quantum editor context.
 
+Fixes
+-----
+
+* Fixed issue: `#367 <https://github.com/BESSER-PEARL/BESSER/issues/367>`_

@@ -59,11 +59,13 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         self.__model = domain_model
         self.__method_class = context_class
         self.__current_type = ObjectType(context_class)
-        self.__root = None
+        self.__is_root = True
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#function_definition.
     def visitFunction_definition(self, ctx:BESSERActionLanguageParser.Function_definitionContext):
+        is_root = self.__is_root
+        self.__is_root = False
         parameters:list[Parameter] = []
         for param in ctx.params:
             parameters.append(self.visit(param))
@@ -77,9 +79,7 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
         self.__current_type = None
 
-        if self.__root is None:
-            self.__root = definition
-        else:
+        if not is_root:
             self.__symbols[ctx.name.text] = definition
 
         return definition
@@ -531,7 +531,9 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
         receiver = self.visit(ctx.receiver)
         if isinstance(self.__current_type, SequenceType):
-            return StandardLibCall(receiver, ctx.name.text, args)
+            fns = functions_for_sequence_type(self.__current_type)
+            fn_type = fns.get(ctx.name.text)
+            return StandardLibCall(receiver, ctx.name.text, fn_type, args)
         elif isinstance(self.__current_type, Class):
             method = ctx.name.text
             methods = {m for m in self.__current_type.methods if m.name == method}
@@ -642,9 +644,9 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         values = list()
         for val in ctx.values:
             values.append(self.visit(val))
-        value_type = self.visit(ctx.the_type)
-        self.__current_type = SequenceType(value_type)
-        return SequenceLiteral(value_type, values)
+        value_type:SequenceType = self.visit(ctx.the_type)
+        self.__current_type = value_type
+        return SequenceLiteral(value_type.elementsType, values)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#range_literal.

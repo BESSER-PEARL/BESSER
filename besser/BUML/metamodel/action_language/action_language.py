@@ -122,6 +122,31 @@ class EnumType(Type):
         self.__enum = enum
 
 
+class FunctionType(Type):
+    def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
+        return bal_visitor.visit_EnumType(self, context)
+
+    def __init__(self, params_type: list[Type], return_type: Type):
+        self.__params_type = params_type
+        self.__return_type = return_type
+
+    @property
+    def params_type(self) -> list[Type]:
+        return self.__params_type
+
+    @params_type.setter
+    def params_type(self, params_type: list[Type]):
+        self.__params_type = params_type
+
+    @property
+    def return_type(self) -> Type:
+        return self.__return_type
+
+    @return_type.setter
+    def return_type(self, return_type: Type):
+        self.__return_type = return_type
+
+
 #==========================#
 # Name Declaration Classes #
 #==========================#
@@ -152,7 +177,7 @@ class Multiplicity:
         self.__nullable = nullable
 
 
-class NameDecl(AssignTarget, Statements):
+class NameDecl(Statements):
     def __init__(self, name: str, declared_type: Type, multiplicity: Multiplicity):
         self.__name = name
         self.__declared_type = declared_type
@@ -186,7 +211,7 @@ class NameDecl(AssignTarget, Statements):
         return bal_visitor.visit_NameDecl(self, context)
 
 
-class ExplicitDecl(NameDecl):
+class ExplicitDecl(AssignTarget, NameDecl):
     def __init__(self, name: str, declared_type: Type, multiplicity: Multiplicity):
         super().__init__(name, declared_type, multiplicity)
 
@@ -194,7 +219,7 @@ class ExplicitDecl(NameDecl):
         return bal_visitor.visit_ExplicitDecl(self, context)
 
 
-class ImplicitDecl(NameDecl):
+class ImplicitDecl(AssignTarget, NameDecl):
     def __init__(self, name: str, declared_type: Type, multiplicity: Multiplicity):
         super().__init__(name, declared_type, multiplicity)
 
@@ -226,24 +251,19 @@ class Parameter(NameDecl):
 #=====================#
 
 
-class FunctionDefinition:
+class FunctionDefinition(NameDecl):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_FunctionDefinition(self, context)
 
     def __init__(self, name: str, parameters: list["Parameter"] = None, return_type: "Type" = None,
                  body: "Block" = None):
-        self.__name = name
         self.__parameters = parameters if parameters is not None else set()
         self.__return_type = return_type
         self.__body = body
+        param_types = [param.declared_type for param in self.__parameters]
+        super().__init__(name, FunctionType(param_types, return_type), Multiplicity(True, False))
 
-    @property
-    def name(self) -> str:
-        return self.__name
 
-    @name.setter
-    def name(self, name: str):
-        self.__name = name
 
     @property
     def return_type(self):
@@ -910,10 +930,11 @@ class New(Call):
         return bal_visitor.visit_New(self, context)
 
 class StandardLibCall(Call):
-    def __init__(self, receiver: Expression, function: str, arguments: list[Expression]):
+    def __init__(self, receiver: Expression, function: str, fn_type: FunctionType, arguments: list[Expression]):
         super().__init__(arguments)
         self.__receiver = receiver
         self.__function = function
+        self.__function_type = fn_type
 
     @property
     def receiver(self) -> Expression:
@@ -931,8 +952,33 @@ class StandardLibCall(Call):
     def function(self, function: str):
         self.__function = function
 
+    @property
+    def function_type(self) -> str:
+        return self.__function_type
+
+    @function_type.setter
+    def function_type(self, function_type: str):
+        self.__function_type = function_type
+
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_StandardLibCall(self, context)
+
+
+class ProcedureCall(Call):
+    def __init__(self, function: FunctionDefinition, arguments: list[Expression]):
+        super().__init__(arguments)
+        self.__function = function
+
+    @property
+    def function(self) -> FunctionDefinition:
+        return self.__function
+
+    @function.setter
+    def function(self, function: FunctionDefinition):
+        self.__function = function
+
+    def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
+        return bal_visitor.visit_ProcedureCall(self, context)
 
 
 # References Expressions #

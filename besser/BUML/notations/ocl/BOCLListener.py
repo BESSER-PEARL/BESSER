@@ -788,7 +788,6 @@ class BOCLListener(ParseTreeListener):
     def enterPrimaryExp(self, ctx: BOCLParser.PrimaryExpContext):
         if self.unary:
             self.sign.append(self.unary.split(ctx.getText())[0])
-            print(self.sign)
             if self.unary == self.sign[-1] + ctx.getText():
                 self.rootHandler.handle_single_variable(ctx.getText(), self.sign.pop())
                 #

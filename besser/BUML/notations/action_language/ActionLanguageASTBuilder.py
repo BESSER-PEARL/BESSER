@@ -7,7 +7,8 @@ from ...metamodel.action_language.action_language import FunctionDefinition, Par
     Or, And, Equal, LessEq, InstanceOf, Plus, Remain, Mult, Not, UnaryMinus, Cast, NullCoalessing, ArrayAccess, \
     FieldAccess, This, New, IntLiteral, StringLiteral, BoolLiteral, RealLiteral, NullLiteral, EnumLiteral, \
     SequenceLiteral, RangeLiteral, NameDecl, Reference, ImplicitDecl, Unequal, Greater, GreaterEq, Less, Minus, Div, \
-    ObjectType, EnumType, MethodCall, StandardLibCall, Concatenation, Multiplicity, Return, ExplicitDecl
+    ObjectType, EnumType, MethodCall, StandardLibCall, Concatenation, Multiplicity, Return, ExplicitDecl, FunctionType, \
+    ProcedureCall
 from ...metamodel.structural import DomainModel, Class, Enumeration
 
 if "." in __name__:
@@ -15,15 +16,38 @@ if "." in __name__:
 else:
     from BESSERActionLanguageParser import BESSERActionLanguageParser
 
-base_classes = {'int': IntType,
-                'float': RealType,
-                'str': StringType,
-                'bool': BoolType,
-                'time': AnyType,
-                'date': AnyType,
-                'datetime': AnyType,
-                'timedelta': AnyType,
-                'any': AnyType}
+base_classes = {
+    'int':          IntType,
+    'float':        RealType,
+    'str':          StringType,
+    'bool':         BoolType,
+    'time':         AnyType,
+    'date':         AnyType,
+    'datetime':     AnyType,
+    'timedelta':    AnyType,
+    'any':          AnyType
+}
+
+def functions_for_sequence_type(sequence_type: SequenceType):
+    elem = sequence_type.elementsType
+    elem_to_bool = FunctionType([elem],BoolType())
+    elem_to_any = FunctionType([elem], AnyType())
+    reduce = FunctionType([elem, elem], elem)
+    sequence_functions = {
+        'size':         FunctionType([],                IntType()),
+        'is_empty':     FunctionType([],                BoolType()),
+        'add':          FunctionType([elem], None),
+        'remove':       FunctionType([elem], None),
+        'contains':     FunctionType([elem],            BoolType()),
+        'filter':       FunctionType([elem_to_bool],    sequence_type),
+        'forall':       FunctionType([elem_to_bool],    BoolType()),
+        'exists':       FunctionType([elem_to_bool],    BoolType()),
+        'one':          FunctionType([elem_to_bool],    BoolType()),
+        'is_unique':    FunctionType([elem_to_any],     BoolType()),
+        'map':          FunctionType([elem_to_any],     BoolType()),
+        'reduce':       FunctionType([reduce],          AnyType())
+    }
+    return sequence_functions
 
 
 # This class defines a complete generic visitor for a parse tree produced by BESSERActionLanguageParser.
@@ -35,6 +59,7 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         self.__model = domain_model
         self.__method_class = context_class
         self.__current_type = ObjectType(context_class)
+        self.__root = None
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#function_definition.
@@ -42,14 +67,22 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         parameters:list[Parameter] = []
         for param in ctx.params:
             parameters.append(self.visit(param))
-        self.__current_type = None
 
-        return FunctionDefinition(
+        definition = FunctionDefinition(
             ctx.name.text,
             parameters,
             self.visit(ctx.return_type),
             self.visit(ctx.body)
         )
+
+        self.__current_type = None
+
+        if self.__root is None:
+            self.__root = definition
+        else:
+            self.__symbols[ctx.name.text] = definition
+
+        return definition
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#parameter.
@@ -143,6 +176,18 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BESSERActionLanguageParser#sequence_type.
+    def visitSequence_type(self, ctx: BESSERActionLanguageParser.Sequence_typeContext):
+        return SequenceType(self.visit(ctx.the_type))
+
+    # Visit a parse tree produced by BESSERActionLanguageParser#function_type.
+    def visitFunction_type(self, ctx: BESSERActionLanguageParser.Function_typeContext):
+        params_types = []
+        for param in ctx.params_type:
+            params_types.append(self.visit(param))
+        return FunctionType(params_types, self.visit(ctx.return_type))
+
+
     # Visit a parse tree produced by BESSERActionLanguageParser#any_type.
     def visitAny_type(self, ctx:BESSERActionLanguageParser.Any_typeContext):
         return AnyType()
@@ -156,11 +201,6 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         elif isinstance(model_type, Enumeration):
             return EnumType(model_type)
         return None
-
-
-    # Visit a parse tree produced by BESSERActionLanguageParser#sequence_type.
-    def visitSequence_type(self, ctx:BESSERActionLanguageParser.Sequence_typeContext):
-        return SequenceType(self.visit(ctx.the_type))
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#real_type.
@@ -388,7 +428,9 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
         receiver = self.visit(ctx.receiver)
         if isinstance(self.__current_type, SequenceType):
-            return StandardLibCall(receiver, ctx.name.text, args)
+            fns = functions_for_sequence_type(self.__current_type)
+            fn_type = fns.get(ctx.name.text)
+            return StandardLibCall(receiver, ctx.name.text, fn_type, args)
         elif isinstance(self.__current_type, Class):
             method = ctx.name.text
             methods = {m for m in self.__current_type.methods if m.name == method}
@@ -513,6 +555,18 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         if ctx.expr is not None:
             return self.visit(ctx.expr)
         return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BESSERActionLanguageParser#procedure_call.
+    def visitProcedure_call(self, ctx: BESSERActionLanguageParser.Procedure_callContext):
+        args = list()
+        for arg in ctx.args:
+            args.append(self.visit(arg))
+
+        decl = self.__symbols.get(ctx.name.text)
+        if isinstance(decl, FunctionDefinition):
+            self.__current_type = decl.return_type
+            return ProcedureCall(decl, args)
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#this.

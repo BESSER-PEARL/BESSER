@@ -122,6 +122,13 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             for method in sort(cls.methods):
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                 visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
+                
+                # Handle code attribute - escape special characters
+                code_str = ""
+                if hasattr(method, 'code') and method.code:
+                    # Escape backslashes first, then quotes, then newlines
+                    escaped_code = method.code.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+                    code_str = f', code="{escaped_code}"'
 
                 # Build parameters dictionary
                 params = {}
@@ -135,10 +142,10 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
                 if method_type:
                     f.write(f"{cls_var_name}_m_{method.name}: Method = Method(name=\"{method.name}\""
-                           f"{visibility_str}, parameters={params_str}, type={method_type})\n")
+                           f"{visibility_str}, parameters={params_str}, type={method_type}{code_str})\n")
                 else:
                     f.write(f"{cls_var_name}_m_{method.name}: Method = Method(name=\"{method.name}\""
-                           f"{visibility_str}, parameters={params_str})\n")
+                           f"{visibility_str}, parameters={params_str}{code_str})\n")
 
             # Write assignments
             if sort(cls.attributes):
@@ -224,6 +231,13 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                 for method in sort(ac.methods):
                     method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                     visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
+                    
+                    # Handle code attribute - escape special characters
+                    code_str = ""
+                    if hasattr(method, 'code') and method.code:
+                        # Escape backslashes first, then quotes, then newlines
+                        escaped_code = method.code.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+                        code_str = f', code="{escaped_code}"'
 
                     # Build parameters dictionary
                     params = {}
@@ -237,10 +251,10 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
                     if method_type:
                         f.write(f"{ac_var_name}_m_{method.name}: Method = Method(name=\"{method.name}\""
-                               f"{visibility_str}, parameters={params_str}, type={method_type})\n")
+                               f"{visibility_str}, parameters={params_str}, type={method_type}{code_str})\n")
                     else:
                         f.write(f"{ac_var_name}_m_{method.name}: Method = Method(name=\"{method.name}\""
-                               f"{visibility_str}, parameters={params_str})\n")
+                               f"{visibility_str}, parameters={params_str}{code_str})\n")
 
                 # Create attributes set string if attributes exist
                 attributes_str = ""

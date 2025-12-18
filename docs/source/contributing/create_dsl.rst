@@ -1,4 +1,4 @@
-Guide: Add a New Sub-DSL
+Guide: Add a New DSL
 ========================
 
 This guide covers the full lifecycle for extending B-UML with a new domain-specific branch and plugging it into the web
@@ -21,8 +21,7 @@ modeling editor.
 3. Extend Utilities and Converters
 ----------------------------------
 
-* Update helpers under ``besser/utilities`` (diagram processors, converters, validators) to recognize the new
-  sub-DSL artifacts.
+* Update helpers under ``besser/utilities`` (diagram processors, converters, validators) to recognize the new DSL artifacts.
 * Keep the converters symmetrical: JSON <-> BUML and BUML <-> JSON must support the same features.
 * Document any new CLI entry points or scripts within ``docs/source/utilities``.
 

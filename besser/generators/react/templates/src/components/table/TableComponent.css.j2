@@ -1,4 +1,4 @@
-.table-chart-wrapper {
+.table-wrapper {
   width: 100%;
   max-width: 100%;
   overflow: hidden;
@@ -7,7 +7,7 @@
   contain: layout style paint; /* Optimize rendering and containment */
 }
 
-.table-chart-scroll {
+.table-scroll {
   width: 100%;
   max-width: 100%;
   overflow-x: auto;
@@ -15,21 +15,21 @@
   min-width: 0; /* Critical for grid/flex children */
 }
 
-.table-chart-scroll table {
+.table-scroll table {
   width: 100%;
   min-width: 0;
   table-layout: auto; /* Allow table to shrink */
 }
 
-.table-chart-scroll::-webkit-scrollbar {
+.table-scroll::-webkit-scrollbar {
   height: 8px;
 }
 
-.table-chart-scroll::-webkit-scrollbar-thumb {
+.table-scroll::-webkit-scrollbar-thumb {
   background-color: rgba(148, 163, 184, 0.5);
   border-radius: 9999px;
 }
 
-.table-chart-scroll::-webkit-scrollbar-track {
+.table-scroll::-webkit-scrollbar-track {
   background-color: transparent;
 }

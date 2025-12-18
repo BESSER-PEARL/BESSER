@@ -16,7 +16,6 @@ import importlib.util
 import sys
 import asyncio
 from datetime import datetime
-from typing import List, Dict, Any
 
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
@@ -70,6 +69,9 @@ from besser.utilities.web_modeling_editor.backend.services.deployment import (
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     cleanup_temp_resources,
     validate_generator,
+)
+from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
+    csv_to_domain_model,
 )
 
 # Backend configuration
@@ -1121,6 +1123,57 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         print(f"Error in get_single_json_model: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to process the uploaded file: {str(e)}")
 
+@app.post("/besser_api/csv-to-domain-model")
+async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
+    """
+    Accepts one or more CSV files and returns a B-UML domain model as JSON.
+    """
+    temp_dir = tempfile.mkdtemp(prefix="besser_csv_")
+    file_paths = []
+    try:
+        # Save uploaded files to temp dir
+        for file in files:
+            file_path = os.path.join(temp_dir, file.filename)
+            with open(file_path, "wb") as f:
+                f.write(await file.read())
+            file_paths.append(file_path)
+
+        # Generate DomainModel from CSVs
+        domain_model = csv_to_domain_model(file_paths, model_name="ClassDiagram")
+
+        # Parse domain model to JSON using the same logic as get_single_json_model
+        diagram_title = "ClassDiagram"
+        diagram_type = "ClassDiagram"
+        try:
+            # If not, parse_buml_content can be used if needed
+            if domain_model and hasattr(domain_model, "types") and len(domain_model.types) > 0:
+                diagram_json = class_buml_to_json(domain_model)
+                diagram_data = {
+                    "title": diagram_title,
+                    "model": diagram_json
+                }
+            else:
+                raise ValueError("No types found in domain model")
+        except Exception as class_error:
+            print(f"Class diagram parsing failed: {str(class_error)}")
+            raise HTTPException(status_code=500, detail=f"Class diagram parsing failed: {str(class_error)}")
+
+        # Return the diagram in the format expected by the frontend
+        return {
+            "title": diagram_title,
+            "model": {
+                **diagram_data.get("model", {}),
+                "type": diagram_type
+            },
+            "diagramType": diagram_type,
+            "exportedAt": datetime.utcnow().isoformat(),
+            "version": "2.0.0"
+        }
+    except Exception as e:
+        print(f"Error in csv_to_domain_model_endpoint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to process CSV files: {str(e)}")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 @app.post("/besser_api/get-json-model-from-image")
 async def get_json_model_from_image(
@@ -1330,7 +1383,6 @@ async def check_ocl(input_data: DiagramInput):
     """
     print("Warning: /check-ocl is deprecated. Use /validate-diagram instead.")
     return await validate_diagram(input_data)
-
 
 # Main application entry point
 if __name__ == "__main__":

@@ -99,8 +99,17 @@ def process_class_diagram(json_data):
             for attr_id in element.get("attributes", []):
                 attr = elements.get(attr_id)
                 if attr:
-                    visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
-                    if name is None:  # Skip if no name was returned
+                    # Check for new format (separate visibility and attributeType properties)
+                    if "visibility" in attr and "attributeType" in attr:
+                        # New format - use separate properties
+                        visibility = attr.get("visibility", "public")
+                        name = attr.get("name", "").strip()
+                        attr_type = attr.get("attributeType", "str")
+                    else:
+                        # Legacy format - parse from name string
+                        visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
+                    
+                    if not name:  # Skip if no name was returned
                         continue
                     if name in attribute_names:
                         raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
@@ -124,6 +133,9 @@ def process_class_diagram(json_data):
                 method = elements.get(method_id)
                 if method:
                     visibility, name, parameters, return_type = parse_method(method.get("name", ""), domain_model)
+                    
+                    # Get the code attribute for the method
+                    method_code = method.get("code", "")
 
                     # Create method parameters
                     method_params = []
@@ -149,11 +161,12 @@ def process_class_diagram(json_data):
                             param_obj.default_value = param['default']
                         method_params.append(param_obj)
 
-                    # Create method with parameters and return type
+                    # Create method with parameters, return type, and code
                     method_obj = Method(
                         name=name,
                         visibility=visibility,
-                        parameters=method_params
+                        parameters=method_params,
+                        code=method_code
                     )
                     
                     # Handle return type

@@ -25,7 +25,7 @@ from besser.BUML.metamodel.gui.graphical_ui import (
     DataSourceElement,
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart, AgentComponent
+    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent
 )
 from besser.BUML.metamodel.gui.events_actions import Event, Transition, Create, Read, Update, Delete
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
@@ -110,7 +110,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
         f.write("    UnitSize, PositionType, Alignment\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.dashboard import (\n")
-        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, TableChart, AgentComponent\n")
+        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.events_actions import (\n")
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
@@ -283,8 +283,8 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
         _write_radar_chart(f, comp_var, component)
     elif isinstance(component, RadialBarChart):
         _write_radial_bar_chart(f, comp_var, component)
-    elif isinstance(component, TableChart):
-        _write_table_chart(f, comp_var, component)
+    elif isinstance(component, Table):
+        _write_table(f, comp_var, component)
     elif isinstance(component, AgentComponent):
         _write_agent_component(f, comp_var, component)
     elif isinstance(component, ViewContainer):
@@ -696,8 +696,8 @@ def _write_radial_bar_chart(f, var_name, chart):
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
-def _write_table_chart(f, var_name, chart):
-    """Write code for a TableChart component."""
+def _write_table(f, var_name, chart):
+    """Write code for a Table component."""
     params = [f'name="{chart.name}"']
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
@@ -715,7 +715,7 @@ def _write_table_chart(f, var_name, chart):
         column_literals = ", ".join(f'"{_escape_string(col)}"' for col in chart.columns if col)
         params.append(f'columns=[{column_literals}]')
 
-    f.write(f'{var_name} = TableChart({", ".join(params)})\n')
+    f.write(f'{var_name} = Table({", ".join(params)})\n')
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 

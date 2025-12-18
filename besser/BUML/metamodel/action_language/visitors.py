@@ -8,7 +8,7 @@ from besser.BUML.metamodel.action_language.action_language import Parameter, Fun
     UnaryMinus, BinaryArithmetic, Div, Remain, Mult, Plus, Minus, Concatenation, InstanceOf, Reference, Literal, \
     IntLiteral, StringLiteral, BoolLiteral, RealLiteral, NullLiteral, EnumLiteral, SequenceLiteral, RangeLiteral, \
     Iterator, CondLoop, While, DoWhile, ConditionalBranch, Block, Condition, ArrayAccess, MethodCall, StandardLibCall, \
-    Return, AssignTarget
+    Return, AssignTarget, ProcedureCall, FunctionType
 
 ContextType = TypeVar('ContextType')
 ReturnType = TypeVar('ReturnType')
@@ -40,6 +40,10 @@ class BALVisitor(ABC, Generic[ContextType, ReturnType]):
 
     @abstractmethod
     def visit_SequenceType(self, node: SequenceType, context: ContextType) -> ReturnType:
+        pass
+
+    @abstractmethod
+    def visit_FunctionType(self, node: FunctionType, context: ContextType) -> ReturnType:
         pass
 
     @abstractmethod
@@ -160,6 +164,10 @@ class BALVisitor(ABC, Generic[ContextType, ReturnType]):
 
     @abstractmethod
     def visit_StandardLibCall(self, node: StandardLibCall, context: ContextType) -> ReturnType:
+        pass
+
+    @abstractmethod
+    def visit_ProcedureCall(self, node: ProcedureCall, context: ContextType) -> ReturnType:
         pass
 
     @abstractmethod

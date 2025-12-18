@@ -349,7 +349,10 @@ from besser.agent.library.entity.base_entities import {{ entity.name }}
     {% for training_sentence in intent.training_sentences -%}
     '{{ training_sentence | replace('\\', '\\\\') | replace("'", "\\'") }}',
     {% endfor -%}
-])
+    
+]{% if intent.description -%},
+    description='{{ intent.description | replace('\\', '\\\\') | replace("'", "\\'") }}'
+    {% endif -%})
 {% for parameter in intent.parameters -%}
 {{ intent.name }}.parameter('{{ parameter.name }}', '{{ parameter.fragment }}', {{ parameter.entity.name }})
 {% endfor %}

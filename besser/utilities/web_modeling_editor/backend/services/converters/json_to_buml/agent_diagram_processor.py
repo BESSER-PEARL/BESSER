@@ -89,7 +89,7 @@ def process_agent_diagram(json_data):
         elif element.get("type") == "AgentIntent":
             intent_name = element.get("name")
             training_sentences = []
-
+            intent_description = element.get("intent_description", None)
             # Collect training sentences
             for body_id in element.get("bodies", []):
                 body_element = elements.get(body_id)
@@ -101,7 +101,7 @@ def process_agent_diagram(json_data):
                         training_sentences.append(training_sentence)
 
             # Create intent and add to agent
-            intent = Intent(intent_name, training_sentences)
+            intent = Intent(intent_name, training_sentences, description=intent_description)
             agent.add_intent(intent)
             intents_by_id[element_id] = intent
             intent_count += 1

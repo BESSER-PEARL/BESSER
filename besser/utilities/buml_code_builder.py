@@ -520,7 +520,11 @@ def agent_model_to_code(model: Agent, file_path: str):
                 # Escape single quotes for Python string literal
                 escaped_sentence = sentence.replace('\\', '\\\\').replace("'", "\\'")
                 f.write(f"    '{escaped_sentence}',\n")
-            f.write("])\n")
+            f.write("],\n")
+            if intent.description:
+                desc = intent.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+                f.write(f"description=\"{desc}\"")
+            f.write(")\n")
         f.write("\n")
         
         # Check if an LLM is necessary

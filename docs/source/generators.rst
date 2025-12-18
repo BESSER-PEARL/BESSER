@@ -28,6 +28,7 @@ own generator).
    generators/pytorch
    generators/tensorflow
    generators/baf
+   generators/qiskit
 
 
 .. warning::

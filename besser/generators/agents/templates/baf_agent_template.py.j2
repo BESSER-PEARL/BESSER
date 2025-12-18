@@ -49,6 +49,9 @@ rules = json.loads(r'''{{ config['personalizationrules'] | tojson(indent=2) }}''
 {% endif %}
 
 
+{% if personalized_messages is defined and personalized_messages %}
+
+
 
 def evaluate_rules(session: Session):
     """Evaluate rules and return a dict of applied targets -> values.
@@ -174,6 +177,7 @@ def choose_variant_for_message(base_msg, session: Session, applied=None):
     choice = select_variant_for_message(variants, applied)
     return choice if choice is not None else base_msg
  
+{% endif %}
 
 {% set has_speech_output = config and config.outputModalities and 'speech' in config.outputModalities | map('lower') %}
 
@@ -259,6 +263,33 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
         use_entity_synonyms={{ ic_config.use_entity_synonyms }}
 ){% endif -%}
 {% endmacro -%}
+
+{% if config and "intentRecognitionTechnology" in config and config["intentRecognitionTechnology"] == 'llm-based' -%}
+{% if 'llm' in config  and 'model' in config['llm'] %}
+ic_config = LLMIntentClassifierConfiguration(
+    llm_name='{{ config['llm']['model'] }}',
+    parameters={},
+    use_intent_descriptions=True,
+    use_training_sentences=True,
+    use_entity_descriptions=False,
+    use_entity_synonyms=False
+)
+{% else %}
+ic_config = LLMIntentClassifierConfiguration(
+    llm_name='gpt-4o-mini',
+    parameters={},
+    use_intent_descriptions=True,
+    use_training_sentences=True,
+    use_entity_descriptions=False,
+    use_entity_synonyms=False
+)
+{% endif -%}
+
+agent.set_default_ic_config(ic_config)
+{% endif -%}
+
+
+
 
 {% if agent.llms != [] %}
 {% for llm in agent.llms -%}
@@ -352,10 +383,10 @@ def {{ state.body.name }}(session: Session):
     {% if personalized_messages is defined and personalized_messages %}
     session.reply(choose_variant_for_message('{{ action.message }}', session))
     {% else %}
-    session.reply('{{ action.message }}')
+    session.reply('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% endif %}
     {% if has_speech_output %}
-    platform.reply_speech('{{ action.message }}')
+    platform.reply_speech('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% endif %}
     {% endfor -%}
 {% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
@@ -377,9 +408,9 @@ def {{ state.body.name }}(session: Session):
 {% if state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'AgentReply') %}
 def {{ state.fallback_body.name }}(session: Session):
     {% for action in state.fallback_body.actions -%}
-    session.reply('{{ action.message }}')
+    session.reply('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}')
     {% if has_speech_output -%}
-    platform.reply_speech('{{ action.message }}')
+    platform.reply_speech('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}')
     {% endif -%}
     {% endfor %}
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}

@@ -21,7 +21,8 @@ from typing import List, Dict, Any
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
 
-
+import sys
+sys.path.append("C:/Users/conrardy/Desktop/git/BESSER")
 
 # BESSER image-to-UML and BUML utilities
 from besser.utilities.image_to_buml import image_to_buml
@@ -132,7 +133,7 @@ def get_api_root():
     }
 
 
-def generate_agent_files(agent_model):
+def generate_agent_files(agent_model, config):
     """
     Generate agent files from an agent model.
     
@@ -168,10 +169,10 @@ def generate_agent_files(agent_model):
         
         # Use the BAFGenerator with the agent model from the module
         if hasattr(agent_module, 'agent'):
-            generator = generator_class(agent_module.agent)
+            generator = generator_class(agent_module.agent, config=config)
         else:
             # Fall back to the original agent model
-            generator = generator_class(agent_model)
+            generator = generator_class(agent_model, config=config)
         
         generator.generate()
         
@@ -411,7 +412,7 @@ async def _handle_agent_generation(json_data: dict):
         else:
             # Single agent (default behavior)
             agent_model = process_agent_diagram(json_data)
-            zip_buffer, file_name = generate_agent_files(agent_model)
+            zip_buffer, file_name = generate_agent_files(agent_model, config)
             return StreamingResponse(
                 zip_buffer,
                 media_type="application/zip",

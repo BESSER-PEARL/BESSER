@@ -25,9 +25,9 @@ class BAFGenerator(GeneratorInterface):
         model (Agent): A agent model.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
-    def __init__(self, model: Agent, output_dir: str = None, config_path: str = None):
+    def __init__(self, model: Agent, output_dir: str = None, config_path: str = None, config: dict = None):
         super().__init__(model, output_dir)
-        self.config = None
+        self.config = config
         if config_path:
             print("Loading config from:", config_path)
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -73,6 +73,7 @@ class BAFGenerator(GeneratorInterface):
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
         personalized_messages = {}
+        print(self.config)
         if self.config:
             if 'personalizationrules' in self.config:
                 personalize_agent(self.model, self.config['personalizationrules'], personalized_messages)

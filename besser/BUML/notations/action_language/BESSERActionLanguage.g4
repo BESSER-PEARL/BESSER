@@ -8,7 +8,7 @@ parameter: name=ID ':' declared_type=type ('=' expr=expression)?;
  *                                               STATEMENTS                                                         *
  *******************************************************************************************************************/
 
-statements: cond_loop | for | condition | return | expression ';';
+statements: cond_loop | for | condition | return | function_definition | expression ';';
 
 cond_loop: while | do_while ;
 while: 'while' '(' cond=expression ')' body=block;
@@ -24,6 +24,7 @@ return: 'return' expr=expression ';';
 
 type:   single_type |
         sequence_type |
+        function_type
 ;
 single_type:
         any_type |
@@ -33,9 +34,10 @@ single_type:
         int_type |
         bool_type
 ;
+sequence_type: the_type=single_type '[]';
+function_type: '[' params_type+=type (',' params_type+=type)* ']' '->' return_type=type;
 any_type: 'any';
 classifier_type: name=ID;
-sequence_type: the_type=single_type '[]';
 real_type: 'float' ;
 string_type: 'string';
 int_type: 'int';
@@ -95,18 +97,20 @@ function_call: receiver=selection_expression '.' name=ID '(' (args+=expression (
 
 atomic:
     '(' expr=expression ')' |
+    procedure_call |
     literal |
     this |
     new |
     symbol
 ;
+procedure_call: name=ID '(' (args+=expression (',' args+=expression))? ')';
 this: 'this';
 new: 'new' clazz=classifier_type '(' (args+=expression (',' args+=expression))? ')';
 
 literal:
     single_literal |
     sequence_literal |
-    range_literal |
+    range_literal
 ;
 single_literal:
     int_literal |
@@ -114,7 +118,7 @@ single_literal:
     bool_literal |
     real_literal |
     null_literal |
-    enum_literal |
+    enum_literal
 ;
 int_literal: value=INT;
 string_literal: value=STR;

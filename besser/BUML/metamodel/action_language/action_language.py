@@ -261,7 +261,7 @@ class FunctionDefinition(NameDecl):
         self.__return_type = return_type
         self.__body = body
         param_types = [param.declared_type for param in self.__parameters]
-        super().__init__(name, FunctionType(param_types, return_type), Multiplicity(True, False))
+        super().__init__(name, FunctionType(param_types, return_type), Multiplicity(False, False))
 
 
 
@@ -849,7 +849,7 @@ class ArrayAccess(AssignTarget, Expression):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_ArrayAccess(self, context)
 
-    def __init__(self, index: int, receiver: "Expression" = None):
+    def __init__(self, receiver: "Expression", index: int):
         self.__index = index
         self.__receiver = receiver
 

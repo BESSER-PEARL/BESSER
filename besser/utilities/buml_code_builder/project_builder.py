@@ -14,6 +14,7 @@ from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
+from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
 
 
 def project_to_code(project: Project, file_path: str, sm: str = ""):
@@ -54,6 +55,13 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             agent_model = model
         if GUIModel and isinstance(model, GUIModel):
             gui_model = model
+            
+    # Check for QuantumCircuit model (import locally to avoid circular deps if needed, though less likely here)
+    try:
+        from besser.BUML.metamodel.quantum import QuantumCircuit
+        quantum_model = next((m for m in project.models if isinstance(m, QuantumCircuit)), None)
+    except ImportError:
+        quantum_model = None
 
     models = []
     with open(file_path, 'w', encoding='utf-8') as f:
@@ -103,6 +111,16 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             f.write(content_str)
             f.write("\n\n")
             models.append("gui_model")
+
+        if quantum_model:
+            output_file_path = os.path.join(temp_dir, "quantum_model.py")
+            quantum_model_to_code(model=quantum_model, file_path=output_file_path)
+            with open(output_file_path, "r", encoding='utf-8') as m:
+                file_content = m.read()
+            content_str = file_content
+            f.write(content_str)
+            f.write("\n\n")
+            models.append("quantum_model")
 
         if sm != "":
             f.write(sm)

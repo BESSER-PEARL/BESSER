@@ -13,3 +13,4 @@ Model types
   model_types/agent
   model_types/feature_model
   model_types/nn
+  model_types/quantum

@@ -438,6 +438,82 @@ class LLMReplicate(LLMWrapper):
         """
         self.num_previous_messages = num_previous_messages
 
+
+class RAGVectorStore:
+    """Declarative description of a vector store used by a RAG pipeline.
+
+    Args:
+        embedding_provider (str): Identifier of the embedding backend (e.g., "openai", "huggingface").
+        embedding_parameters (dict or None): Backend-specific parameters (API key placeholder, model name, etc.).
+        persist_directory (str or None): Directory where the embedding index is stored.
+
+    Attributes:
+        embedding_provider (str): Provider used to build embeddings.
+        embedding_parameters (dict): Provider specific parameters.
+        persist_directory (str or None): Optional path used to persist vectors.
+    """
+
+    def __init__(self, embedding_provider: str, embedding_parameters: Optional[dict] = None, persist_directory: Optional[str] = None):
+        self.embedding_provider: str = embedding_provider
+        self.embedding_parameters: dict = embedding_parameters or {}
+        self.persist_directory: Optional[str] = persist_directory
+
+
+class RAGTextSplitter:
+    """Declarative description of the chunking strategy used before indexing content."""
+
+    def __init__(self, splitter_type: str, chunk_size: int, chunk_overlap: int):
+        """Create a splitter definition.
+
+        Args:
+            splitter_type (str): The splitter implementation identifier (e.g., "recursive_character").
+            chunk_size (int): Maximum characters per chunk.
+            chunk_overlap (int): Characters shared between adjacent chunks.
+        """
+
+        self.splitter_type: str = splitter_type
+        self.chunk_size: int = chunk_size
+        self.chunk_overlap: int = chunk_overlap
+
+
+class RAG(NamedElement):
+    """Retrieval-Augmented Generation configuration bound to an agent.
+
+    This models the minimal information required to generate code similar to::
+
+        vector_store = Chroma(...)
+        splitter = RecursiveCharacterTextSplitter(...)
+        rag = RAG(agent=agent, vector_store=vector_store, splitter=splitter, llm_name='gpt-4o-mini', k=4, num_previous_messages=0)
+
+    Args:
+        name (str): Logical name of the RAG resource.
+        agent (Agent): Agent that owns the configuration.
+        vector_store (RAGVectorStore): Vector store definition.
+        splitter (RAGTextSplitter): Chunking strategy definition.
+        llm_name (str): Identifier of the LLM used to synthesize answers.
+        k (int): Number of chunks retrieved per question.
+        num_previous_messages (int): Conversation context depth forwarded to the LLM.
+    """
+
+    def __init__(
+            self,
+            name: str,
+            agent: 'Agent',
+            vector_store: RAGVectorStore,
+            splitter: RAGTextSplitter,
+            llm_name: str,
+            k: int = 4,
+            num_previous_messages: int = 0,
+    ):
+        super().__init__(name)
+        self.agent: 'Agent' = agent
+        self.vector_store: RAGVectorStore = vector_store
+        self.splitter: RAGTextSplitter = splitter
+        self.llm_name: str = llm_name
+        self.k: int = k
+        self.num_previous_messages: int = num_previous_messages
+
+
 class AgentSession(Session):
     """A user session in a agent execution.
 
@@ -1094,6 +1170,7 @@ class Agent(StateMachine):
         self.entities: list[Entity] = []
         self.global_initial_states: list[tuple[AgentState, Intent]] = []
         self.llms: list[LLMWrapper] = []
+        self.rags: list[RAG] = []
 
     def new_state(self,
                   name: str,
@@ -1200,6 +1277,31 @@ class Agent(StateMachine):
             raise ValueError(f"A agent cannot have two entities with the same name ({new_entity.name}).")
         self.entities.append(new_entity)
         return new_entity
+
+    def new_rag(
+            self,
+            name: str,
+            vector_store: RAGVectorStore,
+            splitter: RAGTextSplitter,
+            llm_name: str,
+            k: int = 4,
+            num_previous_messages: int = 0,
+    ) -> RAG:
+        """Register a Retrieval-Augmented Generation configuration on the agent."""
+
+        if any(existing.name == name for existing in self.rags):
+            raise ValueError(f"A agent cannot have two RAG configurations with the same name ({name}).")
+        rag = RAG(
+            name=name,
+            agent=self,
+            vector_store=vector_store,
+            splitter=splitter,
+            llm_name=llm_name,
+            k=k,
+            num_previous_messages=num_previous_messages,
+        )
+        self.rags.append(rag)
+        return rag
 
     def use_websocket_platform(self) -> WebSocketPlatform:
         """Use the WebSocketPlatform on this agent.

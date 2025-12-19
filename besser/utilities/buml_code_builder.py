@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural.structural import DomainModel, Association
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.state_machine import StateMachine, CustomCodeAction
-from besser.BUML.metamodel.state_machine.agent import Agent, Intent, AgentReply, LLMReply
+from besser.BUML.metamodel.state_machine.agent import Agent, Intent, AgentReply, LLMReply, RAGReply
 from besser.BUML.metamodel.state_machine.state_machine import Body
 from besser.utilities import sort_by_timestamp as sort
 
@@ -53,6 +53,18 @@ def safe_class_name(name):
         return f"{name}_"
     else:
         return name
+
+
+def safe_identifier(name: str, fallback: str) -> str:
+    """Generate a lowercase, underscore-delimited identifier safe for Python variables."""
+
+    sanitized = ''.join(ch.lower() if ch.isalnum() else '_' for ch in (name or ''))
+    sanitized = sanitized.strip('_')
+    if not sanitized:
+        sanitized = fallback
+    if sanitized[0].isdigit():
+        sanitized = f"{fallback}_{sanitized}"
+    return sanitized
 
 def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: ObjectModel = None):
     """
@@ -496,7 +508,7 @@ def agent_model_to_code(model: Agent, file_path: str):
         f.write("###############\n")
         f.write("import datetime\n")
         f.write("from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty, CustomCodeAction\n")
-        f.write("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, AgentReply, LLMReply, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate\n")
+        f.write("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, AgentReply, LLMReply, RAGReply, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, RAGVectorStore, RAGTextSplitter\n")
         f.write("from besser.BUML.metamodel.structural import Metadata\n")
         f.write("import operator\n\n")
 
@@ -526,6 +538,41 @@ def agent_model_to_code(model: Agent, file_path: str):
                 f.write(f"description=\"{desc}\"")
             f.write(")\n")
         f.write("\n")
+
+        rag_configs = getattr(model, 'rags', []) or []
+        if rag_configs:
+            f.write("# RAG CONFIGURATIONS\n")
+            for index, rag in enumerate(rag_configs):
+                vector_store = getattr(rag, 'vector_store', None)
+                splitter = getattr(rag, 'splitter', None)
+                if not vector_store or not splitter:
+                    continue
+                base_name = safe_identifier(rag.name, f"rag_{index}")
+                vector_var = f"{base_name}_vector_store"
+                splitter_var = f"{base_name}_splitter"
+                rag_var = f"{base_name}_rag"
+
+                f.write(f"{vector_var} = RAGVectorStore(\n")
+                f.write(f"    embedding_provider={repr(vector_store.embedding_provider)},\n")
+                f.write(f"    embedding_parameters={repr(vector_store.embedding_parameters or {})},\n")
+                f.write(f"    persist_directory={repr(vector_store.persist_directory)},\n")
+                f.write(")\n")
+
+                f.write(f"{splitter_var} = RAGTextSplitter(\n")
+                f.write(f"    splitter_type={repr(splitter.splitter_type)},\n")
+                f.write(f"    chunk_size={splitter.chunk_size},\n")
+                f.write(f"    chunk_overlap={splitter.chunk_overlap},\n")
+                f.write(")\n")
+
+                f.write(f"{rag_var} = agent.new_rag(\n")
+                f.write(f"    name={repr(rag.name)},\n")
+                f.write(f"    vector_store={vector_var},\n")
+                f.write(f"    splitter={splitter_var},\n")
+                f.write(f"    llm_name={repr(rag.llm_name)},\n")
+                f.write(f"    k={rag.k},\n")
+                f.write(f"    num_previous_messages={rag.num_previous_messages},\n")
+                f.write(")\n\n")
+
         
         # Check if an LLM is necessary
         llm_required = False
@@ -580,6 +627,14 @@ def agent_model_to_code(model: Agent, file_path: str):
                         f.write(f"{state.name}_body = Body('{state.name}_body')\n")
                         f.write(f"{state.name}_body.add_action(LLMReply())\n")
                         f.write(f"{state.name}.set_body({state.name}_body)\n")
+                    elif isinstance(state.body.actions[0], RAGReply):
+                        print("RAGReply found in state body")
+                        f.write(f"{state.name}_body = Body('{state.name}_body')\n")
+                        for action in state.body.actions:
+                            rag_name = (action.rag_db_name or '').replace('\\', '\\\\').replace("'", "\\'")
+                            f.write(f"{state.name}_body.add_action(RAGReply('{rag_name}'))\n")
+                        f.write("\n")
+                        f.write(f"{state.name}.set_body({state.name}_body)\n")
                     elif isinstance(state.body.actions[0], CustomCodeAction):
                         action = state.body.actions[0]
                         f.write(f"{action.to_code()}\n")
@@ -605,6 +660,13 @@ def agent_model_to_code(model: Agent, file_path: str):
                     elif isinstance(state.fallback_body.actions[0], LLMReply):
                         f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
                         f.write(f"{state.name}_fallback_body.add_action(LLMReply())\n")
+                        f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
+                    elif isinstance(state.fallback_body.actions[0], RAGReply):
+                        f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
+                        for action in state.fallback_body.actions:
+                            rag_name = (action.rag_db_name or '').replace('\\', '\\\\').replace("'", "\\'")
+                            f.write(f"{state.name}_fallback_body.add_action(RAGReply('{rag_name}'))\n")
+                        f.write("\n")
                         f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
                     elif isinstance(state.fallback_body.actions[0], CustomCodeAction):
                         action = state.fallback_body.actions[0]

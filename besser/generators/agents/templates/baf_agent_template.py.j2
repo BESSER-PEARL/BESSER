@@ -19,6 +19,13 @@ from besser.agent.core.session import Session
 from besser.agent.nlp.intent_classifier.intent_classifier_configuration import LLMIntentClassifierConfiguration, SimpleIntentClassifierConfiguration
 from besser.agent.nlp.speech2text.openai_speech2text import OpenAISpeech2Text
 from besser.agent.nlp.text2speech.openai_text2speech import OpenAIText2Speech
+{% if agent.rags and agent.rags|length > 0 -%}
+from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from besser.agent import nlp
+from besser.agent.nlp.rag.rag import RAG
+{% endif -%}
 
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
@@ -243,6 +250,52 @@ stt = OpenAISpeech2Text(agent=agent, model_name="whisper-1")
 tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
 {% endif -%}
 
+{% if agent.rags and agent.rags|length > 0 -%}
+##############################
+# RAG CONFIGURATIONS
+##############################
+
+{% for rag in agent.rags -%}
+    {% set rag_slug = rag.name | lower | replace(' ', '_') | replace('-', '_') %}
+    {% if rag_slug == '' %}
+        {% set rag_slug = 'rag_' ~ loop.index0 %}
+    {% endif %}
+    {% set vector_var = rag_slug ~ '_vector_store' %}
+    {% set splitter_var = rag_slug ~ '_splitter' %}
+    {% set rag_var = rag_slug ~ '_rag' %}
+    {% if rag.vector_store and rag.vector_store.persist_directory %}
+        {% set persist_dir = rag.vector_store.persist_directory %}
+    {% else %}
+        {% set persist_dir = 'vector_store/' ~ rag_slug %}
+    {% endif %}
+    {% if rag.splitter and rag.splitter.chunk_size %}
+        {% set chunk_size = rag.splitter.chunk_size %}
+    {% else %}
+        {% set chunk_size = 1000 %}
+    {% endif %}
+    {% if rag.splitter and rag.splitter.chunk_overlap is not none %}
+        {% set chunk_overlap = rag.splitter.chunk_overlap %}
+    {% else %}
+        {% set chunk_overlap = 100 %}
+    {% endif %}
+{{ vector_var }} = Chroma(
+    embedding_function=OpenAIEmbeddings(openai_api_key=agent.get_property(nlp.OPENAI_API_KEY)),
+    persist_directory='{{ persist_dir }}'
+)
+{{ splitter_var }} = RecursiveCharacterTextSplitter(chunk_size={{ chunk_size }}, chunk_overlap={{ chunk_overlap }})
+{{ rag_var }} = RAG(
+    agent=agent,
+    vector_store={{ vector_var }},
+    splitter={{ splitter_var }},
+    llm_name='{{ rag.llm_name | replace('\\', '\\\\') | replace("'", "\\'") if rag.llm_name else 'gpt-4o-mini' }}',
+    k={{ rag.k if rag.k is not none else 4 }},
+    num_previous_messages={{ rag.num_previous_messages if rag.num_previous_messages is not none else 0 }}
+)
+{{ rag_var }}.load_pdfs('./{{ rag_slug }}')
+
+{% endfor -%}
+{% endif -%}
+
 {% macro write_ic_config(ic_config) -%}
 {% if is_class(ic_config, 'SimpleIntentClassifierConfiguration') -%}SimpleIntentClassifierConfiguration(
         num_words={{ ic_config.num_words }},
@@ -399,6 +452,12 @@ def {{ state.body.name }}(session: Session):
     {% if has_speech_output %}
     platform.reply_speech(message)
     {% endif %}
+{% elif state.body.actions and is_class(state.body.actions[0], 'RAGReply') %}
+def {{ state.body.name }}(session: Session):
+    {% for action in state.body.actions -%}
+    rag_message = session.run_rag(session.event.message)
+    platform.reply_rag(session, rag_message)
+    {% endfor -%}
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.body) }}
 {% endif %}
@@ -423,6 +482,12 @@ def {{ state.fallback_body.name }}(session: Session):
     {% if has_speech_output %}
     platform.reply_speech(message)
     {% endif %}
+{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'RAGReply') %}
+def {{ state.fallback_body.name }}(session: Session):
+    {% for action in state.fallback_body.actions -%}
+    rag_message = session.run_rag(session.event.message)
+    platform.reply_rag(session, rag_message)
+    {% endfor -%}
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.fallback_body) }}
 {% endif %}

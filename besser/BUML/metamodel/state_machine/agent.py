@@ -64,6 +64,24 @@ class LLMReply(Action):
         return "LLMReply()"
 
 
+class RAGReply(Action):
+    """Primitive action that represents sending a reply using a configured RAG pipeline.
+
+    Args:
+        rag_db_name (str): The logical name of the RAG database to query.
+
+    Attributes:
+        rag_db_name (str): Identifier of the RAG database that should handle the reply.
+    """
+
+    def __init__(self, rag_db_name: str):
+        super().__init__()
+        self.rag_db_name: str = rag_db_name
+
+    def __repr__(self):
+        return f"RAGReply(rag_db_name={self.rag_db_name!r})"
+
+
 class IntentClassifierConfiguration(ABC):
     """The Intent Classifier Configuration abstract class.
 

@@ -251,6 +251,15 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
 {% endif -%}
 
 {% if agent.rags and agent.rags|length > 0 -%}
+rag_llm = LLMOpenAI(
+    agent=agent,
+    name='gpt-4o-mini',
+    parameters={},
+    num_previous_messages=10
+)
+{% endif -%}
+
+{% if agent.rags and agent.rags|length > 0 -%}
 ##############################
 # RAG CONFIGURATIONS
 ##############################

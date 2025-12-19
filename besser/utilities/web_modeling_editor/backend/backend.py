@@ -184,10 +184,11 @@ def generate_agent_files(agent_model, config):
             
             # Add all files from the output directory
             if os.path.exists(OUTPUT_DIR):
-                for file_name in os.listdir(OUTPUT_DIR):
-                    file_path = os.path.join(OUTPUT_DIR, file_name)
-                    if os.path.isfile(file_path):
-                        zip_file.write(file_path, file_name)
+                for root, _, files in os.walk(OUTPUT_DIR):
+                    for file_name in files:
+                        file_path = os.path.join(root, file_name)
+                        arcname = os.path.relpath(file_path, OUTPUT_DIR)
+                        zip_file.write(file_path, arcname)
         
         zip_buffer.seek(0)
         return zip_buffer, AGENT_OUTPUT_FILENAME

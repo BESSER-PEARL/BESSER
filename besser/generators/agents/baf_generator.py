@@ -65,6 +65,12 @@ class BAFGenerator(GeneratorInterface):
             else:
                 return None
 
+        def rag_slug(name: str, index: int) -> str:
+            slug = (name or '').strip().lower().replace(' ', '_').replace('-', '_')
+            if not slug:
+                slug = f"rag_{index}"
+            return slug
+
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
         env.globals['is_class'] = is_class
@@ -110,3 +116,14 @@ class BAFGenerator(GeneratorInterface):
             generated_code = readme_template.render(agent=self.model)
             f.write(generated_code)
             print("Agent readme file generated in the location: " + readme_path)
+
+        rag_configs = getattr(self.model, 'rags', []) or []
+        if rag_configs:
+            rag_base_dir = self.build_generation_dir()
+            for idx, rag in enumerate(rag_configs):
+                target_dir = os.path.join(rag_base_dir, rag_slug(getattr(rag, 'name', ''), idx))
+                os.makedirs(target_dir, exist_ok=True)
+                readme_path = os.path.join(target_dir, "README.txt")
+                if not os.path.exists(readme_path):
+                    with open(readme_path, "w", encoding="utf-8") as readme_file:
+                        readme_file.write("Place your PDF documents for this RAG database inside this folder before running the agent.\n")

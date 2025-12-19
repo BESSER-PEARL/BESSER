@@ -305,7 +305,7 @@ class Block(ConditionalBranch):
         self.__statements = statements
 
     @property
-    def statements(self) -> any:
+    def statements(self) -> list[Statements]:
         return self.__statements
 
     @statements.setter
@@ -849,16 +849,16 @@ class ArrayAccess(AssignTarget, Expression):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_ArrayAccess(self, context)
 
-    def __init__(self, receiver: "Expression", index: int):
+    def __init__(self, receiver: "Expression", index: Expression):
         self.__index = index
         self.__receiver = receiver
 
     @property
-    def index(self) -> int:
+    def index(self) -> Expression:
         return self.__index
 
     @index.setter
-    def index(self, index: int):
+    def index(self, index: Expression):
         self.__index = index
 
     @property

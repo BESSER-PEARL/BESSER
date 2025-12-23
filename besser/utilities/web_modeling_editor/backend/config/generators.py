@@ -13,6 +13,7 @@ from besser.generators.backend import BackendGenerator
 from besser.generators.json import JSONSchemaGenerator
 from besser.generators.agents.baf_generator import BAFGenerator
 from besser.generators.web_app import WebAppGenerator
+from besser.generators.qiskit import QiskitGenerator
 
 
 class GeneratorInfo(NamedTuple):
@@ -105,6 +106,15 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="ai_agent",
         requires_class_diagram=False
     ),
+    
+    # Quantum generators
+    "qiskit": GeneratorInfo(
+        generator_class=QiskitGenerator,
+        output_type="file",
+        file_extension=".py",
+        category="quantum",
+        requires_class_diagram=False
+    ),
 }
 
 
@@ -129,6 +139,8 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "tables.sql"
     elif generator_type == "jsonschema":
         return "json_schema.json"
+    elif generator_type == "qiskit":
+        return "qiskit_circuit.py"
     else:
         return f"{generator_type}_output{info.file_extension}"
 

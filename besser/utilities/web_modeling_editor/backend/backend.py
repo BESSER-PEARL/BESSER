@@ -48,6 +48,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_object_diagram,
     json_to_buml_project,
     process_gui_diagram,
+    process_quantum_diagram,
     # BUML to JSON converters
     class_buml_to_json,
     parse_buml_content,
@@ -230,6 +231,26 @@ async def generate_code_output_from_project(input_data: ProjectInput):
         if generator_type == "web_app":
             return await _handle_web_app_project_generation(input_data, generator_info, config)
 
+        # Handle Qiskit generator (requires QuantumCircuitDiagram)
+        if generator_type == "qiskit":
+            quantum_diagram = input_data.diagrams.get("QuantumCircuitDiagram")
+            if not quantum_diagram:
+                raise HTTPException(
+                    status_code=400,
+                    detail="QuantumCircuitDiagram is required for Qiskit generator"
+                )
+            # Convert to DiagramInput with the quantum diagram data
+            diagram_input = DiagramInput(
+                id=quantum_diagram.id,
+                title=quantum_diagram.title,
+                model=quantum_diagram.model,
+                lastUpdate=quantum_diagram.lastUpdate,
+                generator=generator_type,
+                config=config,
+                referenceDiagramData=quantum_diagram.referenceDiagramData if hasattr(quantum_diagram, 'referenceDiagramData') else None
+            )
+            return await generate_code_output(diagram_input)
+
         # For other generators, use the current diagram
         current_diagram = input_data.diagrams.get(input_data.currentDiagramType)
         if not current_diagram:
@@ -289,6 +310,10 @@ async def generate_code_output(input_data: DiagramInput):
         # Handle agent generators (different diagram type)
         if generator_info.category == "ai_agent":
             return await _handle_agent_generation(json_data)
+            
+        # Handle quantum generators
+        if generator_info.category == "quantum":
+            return await _generate_qiskit(json_data, generator_info.generator_class, input_data.config, temp_dir)
 
         # Handle class diagram based generators
         return await _handle_class_diagram_generation(
@@ -579,6 +604,52 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
         )
     else:
         return _create_file_response(temp_dir, "jsonschema")
+
+async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_dir: str):
+    """Generate Qiskit code."""
+    # Process quantum diagram
+    # Note: json_data here is the DiagramInput model dump, so it has 'model' field
+    # process_quantum_diagram expects the diagram data structure
+    
+    # Validate that this is a quantum diagram (has 'cols' in model)
+    model_data = json_data.get('model', {})
+    if not isinstance(model_data, dict) or 'cols' not in model_data:
+        # Check if this looks like a ClassDiagram or other diagram type
+        diagram_type = model_data.get('type', 'unknown') if isinstance(model_data, dict) else 'unknown'
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid diagram type for Qiskit generator. Expected QuantumCircuitDiagram but received '{diagram_type}'. "
+                   f"Please use the 'generate-output-from-project' endpoint or select the Quantum Circuit diagram."
+        )
+    
+    # Debug logging
+    # print(f"[Qiskit Gen] json_data keys: {json_data.keys()}")
+    # print(f"[Qiskit Gen] title: {json_data.get('title')}")
+    # print(f"[Qiskit Gen] model keys: {model_data.keys() if isinstance(model_data, dict) else type(model_data)}")
+    # cols = model_data.get('cols', []) if isinstance(model_data, dict) else []
+    # print(f"[Qiskit Gen] cols length: {len(cols)}")
+    # if cols:
+    #     print(f"[Qiskit Gen] first col: {cols[0]}")
+    
+    quantum_model = process_quantum_diagram(json_data)
+    
+    # print(f"[Qiskit Gen] quantum_model: {quantum_model}")
+    # print(f"[Qiskit Gen] qregs: {quantum_model.qregs}")
+    # print(f"[Qiskit Gen] operations count: {len(quantum_model.operations)}")
+    
+    # Extract Qiskit config
+    backend_type = config.get('backend', 'aer_simulator') if config else 'aer_simulator'
+    shots = config.get('shots', 1024) if config else 1024
+    
+    generator_instance = generator_class(
+        quantum_model, 
+        output_dir=temp_dir,
+        backend_type=backend_type,
+        shots=shots
+    )
+    generator_instance.generate()
+    
+    return _create_file_response(temp_dir, "qiskit")
 
 def _check_for_agent_components(gui_model):
     """Check if the GUI model contains any agent components."""

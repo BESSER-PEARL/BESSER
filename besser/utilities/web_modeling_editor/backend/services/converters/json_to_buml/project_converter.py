@@ -19,7 +19,7 @@ def json_to_buml_project(project):
     description = project.description or ""
 
     # List of diagram names to check
-    diagram_names = ["ClassDiagram", "ObjectDiagram", "StateMachineDiagram", "AgentDiagram", "GUINoCodeDiagram"]
+    diagram_names = ["ClassDiagram", "ObjectDiagram", "StateMachineDiagram", "AgentDiagram", "GUINoCodeDiagram", "QuantumCircuitDiagram"]
     diagrams = {}
 
     # Filter out empty diagrams (those without elements)
@@ -36,6 +36,20 @@ def json_to_buml_project(project):
                     pages = getattr(diag.model, "pages", None)
                 # GUI diagram is valid if it has pages
                 if diag and pages:
+                    diagrams[d_name] = diag
+                else:
+                    diagrams[d_name] = None
+            else:
+                diagrams[d_name] = None
+
+        elif d_name == "QuantumCircuitDiagram":
+            # Quantum diagram has "cols" and "gates"
+            if diag and hasattr(diag, "model"):
+                if isinstance(diag.model, dict):
+                    cols = diag.model.get("cols")
+                else:
+                    cols = getattr(diag.model, "cols", None)
+                if diag and cols is not None: # Empty list is valid
                     diagrams[d_name] = diag
                 else:
                     diagrams[d_name] = None
@@ -106,6 +120,13 @@ def json_to_buml_project(project):
             # GUI diagram exists but no ClassDiagram - skip GUI processing
             print("Warning: GUINoCodeDiagram found but ClassDiagram is missing. Skipping GUI processing.")
 
+
+    # Process QuantumCircuitDiagram if it exists
+    quantum_model_py = diagrams.get("QuantumCircuitDiagram")
+    if quantum_model_py:
+        from .quantum_diagram_processor import process_quantum_diagram
+        quantum_model = process_quantum_diagram(quantum_model_py.model_dump())
+        model_list.append(quantum_model)
 
     metadata = Metadata(description=description)
 

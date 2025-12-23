@@ -1,0 +1,8 @@
+Version 5.4.1
+=============
+
+Fixe
+-----
+
+* Fixed issue: `#368 <https://github.com/BESSER-PEARL/BESSER/issues/368>`_  
+  Resolved a bug where the OCL parser incorrectly handled constraints due to mismatches between the editor and backend parsing logic. OCL constraints are now parsed consistently and correctly across both components.

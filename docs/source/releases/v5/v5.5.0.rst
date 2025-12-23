@@ -1,0 +1,71 @@
+Version 5.5.0
+=============
+
+This release introduces significant enhancements to the **Backend Generator** with class method execution endpoints, and major improvements to the **React Generator** for dashboard components, chart data series modeling, and method execution buttons in the generated frontend.
+
+New Features and Improvements
+-----------------------------
+
+**Backend Generator - Class Method Endpoints**
+
+* Added automatic generation of **API endpoints for class methods** defined in B-UML models, enabling direct method execution via REST API calls.
+* Implemented support for two types of method endpoints:
+    * **Instance methods** (with ``self``): ``POST /{entity}/{id}/methods/{method_name}/`` - Execute methods on specific entity instances
+    * **Class methods** (without ``self``): ``POST /{entity}/methods/{method_name}/`` - Execute class-level operations
+* Added support for method parameters with automatic type inference for ``str``, ``int``, ``float``, ``bool``, ``date``, ``datetime``, and ``time`` types.
+* Method execution captures ``print()`` output and returns it in the API response along with the method result.
+* Automatic database session injection for methods requiring database access.
+
+**Dashboard and Chart Component Modeling**
+
+* Added a new ``Series`` class to represent data series in charts, enabling more structured and extensible chart definitions.
+* Updated the ``Chart`` class to include a list of ``Series`` objects with appropriate property accessors.
+* Enhanced chart rendering with support for multiple data series and improved data binding.
+
+**Button and Method Execution Support**
+
+* Extended the ``ButtonActionType`` enum with new action types for clearer semantics:
+    * ``Navigate`` - Navigation actions
+    * ``RunMethod`` - Execute class/instance methods
+    * ``Create`` - Create new entities
+    * ``Update`` - Update existing entities
+    * ``Delete`` - Delete entities
+* Refactored the ``Button`` class to support:
+    * Direct method execution with configurable endpoints
+    * CRUD operations with entity binding
+    * Confirmation dialogs for destructive actions
+    * Legacy button configuration compatibility
+* Added new properties and accessors for method execution parameters and instance sourcing.
+
+**React Code Generation and Serialization**
+
+* Enhanced the React generator to serialize method execution details for buttons, including:
+    * Endpoint URLs with dynamic parameter substitution
+    * Input parameter definitions and validation
+    * Instance source configuration for context-aware method calls
+* Improved support for both legacy and new method button configurations.
+* Added new template files for table filtering and sorting functionality.
+
+**React Frontend Rendering**
+
+* Updated the ``Renderer`` component to detect and render method execution buttons using the new ``MethodButton`` component.
+* Implemented dynamic form generation for method parameters with type-appropriate input controls.
+* Added support for API calls to execute methods directly from the UI with loading states and error handling.
+* Both new and legacy method button configurations are supported for backward compatibility.
+
+
+Documentation
+-------------
+
+* Added comprehensive documentation for the Backend Generator's class method endpoints, including:
+    * Complete API endpoint reference tables
+    * Supported parameter types
+    * Request/response format examples
+    * Instance vs. class method usage examples
+
+Fixes
+-----
+
+* Fixed type handling for ``time`` type in Pydantic class generation.
+* Improved error handling in method execution endpoints with detailed error messages.
+* Fixed serialization issues with nested method configurations in React code generation.

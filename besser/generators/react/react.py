@@ -1232,11 +1232,24 @@ class ReactGenerator(GeneratorInterface):
         return filtered
 
     @staticmethod
-    def _clean_dict(data: Dict[str, Any]) -> Dict[str, Any]:
+    def _clean_dict(data: Dict[str, Any], preserve_keys: set = None) -> Dict[str, Any]:
+        """Clean dict by removing empty/None values.
+        
+        Args:
+            data: Dictionary to clean
+            preserve_keys: Set of keys to preserve even if their value is empty
+        """
+        if preserve_keys is None:
+            preserve_keys = {"components", "children"}  # Always preserve these for TypeScript compatibility
+        
         cleaned: Dict[str, Any] = {}
         for key, value in data.items():
             if isinstance(value, bool):
                 cleaned[key] = value
+                continue
+            # Preserve specified keys even if empty (for TypeScript type safety)
+            if key in preserve_keys:
+                cleaned[key] = value if value is not None else []
                 continue
             if value in (None, "", [], {}, ()):
                 continue

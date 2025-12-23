@@ -16,6 +16,17 @@ New Features and Improvements
 * Method execution captures ``print()`` output and returns it in the API response along with the method result.
 * Automatic database session injection for methods requiring database access.
 
+**Auto-Generated GUI from Class Diagrams**
+
+* Added support for **automatic GUI generation directly from Class Diagrams**.
+* For each class, the system now generates:
+    * A navigation entry in the sidebar
+    * A dedicated management page with a data table
+    * Built-in create, edit, and delete actions
+    * Action buttons for executing class and instance methods
+* Generated pages include sorting, pagination, and integration with method execution workflows.
+* Ensures consistency between the domain model and the generated frontend while significantly reducing manual UI configuration.
+
 **Dashboard and Chart Component Modeling**
 
 * Added a new ``Series`` class to represent data series in charts, enabling more structured and extensible chart definitions.
@@ -39,20 +50,15 @@ New Features and Improvements
 
 **React Code Generation and Serialization**
 
-* Enhanced the React generator to serialize method execution details for buttons, including:
-    * Endpoint URLs with dynamic parameter substitution
-    * Input parameter definitions and validation
-    * Instance source configuration for context-aware method calls
-* Improved support for both legacy and new method button configurations.
-* Added new template files for table filtering and sorting functionality.
+* Serialized method execution details in the React generator (endpoints, parameters, instance context).
+* Updated the renderer to detect and render method buttons using the new ``MethodButton`` component.
+* Added dynamic parameter forms and direct API execution with loading and error handling.
+* Maintained support for both legacy and new method button configurations.
+* Added templates for table filtering and sorting.
 
-**React Frontend Rendering**
+**Web Modeling Editor Enhancements**
 
-* Updated the ``Renderer`` component to detect and render method execution buttons using the new ``MethodButton`` component.
-* Implemented dynamic form generation for method parameters with type-appropriate input controls.
-* Added support for API calls to execute methods directly from the UI with loading states and error handling.
-* Both new and legacy method button configurations are supported for backward compatibility.
-
+* New sidebar for pages
 
 Documentation
 -------------

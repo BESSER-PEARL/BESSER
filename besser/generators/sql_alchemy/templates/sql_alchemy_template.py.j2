@@ -11,7 +11,7 @@ from sqlalchemy.ext.declarative import AbstractConcreteBase
 from sqlalchemy.orm import (
     column_property, DeclarativeBase, Mapped, mapped_column, relationship
 )
-from datetime import datetime, time, date
+from datetime import datetime as dt_datetime, time as dt_time, date as dt_date
 
 class Base(DeclarativeBase):
     pass
@@ -146,7 +146,7 @@ class {{ asso_class.name }}(Base):
     {%- if end.multiplicity.max == 1 and ns.other_end_max == 1 %}, unique=True{% endif %})
     {%- endfor %}
     {%- for attribute in sort(asso_class.attributes) %}
-    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {{ attribute.name }}: Mapped[{{ helper.mapped_type(attribute.type.name) }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
     {%- if attribute.is_id or (attribute.name == ids.get(asso_class.name)) %}, primary_key=True{% endif %})
     {%- endfor %}
 {% endfor %}

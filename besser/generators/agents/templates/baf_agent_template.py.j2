@@ -218,25 +218,25 @@ platform = agent.use_websocket_platform(use_ui=True)
 # LLM instantiation based on config['llm']
 {% if config and 'llm' in config and config['llm'] -%}
     {%- if config['llm']['provider'] == 'openai' -%}
-gpt = LLMOpenAI(
+reply_llm = LLMOpenAI(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
     {%- elif config['llm']['provider'] == 'huggingface' -%}
-hf_llm = LLMHuggingFace(
+reply_llm = LLMHuggingFace(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
     {%- elif config['llm']['provider'] == 'huggingfaceapi' -%}
-hf_llm_api = LLMHuggingFaceAPI(
+reply_llm_api = LLMHuggingFaceAPI(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
     {%- elif config['llm']['provider'] == 'replicate' -%}
-replicate_llm = LLMReplicate(
+reply_llm = LLMReplicate(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
@@ -353,9 +353,9 @@ agent.set_default_ic_config(ic_config)
 
 
 
-{% if agent.llms != [] %}
+{% if agent.llms != [] and (not config or 'llm' not in config or not config['llm']) %}
 {% for llm in agent.llms -%}
-llm = {{ llm.__class__.__name__}}(
+reply_llm = {{ llm.__class__.__name__}}(
     name='{{ llm.name }}',
     agent=agent,
     {% if llm.parameters -%}
@@ -456,7 +456,7 @@ def {{ state.body.name }}(session: Session):
     {% endfor -%}
 {% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
 def {{ state.body.name }}(session: Session):
-    message = llm.predict(session.event.message)
+    message = reply_llm.predict(session.event.message)
     session.reply(message)
     {% if has_speech_output %}
     platform.reply_speech(message)
@@ -486,7 +486,7 @@ def {{ state.fallback_body.name }}(session: Session):
     {% endfor %}
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}
 def {{ state.fallback_body.name }}(session: Session):
-    message = llm.predict(session.event.message)
+    message = reply_llm.predict(session.event.message)
     session.reply(message)
     {% if has_speech_output %}
     platform.reply_speech(message)

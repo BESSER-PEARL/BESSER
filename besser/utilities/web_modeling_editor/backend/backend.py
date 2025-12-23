@@ -17,12 +17,11 @@ import sys
 import asyncio
 from datetime import datetime
 from typing import List, Dict, Any
-
+import sys
+sys.path.append("C:/Users/Aaron/Documents/GitHub/BESSER")
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
 
-import sys
-sys.path.append("C:/Users/conrardy/Desktop/git/BESSER")
 
 # BESSER image-to-UML and BUML utilities
 from besser.utilities.image_to_buml import image_to_buml
@@ -72,6 +71,9 @@ from besser.utilities.web_modeling_editor.backend.services.deployment import (
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     cleanup_temp_resources,
     validate_generator,
+)
+from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+    build_configurations_package,
 )
 
 # Backend configuration
@@ -347,7 +349,8 @@ async def _handle_agent_generation(json_data: dict):
     try:
         # Get languages from config if present
         config = json_data.get('config', {})
-        languages = config.get('languages') if config else None
+        languages = config.get('languages') if isinstance(config, dict) else None
+        configuration_variants = config.get('configurations') if isinstance(config, dict) else None
 
         # New format: languages is a dict with 'source' and 'target'
         if languages and isinstance(languages, dict):
@@ -409,6 +412,18 @@ async def _handle_agent_generation(json_data: dict):
                 zip_buffer,
                 media_type="application/zip",
                 headers={"Content-Disposition": "attachment; filename=agents_multi_lang.zip"},
+            )
+        elif configuration_variants and isinstance(configuration_variants, list):
+            agent_model = process_agent_diagram(json_data)
+            bundle_buffer = build_configurations_package(
+                agent_model,
+                configuration_variants,
+                generate_agent_files,
+            )
+            return StreamingResponse(
+                bundle_buffer,
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={AGENT_OUTPUT_FILENAME}"},
             )
         else:
             # Single agent (default behavior)

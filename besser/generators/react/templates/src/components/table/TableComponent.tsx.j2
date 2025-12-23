@@ -1,6 +1,9 @@
 import React, { CSSProperties, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { createPortal } from "react-dom";
+import { useTableContext } from "../../contexts/TableContext";
+import { ColumnFilter } from "./ColumnFilter";
+import { ColumnSort } from "./ColumnSort";
 import "./TableComponent.css";
 
 interface TableColumn {
@@ -76,6 +79,10 @@ export const TableComponent: React.FC<Props> = ({
 }) => {
   // Local state for table data
   const [tableData, setTableData] = useState<any[]>(data ?? []);
+  const { setSelectedRow, registerTableRefresh } = useTableContext();
+  const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
+  const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
+  const [sortConfig, setSortConfig] = useState<{ field: string; direction: 'asc' | 'desc' } | null>(null);
 
   // Fetch table data from backend
   const fetchTableData = async () => {
@@ -111,6 +118,12 @@ export const TableComponent: React.FC<Props> = ({
       console.error("Error fetching table data:", err);
     }
   };
+
+  // Register refresh function with context
+  useEffect(() => {
+    registerTableRefresh(id, fetchTableData);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   // Initial fetch and update on data prop change
   useEffect(() => {
@@ -198,6 +211,197 @@ export const TableComponent: React.FC<Props> = ({
     }));
   }, [normalizedRows, resolvedOptions.columns]);
 
+  // Apply column filters
+  const filteredRows = useMemo(() => {
+    if (Object.keys(columnFilters).length === 0) {
+      return normalizedRows;
+    }
+
+    return normalizedRows.filter((row) => {
+      return Object.entries(columnFilters).every(([field, filterValue]) => {
+        if (!filterValue) return true;
+
+        // Find the column definition to check if it's a lookup
+        const column = columns.find(col => col.field === field);
+        let cellValue;
+
+        // Handle lookup columns
+        if (column?.columnType === 'lookup' && column.lookupField) {
+          if (column.type === 'list') {
+            // For list lookups (e.g., books array), get array of nested values
+            const relatedArray = row[column.field];
+            if (Array.isArray(relatedArray)) {
+              // Extract all lookup field values and join them for filtering
+              cellValue = relatedArray
+                .map(item => item[column.lookupField!])
+                .filter(val => val !== null && val !== undefined)
+                .join(', ');
+            } else {
+              cellValue = '';
+            }
+          } else {
+            // For single lookups (e.g., library.name), get nested value
+            if (column.relationshipKey) {
+              cellValue = getNestedValue(row, `${column.relationshipKey}.${column.lookupField}`);
+            }
+            if (!cellValue) {
+              cellValue = getNestedValue(row, `${column.field}.${column.lookupField}`);
+            }
+          }
+        } else {
+          cellValue = row[field];
+        }
+
+        // Special operators that don't need a value
+        if (filterValue === "empty") {
+          return cellValue === null || cellValue === undefined || cellValue === "";
+        }
+        if (filterValue === "not_empty") {
+          return cellValue !== null && cellValue !== undefined && cellValue !== "";
+        }
+
+        // Parse operator and value (format: "operator:value")
+        const parts = filterValue.split(":");
+        const operator = parts[0];
+        const searchValue = parts.slice(1).join(":");
+
+        if (!searchValue && operator !== "empty" && operator !== "not_empty") {
+          // Backward compatibility: no operator means contains
+          return String(cellValue || "").toLowerCase().includes(filterValue.toLowerCase());
+        }
+
+        // Handle null/undefined
+        if (cellValue === null || cellValue === undefined) {
+          return false;
+        }
+
+        const cellStr = String(cellValue).toLowerCase();
+        const searchStr = searchValue.toLowerCase();
+
+        // String operators
+        if (operator === "contains") {
+          return cellStr.includes(searchStr);
+        }
+        if (operator === "equals") {
+          return cellStr === searchStr;
+        }
+        if (operator === "starts_with") {
+          return cellStr.startsWith(searchStr);
+        }
+        if (operator === "ends_with") {
+          return cellStr.endsWith(searchStr);
+        }
+
+        // Numeric/Date operators
+        const cellNum = Number(cellValue);
+        const searchNum = Number(searchValue);
+
+        // Try numeric comparison first
+        if (!isNaN(cellNum) && !isNaN(searchNum)) {
+          if (operator === "eq") return cellNum === searchNum;
+          if (operator === "ne") return cellNum !== searchNum;
+          if (operator === "gt") return cellNum > searchNum;
+          if (operator === "gte") return cellNum >= searchNum;
+          if (operator === "lt") return cellNum < searchNum;
+          if (operator === "lte") return cellNum <= searchNum;
+        }
+
+        // Try date comparison
+        const cellDate = new Date(cellValue);
+        const searchDate = new Date(searchValue);
+        
+        if (!isNaN(cellDate.getTime()) && !isNaN(searchDate.getTime())) {
+          if (operator === "eq") return cellDate.getTime() === searchDate.getTime();
+          if (operator === "ne") return cellDate.getTime() !== searchDate.getTime();
+          if (operator === "gt") return cellDate.getTime() > searchDate.getTime();
+          if (operator === "gte") return cellDate.getTime() >= searchDate.getTime();
+          if (operator === "lt") return cellDate.getTime() < searchDate.getTime();
+          if (operator === "lte") return cellDate.getTime() <= searchDate.getTime();
+        }
+
+        // String comparison as fallback
+        if (operator === "eq") return cellStr === searchStr;
+        if (operator === "ne") return cellStr !== searchStr;
+        if (operator === "gt") return cellStr > searchStr;
+        if (operator === "gte") return cellStr >= searchStr;
+        if (operator === "lt") return cellStr < searchStr;
+        if (operator === "lte") return cellStr <= searchStr;
+
+        return false;
+      });
+    });
+  }, [normalizedRows, columnFilters]);
+
+  const handleFilterChange = (field: string, value: string) => {
+    setColumnFilters((prev) => {
+      if (!value) {
+        const newFilters = { ...prev };
+        delete newFilters[field];
+        return newFilters;
+      }
+      return { ...prev, [field]: value };
+    });
+    setCurrentPage(1); // Reset to first page when filtering
+  };
+
+  const handleSortChange = (field: string) => {
+    setSortConfig((prev) => {
+      if (!prev || prev.field !== field) {
+        return { field, direction: 'asc' };
+      }
+      if (prev.direction === 'asc') {
+        return { field, direction: 'desc' };
+      }
+      return null; // Remove sorting
+    });
+  };
+
+  // Apply sorting after filtering
+  const sortedAndFilteredRows = useMemo(() => {
+    if (!sortConfig) {
+      return filteredRows;
+    }
+
+    const sorted = [...filteredRows].sort((a, b) => {
+      const aValue = a[sortConfig.field];
+      const bValue = b[sortConfig.field];
+
+      // Handle null/undefined
+      if (aValue === null || aValue === undefined) return 1;
+      if (bValue === null || bValue === undefined) return -1;
+
+      // Detect type and sort accordingly
+      const aNum = Number(aValue);
+      const bNum = Number(bValue);
+
+      // If both are valid numbers, sort numerically
+      if (!isNaN(aNum) && !isNaN(bNum)) {
+        return sortConfig.direction === 'asc' ? aNum - bNum : bNum - aNum;
+      }
+
+      // Try date parsing
+      const aDate = new Date(aValue);
+      const bDate = new Date(bValue);
+      if (!isNaN(aDate.getTime()) && !isNaN(bDate.getTime())) {
+        return sortConfig.direction === 'asc' 
+          ? aDate.getTime() - bDate.getTime() 
+          : bDate.getTime() - aDate.getTime();
+      }
+
+      // Default to string comparison
+      const aStr = String(aValue).toLowerCase();
+      const bStr = String(bValue).toLowerCase();
+      
+      if (sortConfig.direction === 'asc') {
+        return aStr < bStr ? -1 : aStr > bStr ? 1 : 0;
+      } else {
+        return bStr < aStr ? -1 : bStr > aStr ? 1 : 0;
+      }
+    });
+
+    return sorted;
+  }, [filteredRows, sortConfig]);
+
   const pageSize = Math.max(
     1,
     Number.isFinite(Number(resolvedOptions.rowsPerPage))
@@ -215,7 +419,7 @@ export const TableComponent: React.FC<Props> = ({
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [pageSize, normalizedRows.length]);
+  }, [pageSize, filteredRows.length]);
 
   // Reset form values when modal opens
   useEffect(() => {
@@ -288,16 +492,16 @@ export const TableComponent: React.FC<Props> = ({
   }, [showModal, columns, modalMode, editRowData]);
 
   const totalPages = resolvedOptions.showPagination
-    ? Math.max(1, Math.ceil(normalizedRows.length / pageSize))
+    ? Math.max(1, Math.ceil(sortedAndFilteredRows.length / pageSize))
     : 1;
 
   const visibleRows = useMemo(() => {
     if (!resolvedOptions.showPagination) {
-      return normalizedRows;
+      return sortedAndFilteredRows;
     }
     const start = (currentPage - 1) * pageSize;
-    return normalizedRows.slice(start, start + pageSize);
-  }, [currentPage, normalizedRows, pageSize, resolvedOptions.showPagination]);
+    return sortedAndFilteredRows.slice(start, start + pageSize);
+  }, [currentPage, sortedAndFilteredRows, pageSize, resolvedOptions.showPagination]);
 
   const containerStyle: CSSProperties = {
     display: "flex",
@@ -600,7 +804,7 @@ export const TableComponent: React.FC<Props> = ({
                                       }}
                                     />
                                     <span style={{ fontSize: "14px", color: "#1e293b" }}>
-                                      {(col.lookupField && option[col.lookupField]) || {% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
+                                      {(col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`}
                                     </span>
                                   </div>
                                 );
@@ -634,7 +838,7 @@ export const TableComponent: React.FC<Props> = ({
                           <option value="">-- Select {col.label} --</option>
                           {options.map((option: any) => (
                             <option key={option.id} value={option.id}>
-                              {(col.lookupField && option[col.lookupField]) || {% for field in all_table_fields %}option.[[field]] || {% endfor %}`ID: ${option.id}`}
+                              {(col.lookupField && option[col.lookupField]) || option.pages || option.stock || option.title || `ID: ${option.id}`}
                             </option>
                           ))}
                         </select>
@@ -811,7 +1015,19 @@ export const TableComponent: React.FC<Props> = ({
                         letterSpacing: "0.01em",
                       }}
                     >
-                      {column.label}
+                      <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                        <span>{column.label}</span>
+                        <ColumnSort
+                          column={column}
+                          currentSort={sortConfig}
+                          onSortChange={handleSortChange}
+                        />
+                        <ColumnFilter
+                          column={column}
+                          onFilterChange={handleFilterChange}
+                          currentValue={columnFilters[column.field] || ""}
+                        />
+                      </div>
                     </th>
                   ))}
                   {resolvedOptions.actionButtons && (
@@ -821,15 +1037,40 @@ export const TableComponent: React.FC<Props> = ({
               </thead>
             )}
             <tbody>
-              {visibleRows.map((row, rowIndex) => (
+              {visibleRows.map((row, rowIndex) => {
+                const actualRowIndex = (currentPage - 1) * pageSize + rowIndex;
+                const isSelected = selectedRowIndex === actualRowIndex;
+                
+                return (
                 <tr
                   key={`${id}-row-${rowIndex}`}
+                  onClick={() => {
+                    setSelectedRowIndex(actualRowIndex);
+                    setSelectedRow(id, row);
+                    console.log(`[TableComponent] Row selected in table ${id}:`, row);
+                  }}
                   style={{
-                    backgroundColor:
-                      resolvedOptions.stripedRows && rowIndex % 2 === 1
+                    backgroundColor: isSelected
+                      ? "#dbeafe"
+                      : resolvedOptions.stripedRows && rowIndex % 2 === 1
                         ? "#f8fafc"
                         : "#ffffff",
                     borderBottom: "1px solid #e2e8f0",
+                    cursor: "pointer",
+                    transition: "background-color 0.2s",
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = "#f1f5f9";
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.backgroundColor = 
+                        resolvedOptions.stripedRows && rowIndex % 2 === 1
+                          ? "#f8fafc"
+                          : "#ffffff";
+                    }
                   }}
                 >
                   {columns.map((column) => {
@@ -936,13 +1177,14 @@ export const TableComponent: React.FC<Props> = ({
                     </td>
                   )}
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
-      {resolvedOptions.showPagination && normalizedRows.length > 0 && (
+      {resolvedOptions.showPagination && filteredRows.length > 0 && (
         <div
           style={{
             display: "flex",
@@ -954,7 +1196,12 @@ export const TableComponent: React.FC<Props> = ({
           }}
         >
           <span>
-            Showing {visibleRows.length} of {normalizedRows.length} rows
+            Showing {visibleRows.length} of {sortedAndFilteredRows.length} rows
+            {Object.keys(columnFilters).length > 0 && (
+              <span style={{ color: "#2563eb", marginLeft: "4px" }}>
+                (filtered from {normalizedRows.length})
+              </span>
+            )}
           </span>
           <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
             <button

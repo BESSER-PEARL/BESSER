@@ -5,6 +5,20 @@ import stylesData from "../data/ui_styles.json";
 import { Renderer } from "../components/Renderer";
 import { applyStyle, StyleData } from "../utils/applyStyle";
 
+// Type definitions for the UI components data structure
+interface PageData {
+  id: string;
+  name: string;
+  description: string;
+  is_main: boolean;
+  route_path: string;
+  components: any[];
+}
+
+interface ComponentsData {
+  pages: PageData[];
+}
+
 const mainPageId = "[[ main_page_id or '' ]]";
 
 const Home: React.FC = () => {
@@ -17,15 +31,16 @@ const Home: React.FC = () => {
   console.log("stylesData:", stylesData);
   console.log("mainPageId:", mainPageId);
 
-  const pages = componentsData?.pages ?? [];
+  const typedData = componentsData as ComponentsData;
+  const pages = typedData?.pages ?? [];
   console.log("pages array:", pages);
 
   // Find page by route path or fallback to main page
-  let page = pages.find((p: any) => p.route_path === location.pathname);
+  let page: PageData | undefined = pages.find((p) => p.route_path === location.pathname);
   
   // If not found by route, use main page or first page
   if (!page) {
-    page = pages.find((p: any) => (mainPageId ? p.id === mainPageId : false)) ?? pages[0];
+    page = pages.find((p) => (mainPageId ? p.id === mainPageId : false)) ?? pages[0];
   }
 
   if (!page) {

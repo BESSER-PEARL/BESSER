@@ -1,7 +1,8 @@
 from typing import Optional, Sequence
-
 from besser.BUML.metamodel.gui.graphical_ui import ViewComponent
 from besser.BUML.metamodel.gui.style import Alignment
+from besser.BUML.metamodel.gui.binding import DataBinding
+from besser.BUML.metamodel.gui.style import Styling
 from besser.BUML.metamodel.structural import Property
 
 class AgentComponent(ViewComponent):
@@ -43,6 +44,22 @@ class AgentComponent(ViewComponent):
     def agent_title(self, value: Optional[str]):
         self._agent_title = value
 
+class Series(ViewComponent):
+    """Represents a data series in a chart.
+
+    Args:
+        name (str): The name of the series.
+        label (str | None): Label for the series.
+        data_binding (DataBinding): The data binding for the series.
+        styling (Styling): The styling for the series.
+    """
+    def __init__(self, name: str, label: Optional[str], data_binding: DataBinding, styling: Styling):
+        super().__init__(name, data_binding=data_binding, styling=styling)
+        self.label = label
+
+    def __repr__(self):
+        return f"Series(name={self.name}, label={self.label}, data_binding={self.data_binding}, styling={self.styling})"
+
 class Chart(ViewComponent):
     """Represents a chart component in the dashboard.
 
@@ -50,11 +67,13 @@ class Chart(ViewComponent):
         name (str): The name of the chart.
         title (str | None): Optional display title of the chart.
         primary_color (str | None): Optional primary color used by the chart.
+        series (list[Series]): List of data series in the chart.
     """
 
     def __init__(
         self,
         name: str,
+        series: Optional[Sequence[Series]] = None,
         title: Optional[str] = None,
         primary_color: Optional[str] = None,
         **kwargs,
@@ -62,6 +81,7 @@ class Chart(ViewComponent):
         super().__init__(name, **kwargs)
         self.title = title
         self.primary_color = primary_color
+        self.series = series
 
     @property
     def title(self) -> Optional[str]:
@@ -80,6 +100,18 @@ class Chart(ViewComponent):
     @primary_color.setter
     def primary_color(self, value: Optional[str]):
         self._primary_color = value
+    
+    @property
+    def series(self) -> list[Series]:
+        """list[Series]: List of data series in the chart."""
+        return self._series
+
+    @series.setter
+    def series(self, value: Optional[Sequence[Series]]):
+        if value is None:
+            self._series = []
+        else:
+            self._series = list(value)
 
 class LineChart(Chart):
     """Represents a line chart component in the dashboard.

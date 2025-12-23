@@ -120,6 +120,9 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
             # Write methods
             for method in sort(cls.methods):
+                # Extract just the method name (before any parenthesis) for the variable name
+                method_var_name = method.name.split('(')[0] if '(' in method.name else method.name
+                
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                 visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
                 
@@ -141,10 +144,10 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                 params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
 
                 if method_type:
-                    f.write(f"{cls_var_name}_m_{method.name}: Method = Method(name=\"{method.name}\""
+                    f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
                            f"{visibility_str}, parameters={params_str}, type={method_type}{code_str})\n")
                 else:
-                    f.write(f"{cls_var_name}_m_{method.name}: Method = Method(name=\"{method.name}\""
+                    f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
                            f"{visibility_str}, parameters={params_str}{code_str})\n")
 
             # Write assignments
@@ -152,7 +155,8 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                 attrs_str = ", ".join([f"{cls_var_name}_{attr.name}" for attr in cls.attributes])
                 f.write(f"{cls_var_name}.attributes={{{attrs_str}}}\n")
             if sort(cls.methods):
-                methods_str = ", ".join([f"{cls_var_name}_m_{method.name}" for method in cls.methods])
+                # Extract just method names for variable references
+                methods_str = ", ".join([f"{cls_var_name}_m_{method.name.split('(')[0] if '(' in method.name else method.name}" for method in cls.methods])
                 f.write(f"{cls_var_name}.methods={{{methods_str}}}\n")
             f.write("\n")
 
@@ -229,6 +233,9 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
                 # Write methods for the association class
                 for method in sort(ac.methods):
+                    # Extract just the method name (before any parenthesis) for the variable name
+                    method_var_name = method.name.split('(')[0] if '(' in method.name else method.name
+                    
                     method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                     visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
                     
@@ -250,10 +257,10 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                     params_str = "{" + ", ".join(f"{param}" for name, param in params.items()) + "}"
 
                     if method_type:
-                        f.write(f"{ac_var_name}_m_{method.name}: Method = Method(name=\"{method.name}\""
+                        f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
                                f"{visibility_str}, parameters={params_str}, type={method_type}{code_str})\n")
                     else:
-                        f.write(f"{ac_var_name}_m_{method.name}: Method = Method(name=\"{method.name}\""
+                        f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
                                f"{visibility_str}, parameters={params_str}{code_str})\n")
 
                 # Create attributes set string if attributes exist
@@ -265,7 +272,8 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                 # Create methods set string if methods exist
                 methods_str = ""
                 if sort(ac.methods):
-                    methods_list = ", ".join([f"{ac_var_name}_m_{method.name}" for method in ac.methods])
+                    # Extract just method names for variable references
+                    methods_list = ", ".join([f"{ac_var_name}_m_{method.name.split('(')[0] if '(' in method.name else method.name}" for method in ac.methods])
                     methods_str = f", methods={{{methods_list}}}"
 
                 # Now create the association class

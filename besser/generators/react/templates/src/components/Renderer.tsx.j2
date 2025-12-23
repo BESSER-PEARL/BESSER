@@ -10,6 +10,7 @@ import { applyStyle, StyleData } from "../utils/applyStyle";
 {% endif %}{% if 'MetricCard' in used_components %}import { MetricCardComponent } from "./charts/MetricCardComponent";
 {% endif %}{% if 'Table' in used_components %}import { TableComponent } from "./table/TableComponent";
 {% endif %}import { AgentComponent } from "./AgentComponent";
+import { MethodButton } from "./MethodButton";
 {% if 'Table' in used_components %}import "./table/TableComponent.css";
 {% endif %}
 
@@ -169,6 +170,54 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   }
 
   if (component.type === "button" || component.type === "action-button") {
+    // Check if this is a method button (from JSON attributes)
+    const actionType = component.attributes?.["data-action-type"] || component.action_type;
+    
+    if (actionType === "run-method") {
+      const isInstanceMethod = component.attributes?.["is-instance-method"] === "true" || component.attributes?.["is-instance-method"] === true;
+      const instanceSource = component.attributes?.["instance-source"];
+      const endpoint = component.attributes?.endpoint || "";
+      const inputParameters = component.attributes?.["input-parameters"] || {};
+      
+      // Convert input parameters from JSON format to MethodParameter array
+      const parameters = Object.entries(inputParameters).map(([name, type]) => ({
+        name,
+        type: String(type),
+        required: true,
+      }));
+      
+      return (
+        <MethodButton
+          endpoint={endpoint}
+          label={component.attributes?.["button-label"] || component.label || component.name || "Execute"}
+          parameters={parameters}
+          isInstanceMethod={isInstanceMethod}
+          instanceSourceTableId={instanceSource}
+          className={component.class_list?.join(' ')}
+          style={style}
+          backendUrl="http://localhost:8000"
+        />
+      );
+    }
+    
+    // Check if this is a method button (legacy method_config)
+    if (component.method_config) {
+      const methodConfig = component.method_config;
+      return (
+        <MethodButton
+          entityType={methodConfig.entity_type}
+          entityId={methodConfig.entity_id}
+          methodName={methodConfig.method_name}
+          label={component.label || component.name || methodConfig.method_name}
+          parameters={methodConfig.parameters || []}
+          isClassMethod={methodConfig.is_class_method || false}
+          className={component.class_list?.join(' ')}
+          style={style}
+          backendUrl="http://localhost:8000"
+        />
+      );
+    }
+
     const handleClick = () => {
       // Handle button events
       if (component.events && Array.isArray(component.events)) {

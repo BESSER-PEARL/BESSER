@@ -100,12 +100,20 @@ class RESTAPIGenerator(GeneratorInterface):
         # Generate requirements.txt first
         self.generate_requirements()
 
+        # Custom Jinja filter to extract clean method name (remove parameters if included)
+        def clean_method_name(name):
+            """Extract just the method name without parameters."""
+            if '(' in str(name):
+                return str(name).split('(')[0].strip()
+            return str(name).strip()
+
         if self.backend:
             file_path = self.build_generation_path(file_name="main_api.py")
             templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
             env = Environment(loader=FileSystemLoader(templates_path),
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
+            env.filters['clean_method_name'] = clean_method_name
             template = env.get_template('backend_fast_api_template.py.j2')
             with open(file_path, mode="w") as f:
                 generated_code = template.render(

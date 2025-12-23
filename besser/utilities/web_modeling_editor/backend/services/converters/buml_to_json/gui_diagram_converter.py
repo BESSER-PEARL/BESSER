@@ -347,6 +347,26 @@ def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
             target_screen_attr = _resolve_target_screen_id(button)
             if target_screen_attr:
                 attrs["target-screen"] = target_screen_attr
+    
+    # Handle method execution configuration
+    if hasattr(button, 'method_entity') and button.method_entity:
+        attrs["data-method-entity"] = button.method_entity.name if hasattr(button.method_entity, 'name') else str(button.method_entity)
+    elif hasattr(button, '_method_entity_name') and button._method_entity_name:
+        attrs["data-method-entity"] = button._method_entity_name
+    
+    if hasattr(button, 'method_name') and button.method_name:
+        attrs["data-method-name"] = button.method_name
+    
+    if hasattr(button, 'method_entity_id') and button.method_entity_id is not None:
+        attrs["data-method-entity-id"] = str(button.method_entity_id)
+    
+    if hasattr(button, 'method_parameters') and button.method_parameters:
+        import json
+        attrs["data-method-parameters"] = json.dumps(button.method_parameters)
+    
+    if hasattr(button, 'is_instance_method'):
+        attrs["instance-method"] = "true" if button.is_instance_method else "false"
+    
     crud_entity = attrs.get("crud-entity") or attrs.get("data-crud-entity")
     if not crud_entity:
         crud_entity = _resolve_crud_target(button)

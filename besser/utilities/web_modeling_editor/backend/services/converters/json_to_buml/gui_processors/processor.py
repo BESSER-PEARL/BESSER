@@ -48,7 +48,7 @@ from .component_parsers import (
 )
 from .constants import CONTAINER_TAGS, CONTAINER_TYPES, INPUT_COMPONENT_TYPES, TEXT_TAGS
 from .styling import build_style_map, resolve_component_styling
-from .utils import sanitize_name
+from .utils import sanitize_name, get_element_by_id, clean_method_name
 
 
 def process_gui_diagram(gui_diagram, class_model, domain_model):
@@ -492,31 +492,124 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 # Also map with "page:" prefix that GrapesJS uses
                 page_id_to_screen[f"page:{page_id}"] = screen
 
-    # Post-processing: Resolve Action references
-    def resolve_action_references(elements):
-        """Recursively resolve Action references (target_screen, target_class)."""
+    # Helper function to find component by ID recursively
+    def find_component_by_id(elements, component_id):
+        """Recursively search for a component by its ID."""
         for element in elements:
-            # Check if element is a Button with events
-            if isinstance(element, Button) and hasattr(element, 'events'):
-                for event in element.events:
-                    for action in event.actions:
-                        # Resolve Transition target_screen
-                        if isinstance(action, Transition) and hasattr(action, '_target_screen_id'):
-                            target_id = getattr(action, '_target_screen_id')
-                            # Try to resolve by page ID first (e.g., "page:nvPCYoWq2RVUadd9w")
-                            target_screen = page_id_to_screen.get(target_id)
-                            # Fall back to matching by screen name if ID lookup fails
-                            if not target_screen:
-                                target_screen = next((s for s in screen_list if s.name == target_id), None)
-                            if target_screen:
-                                action.target_screen = target_screen
-                        
-                        # Resolve CRUD target_class
-                        if isinstance(action, (Create, Read, Update, Delete)) and hasattr(action, '_target_class_name'):
-                            target_name = getattr(action, '_target_class_name')
-                            target_class = domain_model.get_class_by_name(target_name) if domain_model else None
-                            if target_class:
-                                action.target_class = target_class
+            if hasattr(element, 'name') and element.name == component_id:
+                return element
+            if isinstance(element, ViewContainer) and hasattr(element, 'view_elements'):
+                found = find_component_by_id(element.view_elements, component_id)
+                if found:
+                    return found
+        return None
+
+    # Post-processing: Resolve Action and Button class references
+    def resolve_action_references(elements):
+        """Recursively resolve Action references (target_screen, target_class) and Button class references."""
+        for element in elements:
+            # Resolve Button class references (method_btn, entity_class, instance_source)
+            if isinstance(element, Button):
+                # Resolve method_btn for Run Method action
+                if hasattr(element, '_method_class_id') and hasattr(element, '_method_id'):
+                    method_class_id = getattr(element, '_method_class_id')
+                    method_id = getattr(element, '_method_id')
+                    
+                    # Step 1: Get the class and method elements from class_model (JSON) by ID
+                    method_class_el = get_element_by_id(class_model, method_class_id)
+                    method_el = get_element_by_id(class_model, method_id)
+                    
+                    # Step 2: Extract the names from the JSON elements
+                    method_class_name = method_class_el.get('name') if method_class_el else None
+                    method_name_raw = method_el.get('name') if method_el else None
+                    # Clean the method name to remove visibility, parameters, and type annotations
+                    method_name = clean_method_name(method_name_raw) if method_name_raw else None
+                    
+                    # Step 3: Use domain_model to get the actual BUML objects by name
+                    if domain_model and method_class_name:
+                        method_class = domain_model.get_class_by_name(method_class_name)
+                        if method_class and method_name:
+                            # Find the method in the class by name
+                            method_obj = next((m for m in method_class.methods if m.name == method_name), None)
+                            if method_obj:
+                                element.method_btn = method_obj
+                                # Update is_instance_method by checking the method's code for 'self'
+                                # The frontend already set is_instance_method, but if the method has code,
+                                # we can verify by checking if 'self' appears in the code
+                                if hasattr(method_obj, 'code') and method_obj.code:
+                                    # Check if the code uses 'self.' or 'self,' or 'self)' or starts with 'self'
+                                    code_lower = method_obj.code.lower()
+                                    has_self = ('self.' in code_lower or 
+                                               'self,' in code_lower or 
+                                               'self)' in code_lower or
+                                               'self:' in code_lower or
+                                               code_lower.strip().startswith('self'))
+                                    # Only update if we found evidence of self usage
+                                    if has_self:
+                                        element.is_instance_method = True
+                                # If no code or no self found, keep the value set by the frontend parser
+                                # (which was read from the instance-method attribute)
+                
+                # Resolve entity_class for CRUD operations
+                if hasattr(element, '_entity_class_id'):
+                    entity_class_id = getattr(element, '_entity_class_id')
+                    # Step 1: Get the class element from class_model (JSON) by ID
+                    entity_class_el = get_element_by_id(class_model, entity_class_id)
+                    # Step 2: Extract the name from the JSON element
+                    entity_class_name = entity_class_el.get('name') if entity_class_el else None
+                    # Step 3: Use domain_model to get the actual BUML object by name
+                    if domain_model and entity_class_name:
+                        entity_class = domain_model.get_class_by_name(entity_class_name)
+                        if entity_class:
+                            element.entity_class = entity_class
+                
+                # Resolve instance_source (Table component reference)
+                if element.instance_source and isinstance(element.instance_source, str):
+                    # Try to find the component by ID
+                    for screen in screen_list:
+                        if hasattr(screen, 'view_elements'):
+                            component = find_component_by_id(screen.view_elements, element.instance_source)
+                            if component:
+                                element.instance_source = component
+                                break
+                
+                # Resolve target_screen for Navigate action
+                if element.targetScreen is None and element.actionType == ButtonActionType.Navigate:
+                    # Try to find target screen from events
+                    if hasattr(element, 'events'):
+                        for event in element.events:
+                            for action in event.actions:
+                                if isinstance(action, Transition) and hasattr(action, '_target_screen_id'):
+                                    target_id = getattr(action, '_target_screen_id')
+                                    target_screen = page_id_to_screen.get(target_id)
+                                    if not target_screen:
+                                        target_screen = next((s for s in screen_list if s.name == target_id), None)
+                                    if target_screen:
+                                        element.targetScreen = target_screen
+                                        action.target_screen = target_screen
+                                        break
+                
+                # Check if element has events
+                if hasattr(element, 'events'):
+                    for event in element.events:
+                        for action in event.actions:
+                            # Resolve Transition target_screen
+                            if isinstance(action, Transition) and hasattr(action, '_target_screen_id'):
+                                target_id = getattr(action, '_target_screen_id')
+                                # Try to resolve by page ID first (e.g., "page:nvPCYoWq2RVUadd9w")
+                                target_screen = page_id_to_screen.get(target_id)
+                                # Fall back to matching by screen name if ID lookup fails
+                                if not target_screen:
+                                    target_screen = next((s for s in screen_list if s.name == target_id), None)
+                                if target_screen:
+                                    action.target_screen = target_screen
+                            
+                            # Resolve CRUD target_class
+                            if isinstance(action, (Create, Read, Update, Delete)) and hasattr(action, '_target_class_name'):
+                                target_name = getattr(action, '_target_class_name')
+                                target_class = domain_model.get_class_by_name(target_name) if domain_model else None
+                                if target_class:
+                                    action.target_class = target_class
             
             # Recursively process children in containers
             if isinstance(element, ViewContainer) and hasattr(element, 'view_elements'):

@@ -2,7 +2,7 @@ import uvicorn
 import os, json
 import time as time_module
 import logging
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import create_engine
@@ -47,6 +47,9 @@ app = FastAPI(
         {"name": "{{ class.name }}", "description": "Operations for {{ class.name }} entities"},
         {% if class.associations %}
         {"name": "{{ class.name }} Relationships", "description": "Manage {{ class.name }} relationships"},
+        {% endif %}
+        {% if class.methods %}
+        {"name": "{{ class.name }} Methods", "description": "Execute {{ class.name }} methods"},
         {% endif %}
         {% endfor %}
     ]
@@ -887,6 +890,167 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 {% endfor %}
 {% endif %}
 
+{% endif %}
+
+{# Generate endpoints for class methods #}
+{% if class.methods %}
+############################################
+#   {{ class.name }} Method Endpoints
+############################################
+{% for method in class.methods %}
+{% set method_params = [] %}
+{% for param in method.parameters %}
+{% set param_type = 'Any' %}
+{% if param.type.name == 'str' %}{% set param_type = 'str' %}
+{% elif param.type.name == 'int' %}{% set param_type = 'int' %}
+{% elif param.type.name == 'float' %}{% set param_type = 'float' %}
+{% elif param.type.name == 'bool' %}{% set param_type = 'bool' %}
+{% elif param.type.name == 'date' %}{% set param_type = 'date' %}
+{% elif param.type.name == 'datetime' %}{% set param_type = 'datetime' %}
+{% elif param.type.name == 'time' %}{% set param_type = 'time' %}
+{% endif %}
+{% do method_params.append((param.name, param_type, param.default_value)) %}
+{% endfor %}
+
+{# Detect if method is class-level by checking if it does NOT have 'self' as first param #}
+{% set is_class_method = '(self' not in method.code and '(self,' not in method.code %}
+
+{% if "POST" in http_methods %}
+{% if is_class_method %}
+{# Class-level method - no entity ID required #}
+@app.post("/{{ class.name | lower }}/methods/{{ method.name }}/", response_model=None, tags=["{{ class.name }} Methods"])
+async def {{ class.name | lower }}_{{ method.name }}(
+    {% if method_params %}
+    params: dict = Body(default=None, embed=True),
+    {% endif %}
+    database: Session = Depends(get_db)
+):
+    """
+    Execute the {{ method.name }} class method on {{ class.name }}.
+    This method operates on all {{ class.name }} entities or performs class-level operations.
+    {% if method_params %}
+    
+    Parameters (pass as JSON body):
+    {% for param in method_params %}
+    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
+    {% endfor %}
+    {% endif %}
+    """
+    try:
+        # Capture stdout to include print outputs in the response
+        import io
+        import sys
+        captured_output = io.StringIO()
+        sys.stdout = captured_output
+        
+        {% if method_params %}
+        # Extract parameters from request body
+        params = params or {}
+        {% for param in method_params %}
+        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %})
+        {% endfor %}
+        
+        # Call the class method
+        result = {{ class.name }}.{{ method.name }}(database{% for param in method_params %}, {{ param[0] }}{% endfor %})
+        {% else %}
+        # Call the class method
+        result = {{ class.name }}.{{ method.name }}(database)
+        {% endif %}
+        
+        # Restore stdout
+        sys.stdout = sys.__stdout__
+        output = captured_output.getvalue()
+        
+        # Handle result serialization
+        if hasattr(result, '__iter__') and not isinstance(result, (str, dict)):
+            # It's a list of entities
+            result_data = []
+            for item in result:
+                if hasattr(item, '__dict__'):
+                    item_dict = {k: v for k, v in item.__dict__.items() if not k.startswith('_')}
+                    result_data.append(item_dict)
+                else:
+                    result_data.append(str(item))
+            result = result_data
+        elif hasattr(result, '__dict__'):
+            result = {k: v for k, v in result.__dict__.items() if not k.startswith('_')}
+        
+        return {
+            "class": "{{ class.name }}",
+            "method": "{{ method.name }}",
+            "status": "executed",
+            "result": result,
+            "output": output if output else None
+        }
+    except Exception as e:
+        sys.stdout = sys.__stdout__
+        raise HTTPException(status_code=500, detail=f"Method execution failed: {str(e)}")
+
+{% else %}
+{# Instance method - requires entity ID #}
+@app.post("/{{ class.name | lower }}/{% raw %}{{% endraw %}{{ class.name | lower }}_id{% raw %}}{% endraw %}/methods/{{ method.name }}/", response_model=None, tags=["{{ class.name }} Methods"])
+async def execute_{{ class.name | lower }}_{{ method.name }}(
+    {{ class.name | lower }}_id: int,
+    params: dict = Body(default=None, embed=True),
+    database: Session = Depends(get_db)
+):
+    """
+    Execute the {{ method.name }} method on a {{ class.name }} instance.
+    {% if method_params %}
+    
+    Parameters:
+    {% for param in method_params %}
+    - {{ param[0] }}: {{ param[1] }}{% if param[2] is not none %} (default: {{ param[2] }}){% endif %}
+    {% endfor %}
+    {% endif %}
+    """
+    # Retrieve the entity from the database
+    _{{ class.name | lower }}_object = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower }}_id).first()
+    if _{{ class.name | lower }}_object is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+    
+    # Prepare method parameters
+    {% for param in method_params %}
+    {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %})
+    {% endfor %}
+
+    # Execute the method
+    try:        
+        # Capture stdout to include print outputs in the response
+        import io
+        import sys
+        captured_output = io.StringIO()
+        sys.stdout = captured_output
+        {% set method_lines = method.code.split('\n') %}
+        {% set method_body = '\n'.join(method_lines[1:]) %}
+        {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
+
+{{ method_body_replaced | indent(4, first=True) }}
+        # Commit DB
+        database.commit()
+        database.refresh(_{{ class.name | lower }}_object)
+
+        # Restore stdout
+        sys.stdout = sys.__stdout__
+        output = captured_output.getvalue()
+        
+        # Determine result (last statement or None)
+        result = None
+        
+        return {
+            "{{ class.name | lower }}_id": {{ class.name | lower }}_id,
+            "method": "{{ method.name }}",
+            "status": "executed",
+            "result": str(result) if result is not None else None,
+            "output": output if output else None
+        }
+    except Exception as e:
+        sys.stdout = sys.__stdout__
+        raise HTTPException(status_code=500, detail=f"Method execution failed: {str(e)}")
+{% endif %}
+{% endif %}
+
+{% endfor %}
 {% endif %}
 
 

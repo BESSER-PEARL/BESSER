@@ -90,7 +90,7 @@ class ReactGenerator(GeneratorInterface):
             'PieChart': ['PieChartComponent.tsx.j2'],
             'RadarChart': ['RadarChartComponent.tsx.j2'],
             'RadialBarChart': ['RadialBarChartComponent.tsx.j2'],
-            'Table': ['TableComponent.tsx.j2', 'TableComponent.css.j2'],
+            'Table': ['TableComponent.tsx.j2', 'TableComponent.css.j2', 'ColumnFilter.tsx.j2', 'ColumnSort.tsx.j2'],
             'MetricCard': ['MetricCardComponent.tsx.j2'],
         }
 
@@ -364,6 +364,58 @@ class ReactGenerator(GeneratorInterface):
             events = self._serialize_events(element)
             if events:
                 node["events"] = events
+
+            # Handle method execution using method_btn (Method object reference)
+            method_btn = getattr(element, "method_btn", None)
+            if method_btn:
+                # Get method name and class from the Method object
+                method_name = method_btn.name
+                method_class = method_btn.owner
+                class_name = method_class.name if method_class else None
+
+                if method_name and class_name:
+                    # Clean the method name (remove visibility and parameters if present)
+                    clean_method_name = method_name.split('(')[0] if '(' in method_name else method_name
+
+                    # Update attributes with clean names (not IDs)
+                    if 'data-method-name' in attributes:
+                        attributes['method-name'] = clean_method_name
+                        del attributes['data-method-name']
+
+                    if 'data-method-class' in attributes:
+                        attributes['method-class'] = class_name
+                        del attributes['data-method-class']
+
+                    # Generate endpoint URL for method execution
+                    # Format: /book/{book_id}/methods/decrease_stock/
+                    class_name_lower = class_name.lower()
+                    endpoint = f"/{class_name_lower}/{{{class_name_lower}_id}}/methods/{clean_method_name}/"
+                    attributes['endpoint'] = endpoint
+
+                    # Use is_instance_method from Button object
+                    is_instance = getattr(element, "is_instance_method", False)
+                    attributes['is-instance-method'] = str(is_instance).lower()
+
+                    # Extract input parameters from the method
+                    if hasattr(method_btn, 'parameters') and method_btn.parameters:
+                        input_params = {}
+                        for param in method_btn.parameters:
+                            # Skip 'self' and 'session' parameters
+                            if param.name.lower() not in ('self', 'session'):
+                                param_type = param.type.name if param.type else 'any'
+                                input_params[param.name] = param_type
+                        
+                        if input_params:
+                            attributes['input-parameters'] = input_params
+
+            # Output instance_source (table/component ID providing instance data)
+            instance_source = getattr(element, "instance_source", None)
+            if instance_source:
+                # If it's a ViewComponent object, get its component_id; otherwise use the string ID
+                if hasattr(instance_source, 'component_id'):
+                    attributes['instance-source'] = instance_source.component_id
+                elif isinstance(instance_source, str):
+                    attributes['instance-source'] = instance_source
 
         if isinstance(element, InputField):
             node["input_type"] = self._enum_value(getattr(element, "field_type", None))
@@ -1108,6 +1160,33 @@ class ReactGenerator(GeneratorInterface):
         if isinstance(value, Enum):
             return value.value if hasattr(value, "value") else value.name
         return str(value)
+    
+    def _get_entity_name_from_id(self, entity_id: str) -> Optional[str]:
+        """Get entity name from the structural model by ID"""
+        if not hasattr(self, 'model') or not self.model:
+            return None
+        
+        # Search for class with matching name or component_id
+        for cls in self.model.get_classes():
+            if cls.name == entity_id or getattr(cls, 'component_id', None) == entity_id:
+                return cls.name
+        
+        # If not found, return the ID as-is (it might already be a name)
+        return entity_id
+    
+    @staticmethod
+    def _infer_type(value: Any) -> str:
+        """Infer parameter type from value"""
+        if isinstance(value, bool):
+            return 'boolean'
+        elif isinstance(value, int):
+            return 'number'
+        elif isinstance(value, float):
+            return 'number'
+        elif isinstance(value, str):
+            return 'string'
+        else:
+            return 'string'
 
     @staticmethod
     def _convert_style_keys(style: Dict[str, Any]) -> Dict[str, Any]:

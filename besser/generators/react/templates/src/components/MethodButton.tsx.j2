@@ -196,35 +196,62 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
       
       // Handle different error response formats
       let errorMessage = "Error executing method";
+      const statusCode = err.response?.status;
       
-      if (err.response?.data?.detail) {
-        const detail = err.response.data.detail;
+      if (err.response?.data) {
+        const data = err.response.data;
         
-        // If detail is an array (FastAPI validation errors)
-        if (Array.isArray(detail)) {
-          errorMessage = detail.map((e: any) => {
-            const loc = e.loc ? e.loc.join(' -> ') : '';
-            return `${loc}: ${e.msg}`;
-          }).join('; ');
-        } 
-        // If detail is an object
-        else if (typeof detail === 'object') {
-          errorMessage = JSON.stringify(detail);
-        }
-        // If detail is a string
-        else {
-          errorMessage = String(detail);
+        // Try to extract error message from various formats
+        if (data.detail) {
+          const detail = data.detail;
+          
+          // If detail is an array (FastAPI validation errors - 422)
+          if (Array.isArray(detail)) {
+            errorMessage = detail.map((e: any) => {
+              const field = e.loc ? e.loc[e.loc.length - 1] : 'field';
+              return `${field}: ${e.msg}`;
+            }).join('; ');
+          } 
+          // If detail is an object
+          else if (typeof detail === 'object') {
+            errorMessage = detail.message || detail.error || JSON.stringify(detail);
+          }
+          // If detail is a string
+          else {
+            errorMessage = String(detail);
+          }
+        } else if (data.message) {
+          errorMessage = data.message;
+        } else if (data.error) {
+          errorMessage = data.error;
+        } else if (typeof data === 'string') {
+          errorMessage = data;
+        } else {
+          // For 500 errors, try to show something useful
+          errorMessage = `Server error (${statusCode || 'unknown'}): ${JSON.stringify(data).substring(0, 200)}`;
         }
       } else if (err.message) {
-        errorMessage = err.message;
+        // Network errors or other axios errors
+        if (statusCode) {
+          errorMessage = `HTTP ${statusCode}: ${err.message}`;
+        } else {
+          errorMessage = err.message;
+        }
+      }
+      
+      // Add status code prefix for server errors if not already included
+      if (statusCode && statusCode >= 500 && !errorMessage.includes(String(statusCode))) {
+        errorMessage = `Server Error (${statusCode}): ${errorMessage}`;
       }
       
       setError(errorMessage);
       
-      // Close modal and show error toast
-      setShowModal(false);
-      setShowErrorToast(true);
-      setTimeout(() => setShowErrorToast(false), 5000);
+      // Keep modal open on error so user can retry
+      // Show error toast only if no modal (for methods without parameters)
+      if (parameters.length === 0) {
+        setShowErrorToast(true);
+        setTimeout(() => setShowErrorToast(false), 5000);
+      }
       
       if (onError) {
         onError(err);
@@ -235,8 +262,9 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
   };
 
   const handleClick = () => {
-    // Reset error state when opening modal or executing
+    // Reset error and result state when opening modal or executing
     setError(null);
+    setResult(null);
     
     // If method has parameters, show modal for input
     if (parameters.length > 0) {
@@ -438,6 +466,21 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
             }}>
               {label} - Parameters
             </h3>
+
+            {/* Error display inside modal */}
+            {error && (
+              <div style={{
+                padding: "12px",
+                marginBottom: "16px",
+                backgroundColor: "#fee2e2",
+                border: "1px solid #fecaca",
+                borderRadius: "6px",
+                color: "#991b1b",
+                fontSize: "14px",
+              }}>
+                {error}
+              </div>
+            )}
 
             <form onSubmit={(e) => {
               e.preventDefault();

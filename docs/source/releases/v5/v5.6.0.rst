@@ -1,0 +1,96 @@
+Version 5.6.0
+=============
+
+This release introduces **OCL Constraint Validation** in the generated backend and frontend, 
+along with improved error handling in React components and comprehensive documentation restructuring.
+
+New Features
+------------
+
+**OCL Constraint Validation in Backend**
+
+* Added automatic generation of **Pydantic field validators from OCL constraints** defined in B-UML models.
+* OCL expressions are parsed using BESSER's ANTLR-based OCL parser and transformed into Python validation code.
+* Supported OCL comparison operators: ``>``, ``<``, ``>=``, ``<=``, ``=``, ``<>``
+* Supported value types: ``int``, ``float``, ``str``, ``bool``
+* New utility module ``ocl_utils.py`` for OCL constraint parsing with fallback regex parser.
+
+Example constraint:
+
+.. code-block:: python
+
+    constraint = Constraint(
+        name="min_age",
+        context=Player,
+        expression="context Player inv: self.age > 10",
+        language="OCL"
+    )
+
+Generated validator:
+
+.. code-block:: python
+
+    @field_validator('age')
+    @classmethod
+    def validate_age_1(cls, v):
+        if not (v > 10):
+            raise ValueError('age must be > 10')
+        return v
+
+**Frontend Validation Error Display**
+
+* **TableComponent**: Now displays backend validation errors (HTTP 422) in a red box inside the form modal.
+* **TableComponent**: Modal stays open on errors so users can fix and retry without re-entering data.
+* **MethodButton**: Improved error handling for HTTP 500 errors with detailed error message extraction.
+* **MethodButton**: Modal stays open on errors for methods with parameters.
+* Error messages are parsed from FastAPI/Pydantic response format and displayed in user-friendly format.
+
+Improvements
+------------
+
+**Documentation Restructuring**
+
+* Reorganized ``generators.rst`` with generators grouped by category:
+    * Web Application (Full Web App as primary entry)
+    * Frameworks & Languages
+    * Data & API
+    * Machine Learning
+    * Quantum Computing
+    * Agents
+* Enhanced ``full_web_app.rst`` as the main Web App Generator documentation with:
+    * Sub-generator dropdown (backend, pydantic, alchemy, rest_api)
+    * Features section covering methods, OCL validation, error handling
+    * REST API endpoints summary
+* Added OCL Constraint Validation section to Pydantic Generator documentation.
+
+**Test Suite**
+
+* Added 50 new tests for OCL constraint validation:
+    * ``test_ocl_utils.py``: 35 unit tests for OCL parsing
+    * ``test_ocl_pydantic_integration.py``: 15 integration tests for runtime validation
+
+
+Files Changed
+-------------
+
+**Backend**
+
+* ``besser/generators/pydantic_classes/ocl_utils.py`` (NEW)
+* ``besser/generators/pydantic_classes/pydantic_classes_generator.py``
+* ``besser/generators/pydantic_classes/templates/pydantic_classes_template.py.j2``
+
+**Frontend Templates**
+
+* ``besser/generators/react/templates/src/components/table/TableComponent.tsx.j2``
+* ``besser/generators/react/templates/src/components/MethodButton.tsx.j2``
+
+**Tests**
+
+* ``tests/generators/backend/test_ocl_utils.py`` (NEW)
+* ``tests/generators/backend/test_ocl_pydantic_integration.py`` (NEW)
+
+**Documentation**
+
+* ``docs/source/generators.rst``
+* ``docs/source/generators/full_web_app.rst``
+* ``docs/source/generators/pydantic.rst``

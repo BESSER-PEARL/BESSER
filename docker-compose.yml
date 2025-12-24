@@ -39,6 +39,8 @@ services:
       - DEPLOYMENT_URL=${DEPLOYMENT_URL}
       - BACKEND_URL=${BACKEND_URL}
       - UML_BOT_WS_URL=${UML_BOT_WS_URL}
+      - POSTHOG_KEY=${POSTHOG_KEY}
+      - POSTHOG_HOST=${POSTHOG_HOST}
     volumes:
       - ./diagrams:/app/diagrams
     restart: always

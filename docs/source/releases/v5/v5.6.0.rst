@@ -63,34 +63,4 @@ Improvements
     * REST API endpoints summary
 * Added OCL Constraint Validation section to Pydantic Generator documentation.
 
-**Test Suite**
 
-* Added 50 new tests for OCL constraint validation:
-    * ``test_ocl_utils.py``: 35 unit tests for OCL parsing
-    * ``test_ocl_pydantic_integration.py``: 15 integration tests for runtime validation
-
-
-Files Changed
--------------
-
-**Backend**
-
-* ``besser/generators/pydantic_classes/ocl_utils.py`` (NEW)
-* ``besser/generators/pydantic_classes/pydantic_classes_generator.py``
-* ``besser/generators/pydantic_classes/templates/pydantic_classes_template.py.j2``
-
-**Frontend Templates**
-
-* ``besser/generators/react/templates/src/components/table/TableComponent.tsx.j2``
-* ``besser/generators/react/templates/src/components/MethodButton.tsx.j2``
-
-**Tests**
-
-* ``tests/generators/backend/test_ocl_utils.py`` (NEW)
-* ``tests/generators/backend/test_ocl_pydantic_integration.py`` (NEW)
-
-**Documentation**
-
-* ``docs/source/generators.rst``
-* ``docs/source/generators/full_web_app.rst``
-* ``docs/source/generators/pydantic.rst``

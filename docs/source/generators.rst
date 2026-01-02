@@ -3,32 +3,84 @@ Code Generators
 
 BESSER offers a suite of code generators designed for diverse technologies and purposes. These generators play 
 a pivotal role in translating your model, created using the :doc:`buml_language`, into executable code suitable for 
-various applications, such as Django models or database structures compatible with SQLAlchemy.
+various applications.
 
-Currently, BESSER covers the following range of predefined code generators (although you could also design your 
-own generator).
+Web Application
+---------------
+
+Generate complete web applications with frontend, backend, and database:
+
+.. toctree::
+   :maxdepth: 2
+
+   generators/full_web_app
+
+Frameworks & Languages
+----------------------
+
+Generate code for various frameworks and programming languages:
 
 .. toctree::
    :maxdepth: 1
 
-   generators/full_web_app
    generators/django
    generators/python
    generators/java
-   generators/pydantic
-   generators/alchemy
-   generators/sql
-   generators/rest_api
-   generators/backend
    generators/flutter
-   generators/terraform
-   generators/rdf
+
+Data & API
+----------
+
+Generate database schemas, APIs, and data formats:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/sql
    generators/json_schema
-   generators/build_generator
+   generators/rdf
+   generators/terraform
+
+Machine Learning
+----------------
+
+Generate machine learning model code:
+
+.. toctree::
+   :maxdepth: 1
+
    generators/pytorch
    generators/tensorflow
-   generators/baf
+
+Quantum Computing
+-----------------
+
+Generate quantum circuit code:
+
+.. toctree::
+   :maxdepth: 1
+
    generators/qiskit
+
+Agents
+------
+
+Generate conversational agents:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/baf
+
+Build Your Own
+--------------
+
+Create custom code generators:
+
+.. toctree::
+   :maxdepth: 1
+
+   generators/build_generator
 
 
 .. warning::

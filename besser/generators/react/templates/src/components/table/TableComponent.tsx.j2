@@ -717,11 +717,34 @@ export const TableComponent: React.FC<Props> = ({
                     try {
                       await axios.post(url, processedValues);
                       await fetchTableData();
+                      setShowModal(false);
                     } catch (err) {
                       console.error("Error saving data:", err);
                       if (axios.isAxiosError(err) && err.response) {
                         console.error("Response data:", err.response.data);
+                        // Parse and display validation errors from backend (Pydantic/FastAPI)
+                        const detail = err.response.data?.detail;
+                        if (detail) {
+                          if (Array.isArray(detail)) {
+                            const errorMessages = detail.map((e: any) => {
+                              const field = e.loc ? e.loc[e.loc.length - 1] : 'field';
+                              return `${field}: ${e.msg}`;
+                            }).join('; ');
+                            setValidationError(errorMessages);
+                          } else if (typeof detail === 'string') {
+                            setValidationError(detail);
+                          } else {
+                            setValidationError(JSON.stringify(detail));
+                          }
+                        } else if (err.response.data?.message) {
+                          setValidationError(err.response.data.message);
+                        } else {
+                          setValidationError('Failed to save. Please check your input.');
+                        }
+                      } else {
+                        setValidationError('Network error. Please try again.');
                       }
+                      return; // Keep modal open on error
                     }
                   } else if (modalMode === 'edit') {
                     const rowId = getRowId(editRowData);
@@ -730,11 +753,34 @@ export const TableComponent: React.FC<Props> = ({
                     try {
                       await axios.put(fullUrl, processedValues);
                       await fetchTableData();
+                      setShowModal(false);
                     } catch (err) {
                       console.error("Error updating data:", err);
+                      if (axios.isAxiosError(err) && err.response) {
+                        const detail = err.response.data?.detail;
+                        if (detail) {
+                          if (Array.isArray(detail)) {
+                            const errorMessages = detail.map((e: any) => {
+                              const field = e.loc ? e.loc[e.loc.length - 1] : 'field';
+                              return `${field}: ${e.msg}`;
+                            }).join('; ');
+                            setValidationError(errorMessages);
+                          } else if (typeof detail === 'string') {
+                            setValidationError(detail);
+                          } else {
+                            setValidationError(JSON.stringify(detail));
+                          }
+                        } else if (err.response.data?.message) {
+                          setValidationError(err.response.data.message);
+                        } else {
+                          setValidationError('Failed to update. Please check your input.');
+                        }
+                      } else {
+                        setValidationError('Network error. Please try again.');
+                      }
+                      return; // Keep modal open on error
                     }
                   }
-                  setShowModal(false);
                 }}
                 style={{ display: "flex", flexDirection: "column", gap: "16px" }}
               >

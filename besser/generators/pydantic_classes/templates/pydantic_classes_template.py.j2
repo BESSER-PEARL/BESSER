@@ -1,7 +1,7 @@
 from datetime import datetime, date, time
 from typing import List, Optional, Union, Set
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 {% set ns = namespace(abstract_found=false, id_found = false, same_name_found = false )-%}
 {% for class in domain.get_classes() -%}
@@ -106,5 +106,18 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {%- if not class.attributes and not class.associations %}
     pass
     {% endif %}
+    {# OCL Constraint Validators #}
+    {%- if constraints_map and class.name in constraints_map %}
+    {%- for constraint in constraints_map[class.name] %}
+
+    @field_validator('{{ constraint.property }}')
+    @classmethod
+    def validate_{{ constraint.property }}_{{ loop.index }}(cls, v):
+        """OCL Constraint: {{ constraint.constraint_name }}"""
+        if not (v {{ constraint.python_operator }} {{ constraint.value_repr }}):
+            raise ValueError('{{ constraint.property }} must be {{ constraint.python_operator }} {{ constraint.value_repr }}')
+        return v
+    {%- endfor %}
+    {%- endif %}
 
 {% endfor %}

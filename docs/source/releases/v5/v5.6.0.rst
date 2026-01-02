@@ -50,13 +50,7 @@ Improvements
 
 **Documentation Restructuring**
 
-* Reorganized ``generators.rst`` with generators grouped by category:
-    * Web Application (Full Web App as primary entry)
-    * Frameworks & Languages
-    * Data & API
-    * Machine Learning
-    * Quantum Computing
-    * Agents
+* Reorganized ``generators.rst`` with generators grouped by category
 * Enhanced ``full_web_app.rst`` as the main Web App Generator documentation with:
     * Sub-generator dropdown (backend, pydantic, alchemy, rest_api)
     * Features section covering methods, OCL validation, error handling

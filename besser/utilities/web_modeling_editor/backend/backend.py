@@ -3,6 +3,8 @@ BESSER Backend API
 
 This module provides FastAPI endpoints for the BESSER web modeling editor backend.
 It handles code generation from UML diagrams using various generators.
+
+The editor is available at: https://editor.besser-pearl.org
 """
 
 # Standard library imports
@@ -15,7 +17,9 @@ import tempfile
 import importlib.util
 import sys
 import asyncio
+import json
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
@@ -36,7 +40,8 @@ from besser.utilities.buml_code_builder.project_builder import project_to_code
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
     DiagramInput,
-    ProjectInput
+    ProjectInput,
+    FeedbackSubmission
 )
 
 # Backend services - Converters
@@ -1384,6 +1389,156 @@ async def check_ocl(input_data: DiagramInput):
     print("Warning: /check-ocl is deprecated. Use /validate-diagram instead.")
     return await validate_diagram(input_data)
 
+
+@app.post("/besser_api/feedback")
+async def submit_feedback(feedback: FeedbackSubmission):
+    """
+    Receive user feedback and send it via email.
+    
+    Sends feedback to the configured admin email address and optionally stores locally as backup.
+    
+    Args:
+        feedback: FeedbackSubmission model containing user feedback data
+        
+    Returns:
+        dict: Status message confirming feedback receipt
+        
+    Environment Variables:
+        FEEDBACK_EMAIL: Email address to receive feedback (required)
+        SMTP_HOST: SMTP server hostname (default: smtp.gmail.com)
+        SMTP_PORT: SMTP server port (default: 587)
+        SMTP_USERNAME: SMTP authentication username
+        SMTP_PASSWORD: SMTP authentication password or app password
+        
+    Raises:
+        HTTPException: If feedback email sending fails
+    """
+    import smtplib
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    
+    try:
+        # Get email configuration from environment variables
+        admin_email = os.getenv("FEEDBACK_EMAIL")
+        smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
+        smtp_port = int(os.getenv("SMTP_PORT", "587"))
+        smtp_username = os.getenv("SMTP_USERNAME", admin_email)
+        smtp_password = os.getenv("SMTP_PASSWORD")
+        
+        if not admin_email:
+            print("Warning: FEEDBACK_EMAIL not configured. Feedback will only be stored locally.")
+        
+        # Create email message
+        if admin_email and smtp_password:
+            satisfaction_emoji = {"happy": "😊", "neutral": "😐", "sad": "😞"}.get(feedback.satisfaction, "❓")
+            
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = f"[BESSER Feedback] {satisfaction_emoji} {feedback.category or 'General'} - {feedback.satisfaction.upper()}"
+            msg["From"] = smtp_username
+            msg["To"] = admin_email
+            
+            # Create HTML email body
+            html = f"""
+            <html>
+            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+                <div style="max-width: 600px; margin: 0 auto; padding: 20px; background: #f9f9f9;">
+                    <h2 style="color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px;">
+                        New Feedback Received
+                    </h2>
+                    
+                    <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <tr>
+                                <td style="padding: 10px; font-weight: bold; width: 150px;">Satisfaction:</td>
+                                <td style="padding: 10px;">
+                                    <span style="background: {'#d4edda' if feedback.satisfaction == 'happy' else '#fff3cd' if feedback.satisfaction == 'neutral' else '#f8d7da'}; 
+                                                 color: {'#155724' if feedback.satisfaction == 'happy' else '#856404' if feedback.satisfaction == 'neutral' else '#721c24'}; 
+                                                 padding: 5px 15px; border-radius: 20px;">
+                                        {satisfaction_emoji} {feedback.satisfaction.upper()}
+                                    </span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; font-weight: bold;">Category:</td>
+                                <td style="padding: 10px;">{feedback.category or 'Not specified'}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 10px; font-weight: bold;">Timestamp:</td>
+                                <td style="padding: 10px;">{feedback.timestamp}</td>
+                            </tr>
+                            {f'<tr><td style="padding: 10px; font-weight: bold;">Email:</td><td style="padding: 10px;"><a href="mailto:{feedback.email}">{feedback.email}</a></td></tr>' if feedback.email else ''}
+                        </table>
+                    </div>
+                    
+                    <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
+                        <h3 style="color: #2c3e50; margin-top: 0;">Feedback Message:</h3>
+                        <p style="white-space: pre-wrap;">{feedback.feedback}</p>
+                    </div>
+                    
+                    <div style="background: #ecf0f1; padding: 15px; border-radius: 8px; margin: 20px 0; font-size: 12px; color: #7f8c8d;">
+                        <strong>User Agent:</strong><br>
+                        {feedback.user_agent}
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+            
+            # Create plain text version as fallback
+            text = f"""
+New BESSER Feedback Received
+=============================
+
+Satisfaction: {satisfaction_emoji} {feedback.satisfaction.upper()}
+Category: {feedback.category or 'Not specified'}
+Timestamp: {feedback.timestamp}
+{f'Email: {feedback.email}' if feedback.email else ''}
+
+Feedback Message:
+{feedback.feedback}
+
+User Agent: {feedback.user_agent}
+            """
+            
+            msg.attach(MIMEText(text, "plain"))
+            msg.attach(MIMEText(html, "html"))
+            
+            # Send email with longer timeout for Gmail
+            try:
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
+                    server.starttls()
+                    server.login(smtp_username, smtp_password)
+                    server.send_message(msg)
+                print(f"Feedback email sent to {admin_email}: {feedback.satisfaction} - {feedback.category}")
+            except Exception as email_error:
+                print(f"Warning: Failed to send feedback email: {str(email_error)}")
+                print(f"  Host: {smtp_host}:{smtp_port}, User: {smtp_username}")
+                # Continue anyway - we'll store locally
+        
+        # Store locally (always, as backup or primary)
+        feedback_dir = Path("feedback_data")
+        feedback_dir.mkdir(exist_ok=True)
+        feedback_file = feedback_dir / f"feedback_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        
+        with open(feedback_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(feedback.dict(), ensure_ascii=False) + "\n")
+        
+        print(f"Feedback stored locally: {feedback.satisfaction} - {feedback.category}")
+        
+        return {
+            "status": "success",
+            "message": "Feedback received. Thank you for helping us improve BESSER!"
+        }
+    
+    except Exception as e:
+        print(f"Failed to process feedback: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to process feedback: {str(e)}"
+        )
+
+
+
 # Main application entry point
 if __name__ == "__main__":
     import uvicorn
@@ -1393,3 +1548,4 @@ if __name__ == "__main__":
         port=9000,
         log_level="info"
     )
+#The editor is available at: https://editor.besser-pearl.org

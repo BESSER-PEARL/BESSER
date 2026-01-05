@@ -8,7 +8,15 @@ services:
     working_dir: /app/besser
     environment:
       - PYTHONPATH=/app
+      - FEEDBACK_EMAIL=${FEEDBACK_EMAIL}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+    volumes:
+      - feedback_data:/app/besser/feedback_data
     command: python -m besser.utilities.web_modeling_editor.backend.backend
+    restart: unless-stopped
     networks:
       - besser_network
 
@@ -52,6 +60,8 @@ services:
       - besser_redis
 volumes:
   apollon_redis_data:
+    driver: local
+  feedback_data:
     driver: local
 
 networks:

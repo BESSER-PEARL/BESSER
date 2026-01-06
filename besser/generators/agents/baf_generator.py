@@ -13,8 +13,9 @@ from besser.generators.agents.agent_personalization import personalize_agent, co
 
 # BESSER utilities
 from besser.utilities.buml_code_builder import (
-    agent_model_to_code, 
+    agent_model_to_code,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
 
 class BAFGenerator(GeneratorInterface):
     """
@@ -78,16 +79,29 @@ class BAFGenerator(GeneratorInterface):
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
         agent_template = env.get_template('baf_agent_template.py.j2')
         agent_path = self.build_generation_path(file_name=f"{self.model.name}.py")
+        personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")
+        personalized_json_path = self.build_generation_path(file_name="personalized_agent_model.json")
         personalized_messages = {}
         print(self.config)
         if self.config:
             if 'personalizationrules' in self.config:
                 personalize_agent(self.model, self.config['personalizationrules'], personalized_messages)
-                
             else:
                 configure_agent(self.model, self.config)
-                personalized_agent_path = self.build_generation_path(file_name=f"personalized_agent_model.py")
-                agent_model_to_code(self.model, personalized_agent_path)
+
+            # Persist personalized agent python for downstream conversion
+            agent_model_to_code(self.model, personalized_agent_path)
+
+            # Also emit JSON representation of personalized agent
+            try:
+                with open(personalized_agent_path, "r", encoding="utf-8") as f:
+                    personalized_code = f.read()
+                personalized_json = agent_buml_to_json(personalized_code)
+                with open(personalized_json_path, "w", encoding="utf-8") as jf:
+                    json.dump(personalized_json, jf, indent=2)
+                print("Personalized agent JSON generated in the location: " + personalized_json_path)
+            except Exception as conversion_error:
+                print(f"Failed to convert personalized agent to JSON: {conversion_error}")
 
         if personalized_messages == {}:
             

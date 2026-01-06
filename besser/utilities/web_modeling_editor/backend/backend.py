@@ -18,7 +18,7 @@ import asyncio
 from datetime import datetime
 from typing import List, Dict, Any
 import sys
-sys.path.append("C:/Users/Aaron/Documents/GitHub/BESSER")
+sys.path.append("C:/Users/conrardy/Desktop/git/BESSER")
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
 
@@ -439,6 +439,65 @@ async def _handle_agent_generation(json_data: dict):
             status_code=500, 
             detail=f"Error processing agent diagram: {str(e)}"
         )
+
+
+@app.post("/besser_api/transform_agent_model_json")
+async def transform_agent_model_json(input_data: DiagramInput):
+    """Transform an agent JSON model using the generator and return personalized_agent_model as JSON."""
+    temp_dir = tempfile.mkdtemp(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_")
+    original_cwd = os.getcwd()
+    sys_path_added = False
+
+    try:
+        json_data = input_data.model_dump()
+        config = json_data.get("config", input_data.config or {}) or {}
+        if not config:
+            raise HTTPException(status_code=400, detail="Config is required for transformation")
+
+        # Convert to BUML model
+        agent_model = process_agent_diagram(json_data)
+
+        # Persist BUML to file for generator import
+        agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
+        agent_model_to_code(agent_model, agent_file)
+
+        # Prepare import context
+        sys.path.insert(0, temp_dir)
+        sys_path_added = True
+        os.chdir(temp_dir)
+
+        spec = importlib.util.spec_from_file_location("agent_model", agent_file)
+        agent_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(agent_module)
+
+        generator_info = get_generator_info("agent")
+        generator_class = generator_info.generator_class
+        generator_instance = generator_class(getattr(agent_module, "agent", agent_model), config=config)
+        generator_instance.generate()
+
+        personalized_json_path = os.path.join(temp_dir, OUTPUT_DIR, "personalized_agent_model.json")
+        if not os.path.isfile(personalized_json_path):
+            raise HTTPException(status_code=500, detail="personalized_agent_model.json not found after generation")
+
+        with open(personalized_json_path, "r", encoding="utf-8") as f:
+            personalized_json = json.load(f)
+
+        return {
+            "model": personalized_json,
+            "diagramType": "AgentDiagram",
+            "exportedAt": datetime.utcnow().isoformat(),
+            "version": "2.0.0",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transform failed: {str(e)}")
+    finally:
+        os.chdir(original_cwd)
+        if sys_path_added:
+            try:
+            except ValueError:
+                pass
 
 
 async def _handle_class_diagram_generation(

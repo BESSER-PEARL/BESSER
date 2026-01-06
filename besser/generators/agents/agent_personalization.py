@@ -468,16 +468,19 @@ def replace_reply_batch(messages: list[str], config: dict) -> list[str]:
         target_language = config['agentLanguage']
         for i, msg in enumerate(personalized_messages):
             personalized_messages[i] = translate_text_api(msg, target_language)
-    elif 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
-        target_language = config['agentLanguage']
-        personalized_messages = translate_text_batch(personalized_messages, target_language)
     if 'agentStyle' in config and config['agentStyle'] != 'original':
         style = config['agentStyle']
         personalized_messages = style_text_batch(personalized_messages, style)
     if 'languageComplexity' in config and config['languageComplexity'] != 'original':
         complexity = config['languageComplexity']
         personalized_messages = complexity_text_batch(personalized_messages, complexity)
-
+    if 'sentenceLength' in config and config['sentenceLength'] != 'original':
+        length_pref = config['sentenceLength']
+        personalized_messages = sentence_length_batch(personalized_messages, length_pref)
+    if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
+        target_language = config['agentLanguage']
+        personalized_messages = translate_text_batch(personalized_messages, target_language)
+        
     return personalized_messages
 
 def append_speech(match):
@@ -526,6 +529,44 @@ def complexity_text_batch(texts, complexity, model="gpt-5"):
     response_text = call_openai_chat(system_prompt, user_prompt, model=model)
 
     # Try to split the returned text back into a list of outputs
+    results = [
+        line.split(". ", 1)[1] if ". " in line else line
+        for line in response_text.splitlines()
+        if line.strip()
+    ]
+    return results
+
+
+def sentence_length_batch(texts, preference, model="gpt-5"):
+    """
+    Adjusts each text in `texts` to be more concise or verbose.
+    `preference` accepts "concise" or "verbose" (case-insensitive).
+    Returns a list of rewritten texts matching the input order.
+    """
+    normalized_pref = (preference or "").strip().lower()
+    if normalized_pref not in {"concise", "verbose"}:
+        raise ValueError("Invalid sentence length preference. Choose 'Concise' or 'Verbose'.")
+
+    if not isinstance(texts, (list, tuple)):
+        raise TypeError("texts must be a list or tuple of strings")
+
+    if normalized_pref == "concise":
+        system_prompt = (
+            "You are an editing engine focused on brevity. "
+            "Rewrite each numbered text to be concise while keeping the original meaning intact. "
+            "Remove redundancy, trim filler, and keep sentences short. "
+            "Return the rewritten texts as a numbered list in the same order."
+        )
+    else:  # verbose
+        system_prompt = (
+            "You are an editing engine focused on elaboration. "
+            "Rewrite each numbered text to be more detailed and verbose while preserving meaning. "
+            "You may add clarifying context or additional descriptive phrasing. "
+            "Return the rewritten texts as a numbered list in the same order."
+        )
+
+    user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
+    response_text = call_openai_chat(system_prompt, user_prompt, model=model)
     results = [
         line.split(". ", 1)[1] if ". " in line else line
         for line in response_text.splitlines()

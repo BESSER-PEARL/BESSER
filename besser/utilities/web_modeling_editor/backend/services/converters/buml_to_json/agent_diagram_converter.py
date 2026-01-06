@@ -145,9 +145,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         intent_id = str(uuid.uuid4())
                         intent_name = None
                         sentences = []
+                        intent_description = ""
 
                         args = node.value.args
                         intent_name = ast.literal_eval(args[0])
+
+                        for kw in node.value.keywords:
+                            if kw.arg == "description":
+                                intent_description = ast.literal_eval(kw.value)
 
                         if len(args) >= 2 and isinstance(args[1], ast.List):
                             for elt in args[1].elts:
@@ -187,6 +192,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     "height": 100,
                                 },
                                 "bodies": sentences,
+                                "intent_description": intent_description,
                             }
 
                             if states_x < 200:
@@ -296,7 +302,28 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     
                     # Store by variable name for transitions
                     states[var_name] = state_obj
-            
+                    # Create element for visualization
+                    elements[state_id] = {
+                        "id": state_id,
+                        "name": state_name,
+                        "type": "AgentState",
+                        "owner": None,
+                        "bounds": {
+                            "x": states_x,
+                            "y": states_y,
+                            "width": 160,
+                            "height": 100,
+                        },
+                        "bodies": [],
+                        "fallbackBodies": [],
+                    }
+
+                    # Update position for next element
+                    if states_x < 200:
+                        states_x += 490
+                    else:
+                        states_x = -280
+                        states_y += 220
             # Check for state.metadata = Metadata(...) patterns
             elif isinstance(node, ast.Assign):
                 if len(node.targets) == 1:

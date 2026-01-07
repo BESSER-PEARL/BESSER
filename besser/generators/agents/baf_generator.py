@@ -1,5 +1,6 @@
 import os
 import textwrap
+from enum import Enum
 
 from jinja2 import Environment, FileSystemLoader
 import json
@@ -17,6 +18,58 @@ from besser.utilities.buml_code_builder import (
 )
 from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
 
+
+def flatten_agent_config_structure(raw_config):
+    """Flatten structured agent configuration sections into the legacy flat shape."""
+    if not isinstance(raw_config, dict):
+        return raw_config
+
+    flattened = dict(raw_config)
+    section_field_map = {
+        "presentation": {
+            "agentLanguage": "agentLanguage",
+            "agentStyle": "agentStyle",
+            "languageComplexity": "languageComplexity",
+            "sentenceLength": "sentenceLength",
+            "interfaceStyle": "interfaceStyle",
+            "voiceStyle": "voiceStyle",
+            "avatar": "avatar",
+            "useAbbreviations": "useAbbreviations",
+        },
+        "modality": {
+            "inputModalities": "inputModalities",
+            "outputModalities": "outputModalities",
+        },
+        "behavior": {
+            "responseTiming": "responseTiming",
+        },
+        "content": {
+            "adaptContentToUserProfile": "adaptContentToUserProfile",
+        },
+        "system": {
+            "agentPlatform": "agentPlatform",
+            "intentRecognitionTechnology": "intentRecognitionTechnology",
+            "llm": "llm",
+        },
+    }
+
+    for section_name, mapping in section_field_map.items():
+        section_data = flattened.get(section_name)
+        if not isinstance(section_data, dict):
+            continue
+        for source_key, target_key in mapping.items():
+            if source_key in section_data:
+                flattened[target_key] = section_data[source_key]
+        flattened.pop(section_name, None)
+
+    return flattened
+
+
+class GenerationMode(Enum):
+    FULL = "full"
+    PERSONALIZED_ONLY = "personalized_only"
+    CODE_ONLY = "code_only"
+
 class BAFGenerator(GeneratorInterface):
     """
     BAFGenerator is a class that implements the GeneratorInterface and is responsible for generating
@@ -25,10 +78,31 @@ class BAFGenerator(GeneratorInterface):
     Args:
         model (Agent): A agent model.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
+        generation_mode (GenerationMode | str, optional): Controls which pipeline stages run.
+            - GenerationMode.FULL (default): personalization (if config) + templated code.
+            - GenerationMode.PERSONALIZED_ONLY: run personalization JSON/model export only.
+            - GenerationMode.CODE_ONLY: skip personalization helpers, render templates immediately.
     """
-    def __init__(self, model: Agent, output_dir: str = None, config_path: str = None, config: dict = None):
+    def __init__(
+        self,
+        model: Agent,
+        output_dir: str = None,
+        config_path: str = None,
+        config: dict = None,
+        generation_mode: GenerationMode | str = GenerationMode.FULL,
+    ):
         super().__init__(model, output_dir)
-        self.config = config
+        self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
+        if isinstance(generation_mode, GenerationMode):
+            self.generation_mode = generation_mode
+        elif isinstance(generation_mode, str):
+            normalized_mode = generation_mode.strip().lower()
+            self.generation_mode = next(
+                (mode for mode in GenerationMode if mode.value == normalized_mode),
+                GenerationMode.FULL,
+            )
+        else:
+            self.generation_mode = GenerationMode.FULL
         if config_path:
             print("Loading config from:", config_path)
             with open(config_path, 'r', encoding='utf-8') as f:
@@ -71,6 +145,15 @@ class BAFGenerator(GeneratorInterface):
             if not slug:
                 slug = f"rag_{index}"
             return slug
+        config_for_personalization = dict(self.config) if self.config else None
+        generate_personalized_assets = self.generation_mode in (
+            GenerationMode.FULL,
+            GenerationMode.PERSONALIZED_ONLY,
+        )
+        generate_code_assets = self.generation_mode in (
+            GenerationMode.FULL,
+            GenerationMode.CODE_ONLY,
+        )
 
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         env = Environment(loader=FileSystemLoader(templates_path))
@@ -83,11 +166,14 @@ class BAFGenerator(GeneratorInterface):
         personalized_json_path = self.build_generation_path(file_name="personalized_agent_model.json")
         personalized_messages = {}
         print(self.config)
-        if self.config:
-            if 'personalizationrules' in self.config:
-                personalize_agent(self.model, self.config['personalizationrules'], personalized_messages)
+
+        config_for_personalization = dict(self.config) if self.config else None
+
+        if generate_personalized_assets and config_for_personalization:
+            if 'personalizationrules' in config_for_personalization:
+                personalize_agent(self.model, config_for_personalization['personalizationrules'], personalized_messages)
             else:
-                configure_agent(self.model, self.config)
+                configure_agent(self.model, config_for_personalization)
 
             # Persist personalized agent python for downstream conversion
             agent_model_to_code(self.model, personalized_agent_path)
@@ -103,6 +189,12 @@ class BAFGenerator(GeneratorInterface):
             except Exception as conversion_error:
                 print(f"Failed to convert personalized agent to JSON: {conversion_error}")
 
+            if not generate_code_assets:
+                return
+
+        if not generate_code_assets:
+            return
+
         if personalized_messages == {}:
             
             with open(agent_path, mode="w", encoding="utf-8") as f:
@@ -117,27 +209,28 @@ class BAFGenerator(GeneratorInterface):
                 generated_code = agent_template.render(agent=self.model, config=self.config, personalized_messages=personalized_messages)
                 f.write(generated_code)
                 print("Agent script generated in the location: " + agent_path)
-        config_template = env.get_template('baf_config_template.py.j2')
-        config_path = self.build_generation_path(file_name="config.ini")
-        with open(config_path, mode="w", encoding="utf-8") as f:
-            properties = sorted(self.model.properties, key=lambda prop: prop.section)
-            generated_code = config_template.render(properties=properties)
-            f.write(generated_code)
-            print("Agent config file generated in the location: " + config_path)        # Generate readme.txt using the Jinja2 template
-        readme_template = env.get_template('readme.txt.j2')
-        readme_path = self.build_generation_path(file_name="readme.txt")
-        with open(readme_path, mode="w", encoding="utf-8") as f:
-            generated_code = readme_template.render(agent=self.model)
-            f.write(generated_code)
-            print("Agent readme file generated in the location: " + readme_path)
+        if generate_code_assets:
+            config_template = env.get_template('baf_config_template.py.j2')
+            config_path = self.build_generation_path(file_name="config.ini")
+            with open(config_path, mode="w", encoding="utf-8") as f:
+                properties = sorted(self.model.properties, key=lambda prop: prop.section)
+                generated_code = config_template.render(properties=properties)
+                f.write(generated_code)
+                print("Agent config file generated in the location: " + config_path)        # Generate readme.txt using the Jinja2 template
+            readme_template = env.get_template('readme.txt.j2')
+            readme_path = self.build_generation_path(file_name="readme.txt")
+            with open(readme_path, mode="w", encoding="utf-8") as f:
+                generated_code = readme_template.render(agent=self.model)
+                f.write(generated_code)
+                print("Agent readme file generated in the location: " + readme_path)
 
-        rag_configs = getattr(self.model, 'rags', []) or []
-        if rag_configs:
-            rag_base_dir = self.build_generation_dir()
-            for idx, rag in enumerate(rag_configs):
-                target_dir = os.path.join(rag_base_dir, rag_slug(getattr(rag, 'name', ''), idx))
-                os.makedirs(target_dir, exist_ok=True)
-                readme_path = os.path.join(target_dir, "README.txt")
-                if not os.path.exists(readme_path):
-                    with open(readme_path, "w", encoding="utf-8") as readme_file:
-                        readme_file.write("Place your PDF documents for this RAG database inside this folder before running the agent.\n")
+            rag_configs = getattr(self.model, 'rags', []) or []
+            if rag_configs:
+                rag_base_dir = self.build_generation_dir()
+                for idx, rag in enumerate(rag_configs):
+                    target_dir = os.path.join(rag_base_dir, rag_slug(getattr(rag, 'name', ''), idx))
+                    os.makedirs(target_dir, exist_ok=True)
+                    readme_path = os.path.join(target_dir, "README.txt")
+                    if not os.path.exists(readme_path):
+                        with open(readme_path, "w", encoding="utf-8") as readme_file:
+                            readme_file.write("Place your PDF documents for this RAG database inside this folder before running the agent.\n")

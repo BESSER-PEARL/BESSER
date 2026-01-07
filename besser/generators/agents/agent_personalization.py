@@ -9,6 +9,52 @@ from besser.BUML.metamodel.state_machine.agent import AgentReply
 import json
 
 
+def flatten_agent_config_structure(raw_config):
+    """Flatten structured agent configuration sections into the legacy flat shape."""
+    if not isinstance(raw_config, dict):
+        return raw_config
+
+    flattened = dict(raw_config)
+    section_field_map = {
+        "presentation": {
+            "agentLanguage": "agentLanguage",
+            "agentStyle": "agentStyle",
+            "languageComplexity": "languageComplexity",
+            "sentenceLength": "sentenceLength",
+            "interfaceStyle": "interfaceStyle",
+            "voiceStyle": "voiceStyle",
+            "avatar": "avatar",
+            "useAbbreviations": "useAbbreviations",
+        },
+        "modality": {
+            "inputModalities": "inputModalities",
+            "outputModalities": "outputModalities",
+        },
+        "behavior": {
+            "responseTiming": "responseTiming",
+        },
+        "content": {
+            "adaptContentToUserProfile": "adaptContentToUserProfile",
+        },
+        "system": {
+            "agentPlatform": "agentPlatform",
+            "intentRecognitionTechnology": "intentRecognitionTechnology",
+            "llm": "llm",
+        },
+    }
+
+    for section_name, mapping in section_field_map.items():
+        section_data = flattened.get(section_name)
+        if not isinstance(section_data, dict):
+            continue
+        for source_key, target_key in mapping.items():
+            if source_key in section_data:
+                flattened[target_key] = section_data[source_key]
+        flattened.pop(section_name, None)
+
+    return flattened
+
+
 # Initialize OpenAI API key from environment variable or config
 OPENAI_API_KEY = ""
 if not OPENAI_API_KEY:
@@ -171,6 +217,7 @@ def configure_agent(agent, config):
     Returns:
         None (modifies agent in place)
     """
+    config = flatten_agent_config_structure(config or {})
     # Example: You could use OpenAI API here to modify agent intents, responses, etc.
     # openai.api_key = os.getenv('OPENAI_API_KEY')
     # ... personalization logic ...
@@ -442,7 +489,7 @@ def combinations(messages, personalization_rules):
 
 
 def replace_reply(message: str, config: dict) -> str:
-    
+    config = flatten_agent_config_structure(config or {})
     personalized_message = message
     if 'agentStyle' in config and config['agentStyle'] != 'original':
         style = config['agentStyle']
@@ -459,6 +506,7 @@ def replace_reply(message: str, config: dict) -> str:
     return personalized_message.replace("'", "\\'")
 
 def replace_reply_batch(messages: list[str], config: dict) -> list[str]:
+    config = flatten_agent_config_structure(config or {})
     personalized_messages = messages
 
     if 'agentLanguage' in config and config['agentLanguage'] != 'none' and False:

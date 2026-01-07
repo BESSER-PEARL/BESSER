@@ -18,6 +18,7 @@ import asyncio
 from datetime import datetime
 from typing import List, Dict, Any
 import sys
+import json
 sys.path.append("C:/Users/conrardy/Desktop/git/BESSER")
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
@@ -35,6 +36,7 @@ from besser.utilities.buml_code_builder import (
     agent_model_to_code, 
     project_to_code
 )
+from besser.generators.agents.baf_generator import GenerationMode
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -74,6 +76,8 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
 )
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     build_configurations_package,
+    append_zip_contents,
+    slugify_name,
 )
 
 # Backend configuration
@@ -135,7 +139,7 @@ def get_api_root():
     }
 
 
-def generate_agent_files(agent_model, config):
+def generate_agent_files(agent_model, config, generation_mode: GenerationMode = GenerationMode.FULL):
     """
     Generate agent files from an agent model.
     
@@ -171,10 +175,10 @@ def generate_agent_files(agent_model, config):
         
         # Use the BAFGenerator with the agent model from the module
         if hasattr(agent_module, 'agent'):
-            generator = generator_class(agent_module.agent, config=config)
+            generator = generator_class(agent_module.agent, config=config, generation_mode=generation_mode)
         else:
             # Fall back to the original agent model
-            generator = generator_class(agent_model, config=config)
+            generator = generator_class(agent_model, config=config, generation_mode=generation_mode)
         
         generator.generate()
         
@@ -349,8 +353,11 @@ async def _handle_agent_generation(json_data: dict):
     try:
         # Get languages from config if present
         config = json_data.get('config', {})
-        languages = config.get('languages') if isinstance(config, dict) else None
-        configuration_variants = config.get('configurations') if isinstance(config, dict) else None
+        is_config_dict = isinstance(config, dict)
+        languages = config.get('languages') if is_config_dict else None
+        configuration_variants = config.get('configurations') if is_config_dict else None
+        base_model_snapshot = config.get('baseModel') if is_config_dict else None
+        variation_entries = config.get('variations') if is_config_dict else None
 
         # New format: languages is a dict with 'source' and 'target'
         if languages and isinstance(languages, dict):
@@ -412,6 +419,50 @@ async def _handle_agent_generation(json_data: dict):
                 zip_buffer,
                 media_type="application/zip",
                 headers={"Content-Disposition": "attachment; filename=agents_multi_lang.zip"},
+            )
+        elif base_model_snapshot is not None and isinstance(variation_entries, list):
+            def to_agent_model(model_snapshot: Dict[str, Any]):
+                variant_payload = dict(json_data)
+                variant_payload['model'] = model_snapshot
+                return process_agent_diagram(variant_payload)
+
+            combined_zip = io.BytesIO()
+            with zipfile.ZipFile(combined_zip, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                base_agent_model = to_agent_model(base_model_snapshot)
+                base_buffer, _ = generate_agent_files(
+                    base_agent_model,
+                    config,
+                    generation_mode=GenerationMode.CODE_ONLY,
+                )
+                append_zip_contents(zip_file, base_buffer)
+
+                for index, entry in enumerate(variation_entries):
+                    if not isinstance(entry, dict):
+                        continue
+                    variant_snapshot = entry.get('model')
+                    if not variant_snapshot:
+                        continue
+                    try:
+                        variant_agent_model = to_agent_model(variant_snapshot)
+                    except Exception as conversion_error:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Invalid agent model provided for variation '{entry.get('name', index)}': {conversion_error}",
+                        ) from conversion_error
+
+                    folder_name = slugify_name(entry.get('name'), f"variation_{index + 1}")
+                    variant_buffer, _ = generate_agent_files(
+                        variant_agent_model,
+                        entry.get('config'),
+                        generation_mode=GenerationMode.CODE_ONLY,
+                    )
+                    append_zip_contents(zip_file, variant_buffer, prefix=folder_name or f"variation_{index + 1}")
+
+            combined_zip.seek(0)
+            return StreamingResponse(
+                combined_zip,
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={AGENT_OUTPUT_FILENAME}"},
             )
         elif configuration_variants and isinstance(configuration_variants, list):
             agent_model = process_agent_diagram(json_data)
@@ -496,8 +547,10 @@ async def transform_agent_model_json(input_data: DiagramInput):
         os.chdir(original_cwd)
         if sys_path_added:
             try:
+                sys.path.remove(temp_dir)
             except ValueError:
                 pass
+        cleanup_temp_resources(temp_dir)
 
 
 async def _handle_class_diagram_generation(

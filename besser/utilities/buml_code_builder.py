@@ -3,6 +3,7 @@ import tempfile
 import uuid
 import shutil
 from re import search
+from typing import Optional
 from besser.BUML.metamodel.structural.structural import DomainModel, AssociationClass, Metadata
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
@@ -10,6 +11,13 @@ from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Cust
 from besser.BUML.metamodel.state_machine.agent import Agent, Intent, AgentReply, LLMReply, RAGReply
 from besser.BUML.metamodel.state_machine.state_machine import Body
 from besser.utilities import sort_by_timestamp as sort
+
+try:
+    from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+        domain_model as reference_user_domain_model,
+    )
+except ImportError:
+    reference_user_domain_model = None
 
 PRIMITIVE_TYPE_MAPPING = {
     'str': 'StringType',
@@ -66,7 +74,46 @@ def safe_identifier(name: str, fallback: str) -> str:
         sanitized = f"{fallback}_{sanitized}"
     return sanitized
 
-def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: ObjectModel = None):
+
+def contains_user_class(model) -> bool:
+    """Return True if the supplied model exposes a Class literally named 'User'."""
+    if not model:
+        return False
+    get_classes = getattr(model, "get_classes", None)
+    if not callable(get_classes):
+        return False
+    classes = get_classes() or []
+    for cls in classes:
+        class_name = (getattr(cls, "name", "") or "").strip().lower()
+        if class_name == "user":
+            return True
+    return False
+
+
+def is_user_object_model(obj_model: ObjectModel) -> bool:
+    """Detect whether an ObjectModel belongs to the user reference domain."""
+    if not obj_model:
+        return False
+    domain_model = getattr(obj_model, "domain_model", None)
+    if contains_user_class(domain_model):
+        return True
+
+    objects = getattr(obj_model, "objects", None) or []
+    for obj in objects:
+        classifier = getattr(obj, "classifier", None)
+        classifier_name = (getattr(classifier, "name", "") or "").strip().lower()
+        if classifier_name == "user":
+            return True
+    return False
+
+def domain_model_to_code(
+    model: DomainModel,
+    file_path: str,
+    objectmodel: ObjectModel = None,
+    model_var_name: str = "domain_model",
+    metadata_var_name: Optional[str] = None,
+    object_model_var_name: str = "object_model",
+):
     """
     Generates Python code for a B-UML model and writes it to a specified file.
 
@@ -75,6 +122,11 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             associations, and generalizations.
         file_path (str): The path where the generated code will be saved.
         objectmodel (ObjectModel, optional): The B-UML object model to include in the same file.
+        model_var_name (str, optional): Name of the DomainModel variable in the generated code.
+        metadata_var_name (Optional[str], optional): Name for the metadata helper variable. Defaults
+            to "<model_var_name>_metadata" when not provided.
+        object_model_var_name (str, optional): Name of the ObjectModel variable when an object model
+            is included. Defaults to "object_model".
 
     Outputs:
         - A Python file containing the base code representation of the B-UML domain model
@@ -85,6 +137,9 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
         os.makedirs(output_dir)
     if not file_path.endswith('.py'):
         file_path += '.py'
+
+    metadata_var_name = metadata_var_name or f"{model_var_name}_metadata"
+    object_model_var_name = object_model_var_name or "object_model"
 
     with open(file_path, 'w', encoding='utf-8') as f:
         # Write imports
@@ -346,7 +401,7 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
         # Write domain model metadata if it exists
         domain_metadata_var = None
         if hasattr(model, 'metadata') and model.metadata:
-            domain_metadata_var = "domain_metadata"
+            domain_metadata_var = metadata_var_name
             f.write(f"{domain_metadata_var} = Metadata(\n")
             if model.metadata.description:
                 # Escape quotes and newlines in description
@@ -358,7 +413,7 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                 f.write(f'    icon="{model.metadata.icon}"\n')
             f.write(")\n\n")
         
-        f.write("domain_model = DomainModel(\n")
+        f.write(f"{model_var_name} = DomainModel(\n")
         f.write(f"    name=\"{model.name}\",\n")
 
         # Include all classes (regular and association) and enumerations in types
@@ -465,7 +520,7 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             # Create the object model instance
             f.write("# Object Model instance\n")
             objects_str = ", ".join([f"{obj.name_.lower()}_obj" for obj in sorted(objectmodel.objects, key=lambda x: x.name_)])
-            f.write(f"object_model: ObjectModel = ObjectModel(\n")
+            f.write(f"{object_model_var_name}: ObjectModel = ObjectModel(\n")
             f.write(f"    name=\"{objectmodel.name}\",\n")
             f.write(f"    objects={{{objects_str}}}")
             
@@ -735,6 +790,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     domain_model = None
     objectmodel = None
     agent_model = None
+    user_domain_model = None
+    user_objectmodel = None
     gui_model = None
 
     # Import GUIModel locally to avoid circular imports
@@ -745,13 +802,22 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
     for model in project.models:
         if isinstance(model, DomainModel):
-            domain_model = model
-        if isinstance(model, ObjectModel):
-            objectmodel = model
-        if isinstance(model, Agent):
+            if contains_user_class(model):
+                user_domain_model = user_domain_model or model
+            elif domain_model is None:
+                domain_model = model
+        elif isinstance(model, ObjectModel):
+            if is_user_object_model(model):
+                user_objectmodel = user_objectmodel or model
+            elif objectmodel is None:
+                objectmodel = model
+        elif isinstance(model, Agent):
             agent_model = model
-        if GUIModel and isinstance(model, GUIModel):
+        elif GUIModel and isinstance(model, GUIModel):
             gui_model = model
+
+    if user_objectmodel and not user_domain_model and reference_user_domain_model:
+        user_domain_model = reference_user_domain_model
 
     models = []
     with open(file_path, 'w', encoding='utf-8') as f:
@@ -777,7 +843,26 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             f.write(content_str)
             f.write("\n\n")
             models.append("domain_model")
-        
+
+        if user_domain_model:
+            output_file_path = os.path.join(temp_dir, "user_model.py")
+            domain_model_to_code(
+                model=user_domain_model,
+                file_path=output_file_path,
+                objectmodel=user_objectmodel,
+                model_var_name="user_model",
+                metadata_var_name="user_metadata",
+                object_model_var_name="user_object_model",
+            )
+            with open(output_file_path, "r") as m:
+                file_content = m.read()
+            content_str = file_content
+            f.write(content_str)
+            f.write("\n\n")
+            models.append("user_model")
+            if user_objectmodel:
+                models.append("user_object_model")
+
         if agent_model:
             output_file_path = os.path.join(temp_dir, "agent_model.py")
             agent_model_to_code(model=agent_model, file_path=output_file_path)

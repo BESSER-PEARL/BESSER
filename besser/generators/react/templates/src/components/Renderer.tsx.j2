@@ -28,6 +28,9 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   const navigate = useNavigate();
   {% if has_language_switcher %}
   const { t } = useTranslation();
+  {% else %}
+  // Fallback translation function when i18n is not configured
+  const t = (key: string, options?: { defaultValue?: string }) => options?.defaultValue || key;
   {% endif %}
   
   // All hooks must be at the top level - declare all states here

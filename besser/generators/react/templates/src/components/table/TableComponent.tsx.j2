@@ -1,7 +1,9 @@
 import React, { CSSProperties, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { createPortal } from "react-dom";
+{% if has_language_switcher %}
 import { useTranslation } from "react-i18next";
+{% endif %}
 import { useTableContext } from "../../contexts/TableContext";
 import { ColumnFilter } from "./ColumnFilter";
 import { ColumnSort } from "./ColumnSort";
@@ -81,7 +83,28 @@ export const TableComponent: React.FC<Props> = ({
   // Local state for table data
   const [tableData, setTableData] = useState<any[]>(data ?? []);
   const { setSelectedRow, registerTableRefresh } = useTableContext();
+  {% if has_language_switcher %}
   const { t } = useTranslation();
+  {% else %}
+  // Fallback translation function when i18n is not configured
+  const t = (key: string) => {
+    const translations: Record<string, string> = {
+      'table.addNew': 'Add New',
+      'table.filterBy': 'Filtered by',
+      'common.edit': 'Edit',
+      'common.delete': 'Delete',
+      'common.cancel': 'Cancel',
+      'common.save': 'Save',
+      'common.noData': 'No data available',
+      'common.of': 'of',
+      'common.rowsPerPage': 'Rows per page',
+      'common.previous': 'Previous',
+      'common.next': 'Next',
+      'common.page': 'Page',
+    };
+    return translations[key] || key;
+  };
+  {% endif %}
   const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [sortConfig, setSortConfig] = useState<{ field: string; direction: 'asc' | 'desc' } | null>(null);

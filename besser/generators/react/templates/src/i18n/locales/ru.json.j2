@@ -1,0 +1,108 @@
+{
+  "common": {
+    "appName": "[[ module_name ]]",
+    "loading": "Загрузка...",
+    "error": "Произошла ошибка",
+    "save": "Сохранить",
+    "cancel": "Отмена",
+    "delete": "Удалить",
+    "edit": "Редактировать",
+    "create": "Создать",
+    "update": "Обновить",
+    "search": "Поиск",
+    "filter": "Фильтр",
+    "actions": "Действия",
+    "confirm": "Подтвердить",
+    "yes": "Да",
+    "no": "Нет",
+    "submit": "Отправить",
+    "reset": "Сбросить",
+    "back": "Назад",
+    "next": "Далее",
+    "previous": "Предыдущий",
+    "close": "Закрыть",
+    "open": "Открыть",
+    "view": "Просмотр",
+    "details": "Подробности",
+    "noData": "Нет доступных данных",
+    "rowsPerPage": "Строк на странице",
+    "of": "из",
+    "page": "Страница",
+    "total": "Всего",
+    "all": "Все",
+    "none": "Ничего",
+    "select": "Выбрать",
+    "selected": "Выбрано",
+    "copyright": "© 2025 [[ module_name ]]. Все права защищены."
+  },
+  "navigation": {
+    "home": "Главная",
+    "dashboard": "Панель управления",
+    "settings": "Настройки",
+    "profile": "Профиль",
+    "logout": "Выйти",
+    "login": "Войти"
+  },
+  "pages": {
+    {% for page in pages_meta %}
+    "[[ page.id ]]": {
+      "title": "[[ page.name ]]",
+      "description": "Управление данными [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "content": {
+    {% for key, value in text_content_map_ru.items() %}
+    "[[ key ]]": "[[ value | replace('\"', '\\\"') | replace('\n', ' ') ]]"{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "table": {
+    "noResults": "Результаты не найдены",
+    "loading": "Загрузка данных...",
+    "error": "Не удалось загрузить данные",
+    "empty": "Нет записей для отображения",
+    "addNew": "Добавить новый",
+    "editRow": "Редактировать строку",
+    "deleteRow": "Удалить строку",
+    "confirmDelete": "Вы уверены, что хотите удалить этот элемент?",
+    "searchPlaceholder": "Поиск...",
+    "filterBy": "Фильтровать по",
+    "sortBy": "Сортировать по",
+    "ascending": "По возрастанию",
+    "descending": "По убыванию",
+    "showColumns": "Показать столбцы",
+    "exportData": "Экспорт данных",
+    "refresh": "Обновить"
+  },
+  "form": {
+    "required": "Это поле обязательно",
+    "invalid": "Недопустимое значение",
+    "minLength": "Минимальная длина {{min}} символов",
+    "maxLength": "Максимальная длина {{max}} символов",
+    "email": "Пожалуйста, введите действительный адрес электронной почты",
+    "number": "Пожалуйста, введите допустимое число",
+    "date": "Пожалуйста, введите действительную дату",
+    "selectOption": "Выберите вариант",
+    "uploadFile": "Загрузить файл",
+    "dragDrop": "Перетащите файлы сюда"
+  },
+  "messages": {
+    "success": "Операция успешно завершена",
+    "error": "Произошла ошибка. Пожалуйста, попробуйте снова.",
+    "saveSuccess": "Изменения успешно сохранены",
+    "deleteSuccess": "Элемент успешно удален",
+    "createSuccess": "Элемент успешно создан",
+    "updateSuccess": "Элемент успешно обновлен",
+    "confirmAction": "Вы уверены, что хотите продолжить?",
+    "unsavedChanges": "У вас есть несохраненные изменения. Вы уверены, что хотите выйти?"
+  },
+  "entities": {
+    {% for page in pages_meta %}
+    "[[ page.name | lower ]]": {
+      "singular": "[[ page.name ]]",
+      "plural": "[[ page.name ]]s",
+      "manage": "Управление [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  }
+}

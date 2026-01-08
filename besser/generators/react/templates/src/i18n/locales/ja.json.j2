@@ -1,0 +1,108 @@
+{
+  "common": {
+    "appName": "[[ module_name ]]",
+    "loading": "読み込み中...",
+    "error": "エラーが発生しました",
+    "save": "保存",
+    "cancel": "キャンセル",
+    "delete": "削除",
+    "edit": "編集",
+    "create": "作成",
+    "update": "更新",
+    "search": "検索",
+    "filter": "フィルター",
+    "actions": "アクション",
+    "confirm": "確認",
+    "yes": "はい",
+    "no": "いいえ",
+    "submit": "送信",
+    "reset": "リセット",
+    "back": "戻る",
+    "next": "次へ",
+    "previous": "前へ",
+    "close": "閉じる",
+    "open": "開く",
+    "view": "表示",
+    "details": "詳細",
+    "noData": "データがありません",
+    "rowsPerPage": "ページあたりの行数",
+    "of": "/",
+    "page": "ページ",
+    "total": "合計",
+    "all": "すべて",
+    "none": "なし",
+    "select": "選択",
+    "selected": "選択済み",
+    "copyright": "© 2025 [[ module_name ]]. All rights reserved."
+  },
+  "navigation": {
+    "home": "ホーム",
+    "dashboard": "ダッシュボード",
+    "settings": "設定",
+    "profile": "プロフィール",
+    "logout": "ログアウト",
+    "login": "ログイン"
+  },
+  "pages": {
+    {% for page in pages_meta %}
+    "[[ page.id ]]": {
+      "title": "[[ page.name ]]",
+      "description": "[[ page.name ]] データを管理"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "content": {
+    {% for key, value in text_content_map_ja.items() %}
+    "[[ key ]]": "[[ value | replace('\"', '\\\"') | replace('\n', ' ') ]]"{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "table": {
+    "noResults": "結果が見つかりません",
+    "loading": "データを読み込み中...",
+    "error": "データの読み込みに失敗しました",
+    "empty": "表示するレコードがありません",
+    "addNew": "新規追加",
+    "editRow": "行を編集",
+    "deleteRow": "行を削除",
+    "confirmDelete": "このアイテムを削除してもよろしいですか？",
+    "searchPlaceholder": "検索...",
+    "filterBy": "フィルター条件",
+    "sortBy": "並べ替え",
+    "ascending": "昇順",
+    "descending": "降順",
+    "showColumns": "列を表示",
+    "exportData": "データをエクスポート",
+    "refresh": "更新"
+  },
+  "form": {
+    "required": "この項目は必須です",
+    "invalid": "無効な値です",
+    "minLength": "最低{{min}}文字必要です",
+    "maxLength": "最大{{max}}文字までです",
+    "email": "有効なメールアドレスを入力してください",
+    "number": "有効な数値を入力してください",
+    "date": "有効な日付を入力してください",
+    "selectOption": "オプションを選択",
+    "uploadFile": "ファイルをアップロード",
+    "dragDrop": "ここにファイルをドラッグ＆ドロップ"
+  },
+  "messages": {
+    "success": "操作が完了しました",
+    "error": "エラーが発生しました。もう一度お試しください。",
+    "saveSuccess": "変更が保存されました",
+    "deleteSuccess": "アイテムが削除されました",
+    "createSuccess": "アイテムが作成されました",
+    "updateSuccess": "アイテムが更新されました",
+    "confirmAction": "続行してもよろしいですか？",
+    "unsavedChanges": "保存されていない変更があります。終了してもよろしいですか？"
+  },
+  "entities": {
+    {% for page in pages_meta %}
+    "[[ page.name | lower ]]": {
+      "singular": "[[ page.name ]]",
+      "plural": "[[ page.name ]]s",
+      "manage": "[[ page.name ]] を管理"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  }
+}

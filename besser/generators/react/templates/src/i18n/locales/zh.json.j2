@@ -1,0 +1,108 @@
+{
+  "common": {
+    "appName": "[[ module_name ]]",
+    "loading": "加载中...",
+    "error": "发生错误",
+    "save": "保存",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "create": "创建",
+    "update": "更新",
+    "search": "搜索",
+    "filter": "筛选",
+    "actions": "操作",
+    "confirm": "确认",
+    "yes": "是",
+    "no": "否",
+    "submit": "提交",
+    "reset": "重置",
+    "back": "返回",
+    "next": "下一步",
+    "previous": "上一步",
+    "close": "关闭",
+    "open": "打开",
+    "view": "查看",
+    "details": "详情",
+    "noData": "暂无数据",
+    "rowsPerPage": "每页行数",
+    "of": "/",
+    "page": "页",
+    "total": "总计",
+    "all": "全部",
+    "none": "无",
+    "select": "选择",
+    "selected": "已选择",
+    "copyright": "© 2025 [[ module_name ]]. 保留所有权利。"
+  },
+  "navigation": {
+    "home": "首页",
+    "dashboard": "仪表板",
+    "settings": "设置",
+    "profile": "个人资料",
+    "logout": "退出",
+    "login": "登录"
+  },
+  "pages": {
+    {% for page in pages_meta %}
+    "[[ page.id ]]": {
+      "title": "[[ page.name ]]",
+      "description": "管理 [[ page.name ]] 数据"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "content": {
+    {% for key, value in text_content_map_zh.items() %}
+    "[[ key ]]": "[[ value | replace('\"', '\\\"') | replace('\n', ' ') ]]"{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "table": {
+    "noResults": "未找到结果",
+    "loading": "数据加载中...",
+    "error": "数据加载失败",
+    "empty": "暂无记录",
+    "addNew": "新增",
+    "editRow": "编辑行",
+    "deleteRow": "删除行",
+    "confirmDelete": "确定要删除此项吗？",
+    "searchPlaceholder": "搜索...",
+    "filterBy": "筛选条件",
+    "sortBy": "排序方式",
+    "ascending": "升序",
+    "descending": "降序",
+    "showColumns": "显示列",
+    "exportData": "导出数据",
+    "refresh": "刷新"
+  },
+  "form": {
+    "required": "此字段为必填项",
+    "invalid": "无效值",
+    "minLength": "最少需要 {{min}} 个字符",
+    "maxLength": "最多允许 {{max}} 个字符",
+    "email": "请输入有效的电子邮件地址",
+    "number": "请输入有效的数字",
+    "date": "请输入有效的日期",
+    "selectOption": "请选择一个选项",
+    "uploadFile": "上传文件",
+    "dragDrop": "将文件拖放到此处"
+  },
+  "messages": {
+    "success": "操作成功",
+    "error": "发生错误，请重试。",
+    "saveSuccess": "保存成功",
+    "deleteSuccess": "删除成功",
+    "createSuccess": "创建成功",
+    "updateSuccess": "更新成功",
+    "confirmAction": "确定要继续吗？",
+    "unsavedChanges": "您有未保存的更改。确定要离开吗？"
+  },
+  "entities": {
+    {% for page in pages_meta %}
+    "[[ page.name | lower ]]": {
+      "singular": "[[ page.name ]]",
+      "plural": "[[ page.name ]]s",
+      "manage": "管理 [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  }
+}

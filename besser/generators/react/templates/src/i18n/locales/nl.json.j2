@@ -1,0 +1,108 @@
+{
+  "common": {
+    "appName": "[[ module_name ]]",
+    "loading": "Laden...",
+    "error": "Er is een fout opgetreden",
+    "save": "Opslaan",
+    "cancel": "Annuleren",
+    "delete": "Verwijderen",
+    "edit": "Bewerken",
+    "create": "Aanmaken",
+    "update": "Bijwerken",
+    "search": "Zoeken",
+    "filter": "Filteren",
+    "actions": "Acties",
+    "confirm": "Bevestigen",
+    "yes": "Ja",
+    "no": "Nee",
+    "submit": "Verzenden",
+    "reset": "Resetten",
+    "back": "Terug",
+    "next": "Volgende",
+    "previous": "Vorige",
+    "close": "Sluiten",
+    "open": "Openen",
+    "view": "Bekijken",
+    "details": "Details",
+    "noData": "Geen gegevens beschikbaar",
+    "rowsPerPage": "Rijen per pagina",
+    "of": "van",
+    "page": "Pagina",
+    "total": "Totaal",
+    "all": "Alles",
+    "none": "Geen",
+    "select": "Selecteren",
+    "selected": "Geselecteerd",
+    "copyright": "© 2025 [[ module_name ]]. Alle rechten voorbehouden."
+  },
+  "navigation": {
+    "home": "Home",
+    "dashboard": "Dashboard",
+    "settings": "Instellingen",
+    "profile": "Profiel",
+    "logout": "Uitloggen",
+    "login": "Inloggen"
+  },
+  "pages": {
+    {% for page in pages_meta %}
+    "[[ page.id ]]": {
+      "title": "[[ page.name ]]",
+      "description": "Beheer [[ page.name ]] gegevens"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "content": {
+    {% for key, value in text_content_map_nl.items() %}
+    "[[ key ]]": "[[ value | replace('\"', '\\\"') | replace('\n', ' ') ]]"{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "table": {
+    "noResults": "Geen resultaten gevonden",
+    "loading": "Gegevens laden...",
+    "error": "Kan gegevens niet laden",
+    "empty": "Geen records om weer te geven",
+    "addNew": "Nieuwe toevoegen",
+    "editRow": "Rij bewerken",
+    "deleteRow": "Rij verwijderen",
+    "confirmDelete": "Weet u zeker dat u dit item wilt verwijderen?",
+    "searchPlaceholder": "Zoeken...",
+    "filterBy": "Filteren op",
+    "sortBy": "Sorteren op",
+    "ascending": "Oplopend",
+    "descending": "Aflopend",
+    "showColumns": "Kolommen weergeven",
+    "exportData": "Gegevens exporteren",
+    "refresh": "Vernieuwen"
+  },
+  "form": {
+    "required": "Dit veld is verplicht",
+    "invalid": "Ongeldige waarde",
+    "minLength": "Minimale lengte is {{min}} tekens",
+    "maxLength": "Maximale lengte is {{max}} tekens",
+    "email": "Voer een geldig e-mailadres in",
+    "number": "Voer een geldig nummer in",
+    "date": "Voer een geldige datum in",
+    "selectOption": "Selecteer een optie",
+    "uploadFile": "Bestand uploaden",
+    "dragDrop": "Sleep bestanden hierheen"
+  },
+  "messages": {
+    "success": "Bewerking succesvol voltooid",
+    "error": "Er is een fout opgetreden. Probeer het opnieuw.",
+    "saveSuccess": "Wijzigingen succesvol opgeslagen",
+    "deleteSuccess": "Item succesvol verwijderd",
+    "createSuccess": "Item succesvol aangemaakt",
+    "updateSuccess": "Item succesvol bijgewerkt",
+    "confirmAction": "Weet u zeker dat u wilt doorgaan?",
+    "unsavedChanges": "U hebt niet-opgeslagen wijzigingen. Weet u zeker dat u wilt afsluiten?"
+  },
+  "entities": {
+    {% for page in pages_meta %}
+    "[[ page.name | lower ]]": {
+      "singular": "[[ page.name ]]",
+      "plural": "[[ page.name ]]s",
+      "manage": "Beheer [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  }
+}

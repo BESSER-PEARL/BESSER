@@ -1,0 +1,74 @@
+import i18n from 'i18next';
+import { initReactI18next } from 'react-i18next';
+import LanguageDetector from 'i18next-browser-languagedetector';
+
+// Import translation files for enabled languages
+import enTranslation from './locales/en.json';
+{% if 'fr' in enabled_languages %}import frTranslation from './locales/fr.json';
+{% endif %}{% if 'de' in enabled_languages %}import deTranslation from './locales/de.json';
+{% endif %}{% if 'es' in enabled_languages %}import esTranslation from './locales/es.json';
+{% endif %}{% if 'pt' in enabled_languages %}import ptTranslation from './locales/pt.json';
+{% endif %}{% if 'it' in enabled_languages %}import itTranslation from './locales/it.json';
+{% endif %}{% if 'nl' in enabled_languages %}import nlTranslation from './locales/nl.json';
+{% endif %}{% if 'pl' in enabled_languages %}import plTranslation from './locales/pl.json';
+{% endif %}{% if 'ru' in enabled_languages %}import ruTranslation from './locales/ru.json';
+{% endif %}{% if 'zh' in enabled_languages %}import zhTranslation from './locales/zh.json';
+{% endif %}{% if 'ja' in enabled_languages %}import jaTranslation from './locales/ja.json';
+{% endif %}{% if 'ko' in enabled_languages %}import koTranslation from './locales/ko.json';
+{% endif %}{% if 'ar' in enabled_languages %}import arTranslation from './locales/ar.json';
+{% endif %}
+
+// Available languages configuration (only enabled languages)
+export const languages = [
+  { code: 'en', name: 'English', flag: '🇺🇸' },
+  {% if 'fr' in enabled_languages %}{ code: 'fr', name: 'Français', flag: '🇫🇷' },{% endif %}
+  {% if 'de' in enabled_languages %}{ code: 'de', name: 'Deutsch', flag: '🇩🇪' },{% endif %}
+  {% if 'es' in enabled_languages %}{ code: 'es', name: 'Español', flag: '🇪🇸' },{% endif %}
+  {% if 'pt' in enabled_languages %}{ code: 'pt', name: 'Português', flag: '🇵🇹' },{% endif %}
+  {% if 'it' in enabled_languages %}{ code: 'it', name: 'Italiano', flag: '🇮🇹' },{% endif %}
+  {% if 'nl' in enabled_languages %}{ code: 'nl', name: 'Nederlands', flag: '🇳🇱' },{% endif %}
+  {% if 'pl' in enabled_languages %}{ code: 'pl', name: 'Polski', flag: '🇵🇱' },{% endif %}
+  {% if 'ru' in enabled_languages %}{ code: 'ru', name: 'Русский', flag: '🇷🇺' },{% endif %}
+  {% if 'zh' in enabled_languages %}{ code: 'zh', name: '中文', flag: '🇨🇳' },{% endif %}
+  {% if 'ja' in enabled_languages %}{ code: 'ja', name: '日本語', flag: '🇯🇵' },{% endif %}
+  {% if 'ko' in enabled_languages %}{ code: 'ko', name: '한국어', flag: '🇰🇷' },{% endif %}
+  {% if 'ar' in enabled_languages %}{ code: 'ar', name: 'العربية', flag: '🇸🇦' },{% endif %}
+];
+
+// Translation resources for enabled languages
+const resources = {
+  en: { translation: enTranslation },
+  {% if 'fr' in enabled_languages %}fr: { translation: frTranslation },{% endif %}
+  {% if 'de' in enabled_languages %}de: { translation: deTranslation },{% endif %}
+  {% if 'es' in enabled_languages %}es: { translation: esTranslation },{% endif %}
+  {% if 'pt' in enabled_languages %}pt: { translation: ptTranslation },{% endif %}
+  {% if 'it' in enabled_languages %}it: { translation: itTranslation },{% endif %}
+  {% if 'nl' in enabled_languages %}nl: { translation: nlTranslation },{% endif %}
+  {% if 'pl' in enabled_languages %}pl: { translation: plTranslation },{% endif %}
+  {% if 'ru' in enabled_languages %}ru: { translation: ruTranslation },{% endif %}
+  {% if 'zh' in enabled_languages %}zh: { translation: zhTranslation },{% endif %}
+  {% if 'ja' in enabled_languages %}ja: { translation: jaTranslation },{% endif %}
+  {% if 'ko' in enabled_languages %}ko: { translation: koTranslation },{% endif %}
+  {% if 'ar' in enabled_languages %}ar: { translation: arTranslation },{% endif %}
+};
+
+i18n
+  .use(LanguageDetector)
+  .use(initReactI18next)
+  .init({
+    resources,
+    fallbackLng: '[[ i18n_config.default_language if i18n_config else "en" ]]',
+    debug: process.env.NODE_ENV === 'development',
+    
+    interpolation: {
+      escapeValue: false, // React already escapes values
+    },
+    
+    detection: {
+      order: ['localStorage', 'navigator', 'htmlTag'],
+      caches: ['localStorage'],
+      lookupLocalStorage: 'i18nextLng',
+    },
+  });
+
+export default i18n;

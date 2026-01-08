@@ -1,0 +1,108 @@
+{
+  "common": {
+    "appName": "[[ module_name ]]",
+    "loading": "جارٍ التحميل...",
+    "error": "حدث خطأ",
+    "save": "حفظ",
+    "cancel": "إلغاء",
+    "delete": "حذف",
+    "edit": "تعديل",
+    "create": "إنشاء",
+    "update": "تحديث",
+    "search": "بحث",
+    "filter": "تصفية",
+    "actions": "إجراءات",
+    "confirm": "تأكيد",
+    "yes": "نعم",
+    "no": "لا",
+    "submit": "إرسال",
+    "reset": "إعادة تعيين",
+    "back": "رجوع",
+    "next": "التالي",
+    "previous": "السابق",
+    "close": "إغلاق",
+    "open": "فتح",
+    "view": "عرض",
+    "details": "تفاصيل",
+    "noData": "لا توجد بيانات متاحة",
+    "rowsPerPage": "صفوف لكل صفحة",
+    "of": "من",
+    "page": "صفحة",
+    "total": "المجموع",
+    "all": "الكل",
+    "none": "لا شيء",
+    "select": "اختر",
+    "selected": "محدد",
+    "copyright": "© 2025 [[ module_name ]]. جميع الحقوق محفوظة."
+  },
+  "navigation": {
+    "home": "الرئيسية",
+    "dashboard": "لوحة التحكم",
+    "settings": "الإعدادات",
+    "profile": "الملف الشخصي",
+    "logout": "تسجيل الخروج",
+    "login": "تسجيل الدخول"
+  },
+  "pages": {
+    {% for page in pages_meta %}
+    "[[ page.id ]]": {
+      "title": "[[ page.name ]]",
+      "description": "إدارة بيانات [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "content": {
+    {% for key, value in text_content_map_ar.items() %}
+    "[[ key ]]": "[[ value | replace('\"', '\\\"') | replace('\n', ' ') ]]"{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "table": {
+    "noResults": "لم يتم العثور على نتائج",
+    "loading": "جارٍ تحميل البيانات...",
+    "error": "فشل في تحميل البيانات",
+    "empty": "لا توجد سجلات للعرض",
+    "addNew": "إضافة جديد",
+    "editRow": "تعديل الصف",
+    "deleteRow": "حذف الصف",
+    "confirmDelete": "هل أنت متأكد أنك تريد حذف هذا العنصر؟",
+    "searchPlaceholder": "بحث...",
+    "filterBy": "تصفية حسب",
+    "sortBy": "ترتيب حسب",
+    "ascending": "تصاعدي",
+    "descending": "تنازلي",
+    "showColumns": "إظهار الأعمدة",
+    "exportData": "تصدير البيانات",
+    "refresh": "تحديث"
+  },
+  "form": {
+    "required": "هذا الحقل مطلوب",
+    "invalid": "قيمة غير صالحة",
+    "minLength": "الحد الأدنى للطول هو {{min}} حرف",
+    "maxLength": "الحد الأقصى للطول هو {{max}} حرف",
+    "email": "يرجى إدخال عنوان بريد إلكتروني صالح",
+    "number": "يرجى إدخال رقم صالح",
+    "date": "يرجى إدخال تاريخ صالح",
+    "selectOption": "اختر خياراً",
+    "uploadFile": "رفع ملف",
+    "dragDrop": "اسحب الملفات وأفلتها هنا"
+  },
+  "messages": {
+    "success": "تمت العملية بنجاح",
+    "error": "حدث خطأ. يرجى المحاولة مرة أخرى.",
+    "saveSuccess": "تم حفظ التغييرات بنجاح",
+    "deleteSuccess": "تم حذف العنصر بنجاح",
+    "createSuccess": "تم إنشاء العنصر بنجاح",
+    "updateSuccess": "تم تحديث العنصر بنجاح",
+    "confirmAction": "هل أنت متأكد أنك تريد المتابعة؟",
+    "unsavedChanges": "لديك تغييرات غير محفوظة. هل أنت متأكد أنك تريد المغادرة؟"
+  },
+  "entities": {
+    {% for page in pages_meta %}
+    "[[ page.name | lower ]]": {
+      "singular": "[[ page.name ]]",
+      "plural": "[[ page.name ]]s",
+      "manage": "إدارة [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  }
+}

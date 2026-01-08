@@ -1,0 +1,218 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { languages } from '../../i18n/i18n';
+
+interface LanguageSwitcherProps {
+  variant?: 'dropdown' | 'inline' | 'minimal';
+  showFlags?: boolean;
+  showLabels?: boolean;
+  className?: string;
+}
+
+export const LanguageSwitcher: React.FC<LanguageSwitcherProps> = ({
+  variant = 'dropdown',
+  showFlags = true,
+  showLabels = true,
+  className = '',
+}) => {
+  const { i18n } = useTranslation();
+  const [isOpen, setIsOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  const currentLanguage = languages.find((lang) => lang.code === i18n.language) || languages[0];
+
+  const changeLanguage = (langCode: string) => {
+    i18n.changeLanguage(langCode);
+    setIsOpen(false);
+    localStorage.setItem('i18nextLng', langCode);
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  if (variant === 'inline') {
+    return (
+      <div className={`language-switcher-inline ${className}`} style={styles.inline}>
+        {languages.map((lang) => (
+          <button
+            key={lang.code}
+            onClick={() => changeLanguage(lang.code)}
+            style={{
+              ...styles.inlineButton,
+              ...(i18n.language === lang.code ? styles.activeButton : {}),
+            }}
+            aria-label={`Switch to ${lang.name}`}
+          >
+            {showFlags && <span style={styles.flag}>{lang.flag}</span>}
+            {showLabels && <span>{lang.code.toUpperCase()}</span>}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  if (variant === 'minimal') {
+    return (
+      <select
+        value={i18n.language}
+        onChange={(e) => changeLanguage(e.target.value)}
+        className={`language-switcher-minimal ${className}`}
+        style={styles.select}
+        aria-label="Select language"
+      >
+        {languages.map((lang) => (
+          <option key={lang.code} value={lang.code}>
+            {showFlags ? `${lang.flag} ` : ''}{lang.code.toUpperCase()}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  // Default: dropdown variant
+  return (
+    <div
+      ref={dropdownRef}
+      className={`language-switcher-dropdown ${className}`}
+      style={styles.container}
+    >
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        style={styles.trigger}
+        aria-expanded={isOpen}
+        aria-haspopup="listbox"
+        aria-label="Select language"
+      >
+        {showFlags && <span style={styles.flag}>{currentLanguage.flag}</span>}
+        {showLabels && <span>{currentLanguage.name}</span>}
+        <span style={{ ...styles.arrow, transform: isOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+          ▼
+        </span>
+      </button>
+
+      {isOpen && (
+        <ul style={styles.dropdown} role="listbox">
+          {languages.map((lang) => (
+            <li
+              key={lang.code}
+              onClick={() => changeLanguage(lang.code)}
+              style={{
+                ...styles.dropdownItem,
+                ...(i18n.language === lang.code ? styles.activeItem : {}),
+              }}
+              role="option"
+              aria-selected={i18n.language === lang.code}
+            >
+              {showFlags && <span style={styles.flag}>{lang.flag}</span>}
+              <span>{lang.name}</span>
+              {i18n.language === lang.code && (
+                <span style={styles.checkmark}>✓</span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+const styles: Record<string, React.CSSProperties> = {
+  container: {
+    position: 'relative',
+    display: 'inline-block',
+  },
+  trigger: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 12px',
+    backgroundColor: 'transparent',
+    border: '1px solid rgba(255, 255, 255, 0.3)',
+    borderRadius: '6px',
+    color: 'inherit',
+    cursor: 'pointer',
+    fontSize: '14px',
+    transition: 'all 0.2s ease',
+  },
+  arrow: {
+    fontSize: '10px',
+    marginLeft: '4px',
+    transition: 'transform 0.2s ease',
+  },
+  dropdown: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    marginTop: '4px',
+    minWidth: '160px',
+    backgroundColor: '#fff',
+    borderRadius: '8px',
+    boxShadow: '0 4px 20px rgba(0, 0, 0, 0.15)',
+    padding: '4px 0',
+    listStyle: 'none',
+    zIndex: 1000,
+  },
+  dropdownItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '10px 14px',
+    cursor: 'pointer',
+    color: '#333',
+    transition: 'background-color 0.2s ease',
+  },
+  activeItem: {
+    backgroundColor: '#f0f7ff',
+    color: '#2563eb',
+    fontWeight: 500,
+  },
+  flag: {
+    fontSize: '18px',
+  },
+  checkmark: {
+    marginLeft: 'auto',
+    color: '#2563eb',
+    fontWeight: 'bold',
+  },
+  inline: {
+    display: 'flex',
+    gap: '4px',
+  },
+  inlineButton: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '6px 10px',
+    backgroundColor: 'transparent',
+    border: '1px solid rgba(255, 255, 255, 0.2)',
+    borderRadius: '4px',
+    color: 'inherit',
+    cursor: 'pointer',
+    fontSize: '13px',
+    transition: 'all 0.2s ease',
+  },
+  activeButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderColor: 'rgba(255, 255, 255, 0.4)',
+  },
+  select: {
+    padding: '6px 10px',
+    backgroundColor: 'transparent',
+    border: '1px solid rgba(255, 255, 255, 0.3)',
+    borderRadius: '4px',
+    color: 'inherit',
+    cursor: 'pointer',
+    fontSize: '14px',
+  },
+};
+
+export default LanguageSwitcher;

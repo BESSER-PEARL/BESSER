@@ -1,6 +1,7 @@
 import React, { CSSProperties, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 import { useTableContext } from "../../contexts/TableContext";
 import { ColumnFilter } from "./ColumnFilter";
 import { ColumnSort } from "./ColumnSort";
@@ -80,6 +81,7 @@ export const TableComponent: React.FC<Props> = ({
   // Local state for table data
   const [tableData, setTableData] = useState<any[]>(data ?? []);
   const { setSelectedRow, registerTableRefresh } = useTableContext();
+  const { t } = useTranslation();
   const [selectedRowIndex, setSelectedRowIndex] = useState<number | null>(null);
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({});
   const [sortConfig, setSortConfig] = useState<{ field: string; direction: 'asc' | 'desc' } | null>(null);
@@ -575,7 +577,7 @@ export const TableComponent: React.FC<Props> = ({
               gap: '6px',
             }}
             type="button"
-            title={`Add ${dataBinding?.entity || 'Register'}`}
+            title={t('table.addNew') + ' ' + (dataBinding?.entity || 'Register')}
             onClick={() => {
               setModalMode('add');
               setEditRowData(null);
@@ -587,7 +589,7 @@ export const TableComponent: React.FC<Props> = ({
               <rect x="9" y="5.5" width="2" height="9" rx="1" fill="white"/>
               <rect x="5.5" y="9" width="9" height="2" rx="1" fill="white"/>
             </svg>
-            {`Add ${dataBinding?.entity || 'Register'}`}
+            {t('table.addNew')} {dataBinding?.entity || 'Register'}
           </button>
         </div>
       )}
@@ -618,7 +620,7 @@ export const TableComponent: React.FC<Props> = ({
               position: "relative",
             }}>
               <h4 style={{ margin: 0, marginBottom: "18px", color: "#1e293b" }}>
-                {modalMode === 'edit' ? `Edit ${dataBinding?.entity || 'Register'}` : `Add ${dataBinding?.entity || 'Register'}`}
+                {modalMode === 'edit' ? t('common.edit') + ' ' + (dataBinding?.entity || 'Register') : t('table.addNew') + ' ' + (dataBinding?.entity || 'Register')}
               </h4>
               {validationError && (
                 <div style={{
@@ -995,7 +997,7 @@ export const TableComponent: React.FC<Props> = ({
                       fontWeight: 500,
                       cursor: "pointer",
                     }}
-                  >Cancel</button>
+                  >{t('common.cancel')}</button>
                   <button
                     type="submit"
                     style={{
@@ -1007,7 +1009,7 @@ export const TableComponent: React.FC<Props> = ({
                       fontWeight: 700,
                       cursor: "pointer",
                     }}
-                  >Save</button>
+                  >{t('common.save')}</button>
                 </div>
               </form>
               <button
@@ -1042,8 +1044,8 @@ export const TableComponent: React.FC<Props> = ({
             backgroundColor: "#f8fafc",
           }}
         >
-          No data available for{" "}
-          {dataBinding?.entity ? `${dataBinding.entity}` : "this table"}.
+          {t('common.noData')}{" "}
+          {dataBinding?.entity ? `- ${dataBinding.entity}` : ""}
         </div>
       ) : (
         <div className="table-scroll">
@@ -1183,7 +1185,7 @@ export const TableComponent: React.FC<Props> = ({
                             alignItems: "center",
                           }}
                           type="button"
-                          title="Edit"
+                          title={t('common.edit')}
                           onClick={() => {
                             setModalMode('edit');
                             setEditRowData(row);
@@ -1202,7 +1204,7 @@ export const TableComponent: React.FC<Props> = ({
                             alignItems: "center",
                           }}
                           type="button"
-                          title="Remove"
+                          title={t('common.delete')}
                           onClick={async () => {
                             const endpoint = getEndpoint();
                             const rowId = getRowId(row);
@@ -1242,10 +1244,10 @@ export const TableComponent: React.FC<Props> = ({
           }}
         >
           <span>
-            Showing {visibleRows.length} of {sortedAndFilteredRows.length} rows
+            {visibleRows.length} {t('common.of')} {sortedAndFilteredRows.length} {t('common.rowsPerPage').toLowerCase()}
             {Object.keys(columnFilters).length > 0 && (
               <span style={{ color: "#2563eb", marginLeft: "4px" }}>
-                (filtered from {normalizedRows.length})
+                ({t('table.filterBy').toLowerCase()} {normalizedRows.length})
               </span>
             )}
           </span>
@@ -1262,10 +1264,10 @@ export const TableComponent: React.FC<Props> = ({
                 cursor: currentPage === 1 ? "not-allowed" : "pointer",
               }}
             >
-              Prev
+              {t('common.previous')}
             </button>
             <span>
-              Page {currentPage} of {totalPages}
+              {t('common.page')} {currentPage} {t('common.of')} {totalPages}
             </span>
             <button
               type="button"
@@ -1283,7 +1285,7 @@ export const TableComponent: React.FC<Props> = ({
                   currentPage === totalPages ? "not-allowed" : "pointer",
               }}
             >
-              Next
+              {t('common.next')}
             </button>
           </div>
         </div>

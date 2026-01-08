@@ -1,0 +1,108 @@
+{
+  "common": {
+    "appName": "[[ module_name ]]",
+    "loading": "Cargando...",
+    "error": "Se produjo un error",
+    "save": "Guardar",
+    "cancel": "Cancelar",
+    "delete": "Eliminar",
+    "edit": "Editar",
+    "create": "Crear",
+    "update": "Actualizar",
+    "search": "Buscar",
+    "filter": "Filtrar",
+    "actions": "Acciones",
+    "confirm": "Confirmar",
+    "yes": "Sí",
+    "no": "No",
+    "submit": "Enviar",
+    "reset": "Restablecer",
+    "back": "Atrás",
+    "next": "Siguiente",
+    "previous": "Anterior",
+    "close": "Cerrar",
+    "open": "Abrir",
+    "view": "Ver",
+    "details": "Detalles",
+    "noData": "No hay datos disponibles",
+    "rowsPerPage": "Filas por página",
+    "of": "de",
+    "page": "Página",
+    "total": "Total",
+    "all": "Todo",
+    "none": "Ninguno",
+    "select": "Seleccionar",
+    "selected": "Seleccionado",
+    "copyright": "© 2025 [[ module_name ]]. Todos los derechos reservados."
+  },
+  "navigation": {
+    "home": "Inicio",
+    "dashboard": "Panel de control",
+    "settings": "Configuración",
+    "profile": "Perfil",
+    "logout": "Cerrar sesión",
+    "login": "Iniciar sesión"
+  },
+  "pages": {
+    {% for page in pages_meta %}
+    "[[ page.id ]]": {
+      "title": "[[ page.name ]]",
+      "description": "Administrar datos de [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "content": {
+    {% for key, value in text_content_map_es.items() %}
+    "[[ key ]]": "[[ value | replace('\"', '\\\"') | replace('\n', ' ') ]]"{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "table": {
+    "noResults": "No se encontraron resultados",
+    "loading": "Cargando datos...",
+    "error": "Error al cargar los datos",
+    "empty": "No hay registros para mostrar",
+    "addNew": "Agregar nuevo",
+    "editRow": "Editar fila",
+    "deleteRow": "Eliminar fila",
+    "confirmDelete": "¿Está seguro de que desea eliminar este elemento?",
+    "searchPlaceholder": "Buscar...",
+    "filterBy": "Filtrar por",
+    "sortBy": "Ordenar por",
+    "ascending": "Ascendente",
+    "descending": "Descendente",
+    "showColumns": "Mostrar columnas",
+    "exportData": "Exportar datos",
+    "refresh": "Actualizar"
+  },
+  "form": {
+    "required": "Este campo es obligatorio",
+    "invalid": "Valor no válido",
+    "minLength": "La longitud mínima es de {{min}} caracteres",
+    "maxLength": "La longitud máxima es de {{max}} caracteres",
+    "email": "Por favor, introduzca una dirección de correo electrónico válida",
+    "number": "Por favor, introduzca un número válido",
+    "date": "Por favor, introduzca una fecha válida",
+    "selectOption": "Seleccione una opción",
+    "uploadFile": "Subir archivo",
+    "dragDrop": "Arrastre y suelte los archivos aquí"
+  },
+  "messages": {
+    "success": "Operación completada con éxito",
+    "error": "Se produjo un error. Por favor, inténtelo de nuevo.",
+    "saveSuccess": "Cambios guardados con éxito",
+    "deleteSuccess": "Elemento eliminado con éxito",
+    "createSuccess": "Elemento creado con éxito",
+    "updateSuccess": "Elemento actualizado con éxito",
+    "confirmAction": "¿Está seguro de que desea continuar?",
+    "unsavedChanges": "Tiene cambios sin guardar. ¿Está seguro de que desea salir?"
+  },
+  "entities": {
+    {% for page in pages_meta %}
+    "[[ page.name | lower ]]": {
+      "singular": "[[ page.name ]]",
+      "plural": "[[ page.name ]]s",
+      "manage": "Gestionar [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  }
+}

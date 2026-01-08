@@ -317,6 +317,34 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 attach_meta(element, meta)
             return element
 
+        # === LANGUAGE SWITCHER PARSER ===
+        if comp_type == "language-switcher":
+            name = get_unique_name(component, "LanguageSwitcher")
+            attrs = component.get("attributes", {})
+            
+            # Create a ViewContainer to hold the language switcher config
+            lang_switcher = ViewContainer(
+                name=name,
+                description="Language Switcher Component",
+                view_elements=set()
+            )
+            lang_switcher.component_id = meta.get("component_id", name)
+            
+            # Store configuration in custom_attributes
+            lang_switcher.custom_attributes = {
+                "component_type": "language-switcher",
+                "variant": attrs.get("variant", "dropdown"),
+                "showFlags": attrs.get("showFlags", True),
+                "showLabels": attrs.get("showLabels", True),
+                "languages": attrs.get("languages", "en,fr,de,es"),
+                "defaultLanguage": attrs.get("defaultLanguage", "en"),
+            }
+            
+            if styling:
+                lang_switcher.styling = styling
+            attach_meta(lang_switcher, meta)
+            return lang_switcher
+
         # === BUTTON PARSER ===
         if comp_type in {"button", "action-button"} or tag == "button":
             name = get_unique_name(component, "Button")

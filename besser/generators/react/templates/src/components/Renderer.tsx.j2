@@ -1,6 +1,10 @@
 import React, { CSSProperties, useEffect, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+{% if has_language_switcher %}
+import { useTranslation } from "react-i18next";
+import { LanguageSwitcher } from "./LanguageSwitcher";
+{% endif %}
 import { applyStyle, StyleData } from "../utils/applyStyle";
 {% if 'BarChart' in used_components %}import { BarChartComponent } from "./charts/BarChartComponent";
 {% endif %}{% if 'LineChart' in used_components %}import { LineChartComponent } from "./charts/LineChartComponent";
@@ -22,6 +26,9 @@ export interface RendererProps {
 export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   // BrowserRouter should be set up in index.tsx - hooks must be called unconditionally
   const navigate = useNavigate();
+  {% if has_language_switcher %}
+  const { t } = useTranslation();
+  {% endif %}
   
   // All hooks must be at the top level - declare all states here
   const [chartData, setChartData] = useState<any[]>(component.data ?? []);
@@ -157,6 +164,11 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     // Filter out 'style' from attributes since we handle it separately as a React object
     const { style: _, ...safeAttributes } = component.attributes || {};
     
+    // Try to translate content using translation key or fallback to original content
+    const content = component.content || "";
+    const translationKey = component.translationKey || component.attributes?.['data-i18n-key'];
+    const translatedContent = translationKey ? t(translationKey, { defaultValue: content }) : content;
+    
     return React.createElement(
       tagName,
       {
@@ -165,7 +177,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         className: component.class_list?.join(' '),
         ...safeAttributes
       },
-      component.content || ""
+      translatedContent
     );
   }
 
@@ -659,6 +671,23 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       />
     );
   }
+
+  {% if has_language_switcher %}
+  // Language Switcher component - renders the i18n language selector
+  if (component.type === "language-switcher" || component.attributes?.component_type === "language-switcher") {
+    const attrs = component.attributes || {};
+    const classList = component.class_list?.join(" ") || "";
+    return (
+      <div id={component.id} className={classList} style={style}>
+        <LanguageSwitcher
+          variant={attrs.variant || "dropdown"}
+          showFlags={attrs.showFlags !== false}
+          showLabels={attrs.showLabels !== false}
+        />
+      </div>
+    );
+  }
+  {% endif %}
 
   return (
     <div id={component.id} style={style}>

@@ -1,0 +1,108 @@
+{
+  "common": {
+    "appName": "[[ module_name ]]",
+    "loading": "Ładowanie...",
+    "error": "Wystąpił błąd",
+    "save": "Zapisz",
+    "cancel": "Anuluj",
+    "delete": "Usuń",
+    "edit": "Edytuj",
+    "create": "Utwórz",
+    "update": "Aktualizuj",
+    "search": "Szukaj",
+    "filter": "Filtruj",
+    "actions": "Akcje",
+    "confirm": "Potwierdź",
+    "yes": "Tak",
+    "no": "Nie",
+    "submit": "Wyślij",
+    "reset": "Resetuj",
+    "back": "Wstecz",
+    "next": "Dalej",
+    "previous": "Poprzedni",
+    "close": "Zamknij",
+    "open": "Otwórz",
+    "view": "Wyświetl",
+    "details": "Szczegóły",
+    "noData": "Brak dostępnych danych",
+    "rowsPerPage": "Wierszy na stronie",
+    "of": "z",
+    "page": "Strona",
+    "total": "Razem",
+    "all": "Wszystko",
+    "none": "Brak",
+    "select": "Wybierz",
+    "selected": "Wybrano",
+    "copyright": "© 2025 [[ module_name ]]. Wszelkie prawa zastrzeżone."
+  },
+  "navigation": {
+    "home": "Strona główna",
+    "dashboard": "Panel",
+    "settings": "Ustawienia",
+    "profile": "Profil",
+    "logout": "Wyloguj",
+    "login": "Zaloguj"
+  },
+  "pages": {
+    {% for page in pages_meta %}
+    "[[ page.id ]]": {
+      "title": "[[ page.name ]]",
+      "description": "Zarządzaj danymi [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "content": {
+    {% for key, value in text_content_map_pl.items() %}
+    "[[ key ]]": "[[ value | replace('\"', '\\\"') | replace('\n', ' ') ]]"{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "table": {
+    "noResults": "Nie znaleziono wyników",
+    "loading": "Ładowanie danych...",
+    "error": "Nie udało się załadować danych",
+    "empty": "Brak rekordów do wyświetlenia",
+    "addNew": "Dodaj nowy",
+    "editRow": "Edytuj wiersz",
+    "deleteRow": "Usuń wiersz",
+    "confirmDelete": "Czy na pewno chcesz usunąć ten element?",
+    "searchPlaceholder": "Szukaj...",
+    "filterBy": "Filtruj według",
+    "sortBy": "Sortuj według",
+    "ascending": "Rosnąco",
+    "descending": "Malejąco",
+    "showColumns": "Pokaż kolumny",
+    "exportData": "Eksportuj dane",
+    "refresh": "Odśwież"
+  },
+  "form": {
+    "required": "To pole jest wymagane",
+    "invalid": "Nieprawidłowa wartość",
+    "minLength": "Minimalna długość to {{min}} znaków",
+    "maxLength": "Maksymalna długość to {{max}} znaków",
+    "email": "Wprowadź prawidłowy adres e-mail",
+    "number": "Wprowadź prawidłową liczbę",
+    "date": "Wprowadź prawidłową datę",
+    "selectOption": "Wybierz opcję",
+    "uploadFile": "Prześlij plik",
+    "dragDrop": "Przeciągnij i upuść pliki tutaj"
+  },
+  "messages": {
+    "success": "Operacja zakończona pomyślnie",
+    "error": "Wystąpił błąd. Spróbuj ponownie.",
+    "saveSuccess": "Zmiany zapisane pomyślnie",
+    "deleteSuccess": "Element usunięty pomyślnie",
+    "createSuccess": "Element utworzony pomyślnie",
+    "updateSuccess": "Element zaktualizowany pomyślnie",
+    "confirmAction": "Czy na pewno chcesz kontynuować?",
+    "unsavedChanges": "Masz niezapisane zmiany. Czy na pewno chcesz wyjść?"
+  },
+  "entities": {
+    {% for page in pages_meta %}
+    "[[ page.name | lower ]]": {
+      "singular": "[[ page.name ]]",
+      "plural": "[[ page.name ]]s",
+      "manage": "Zarządzaj [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  }
+}

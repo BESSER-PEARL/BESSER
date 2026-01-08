@@ -1,0 +1,108 @@
+{
+  "common": {
+    "appName": "[[ module_name ]]",
+    "loading": "로딩 중...",
+    "error": "오류가 발생했습니다",
+    "save": "저장",
+    "cancel": "취소",
+    "delete": "삭제",
+    "edit": "편집",
+    "create": "생성",
+    "update": "업데이트",
+    "search": "검색",
+    "filter": "필터",
+    "actions": "작업",
+    "confirm": "확인",
+    "yes": "예",
+    "no": "아니요",
+    "submit": "제출",
+    "reset": "초기화",
+    "back": "뒤로",
+    "next": "다음",
+    "previous": "이전",
+    "close": "닫기",
+    "open": "열기",
+    "view": "보기",
+    "details": "상세",
+    "noData": "데이터가 없습니다",
+    "rowsPerPage": "페이지당 행 수",
+    "of": "/",
+    "page": "페이지",
+    "total": "합계",
+    "all": "전체",
+    "none": "없음",
+    "select": "선택",
+    "selected": "선택됨",
+    "copyright": "© 2025 [[ module_name ]]. All rights reserved."
+  },
+  "navigation": {
+    "home": "홈",
+    "dashboard": "대시보드",
+    "settings": "설정",
+    "profile": "프로필",
+    "logout": "로그아웃",
+    "login": "로그인"
+  },
+  "pages": {
+    {% for page in pages_meta %}
+    "[[ page.id ]]": {
+      "title": "[[ page.name ]]",
+      "description": "[[ page.name ]] 데이터 관리"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "content": {
+    {% for key, value in text_content_map_ko.items() %}
+    "[[ key ]]": "[[ value | replace('\"', '\\\"') | replace('\n', ' ') ]]"{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "table": {
+    "noResults": "결과를 찾을 수 없습니다",
+    "loading": "데이터 로딩 중...",
+    "error": "데이터 로드 실패",
+    "empty": "표시할 레코드가 없습니다",
+    "addNew": "새로 추가",
+    "editRow": "행 편집",
+    "deleteRow": "행 삭제",
+    "confirmDelete": "이 항목을 삭제하시겠습니까?",
+    "searchPlaceholder": "검색...",
+    "filterBy": "필터 기준",
+    "sortBy": "정렬 기준",
+    "ascending": "오름차순",
+    "descending": "내림차순",
+    "showColumns": "열 표시",
+    "exportData": "데이터 내보내기",
+    "refresh": "새로고침"
+  },
+  "form": {
+    "required": "이 필드는 필수입니다",
+    "invalid": "유효하지 않은 값입니다",
+    "minLength": "최소 {{min}}자 이상이어야 합니다",
+    "maxLength": "최대 {{max}}자까지 가능합니다",
+    "email": "유효한 이메일 주소를 입력하세요",
+    "number": "유효한 숫자를 입력하세요",
+    "date": "유효한 날짜를 입력하세요",
+    "selectOption": "옵션을 선택하세요",
+    "uploadFile": "파일 업로드",
+    "dragDrop": "여기에 파일을 끌어다 놓으세요"
+  },
+  "messages": {
+    "success": "작업이 완료되었습니다",
+    "error": "오류가 발생했습니다. 다시 시도해 주세요.",
+    "saveSuccess": "변경사항이 저장되었습니다",
+    "deleteSuccess": "항목이 삭제되었습니다",
+    "createSuccess": "항목이 생성되었습니다",
+    "updateSuccess": "항목이 업데이트되었습니다",
+    "confirmAction": "계속하시겠습니까?",
+    "unsavedChanges": "저장되지 않은 변경사항이 있습니다. 나가시겠습니까?"
+  },
+  "entities": {
+    {% for page in pages_meta %}
+    "[[ page.name | lower ]]": {
+      "singular": "[[ page.name ]]",
+      "plural": "[[ page.name ]]s",
+      "manage": "[[ page.name ]] 관리"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  }
+}

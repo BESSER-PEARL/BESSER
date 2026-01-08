@@ -11,6 +11,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from jinja2 import Environment, FileSystemLoader
 
+try:
+    from deep_translator import GoogleTranslator
+    TRANSLATION_AVAILABLE = True
+except ImportError:
+    TRANSLATION_AVAILABLE = False
+
 from besser.BUML.metamodel.gui import (
     Button,
     DataList,
@@ -82,6 +88,8 @@ class ReactGenerator(GeneratorInterface):
 
         context = self._build_generation_context()
         used_component_types = self._get_used_component_types()
+        has_language_switcher = context.get("has_language_switcher", False)
+        enabled_languages = context.get("enabled_languages", ["en"])
 
         # Map component types to their template file patterns
         component_template_map = {
@@ -96,6 +104,17 @@ class ReactGenerator(GeneratorInterface):
 
         def should_generate_file(rel_path: str) -> bool:
             """Determine if a file should be generated based on component usage."""
+            # Skip i18n files if no language switcher is configured
+            if 'i18n' + os.sep in rel_path or 'LanguageSwitcher' in rel_path:
+                if not has_language_switcher:
+                    return False
+                # Also skip locale files for languages not enabled
+                if 'locales' + os.sep in rel_path:
+                    file_name = os.path.basename(rel_path)
+                    for lang in ['en', 'fr', 'de', 'es', 'pt', 'it', 'nl', 'pl', 'ru', 'zh', 'ja', 'ko', 'ar']:
+                        if file_name.startswith(f"{lang}.json"):
+                            return lang in enabled_languages
+            
             # Always generate non-chart component files
             if 'charts' + os.sep not in rel_path and 'table' + os.sep not in rel_path:
                 return True
@@ -164,6 +183,24 @@ class ReactGenerator(GeneratorInterface):
         # Get used component types for conditional rendering in templates
         used_component_types = self._get_used_component_types()
         
+        # Extract language switcher configuration from components
+        i18n_config = self._extract_i18n_config(components_payload)
+        enabled_languages = i18n_config.get("languages", ["en"])  # Default to English only
+        has_language_switcher = i18n_config.get("has_language_switcher", False)
+        
+        # Extract all text content for i18n translations
+        text_content_map = self._extract_text_content(components_payload)
+        
+        # Create translated content maps only for enabled languages
+        translated_maps = {"en": text_content_map}  # English is always the source
+        
+        if has_language_switcher:
+            # Only translate for languages that are configured
+            for lang in enabled_languages:
+                if lang != "en":  # Don't translate English to English
+                    print(f"[i18n] Translating content to {lang}...")
+                    translated_maps[lang] = self._translate_content_map(text_content_map, lang)
+        
         return {
             "model": self.gui_model,
             "components_json": self._to_pretty_json(components_payload),
@@ -174,6 +211,24 @@ class ReactGenerator(GeneratorInterface):
             "module_name": meta.get("module_name"),
             "all_table_fields": all_table_fields,
             "used_components": used_component_types,
+            "text_content_map": text_content_map,
+            # Language-specific translated maps
+            "text_content_map_fr": translated_maps.get("fr", text_content_map),
+            "text_content_map_de": translated_maps.get("de", text_content_map),
+            "text_content_map_es": translated_maps.get("es", text_content_map),
+            "text_content_map_pt": translated_maps.get("pt", text_content_map),
+            "text_content_map_it": translated_maps.get("it", text_content_map),
+            "text_content_map_nl": translated_maps.get("nl", text_content_map),
+            "text_content_map_pl": translated_maps.get("pl", text_content_map),
+            "text_content_map_ru": translated_maps.get("ru", text_content_map),
+            "text_content_map_zh": translated_maps.get("zh", text_content_map),
+            "text_content_map_ja": translated_maps.get("ja", text_content_map),
+            "text_content_map_ko": translated_maps.get("ko", text_content_map),
+            "text_content_map_ar": translated_maps.get("ar", text_content_map),
+            # i18n configuration
+            "i18n_config": i18n_config,
+            "enabled_languages": enabled_languages,
+            "has_language_switcher": has_language_switcher,
         }
 
     def _serialize_gui_model(self) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
@@ -337,6 +392,12 @@ class ReactGenerator(GeneratorInterface):
                 # Use name or description as fallback
                 content = self._derive_display_name(element) or element.description or ""
             node["content"] = content or ""
+            
+            # Add translation key for i18n support
+            # Create a safe key from component_id by replacing special characters
+            safe_key = component_id.replace('-', '_').replace('.', '_').replace(' ', '_')
+            if content and content.strip():
+                node["translationKey"] = f"content.{safe_key}"
 
         if isinstance(element, Image):
             node["alt"] = element.description or ""
@@ -1023,6 +1084,12 @@ class ReactGenerator(GeneratorInterface):
     @staticmethod
     def _map_component_type(element: ViewComponent) -> str:
         if isinstance(element, ViewContainer):
+            # Check if this is a special container type (like language-switcher)
+            custom_attrs = getattr(element, 'custom_attributes', None)
+            if custom_attrs and isinstance(custom_attrs, dict):
+                component_type = custom_attrs.get('component_type')
+                if component_type:
+                    return component_type
             return "container"
         if isinstance(element, Text):
             return "text"
@@ -1152,6 +1219,204 @@ class ReactGenerator(GeneratorInterface):
                     scan_element(element)
         
         return used_types
+
+    def _extract_text_content(self, components_payload: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Extract all text content from components for i18n translation.
+        Creates a mapping of component_id -> text content.
+        
+        Args:
+            components_payload: The serialized components JSON structure
+            
+        Returns:
+            Dictionary mapping component IDs to their text content
+        """
+        text_map = {}
+        
+        def make_safe_key(key: str) -> str:
+            """Create a safe translation key from a component ID."""
+            return key.replace("-", "_").replace(".", "_").replace(" ", "_")
+        
+        def extract_from_component(component: Dict[str, Any]):
+            """Recursively extract text content from a component."""
+            comp_id = component.get("id", "")
+            content = component.get("content", "")
+            
+            # Only add if there's actual text content
+            if content and isinstance(content, str) and content.strip():
+                # Create a safe key from the component ID
+                safe_key = make_safe_key(comp_id)
+                text_map[safe_key] = content.strip()
+            
+            # Also extract from label if it's meaningful (e.g., buttons, links)
+            label = component.get("label", "")
+            if label and isinstance(label, str) and label.strip():
+                safe_key = f"{make_safe_key(comp_id)}_label"
+                text_map[safe_key] = label.strip()
+            
+            # Recursively process children
+            children = component.get("children", [])
+            for child in children:
+                extract_from_component(child)
+        
+        # Process all pages and their components
+        pages = components_payload.get("pages", [])
+        for page in pages:
+            # Extract page-level text
+            page_id = page.get("id", "")
+            page_name = page.get("name", "")
+            page_desc = page.get("description", "")
+            
+            if page_name:
+                text_map[f"page_{make_safe_key(page_id)}_title"] = page_name
+            if page_desc:
+                text_map[f"page_{make_safe_key(page_id)}_description"] = page_desc
+            
+            # Process components in this page
+            components = page.get("components", [])
+            for component in components:
+                extract_from_component(component)
+        
+        return text_map
+
+    def _extract_i18n_config(self, components_payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract i18n configuration from LanguageSwitcher components in the GUI model.
+        
+        Args:
+            components_payload: The serialized components JSON structure
+            
+        Returns:
+            Dictionary containing:
+            - has_language_switcher: bool - whether a language switcher exists
+            - languages: list of language codes configured
+            - default_language: the default language
+            - variant: the UI variant (dropdown, inline, minimal)
+            - show_flags: whether to show flag emojis
+            - show_labels: whether to show language labels
+        """
+        config = {
+            "has_language_switcher": False,
+            "languages": ["en"],  # Default to English only
+            "default_language": "en",
+            "variant": "dropdown",
+            "show_flags": True,
+            "show_labels": True,
+        }
+        
+        def find_language_switcher(component: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+            """Recursively search for a language switcher component."""
+            comp_type = component.get("type", "")
+            attrs = component.get("attributes", {})
+            
+            # Check if this is a language switcher
+            if comp_type == "language-switcher" or attrs.get("component_type") == "language-switcher":
+                return component
+            
+            # Check children
+            for child in component.get("children", []):
+                result = find_language_switcher(child)
+                if result:
+                    return result
+            
+            return None
+        
+        # Search all pages for a language switcher
+        for page in components_payload.get("pages", []):
+            for component in page.get("components", []):
+                switcher = find_language_switcher(component)
+                if switcher:
+                    attrs = switcher.get("attributes", {})
+                    
+                    # Parse languages from comma-separated string
+                    languages_str = attrs.get("languages", "en,fr,de,es")
+                    if isinstance(languages_str, str):
+                        languages = [lang.strip() for lang in languages_str.split(",") if lang.strip()]
+                    else:
+                        languages = ["en", "fr", "de", "es"]
+                    
+                    # Ensure English is always included as the source language
+                    if "en" not in languages:
+                        languages.insert(0, "en")
+                    
+                    config["has_language_switcher"] = True
+                    config["languages"] = languages
+                    config["default_language"] = attrs.get("defaultLanguage", "en")
+                    config["variant"] = attrs.get("variant", "dropdown")
+                    config["show_flags"] = attrs.get("showFlags", True)
+                    config["show_labels"] = attrs.get("showLabels", True)
+                    
+                    print(f"[i18n] Found LanguageSwitcher with languages: {languages}")
+                    return config
+        
+        return config
+
+    def _translate_content_map(self, text_map: Dict[str, str], target_lang: str, source_lang: str = 'en') -> Dict[str, str]:
+        """
+        Translate all content in a text map to the target language using batch translation.
+        
+        Args:
+            text_map: Dictionary of key -> English text
+            target_lang: Target language code (e.g., 'fr', 'de', 'es')
+            source_lang: Source language code (default: 'en')
+            
+        Returns:
+            Dictionary of key -> translated text
+        """
+        if not TRANSLATION_AVAILABLE:
+            print(f"[i18n] deep_translator not installed, skipping translation to {target_lang}")
+            return text_map.copy()
+        
+        if not text_map:
+            return {}
+        
+        # Don't translate if source and target are the same
+        if target_lang == source_lang:
+            return text_map.copy()
+        
+        try:
+            # Get keys and texts in order
+            keys = list(text_map.keys())
+            texts = [text_map[k] for k in keys]
+            
+            # Filter out empty texts but keep track of indices
+            non_empty_indices = [i for i, t in enumerate(texts) if t and t.strip()]
+            non_empty_texts = [texts[i] for i in non_empty_indices]
+            
+            if not non_empty_texts:
+                return text_map.copy()
+            
+            # Batch translate all non-empty texts at once
+            translator = GoogleTranslator(source=source_lang, target=target_lang)
+            
+            # Translate each text individually to handle errors gracefully
+            translated_texts = []
+            for text in non_empty_texts:
+                try:
+                    translated = translator.translate(text)
+                    # If translation returns None or empty, keep original
+                    translated_texts.append(translated if translated and translated.strip() else text)
+                except Exception as text_error:
+                    # Keep original text if individual translation fails
+                    print(f"[i18n] Could not translate '{text[:30]}...': {text_error}")
+                    translated_texts.append(text)
+            
+            # Build result map
+            translated_map = {}
+            translated_idx = 0
+            for i, key in enumerate(keys):
+                if i in non_empty_indices:
+                    translated_map[key] = translated_texts[translated_idx] if translated_texts[translated_idx] else texts[i]
+                    translated_idx += 1
+                else:
+                    translated_map[key] = texts[i]
+            
+            print(f"[i18n] Translated {len(non_empty_texts)} texts to {target_lang}")
+            return translated_map
+            
+        except Exception as e:
+            print(f"[i18n] Batch translation to {target_lang} failed: {e}")
+            return text_map.copy()
 
     @staticmethod
     def _enum_value(value: Any) -> Optional[str]:

@@ -4,6 +4,11 @@ import Home from "./pages/Home";
 import { TableProvider } from "./contexts/TableContext";
 import componentsData from "./data/ui_components.json";
 
+{% if has_language_switcher %}
+// Initialize i18n for multilingual support
+import './i18n/i18n';
+{% endif %}
+
 function App() {
   // Dynamically extract all routes from pages
   const pages = componentsData?.pages ?? [];

@@ -1,0 +1,108 @@
+{
+  "common": {
+    "appName": "[[ module_name ]]",
+    "loading": "Caricamento...",
+    "error": "Si è verificato un errore",
+    "save": "Salva",
+    "cancel": "Annulla",
+    "delete": "Elimina",
+    "edit": "Modifica",
+    "create": "Crea",
+    "update": "Aggiorna",
+    "search": "Cerca",
+    "filter": "Filtra",
+    "actions": "Azioni",
+    "confirm": "Conferma",
+    "yes": "Sì",
+    "no": "No",
+    "submit": "Invia",
+    "reset": "Reimposta",
+    "back": "Indietro",
+    "next": "Avanti",
+    "previous": "Precedente",
+    "close": "Chiudi",
+    "open": "Apri",
+    "view": "Visualizza",
+    "details": "Dettagli",
+    "noData": "Nessun dato disponibile",
+    "rowsPerPage": "Righe per pagina",
+    "of": "di",
+    "page": "Pagina",
+    "total": "Totale",
+    "all": "Tutti",
+    "none": "Nessuno",
+    "select": "Seleziona",
+    "selected": "Selezionato",
+    "copyright": "© 2025 [[ module_name ]]. Tutti i diritti riservati."
+  },
+  "navigation": {
+    "home": "Home",
+    "dashboard": "Dashboard",
+    "settings": "Impostazioni",
+    "profile": "Profilo",
+    "logout": "Esci",
+    "login": "Accedi"
+  },
+  "pages": {
+    {% for page in pages_meta %}
+    "[[ page.id ]]": {
+      "title": "[[ page.name ]]",
+      "description": "Gestisci i dati di [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "content": {
+    {% for key, value in text_content_map_it.items() %}
+    "[[ key ]]": "[[ value | replace('\"', '\\\"') | replace('\n', ' ') ]]"{% if not loop.last %},{% endif %}
+    {% endfor %}
+  },
+  "table": {
+    "noResults": "Nessun risultato trovato",
+    "loading": "Caricamento dati...",
+    "error": "Impossibile caricare i dati",
+    "empty": "Nessun record da visualizzare",
+    "addNew": "Aggiungi nuovo",
+    "editRow": "Modifica riga",
+    "deleteRow": "Elimina riga",
+    "confirmDelete": "Sei sicuro di voler eliminare questo elemento?",
+    "searchPlaceholder": "Cerca...",
+    "filterBy": "Filtra per",
+    "sortBy": "Ordina per",
+    "ascending": "Crescente",
+    "descending": "Decrescente",
+    "showColumns": "Mostra colonne",
+    "exportData": "Esporta dati",
+    "refresh": "Aggiorna"
+  },
+  "form": {
+    "required": "Questo campo è obbligatorio",
+    "invalid": "Valore non valido",
+    "minLength": "La lunghezza minima è di {{min}} caratteri",
+    "maxLength": "La lunghezza massima è di {{max}} caratteri",
+    "email": "Inserisci un indirizzo email valido",
+    "number": "Inserisci un numero valido",
+    "date": "Inserisci una data valida",
+    "selectOption": "Seleziona un'opzione",
+    "uploadFile": "Carica file",
+    "dragDrop": "Trascina e rilascia i file qui"
+  },
+  "messages": {
+    "success": "Operazione completata con successo",
+    "error": "Si è verificato un errore. Riprova.",
+    "saveSuccess": "Modifiche salvate con successo",
+    "deleteSuccess": "Elemento eliminato con successo",
+    "createSuccess": "Elemento creato con successo",
+    "updateSuccess": "Elemento aggiornato con successo",
+    "confirmAction": "Sei sicuro di voler procedere?",
+    "unsavedChanges": "Hai modifiche non salvate. Sei sicuro di voler uscire?"
+  },
+  "entities": {
+    {% for page in pages_meta %}
+    "[[ page.name | lower ]]": {
+      "singular": "[[ page.name ]]",
+      "plural": "[[ page.name ]]s",
+      "manage": "Gestisci [[ page.name ]]"
+    }{% if not loop.last %},{% endif %}
+    {% endfor %}
+  }
+}

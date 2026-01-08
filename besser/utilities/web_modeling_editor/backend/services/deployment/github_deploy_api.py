@@ -2,8 +2,7 @@
 GitHub Deployment API - Deploy generated apps to user's GitHub account.
 
 This endpoint generates a web app and pushes it to a GitHub repository
-in the user's account, enabling one-click deployment to platforms like
-Vercel, Netlify, and Render.
+in the user's account, enabling one-click deployment to platforms like Render.
 """
 
 import io
@@ -82,7 +81,7 @@ async def deploy_webapp_to_github(
     4. Push generated code to repository
     5. Return repository URL and deployment links
     
-    The user can then deploy to Vercel/Netlify/Render with one click.
+    The user can then deploy to Render with one click.
     """
     temp_dir = None
     

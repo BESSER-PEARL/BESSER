@@ -4,7 +4,7 @@ Deployment module for handling application deployment.
 This module provides:
 - Docker Compose deployment for local hosting
 - GitHub OAuth and repository creation for cloud deployment
-- Integration with Vercel, Netlify, Render via GitHub repos
+- Integration with Render via GitHub repos
 """
 
 from .docker_deployment import run_docker_compose

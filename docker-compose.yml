@@ -19,6 +19,11 @@ services:
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USERNAME=${SMTP_USERNAME}
       - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:9000/besser_api/github/auth/callback}
+      - FRONTEND_URL=${FRONTEND_URL:-http://localhost:8080}
+      - BESSER_BACKEND_URL=${BESSER_BACKEND_URL:-http://localhost:9000/besser_api}
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     networks:
       - besser_network

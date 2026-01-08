@@ -46,7 +46,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         setLoading(true);
         setError(null);
         // Always use backend base URL for relative endpoints
-        const backendBase = "http://localhost:8000";
+        const backendBase = process.env.REACT_APP_API_URL || "http://localhost:8000";
         
         // Check if table has lookup columns - if so, request detailed data with joins
         const hasLookupColumns = component.chart?.columns?.some(
@@ -102,7 +102,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       const source = component.data_sources[0];
       const endpoint = source.endpoint || `/${source.domain?.toLowerCase()}/`;
       if (endpoint) {
-        const backendBase = "http://localhost:8000";
+        const backendBase = process.env.REACT_APP_API_URL || "http://localhost:8000";
         const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
         axios.get(url)
           .then((res) => {
@@ -195,7 +195,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
           instanceSourceTableId={instanceSource}
           className={component.class_list?.join(' ')}
           style={style}
-          backendUrl="http://localhost:8000"
+          backendUrl={process.env.REACT_APP_API_URL || "http://localhost:8000"}
         />
       );
     }
@@ -213,7 +213,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
           isClassMethod={methodConfig.is_class_method || false}
           className={component.class_list?.join(' ')}
           style={style}
-          backendUrl="http://localhost:8000"
+          backendUrl={process.env.REACT_APP_API_URL || "http://localhost:8000"}
         />
       );
     }

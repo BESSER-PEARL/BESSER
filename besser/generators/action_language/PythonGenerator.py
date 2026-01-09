@@ -3,9 +3,9 @@ from besser.BUML.metamodel.action_language.action_language import Condition, Blo
     StringLiteral, IntLiteral, Literal, Reference, InstanceOf, Concatenation, Minus, Plus, Mult, Remain, Div, \
     BinaryArithmetic, UnaryMinus, Arithmetic, Ternary, NullCoalessing, Cast, ArrayAccess, FieldAccess, This, \
     ProcedureCall, StandardLibCall, MethodCall, New, Call, Not, GreaterEq, Unequal, Less, Greater, Equal, Or, And, \
-    LessEq, BinaryBoolean, Boolean, Expression, Return, For, ImplicitDecl, ExplicitDecl, NameDecl, Statements, \
-    Assignment, BoolType, EnumType, IntType, StringType, RealType, NaturalType, Type, FunctionType, SequenceType, \
-    ObjectType, Multiplicity, AnyType, FunctionDefinition, Parameter, AssignTarget
+    LessEq, BinaryBoolean, Boolean, Expression, Return, For, ImplicitDecl, ExplicitDecl, NameDecl, Statement, \
+    Assignment, BoolType, EnumType, IntType, StringType, RealType, Type, FunctionType, SequenceType, ObjectType, \
+    Multiplicity, AnyType, OptionalType, FunctionDefinition, Parameter, AssignTarget, Nothing
 from besser.BUML.metamodel.action_language.visitors import BALVisitor
 
 
@@ -29,7 +29,11 @@ class BALPythonGenerator(BALVisitor[PythonGenerationContext, list[str]]):
 
     def visit_Parameter(self, node: Parameter, context: PythonGenerationContext) -> list[str]:
         param_type = node.declared_type.accept(self, context)[0]
-        return [f"{node.name}: {param_type}"]
+        expr = ""
+        if node.default is not None:
+            expr = node.default.accept(self, context)[0]
+            expr = " = " + expr
+        return [f"{node.name}: {param_type}{expr}"]
 
     def visit_FunctionDefinition(self, node: FunctionDefinition, context: PythonGenerationContext) -> list[str]:
         lines = []
@@ -55,15 +59,15 @@ class BALPythonGenerator(BALVisitor[PythonGenerationContext, list[str]]):
         return [node.clazz.name]
 
     def visit_SequenceType(self, node: SequenceType, context: PythonGenerationContext) -> list[str]:
-        return [f"list[{node.elementsType.accept(self, context)[0]}]"]
+        return [f"set[{node.elementsType.accept(self, context)[0]}]"]
+
+    def visit_OptionalType(self, node: OptionalType, context: PythonGenerationContext) -> list[str]:
+        return node.type.accept(self, context)
 
     def visit_FunctionType(self, node: FunctionType, context: PythonGenerationContext) -> list[str]:
         return ["Any"]
 
     def visit_Type(self, node: Type, context: PythonGenerationContext) -> list[str]:
-        pass
-
-    def visit_NaturalType(self, node: NaturalType, context: PythonGenerationContext) -> list[str]:
         pass
 
     def visit_RealType(self, node: RealType, context: PythonGenerationContext) -> list[str]:
@@ -81,12 +85,15 @@ class BALPythonGenerator(BALVisitor[PythonGenerationContext, list[str]]):
     def visit_BoolType(self, node: BoolType, context: PythonGenerationContext) -> list[str]:
         return ["bool"]
 
+    def visit_Nothing(self, node: Nothing, context: PythonGenerationContext) -> list[str]:
+        return ["None"]
+
     def visit_Assignment(self, node: Assignment, context: PythonGenerationContext) -> list[str]:
         target = node.target.accept(self, context)
         assignee = node.assignee.accept(self, context)
         return [f"{target[0]} = {assignee[0]}"]
 
-    def visit_Statements(self, node: Statements, context: PythonGenerationContext) -> list[str]:
+    def visit_Statement(self, node: Statement, context: PythonGenerationContext) -> list[str]:
         pass
 
     def visit_NameDecl(self, node: NameDecl, context: PythonGenerationContext) -> list[str]:
@@ -196,7 +203,7 @@ class BALPythonGenerator(BALVisitor[PythonGenerationContext, list[str]]):
     def visit_ProcedureCall(self, node: ProcedureCall, context: PythonGenerationContext) -> list[str]:
         args = []
         for arg in node.arguments:
-            args.append(arg.accept(self, context))
+            args.append(arg.accept(self, context)[0])
         return [f"{node.function.name}({', '.join(args)})"]
 
     def visit_This(self, node: This, context: PythonGenerationContext) -> list[str]:

@@ -525,10 +525,65 @@ def replace_reply_batch(messages: list[str], config: dict) -> list[str]:
     if 'sentenceLength' in config and config['sentenceLength'] != 'original':
         length_pref = config['sentenceLength']
         personalized_messages = sentence_length_batch(personalized_messages, length_pref)
+    if isinstance(config.get('userProfileModel'), dict):
+        personalized_messages = replace_content_profile_batch(personalized_messages, config)
     if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
         target_language = config['agentLanguage']
         personalized_messages = translate_text_batch(personalized_messages, target_language)
         
+    return personalized_messages
+
+
+def replace_content_profile_batch(messages: list[str], config: dict) -> list[str]:
+    """Adapt reply content so it aligns with the supplied user profile model."""
+    flattened_config = flatten_agent_config_structure(config or {})
+    user_profile = flattened_config.get('userProfileModel')
+    if not isinstance(user_profile, dict):
+        return messages
+
+    profile_json = json.dumps(user_profile, ensure_ascii=False)
+    max_profile_chars = 6000
+    if len(profile_json) > max_profile_chars:
+        profile_context = profile_json[:max_profile_chars] + '... (truncated)'
+    else:
+        profile_context = profile_json
+
+    model_name = flattened_config.get('llm')
+    if not isinstance(model_name, str) or not model_name.strip():
+        model_name = 'gpt-5'
+    else:
+        model_name = model_name.strip()
+
+    system_prompt = (
+        "You personalize agent replies for a single user based on a provided profile. "
+        "The reply and semantics should only be changed, when original content would contradict profile data. Keep information accurate, and return only "
+        "the rewritten reply text and do not use any kind of formatting."
+    )
+
+    personalized_messages: list[str] = []
+    for original_text in messages:
+        if not isinstance(original_text, str) or not original_text.strip():
+            personalized_messages.append(original_text)
+            continue
+
+        user_prompt = (
+            f"User profile (JSON):\n{profile_context}\n\n"
+            f"Original agent reply:\n{original_text}\n\n"
+            "Return only the rewritten reply and do not use any kind of formatting."
+        )
+
+        try:
+            rewritten = call_openai_chat(system_prompt, user_prompt, model=model_name)
+            final_text = rewritten if rewritten else original_text
+            if isinstance(final_text, str):
+                final_text = final_text.replace("'", "\\'")
+            personalized_messages.append(final_text)
+        except Exception as exc:
+            print("Content profile adaptation failed:", exc)
+            traceback.print_exc()
+            fallback_text = original_text.replace("'", "\\'") if isinstance(original_text, str) else original_text
+            personalized_messages.append(fallback_text)
+
     return personalized_messages
 
 def append_speech(match):

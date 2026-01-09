@@ -9,7 +9,7 @@ from besser.BUML.metamodel.action_language.action_language import Condition, Blo
 from besser.BUML.metamodel.action_language.visitors import BALVisitor
 from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.BUML.notations.action_language.helpers import UnknownClassifier, base_classes, get_typename
-from besser.generators.action_language.PythonGenerator import BALPythonGenerator
+from besser.generators.action_language.PythonGenerator import BALPythonGenerator, PythonGenerationContext
 
 
 class TypeCheckFeedback:
@@ -52,6 +52,7 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
 
     def __init__(self):
         self.__to_text_visitor = BALPythonGenerator()
+        self.__to_text_context = PythonGenerationContext()
 
     def check(self, node: FunctionDefinition):
         context = TypeCheckingContext()
@@ -65,7 +66,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
         if node.default is not None:
             default_type = node.default.accept(self, context)
             if not default_type <= node.declared_type:
-                context.add_error(Error(f"Parameter {node.name} expect values of type {get_typename(node.declared_type)}, default returns {get_typename(default_type)}"))
+                repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+                context.add_error(Error(f"Parameter {node.name} expect values of type {get_typename(node.declared_type)}, default returns {get_typename(default_type)}", "\n".join(repr)))
         return node.declared_type
 
     def visit_FunctionDefinition(self, node: FunctionDefinition, context: TypeCheckingContext) -> Type:
@@ -74,11 +76,19 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
             params_types.append(param.accept(self, context))
 
         effective_return_type = node.body.accept(self, context).supertype()
+        if isinstance(effective_return_type, TypeUnion):
+            if effective_return_type.a == Nothing():
+                repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+                context.add_warning(Warning(
+                    f"Function {node.name} is supposed to return {get_typename(node.return_type)}, got {get_typename(effective_return_type)} instead",
+                    "\n".join(repr)
+                ))
         if effective_return_type == NoType():
             effective_return_type = Nothing()
 
         if not effective_return_type <= node.return_type:
-            context.add_error(Error(f"A return statement in function {node.name} is returning an invalid type, returns {get_typename(effective_return_type)} rather than {get_typename(node.return_type)}"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error(f"A return statement in function {node.name} is returning an invalid type, returns {get_typename(effective_return_type)} rather than {get_typename(node.return_type)}", "\n".join(repr)))
 
         return NoType()
 
@@ -125,8 +135,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
         target = node.target.accept(self, context)
         assignee = node.assignee.accept(self, context)
         if not assignee <= target:
-            # repr = node.accept(self.__to_text_visitor, None)
-            context.add_error(Error(f"A value of type {get_typename(assignee)} cannot be assigned to a variable of type {get_typename(target)}"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error(f"A value of type {get_typename(assignee)} cannot be assigned to a variable of type {get_typename(target)}", "\n".join(repr)))
 
         if isinstance(assignee, TypeUnion): # if supertype is union then type is T | Nothing
             assign_target = node.target
@@ -171,30 +181,33 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
     def visit_LessEq(self, node: LessEq, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != IntType() and left != RealType():
-            context.add_error(Error("left-hand side of a less equal operation is not a number"))
+            context.add_error(Error("left-hand side of a less equal operation is not a number", "\n".join(repr)))
         if right != IntType() and right != RealType():
-            context.add_error(Error("right-hand side of a less equal operation is not a number"))
+            context.add_error(Error("right-hand side of a less equal operation is not a number", "\n".join(repr)))
 
         return BoolType()
 
     def visit_And(self, node: And, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != BoolType():
-            context.add_error(Error("left-hand side of a and operation is not a boolean"))
+            context.add_error(Error("left-hand side of an and operation is not a boolean", "\n".join(repr)))
         if right != BoolType():
-            context.add_error(Error("right-hand side of a and operation is not a boolean"))
+            context.add_error(Error("right-hand side of an and operation is not a boolean", "\n".join(repr)))
 
         return BoolType()
 
     def visit_Or(self, node: Or, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != BoolType():
-            context.add_error(Error("left-hand side of a or operation is not a boolean"))
+            context.add_error(Error("left-hand side of an or operation is not a boolean", "\n".join(repr)))
         if right != BoolType():
-            context.add_error(Error("right-hand side of a or operation is not a boolean"))
+            context.add_error(Error("right-hand side of an or operation is not a boolean", "\n".join(repr)))
 
         return BoolType()
 
@@ -204,20 +217,22 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
     def visit_Greater(self, node: Greater, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != IntType() and left != RealType():
-            context.add_error(Error("left-hand side of a greater operation is not a number"))
+            context.add_error(Error("left-hand side of a greater operation is not a number"), "\n".join(repr))
         if right != IntType() and right != RealType():
-            context.add_error(Error("right-hand side of a greater operation is not a number"))
+            context.add_error(Error("right-hand side of a greater operation is not a number"), "\n".join(repr))
 
         return BoolType()
 
     def visit_Less(self, node: Less, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != IntType() and left != RealType():
-            context.add_error(Error("left-hand side of a less operation is not a number"))
+            context.add_error(Error("left-hand side of a less operation is not a number"), "\n".join(repr))
         if right != IntType() and right != RealType():
-            context.add_error(Error("right-hand side of a less operation is not a number"))
+            context.add_error(Error("right-hand side of a less operation is not a number"), "\n".join(repr))
 
         return BoolType()
 
@@ -227,17 +242,19 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
     def visit_GreaterEq(self, node: GreaterEq, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != IntType() and left != RealType():
-            context.add_error(Error("left-hand side of a greater equal operation is not a number"))
+            context.add_error(Error("left-hand side of a greater equal operation is not a number"), "\n".join(repr))
         if right != IntType() and right != RealType():
-            context.add_error(Error("right-hand side of a greater equal operation is not a number"))
+            context.add_error(Error("right-hand side of a greater equal operation is not a number"), "\n".join(repr))
 
         return BoolType()
 
     def visit_Not(self, node: Not, context: TypeCheckingContext) -> Type:
         expr = node.expr.accept(self, context)
         if expr != BoolType():
-            context.add_error(Error("Sub-expression of a not operator is not a boolean"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Sub-expression of a not operator is not a boolean"), "\n".join(repr))
         return BoolType()
 
     def visit_Call(self, node: Call, context: TypeCheckingContext) -> Type:
@@ -253,7 +270,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
         receiver = node.receiver.accept(self, context)
         receiver_typename = get_typename(receiver)
         if node.method is None:
-            context.add_error(Error(f"Method does not exist for object of type {receiver_typename}"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error(f"Method does not exist for object of type {receiver_typename}", "\n".join(repr)))
             return NoType()
 
         args_types = []
@@ -270,13 +288,19 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
 
         for i in range(0, len(shortest)):
             if not args_types[i] <= param_types[i]:  # if ~ P2 <= P1
+                repr = node.accept(self.__to_text_visitor, self.__to_text_context)
                 context.add_error(Error(
-                    f"Argument for parameter {parameters[i].name} is of type {get_typename(args_types[i])}, {get_typename(param_types[i])} expected"))
+                    f"Argument for parameter {parameters[i].name} is of type {get_typename(args_types[i])}, {get_typename(param_types[i])} expected",
+                    "\n".join(repr)
+                ))
 
         for i in range(len(shortest), len(longest)):
             if not isinstance(longest[i], OptionalType):
+                repr = node.accept(self.__to_text_visitor, self.__to_text_context)
                 context.add_error(Error(
-                    f"Parameter {parameters[i].name} of method {node.method.name} not supplied"))
+                    f"Parameter {parameters[i].name} of method {node.method.name} not supplied",
+                    "\n".join(repr)
+                ))
 
         return struct_to_action_type(node.method.type)
 
@@ -284,7 +308,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
         receiver = node.receiver.accept(self, context)
         receiver_typename = get_typename(receiver)
         if node.function_type is None or node.function_type.params_type is None:
-            context.add_error(Error(f"No method named {node.function} for instances of type {receiver_typename}"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error(f"No method named {node.function} for instances of type {receiver_typename}", "\n".join(repr)))
 
         args_types = []
         for arg in node.arguments:
@@ -297,23 +322,31 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
 
         for i in range(0, len(shortest)):
             if not args_types[i] <= param_types[i]:  # if ~ P2 <= P1
+                repr = node.accept(self.__to_text_visitor, self.__to_text_context)
                 context.add_error(Error(
-                    f"Argument for parameter number {i+1} is of type {get_typename(args_types[i])}, {get_typename(param_types[i])} expected"))
+                    f"Argument for parameter number {i+1} is of type {get_typename(args_types[i])}, {get_typename(param_types[i])} expected",
+                    "\n".join(repr)
+                ))
 
         for i in range(len(shortest), len(longest)):
             if not isinstance(longest[i], OptionalType):
+                repr = node.accept(self.__to_text_visitor, self.__to_text_context)
                 context.add_error(Error(
-                    f"Parameter number {i+1} of method {node.function} not supplied"))
+                    f"Parameter number {i+1} of method {node.function} not supplied",
+                    "\n".join(repr)
+                ))
 
         return node.function_type.return_type
 
     def visit_ProcedureCall(self, node: ProcedureCall, context: TypeCheckingContext) -> Type:
         if node.function is None:
-            context.add_error(Error("Function call on a non function object"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Function call on a non function object", "\n".join(repr)))
             return NoType()
 
         if node.function.parameters is None:
-            context.add_warning(Warning("Unknown function called, this may result in errors in generated code"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_warning(Warning("Unknown function called, this may result in errors in generated code", "\n".join(repr)))
 
 
         args_types = []
@@ -327,11 +360,19 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
 
         for i in range(0, len(shortest)):
             if not args_types[i] <= param_types[i]:  # if ~ P2 <= P1
-                context.add_error(Error(f"Argument for parameter {node.function.parameters[i].name} of type {get_typename(args_types[i])}, {get_typename(param_types[i])} expected"))
+                repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+                context.add_error(Error(
+                    f"Argument for parameter {node.function.parameters[i].name} of type {get_typename(args_types[i])}, {get_typename(param_types[i])} expected",
+                    "\n".join(repr)
+                ))
 
         for i in range(len(shortest), len(longest)):
             if not isinstance(longest[i], OptionalType):
-                context.add_error(Error(f"Parameter {node.function.parameters[i].name} of function {node.function.name} not supplied"))
+                repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+                context.add_error(Error(
+                    f"Parameter {node.function.parameters[i].name} of function {node.function.name} not supplied",
+                    "\n".join(repr)
+                ))
 
         return node.function.return_type
 
@@ -341,10 +382,12 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
     def visit_FieldAccess(self, node: FieldAccess, context: TypeCheckingContext) -> Type:
         receiver = node.receiver.accept(self, context)
         if not isinstance(receiver, ObjectType):
-            context.add_error(Error("Field access on a non-object type"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Field access on a non-object type", "\n".join(repr)))
             return NoType()
         if node.field is None:
-            context.add_error(Error(f"Invalid field access on object of type \"{receiver.clazz.name}\""))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error(f"Invalid field access on object of type \"{receiver.clazz.name}\"", "\n".join(repr)))
             return NoType()
 
         if node.field.type.name in base_classes:
@@ -362,9 +405,11 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
         receiver = node.receiver.accept(self, context)
         index = node.index.accept(self, context)
         if index != IntType():
-            context.add_error(Error("Invalid array access, index is not an integer"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Invalid array access, index is not an integer", "\n".join(repr)))
         if not isinstance(receiver, SequenceType):
-            context.add_error(Error("Invalid array access, the receiver is not a sequence"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Invalid array access, the receiver is not a sequence", "\n".join(repr)))
             return NoType()
         return receiver.elementsType
 
@@ -388,7 +433,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
     def visit_Ternary(self, node: Ternary, context: TypeCheckingContext) -> Type:
         expr = node.expr.accept(self, context)
         if expr != BoolType():
-            context.add_error(Error("Condition of a ternary expression is not a boolean"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Condition of a ternary expression is not a boolean", "\n".join(repr)))
         then = node.then.accept(self, context)
         elze = node.elze.accept(self, context)
         return then | elze
@@ -399,7 +445,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
     def visit_UnaryMinus(self, node: UnaryMinus, context: TypeCheckingContext) -> Type:
         expr = node.expr.accept(self, context)
         if expr != IntType() and expr != RealType():
-            context.add_error(Error("Sub-expression of a unary minus is not a number"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Sub-expression of a unary minus is not a number", "\n".join(repr)))
 
         return expr
 
@@ -409,50 +456,55 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
     def visit_Div(self, node: Div, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != IntType() and left != RealType():
-            context.add_error(Error("left-hand side of a division operation is not a number"))
+            context.add_error(Error("left-hand side of a division operation is not a number", "\n".join(repr)))
         if right != IntType() and right != RealType():
-            context.add_error(Error("right-hand side of a division operation is not a number"))
+            context.add_error(Error("right-hand side of a division operation is not a number", "\n".join(repr)))
 
         return RealType() if left == RealType() or right == RealType() else IntType()
 
     def visit_Remain(self, node: Remain, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != IntType() and left != RealType():
-            context.add_error(Error("left-hand side of a reminder operation is not a number"))
+            context.add_error(Error("left-hand side of a reminder operation is not a number", "\n".join(repr)))
         if right != IntType() and right != RealType():
-            context.add_error(Error("right-hand side of a reminder operation is not a number"))
+            context.add_error(Error("right-hand side of a reminder operation is not a number", "\n".join(repr)))
 
         return IntType()
 
     def visit_Mult(self, node: Mult, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != IntType() and left != RealType():
-            context.add_error(Error("left-hand side of a multiply operation is not a number"))
+            context.add_error(Error("left-hand side of a multiply operation is not a number", "\n".join(repr)))
         if right != IntType() and right != RealType():
-            context.add_error(Error("right-hand side of a multiply operation is not a number"))
+            context.add_error(Error("right-hand side of a multiply operation is not a number", "\n".join(repr)))
 
         return RealType() if left == RealType() or right == RealType() else IntType()
 
     def visit_Plus(self, node: Plus, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != IntType() and left != RealType():
-            context.add_error(Error("left-hand side of a plus operation is not a number"))
+            context.add_error(Error("left-hand side of a plus operation is not a number", "\n".join(repr)))
         if right != IntType() and right != RealType():
-            context.add_error(Error("right-hand side of a plus operation is not a number"))
+            context.add_error(Error("right-hand side of a plus operation is not a number", "\n".join(repr)))
 
         return RealType() if left == RealType() or right == RealType() else IntType()
 
     def visit_Minus(self, node: Minus, context: TypeCheckingContext) -> Type:
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
+        repr = node.accept(self.__to_text_visitor, self.__to_text_context)
         if left != IntType() and left != RealType():
-            context.add_error(Error("left-hand side of a minus operation is not a number"))
+            context.add_error(Error("left-hand side of a minus operation is not a number", "\n".join(repr)))
         if right != IntType() and right != RealType():
-            context.add_error(Error("right-hand side of a minus operation is not a number"))
+            context.add_error(Error("right-hand side of a minus operation is not a number", "\n".join(repr)))
 
         return RealType() if left == RealType() or right == RealType() else IntType()
 
@@ -460,7 +512,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
         left = node.left.accept(self, context)
         right = node.right.accept(self, context)
         if left != StringType() and right != StringType():
-            context.add_error(Error("Unexpected type error, concatenation of two non-string type"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Unexpected type error, concatenation of two non-string type", "\n".join(repr)))
         return StringType()
 
     def visit_InstanceOf(self, node: InstanceOf, context: TypeCheckingContext) -> Type:
@@ -495,9 +548,11 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
     def visit_EnumLiteral(self, node: EnumLiteral, context: TypeCheckingContext) -> Type:
         enum_type = node.enumeration
         if isinstance(enum_type, UnknownClassifier):
-            context.add_error(Error(f"Unknown enumeration named \"{enum_type.name()}\""))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error(f"Unknown enumeration named \"{enum_type.name()}\"", "\n".join(repr)))
         elif node.name is None:
-            context.add_error(Error(f"Unknown literal of enum \"{enum_type.enum.name}\""))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error(f"Unknown literal of enum \"{enum_type.enum.name}\"", "\n".join(repr)))
         return enum_type
 
     def visit_SequenceLiteral(self, node: SequenceLiteral, context: TypeCheckingContext) -> Type:
@@ -505,22 +560,29 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
         for val in node.values:
             val_type = val.accept(self, context)
             if val_type != value_type:
-                context.add_error(Error(f"Value of type {get_typename(val_type)} in a sequence literal of type {get_typename(value_type)}"))
+                repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+                context.add_error(Error(
+                    f"Value of type {get_typename(val_type)} in a sequence literal of type {get_typename(value_type)}",
+                    "\n".join(repr)
+                ))
         return SequenceType(value_type)
 
     def visit_RangeLiteral(self, node: RangeLiteral, context: TypeCheckingContext) -> Type:
         first_type = node.first.accept(self, context)
         if first_type != IntType():
-            context.add_error(Error("Range lower bound is not an integer"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Range lower bound is not an integer", "\n".join(repr)))
         last_type = node.last.accept(self, context)
         if last_type != IntType():
-            context.add_error(Error("Range upper bound is not an integer"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Range upper bound is not an integer", "\n".join(repr)))
         return SequenceType(IntType())
 
     def visit_Iterator(self, node: Iterator, context: TypeCheckingContext) -> Type:
         sequence_type = node.sequence.accept(self, context)
         if isinstance(sequence_type, SequenceType):
-            context.add_error(Error("Iterator over a non-sequence type"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Iterator over a non-sequence type", "\n".join(repr)))
         return NoType()
 
     def visit_CondLoop(self, node: CondLoop, context: TypeCheckingContext) -> Type:
@@ -529,13 +591,15 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
     def visit_While(self, node: While, context: TypeCheckingContext) -> Type:
         cond_type = node.condition.accept(self, context)
         if cond_type != BoolType():
-            context.add_error(Error("While condition is not a boolean"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("While condition is not a boolean", "\n".join(repr)))
         return NoType() | node.body.accept(self, context)
 
     def visit_DoWhile(self, node: DoWhile, context: TypeCheckingContext) -> Type:
         cond_type = node.condition.accept(self, context)
         if cond_type != BoolType():
-            context.add_error(Error("Do-While condition is not a boolean"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("Do-While condition is not a boolean", "\n".join(repr)))
         return NoType() | node.body.accept(self, context)
 
     def visit_ConditionalBranch(self, node: ConditionalBranch, context: TypeCheckingContext) -> Type:
@@ -553,7 +617,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
     def visit_Condition(self, node: Condition, context: TypeCheckingContext) -> Type:
         cond_type = node.condition.accept(self, context)
         if cond_type != BoolType():
-            context.add_error(Error("If condition is not a boolean"))
+            repr = node.accept(self.__to_text_visitor, self.__to_text_context)
+            context.add_error(Error("If condition is not a boolean", "\n".join(repr)))
         the_type = node.then.accept(self, context)
         if node.elze is not None:
             the_type = node.elze.accept(self, context) | the_type

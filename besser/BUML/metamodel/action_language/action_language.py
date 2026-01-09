@@ -1,10 +1,12 @@
 from abc import ABC
 from typing import TypeVar
-
 from typing import TYPE_CHECKING
+
+from besser.BUML.metamodel.structural import Method, Property, Class, Enumeration
+
 if TYPE_CHECKING:
     from besser.BUML.metamodel.action_language.visitors import BALVisitor
-    from besser.BUML.metamodel.structural import Method, Property, Class, Enumeration
+
 
 ContextType = TypeVar('ContextType')
 ReturnType = TypeVar('ReturnType')
@@ -19,12 +21,12 @@ ReturnType = TypeVar('ReturnType')
 #==================#
 
 
-class Statements(ABC):
+class Statement(ABC):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_Statements(self, context)
     
 
-class Expression(Statements):
+class Expression(Statement):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_Expression(self, context)
 
@@ -43,6 +45,279 @@ class Type(ABC):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_Type(self, context)
 
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return True
+        else:
+            return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __le__(self, other):
+        if isinstance(other, Type):
+            return self.is_subtype(other)
+        else:
+            return False
+
+    def __ge__(self, other):
+        if isinstance(other, Type):
+            return other.is_subtype(self)
+        else:
+            return False
+
+    def __or__(self, other):
+        if isinstance(other, Type):
+            return TypeUnion(self, other)
+        else:
+            return self
+
+    def supertype(self):
+        return self
+
+    def subtype(self):
+        return self
+
+    # check if a is a subtype of b (a<=b)
+    def is_subtype(self, other):
+        if not isinstance(other, Type):
+            return False
+
+        a = self.supertype()
+        b = other.supertype()
+        if a == b:
+            return True
+        if b == AnyType():
+            return True
+        if isinstance(a, TypeUnion):
+            if isinstance(a.a, Nothing):
+                return a.b <= b
+            else:
+                return a.a <= b
+        if isinstance(b, TypeUnion):
+            if isinstance(b.a, Nothing):
+                return a <= b.b
+            else:
+                return a <= b.a
+        elif isinstance(a, OptionalType):
+            if isinstance(b, OptionalType):
+                return a.type <= b.type
+            else:
+                return a.type <= b
+        elif isinstance(b, OptionalType):
+            return a <= b.type
+        elif isinstance(a, FunctionType) and isinstance(b, FunctionType):
+            # P1 -> R1 <= P2 -> R2 ==>  P2 <= P1, R1 <= R2
+            if not a.return_type <= b.return_type:  # if ~ R1 <= R2
+                return False
+
+            shortest, longest = (a.params_type, b.params_type) \
+                if len(a.params_type) <= len(b.params_type) \
+                else (b.params_type, a.params_type)
+
+            for i in range(len(shortest), len(longest)):
+                if not isinstance(longest[i], OptionalType):
+                    return False
+
+            for i in range(0, len(shortest)):
+                if not b.params_type[i] <= a.params_type[i]:  # if ~ P2 <= P1
+                    return False
+            return True
+        elif (not isinstance(a, ObjectType)) or (not isinstance(b, ObjectType)):
+            return False
+        else:  # Both are ObjectType
+            b_children: set[Class] = b.clazz.all_specializations()
+            if a.clazz in b_children:
+                return True
+            return False
+
+
+class NoType(Type):
+    pass
+
+class Nothing(Type):
+    def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
+        return bal_visitor.visit_Nothing(self, context)
+
+class TypeUnion(Type):
+    def __init__(self, a: Type, b: Type):
+        self.a = a
+        self.b = b
+
+    def supertype(self) -> Type:
+        #Find the supertype R of the union (A | B) <= R
+        # (A | B) <= R <==> A <= R, B <= R
+        a = self.a.supertype()
+        b = self.b.supertype()
+        if a == b:
+            return a
+        elif isinstance(a, NoType):
+            return b
+        elif isinstance(b, NoType):
+            return a
+        elif isinstance(a, Nothing):
+            if isinstance(b, Nothing):
+                return Nothing()
+            else:
+                return self
+        elif isinstance(b, Nothing):
+            return b | a
+        elif isinstance(a, TypeUnion):
+            if isinstance(a.a, Nothing):
+                union_type = a.b | b
+                return a.a | union_type.supertype()
+            else:
+                union_type = a.a | b
+                return a.b | union_type.supertype()
+        elif isinstance(b, TypeUnion):
+            if isinstance(b.a, Nothing):
+                union_type = b.b | a
+                return b.a | union_type.supertype()
+            else:
+                union_type = b.a | a
+                return b.b | union_type.supertype()
+        elif isinstance(a, OptionalType):
+            if isinstance(b, OptionalType):
+                union = a.type | b.type
+            else:
+                union = a.type | b
+            return OptionalType(union.supertype())
+        elif isinstance(b, OptionalType):
+            union = a | b.type
+            return OptionalType(union.supertype())
+        elif isinstance(a, FunctionType) and isinstance(b, FunctionType):
+            # (P1 -> R1 | P2 -> R2) <= P -> R ==> P <= P1, P <= P2, R1 <= R, R2 <= R
+            # equivalent to (P1 -> R1 | P2 -> R2) <= P -> R ==> P <= (P1 | P2), (R1 | R2) <= R
+            return_type = (a.return_type | b.return_type).supertype() # compute R such as (R1 | R2) <= R
+            shortest, longest = (a.params_type, b.params_type) \
+                                if len(a.params_type) <= len(b.params_type)\
+                                else (b.params_type, a.params_type)
+            for i in range(len(shortest), len(longest)):
+                if not isinstance(longest[i], OptionalType):
+                    return AnyType()
+            param_types = []
+            for i in range(0, len(shortest)):
+                union = a.params_type[i] | b.params_type[i]
+                # function params are contravariant -> the union of param types are common subtypes
+                param_type = union.subtype()
+                if param_type is None:
+                    # No possible type found -> fallback to any
+                    return AnyType()
+                param_types.append(param_type)
+            return FunctionType(param_types, return_type)
+        elif (not isinstance(a, ObjectType)) or (not isinstance(b, ObjectType)):
+            return AnyType()
+        else: # Both are ObjectType
+            a_parents: set[Class] = a.clazz.all_parents()
+            b_parents: set[Class] = b.clazz.all_parents()
+            if a.clazz in b_parents:
+                return a
+            if b.clazz in a_parents:
+                return b
+
+            common_parent: set[Class] = a_parents.intersection(b_parents)
+
+            while True:
+                to_remove: set[Class] = set()
+                for parent in common_parent:
+                    to_remove.union(parent.all_parents().intersection(common_parent))
+                common_parent.difference_update(to_remove)
+                if len(to_remove) == 0:
+                    break
+            for clazz in common_parent:
+                return ObjectType(clazz)
+            return AnyType()
+
+    def subtype(self) -> Type:
+        # Find the subtype R of the union R <= (A | B)
+        # R <= (A | B) <==> R <= A, R <= B
+        a = self.a.subtype()
+        b = self.b.subtype()
+        if isinstance(a, NoType):
+            return NoType()
+        elif isinstance(b, NoType):
+            return NoType()
+        elif a == AnyType():
+            return b
+        elif b == AnyType():
+            return a
+        elif a == b:
+            return a
+        elif isinstance(a, Nothing):
+            if isinstance(b, Nothing):
+                return Nothing()
+            else:
+                return self
+        elif isinstance(b, Nothing):
+            return b | a
+        elif isinstance(a, TypeUnion):
+            if isinstance(a.a, Nothing):
+                union_type = a.b | b
+                return a.a | union_type.subtype()
+            else:
+                union_type = a.a | b
+                return a.b | union_type.subtype()
+        elif isinstance(b, TypeUnion):
+            if isinstance(b.a, Nothing):
+                union_type = b.b | a
+                return b.a | union_type.subtype()
+            else:
+                union_type = b.a | a
+                return b.b | union_type.subtype()
+        elif isinstance(a, OptionalType):
+            if isinstance(b, OptionalType):
+                union = (a.type | b.type).subtype()
+                if union is not None:
+                    return OptionalType(union)
+                return NoType()
+            else:
+                return (a.type | b).subtype()
+        elif isinstance(b, OptionalType):
+            union = a | b.type
+            return union.subtype()
+        elif isinstance(a, FunctionType) and isinstance(b, FunctionType):
+            # P -> R <= (P1 -> R1 | P2 -> R2) ==> P1 <= P, P2 <= P, R <= R1, R <= R2
+            # equivalent to P -> R <= (P1 -> R1 | P2 -> R2) ==> (P1 | P2) <= P, R <= (R1 | R2)
+            return_type = (a.return_type | b.return_type).subtype() # compute R such as  R <= (R1 | R2)
+            if return_type == NoType(): # there is no R such as R <= (R1 | R2)
+                return NoType()
+
+            shortest, longest = (a.params_type, b.params_type) \
+                                if len(a.params_type) <= len(b.params_type) \
+                                else (b.params_type, a.params_type)
+
+            for i in range(len(shortest), len(longest)):
+                if not isinstance(longest[i], OptionalType):
+                    return NoType()
+
+            param_types = []
+            for i in range(0, len(shortest)):
+                param_type = (a.params_type[i] | b.params_type[i]).supertype() # compute P such as (P1 | P2) <= P
+                param_types.append(param_type)
+            return FunctionType(param_types, return_type)
+        elif (not isinstance(a, ObjectType)) or (not isinstance(b, ObjectType)):
+            return NoType()
+        else:  # Both are ObjectType
+            a_children: set[Class] = a.clazz.all_specializations()
+            b_children: set[Class] = b.clazz.all_specializations()
+            if a.clazz in b_children:
+                return a
+            if b.clazz in a_children:
+                return b
+
+            common_children: set[Class] = a_children.intersection(b_children)
+
+            while True:
+                to_remove: set[Class] = set()
+                for child in common_children:
+                    to_remove.union(child.all_specializations().intersection(common_children))
+                common_children.difference_update(to_remove)
+                if len(to_remove) == 0:
+                    break
+            for clazz in common_children:
+                return ObjectType(clazz)
+            return NoType()
+
 
 class AnyType(Type):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
@@ -53,8 +328,17 @@ class ObjectType(Type):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_ObjectType(self, context)
 
-    def __init__(self, clazz: 'Class'):
+    def __init__(self, clazz: 'Class' = None):
         self.__clazz = clazz
+
+    def __eq__(self, other):
+        if isinstance(other, ObjectType):
+            return self.__clazz.name == other.__clazz.name
+        else:
+            return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
     @property
     def clazz(self) -> 'Class':
@@ -68,6 +352,15 @@ class ObjectType(Type):
 class SequenceType(Type):
     def __init__(self, elementsType: Type):
         self.__elementsType = elementsType
+
+    def __eq__(self, other):
+        if isinstance(other, SequenceType):
+            return self.__elementsType == other.__elementsType
+        else:
+            return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
     @property
     def elementsType(self) -> Type:
@@ -101,17 +394,21 @@ class IntType(Type):
         return bal_visitor.visit_IntType(self, context)
 
 
-class NaturalType(Type):
-    def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
-        return bal_visitor.visit_NaturalType(self, context)
-
-
 class EnumType(Type):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_EnumType(self, context)
 
-    def __init__(self, enum: 'Enumeration'):
+    def __init__(self, enum: 'Enumeration' = None):
         self.__enum = enum
+
+    def __eq__(self, other):
+        if isinstance(other, EnumType):
+            return self.__enum == other.__enum
+        else:
+            return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
     @property
     def enum(self) -> 'Enumeration':
@@ -122,13 +419,55 @@ class EnumType(Type):
         self.__enum = enum
 
 
+# Type of parameters with default
+class OptionalType(Type):
+    def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
+        return bal_visitor.visit_OptionalType(self, context)
+
+    def __init__(self, type: Type):
+        self.__type = type
+
+    @property
+    def type(self) -> Type:
+        return self.__type
+
+    @type.setter
+    def type(self, type: Type):
+        self.__type = type
+
+    def __eq__(self, other):
+        if isinstance(other, OptionalType):
+            return self.__type == other.__type
+        else:
+            return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+
 class FunctionType(Type):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
-        return bal_visitor.visit_EnumType(self, context)
+        return bal_visitor.visit_FunctionType(self, context)
 
     def __init__(self, params_type: list[Type], return_type: Type):
         self.__params_type = params_type
         self.__return_type = return_type
+
+    def __eq__(self, other):
+        if isinstance(other, FunctionType):
+            if self.__return_type != other.__return_type:
+                return False
+            if len(self.__params_type) != len(other.__params_type):
+                return False
+            for i in range(0, len(self.__params_type)):
+                if self.__params_type[i] != other.__params_type[i]:
+                    return False
+            return True
+        else:
+            return False
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
 
     @property
     def params_type(self) -> list[Type]:
@@ -177,7 +516,7 @@ class Multiplicity:
         self.__nullable = nullable
 
 
-class NameDecl(Statements):
+class NameDecl(Statement):
     def __init__(self, name: str, declared_type: Type, multiplicity: Multiplicity):
         self.__name = name
         self.__declared_type = declared_type
@@ -301,22 +640,22 @@ class ConditionalBranch(ABC):
     
 
 class Block(ConditionalBranch):
-    def __init__(self, statements:list[Statements]):
+    def __init__(self, statements:list[Statement]):
         self.__statements = statements
 
     @property
-    def statements(self) -> list[Statements]:
+    def statements(self) -> list[Statement]:
         return self.__statements
 
     @statements.setter
-    def statements(self, statements: list[Statements]):
+    def statements(self, statements: list[Statement]):
         self.__statements = statements
 
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_Block(self, context)
 
 
-class Condition(Statements, ConditionalBranch):
+class Condition(Statement, ConditionalBranch):
     def __init__(self, condition: Expression, then: Block, elze: ConditionalBranch):
         self.__condition = condition
         self.__then = then
@@ -350,7 +689,7 @@ class Condition(Statements, ConditionalBranch):
         return bal_visitor.visit_Condition(self, context)
     
 
-class CondLoop(Statements):
+class CondLoop(Statement):
     def __init__(self, condition: Expression, body: Block):
         self.__condition = condition
         self.__body = body
@@ -416,7 +755,7 @@ class Iterator:
         return bal_visitor.visit_Iterator(self, context)
 
 
-class For(Statements):
+class For(Statement):
     def __init__(self, iterators:set[Iterator], body:Block):
         self.__iterators = iterators
         self.__body = body
@@ -441,28 +780,7 @@ class For(Statements):
         return bal_visitor.visit_For(self, context)
 
 
-class Return(Statements):
-    def __init__(self, expr: Expression):
-        self.__expr = expr
-
-    @property
-    def expr(self) -> Expression:
-        return self.__expr
-
-    @expr.setter
-    def expr(self, expr: Expression):
-        self.__expr = expr
-
-    def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
-        return bal_visitor.visit_Return(self, context)
-
-
-#=====================#
-# Expressions Classes #
-#=====================#
-
-
-class Assignment:
+class Assignment(Statement):
     def __init__(self, target: AssignTarget, assignee: Expression):
         self.__target = target
         self.__assignee = assignee
@@ -485,6 +803,27 @@ class Assignment:
 
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_Assignment(self, context)
+
+
+class Return(Statement):
+    def __init__(self, expr: Expression):
+        self.__expr = expr
+
+    @property
+    def expr(self) -> Expression:
+        return self.__expr
+
+    @expr.setter
+    def expr(self, expr: Expression):
+        self.__expr = expr
+
+    def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
+        return bal_visitor.visit_Return(self, context)
+
+
+#=====================#
+# Expressions Classes #
+#=====================#
 
 
 class Ternary(Expression):
@@ -953,11 +1292,11 @@ class StandardLibCall(Call):
         self.__function = function
 
     @property
-    def function_type(self) -> str:
+    def function_type(self) -> FunctionType:
         return self.__function_type
 
     @function_type.setter
-    def function_type(self, function_type: str):
+    def function_type(self, function_type: FunctionType):
         self.__function_type = function_type
 
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
@@ -986,9 +1325,20 @@ class This(Expression):
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_This(self, context)
 
+    def __init__(self, clazz: Class):
+        self.__clazz = clazz
+
+    @property
+    def clazz(self) -> Class:
+        return self.__clazz
+
+    @clazz.setter
+    def clazz(self, clazz: Class):
+        self.__clazz = clazz
+
 
 class Reference(AssignTarget, Expression):
-    def __init__(self, definition: NameDecl):
+    def __init__(self, definition: NameDecl, symbol:str = None):
         self.__definition = definition
 
     @property
@@ -998,6 +1348,14 @@ class Reference(AssignTarget, Expression):
     @definition.setter
     def definition(self, definition: NameDecl):
         self.__definition = definition
+
+    @property
+    def symbol(self) -> str:
+        return self.__symbol
+
+    @symbol.setter
+    def symbol(self, symbol: str):
+        self.__symbol = symbol
 
     def accept(self, bal_visitor: 'BALVisitor[ContextType, ReturnType]', context: ContextType) -> ReturnType:
         return bal_visitor.visit_Reference(self, context)

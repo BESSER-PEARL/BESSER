@@ -707,6 +707,7 @@ class Method(TypedElement):
         type (Type): The type of the method (None as default).
         owner (Type): The type that owns the method (None as default).
         code (str): code of the method ("" as default).
+        code_lang (str): language used to code the method ("" as default).
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -719,6 +720,7 @@ class Method(TypedElement):
         type (Type): Inherited from TypedElement, represents the type of the method (None as default).
         owner (Type): The type that owns the property (None as default).
         code (str): code of the method ("" as default).
+        code_lang (str): language used to code the method ("" as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the method (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -726,12 +728,13 @@ class Method(TypedElement):
 
     def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False,
                  parameters: list[Parameter] = None, type: Type = None, owner: Type = None,
-                 code: str = "", timestamp: int = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+                 code: str = "", code_lang: str = "", timestamp: int = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.is_abstract: bool = is_abstract
         self.parameters: list[Parameter] = parameters if parameters is not None else list()
         self.owner: Type = owner
         self.code: str = code
+        self.code_lang: str = code_lang
 
     @property
     def is_abstract(self) -> bool:
@@ -811,6 +814,16 @@ class Method(TypedElement):
     def code(self, code: str):
         """str: Set the code of the method."""
         self.__code = code
+
+    @property
+    def code_language(self) -> str:
+        """str: Get the language used to code the method."""
+        return self.__code_lang
+
+    @code.setter
+    def code_language(self, code_lang: str):
+        """str: Set the language used to code the method."""
+        self.__code_lang = code_lang
 
     def __repr__(self):
         return (

@@ -627,7 +627,7 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
     # Visit a parse tree produced by BESSERActionLanguageParser#string_literal.
     def visitString_literal(self, ctx:BESSERActionLanguageParser.String_literalContext):
         self.__current_type = StringType()
-        return StringLiteral(ctx.value.text)
+        return StringLiteral(ctx.value.text[1:-1])
 
 
     # Visit a parse tree produced by BESSERActionLanguageParser#bool_literal.

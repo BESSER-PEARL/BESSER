@@ -15,8 +15,9 @@ import tempfile
 import importlib.util
 import sys
 import asyncio
+from collections import defaultdict
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Set
 import sys
 import json
 sys.path.append("C:/Users/conrardy/Desktop/git/BESSER")
@@ -61,6 +62,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     object_buml_to_json,
     gui_buml_to_json,
     project_to_json,
+)
+from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+    domain_model as user_reference_domain_model,
 )
 
 # Backend services - Other services
@@ -297,6 +301,25 @@ async def generate_code_output(input_data: DiagramInput):
         # Handle agent generators (different diagram type)
         if generator_info.category == "ai_agent":
             return await _handle_agent_generation(json_data)
+
+        if generator_info.category == "object_model":
+            diagram_type = _get_diagram_type(json_data)
+            if diagram_type == "UserDiagram":
+                return await _handle_user_diagram_generation(
+                    json_data,
+                    generator_type,
+                    generator_info,
+                    input_data.config,
+                    temp_dir,
+                )
+
+            return await _handle_object_diagram_generation(
+                json_data,
+                generator_type,
+                generator_info,
+                input_data.config,
+                temp_dir,
+            )
 
         # Handle class diagram based generators
         return await _handle_class_diagram_generation(
@@ -577,6 +600,213 @@ async def _handle_class_diagram_generation(
         return await _generate_jsonschema(buml_model, generator_class, config, temp_dir)
 
     return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
+
+
+async def _handle_object_diagram_generation(
+    json_data: dict,
+    generator_type: str,
+    generator_info,
+    config: dict,
+    temp_dir: str,
+):
+    """Handle generators that operate on object diagrams."""
+    reference_payload = _extract_reference_class_diagram(json_data)
+    if not reference_payload:
+        raise HTTPException(
+            status_code=400,
+            detail="Object diagram generation requires reference class diagram data."
+        )
+
+    domain_model = process_class_diagram(reference_payload)
+    object_model = process_object_diagram(json_data, domain_model)
+
+    generator_class = generator_info.generator_class
+    generator_instance = generator_class(object_model, output_dir=temp_dir)
+    generator_instance.generate()
+
+    return _create_file_response(temp_dir, generator_type)
+
+
+async def _handle_user_diagram_generation(
+    json_data: dict,
+    generator_type: str,
+    generator_info,
+    config: dict,
+    temp_dir: str,
+):
+    """Handle user diagram generation using the preset user reference domain."""
+    try:
+        object_model = process_object_diagram(json_data, user_reference_domain_model)
+    except Exception as conversion_error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to convert user diagram to BUML: {conversion_error}",
+        ) from conversion_error
+
+    generator_class = generator_info.generator_class
+    generator_instance = generator_class(object_model, output_dir=temp_dir)
+    generator_instance.generate()
+
+    _normalize_user_model_output(object_model, temp_dir)
+
+    return _create_file_response(temp_dir, generator_type)
+
+
+def _normalize_user_model_output(object_model, temp_dir: str) -> None:
+    file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
+    json_path = os.path.join(temp_dir, f"{file_name}.json")
+    if not os.path.isfile(json_path):
+        return
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as source:
+            document = json.load(source)
+    except (OSError, json.JSONDecodeError):
+        return
+
+    normalized_document = _build_user_model_hierarchy(document)
+    if not normalized_document:
+        return
+
+    with open(json_path, "w", encoding="utf-8") as target:
+        json.dump(normalized_document, target, indent=2, ensure_ascii=False)
+
+
+def _build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    objects = document.get("objects")
+    if not isinstance(objects, list):
+        return None
+
+    objects_by_id: Dict[str, Dict[str, Any]] = {}
+    for obj in objects:
+        if not isinstance(obj, dict):
+            continue
+        object_id = obj.get("id")
+        if object_id:
+            objects_by_id[object_id] = obj
+
+    if not objects_by_id:
+        return None
+
+    root_id = next(
+        (obj_id for obj_id, obj in objects_by_id.items() if obj.get("class") == "User"),
+        None,
+    )
+    if not root_id:
+        return None
+
+    root_model = _build_user_model_node(root_id, objects_by_id, include_identity=True, path=set())
+    if root_model is None:
+        return None
+
+    normalized_document = {key: value for key, value in document.items() if key != "objects"}
+    normalized_document["model"] = root_model
+    return normalized_document
+
+
+def _build_user_model_node(
+    object_id: str,
+    objects_by_id: Dict[str, Dict[str, Any]],
+    include_identity: bool,
+    path: Set[str],
+) -> Optional[Dict[str, Any]]:
+    if object_id in path:
+        return None
+
+    obj = objects_by_id.get(object_id)
+    if not obj:
+        return None
+
+    path.add(object_id)
+    try:
+        node: Dict[str, Any] = {}
+        if include_identity:
+            node["id"] = obj.get("id")
+            node["class"] = obj.get("class")
+
+        attributes = obj.get("attributes")
+        if isinstance(attributes, dict):
+            node.update(attributes)
+
+        child_groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+        relationships = obj.get("relationships")
+        if isinstance(relationships, dict):
+            for target_ids in relationships.values():
+                if not isinstance(target_ids, list):
+                    continue
+                for target_id in target_ids:
+                    child_obj = objects_by_id.get(target_id)
+                    if not child_obj:
+                        continue
+                    child_node = _build_user_model_node(
+                        target_id,
+                        objects_by_id,
+                        include_identity=False,
+                        path=path,
+                    )
+                    if child_node is None:
+                        continue
+                    key = child_obj.get("class") or child_obj.get("id")
+                    if not key:
+                        continue
+                    child_groups[key].append(child_node)
+
+        for child_key, children in child_groups.items():
+            if not children:
+                continue
+            if len(children) == 1:
+                node[child_key] = children[0]
+            else:
+                node[child_key] = children
+
+        return node
+    finally:
+        path.remove(object_id)
+
+
+def _sanitize_object_model_filename(name: Optional[str]) -> str:
+    cleaned = (name or "object_model").strip().replace(" ", "_")
+    return cleaned or "object_model"
+
+
+def _extract_reference_class_diagram(json_data: dict):
+    reference_data = json_data.get("referenceDiagramData")
+    if not reference_data:
+        reference_data = json_data.get("model", {}).get("referenceDiagramData")
+
+    if not reference_data:
+        return None
+
+    if isinstance(reference_data, dict) and isinstance(reference_data.get("model"), dict):
+        model_payload = reference_data["model"]
+        title = reference_data.get("title") or reference_data["model"].get("title")
+    else:
+        model_payload = reference_data
+        title = reference_data.get("title")
+
+    if not isinstance(model_payload, dict) or "elements" not in model_payload:
+        return None
+
+    return {
+        "title": title or "ReferenceClassDiagram",
+        "model": model_payload,
+    }
+
+
+def _get_diagram_type(json_data: dict) -> Optional[str]:
+    """Safely extract the diagram type label from the payload."""
+    explicit_type = json_data.get("diagramType")
+    if isinstance(explicit_type, str):
+        return explicit_type
+
+    model_section = json_data.get("model")
+    if isinstance(model_section, dict):
+        model_type = model_section.get("type")
+        if isinstance(model_type, str):
+            return model_type
+
+    return None
 
 
 async def _generate_django(buml_model, generator_class, config: dict, temp_dir: str):
@@ -1239,6 +1469,18 @@ async def validate_diagram(input_data: DiagramInput):
                     validation_errors.extend(object_validation.get("errors", []))
                     validation_warnings.extend(object_validation.get("warnings", []))
                 
+            elif diagram_type == "UserDiagram":
+                buml_model = user_reference_domain_model
+                domain_validation = buml_model.validate(raise_exception=False)
+                validation_errors.extend(domain_validation.get("errors", []))
+                validation_warnings.extend(domain_validation.get("warnings", []))
+
+                if domain_validation.get("success", False):
+                    object_model = process_object_diagram(input_data.model_dump(), buml_model)
+                    object_validation = object_model.validate(raise_exception=False)
+                    validation_errors.extend(object_validation.get("errors", []))
+                    validation_warnings.extend(object_validation.get("warnings", []))
+
             elif diagram_type == "StateMachineDiagram":
                 state_machine_code = process_state_machine(input_data.model_dump())
                 return {

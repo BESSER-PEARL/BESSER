@@ -106,7 +106,8 @@ class BAFGenerator(GeneratorInterface):
         if config_path:
             print("Loading config from:", config_path)
             with open(config_path, 'r', encoding='utf-8') as f:
-                self.config = json.load(f)
+                loaded_config = json.load(f)
+                self.config = flatten_agent_config_structure(loaded_config) if isinstance(loaded_config, dict) else loaded_config
 
     def generate(self):
         """

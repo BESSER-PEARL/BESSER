@@ -2,16 +2,19 @@ from abc import ABC, abstractmethod
 from typing import TypeVar, Generic
 
 from besser.BUML.metamodel.action_language.action_language import Parameter, FunctionDefinition, AnyType, Multiplicity, \
-    ObjectType, SequenceType, Type, NaturalType, RealType, StringType, IntType, EnumType, BoolType, Assignment, \
-    Statements, NameDecl, ExplicitDecl, ImplicitDecl, For, Expression, Boolean, BinaryBoolean, LessEq, And, Or, Equal, \
-    Greater, Less, Unequal, GreaterEq, Not, Call, New, This, FieldAccess, Cast, NullCoalessing, Ternary, Arithmetic, \
-    UnaryMinus, BinaryArithmetic, Div, Remain, Mult, Plus, Minus, Concatenation, InstanceOf, Reference, Literal, \
-    IntLiteral, StringLiteral, BoolLiteral, RealLiteral, NullLiteral, EnumLiteral, SequenceLiteral, RangeLiteral, \
-    Iterator, CondLoop, While, DoWhile, ConditionalBranch, Block, Condition, ArrayAccess, MethodCall, StandardLibCall, \
-    Return, AssignTarget, ProcedureCall, FunctionType
+    ObjectType, SequenceType, Type, RealType, StringType, IntType, EnumType, BoolType, Assignment, Statement, \
+    NameDecl, ExplicitDecl, ImplicitDecl, For, Expression, Boolean, BinaryBoolean, LessEq, And, Or, Equal, Greater, \
+    Less, Unequal, GreaterEq, Not, Call, New, This, FieldAccess, Cast, NullCoalessing, Ternary, Arithmetic, UnaryMinus, \
+    BinaryArithmetic, Div, Remain, Mult, Plus, Minus, Concatenation, InstanceOf, Reference, Literal, IntLiteral, \
+    StringLiteral, BoolLiteral, RealLiteral, NullLiteral, EnumLiteral, SequenceLiteral, RangeLiteral, Iterator, \
+    CondLoop, While, DoWhile, ConditionalBranch, Block, Condition, ArrayAccess, MethodCall, StandardLibCall, Return, \
+    AssignTarget, ProcedureCall, FunctionType, OptionalType, Nothing
 
 ContextType = TypeVar('ContextType')
 ReturnType = TypeVar('ReturnType')
+
+
+
 
 class BALVisitor(ABC, Generic[ContextType, ReturnType]):
     @abstractmethod
@@ -43,15 +46,15 @@ class BALVisitor(ABC, Generic[ContextType, ReturnType]):
         pass
 
     @abstractmethod
+    def visit_OptionalType(self, node: OptionalType, context: ContextType) -> ReturnType:
+        pass
+
+    @abstractmethod
     def visit_FunctionType(self, node: FunctionType, context: ContextType) -> ReturnType:
         pass
 
     @abstractmethod
     def visit_Type(self, node: Type, context: ContextType) -> ReturnType:
-        pass
-
-    @abstractmethod
-    def visit_NaturalType(self, node: NaturalType, context: ContextType) -> ReturnType:
         pass
 
     @abstractmethod
@@ -75,11 +78,15 @@ class BALVisitor(ABC, Generic[ContextType, ReturnType]):
         pass
 
     @abstractmethod
+    def visit_Nothing(self, node: Nothing, context: ContextType) -> ReturnType:
+        pass
+
+    @abstractmethod
     def visit_Assignment(self, node: Assignment, context: ContextType) -> ReturnType:
         pass
 
     @abstractmethod
-    def visit_Statements(self, node: Statements, context: ContextType) -> ReturnType:
+    def visit_Statement(self, node: Statement, context: ContextType) -> ReturnType:
         pass
 
     @abstractmethod

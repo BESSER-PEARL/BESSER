@@ -19,6 +19,11 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BESSERActionLanguageParser#parameterWithDefault.
+    def visitParameterWithDefault(self, ctx:BESSERActionLanguageParser.ParameterWithDefaultContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by BESSERActionLanguageParser#statements.
     def visitStatements(self, ctx:BESSERActionLanguageParser.StatementsContext):
         return self.visitChildren(ctx)
@@ -64,6 +69,21 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BESSERActionLanguageParser#assign_target.
+    def visitAssign_target(self, ctx:BESSERActionLanguageParser.Assign_targetContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BESSERActionLanguageParser#explicit_declaration.
+    def visitExplicit_declaration(self, ctx:BESSERActionLanguageParser.Explicit_declarationContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BESSERActionLanguageParser#assignment.
+    def visitAssignment(self, ctx:BESSERActionLanguageParser.AssignmentContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by BESSERActionLanguageParser#return.
     def visitReturn(self, ctx:BESSERActionLanguageParser.ReturnContext):
         return self.visitChildren(ctx)
@@ -81,6 +101,11 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BESSERActionLanguageParser#sequence_type.
     def visitSequence_type(self, ctx:BESSERActionLanguageParser.Sequence_typeContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BESSERActionLanguageParser#optional_type.
+    def visitOptional_type(self, ctx:BESSERActionLanguageParser.Optional_typeContext):
         return self.visitChildren(ctx)
 
 
@@ -119,23 +144,13 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
+    # Visit a parse tree produced by BESSERActionLanguageParser#nothing.
+    def visitNothing(self, ctx:BESSERActionLanguageParser.NothingContext):
+        return self.visitChildren(ctx)
+
+
     # Visit a parse tree produced by BESSERActionLanguageParser#expression.
     def visitExpression(self, ctx:BESSERActionLanguageParser.ExpressionContext):
-        return self.visitChildren(ctx)
-
-
-    # Visit a parse tree produced by BESSERActionLanguageParser#assign_target.
-    def visitAssign_target(self, ctx:BESSERActionLanguageParser.Assign_targetContext):
-        return self.visitChildren(ctx)
-
-
-    # Visit a parse tree produced by BESSERActionLanguageParser#explicit_declaration.
-    def visitExplicit_declaration(self, ctx:BESSERActionLanguageParser.Explicit_declarationContext):
-        return self.visitChildren(ctx)
-
-
-    # Visit a parse tree produced by BESSERActionLanguageParser#assignment.
-    def visitAssignment(self, ctx:BESSERActionLanguageParser.AssignmentContext):
         return self.visitChildren(ctx)
 
 
@@ -194,28 +209,28 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
-    # Visit a parse tree produced by BESSERActionLanguageParser#primary.
-    def visitPrimary(self, ctx:BESSERActionLanguageParser.PrimaryContext):
-        return self.visitChildren(ctx)
-
-
-    # Visit a parse tree produced by BESSERActionLanguageParser#not.
-    def visitNot(self, ctx:BESSERActionLanguageParser.NotContext):
-        return self.visitChildren(ctx)
-
-
-    # Visit a parse tree produced by BESSERActionLanguageParser#minus.
-    def visitMinus(self, ctx:BESSERActionLanguageParser.MinusContext):
-        return self.visitChildren(ctx)
-
-
-    # Visit a parse tree produced by BESSERActionLanguageParser#cast.
+    # Visit a parse tree produced by BESSERActionLanguageParser#Cast.
     def visitCast(self, ctx:BESSERActionLanguageParser.CastContext):
         return self.visitChildren(ctx)
 
 
-    # Visit a parse tree produced by BESSERActionLanguageParser#null_coalessing.
-    def visitNull_coalessing(self, ctx:BESSERActionLanguageParser.Null_coalessingContext):
+    # Visit a parse tree produced by BESSERActionLanguageParser#Not.
+    def visitNot(self, ctx:BESSERActionLanguageParser.NotContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BESSERActionLanguageParser#NullCoalessing.
+    def visitNullCoalessing(self, ctx:BESSERActionLanguageParser.NullCoalessingContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BESSERActionLanguageParser#Select.
+    def visitSelect(self, ctx:BESSERActionLanguageParser.SelectContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BESSERActionLanguageParser#Minus.
+    def visitMinus(self, ctx:BESSERActionLanguageParser.MinusContext):
         return self.visitChildren(ctx)
 
 

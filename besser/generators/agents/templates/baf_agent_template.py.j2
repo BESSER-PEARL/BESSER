@@ -456,7 +456,12 @@ def {{ state.body.name }}(session: Session):
     {% endfor -%}
 {% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
 def {{ state.body.name }}(session: Session):
+    {% set llm_action = state.body.actions[0] %}
+    {% if llm_action.prompt %}
+    message = reply_llm.predict(session.event.message, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
     message = reply_llm.predict(session.event.message)
+    {% endif %}
     session.reply(message)
     {% if has_speech_output %}
     platform.reply_speech(message)
@@ -464,7 +469,11 @@ def {{ state.body.name }}(session: Session):
 {% elif state.body.actions and is_class(state.body.actions[0], 'RAGReply') %}
 def {{ state.body.name }}(session: Session):
     {% for action in state.body.actions -%}
+    {% if action.prompt %}
+    rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
     rag_message = session.run_rag(session.event.message)
+    {% endif %}
     platform.reply_rag(session, rag_message)
     {% endfor -%}
 {% else %}
@@ -486,7 +495,12 @@ def {{ state.fallback_body.name }}(session: Session):
     {% endfor %}
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}
 def {{ state.fallback_body.name }}(session: Session):
+    {% set llm_action = state.fallback_body.actions[0] %}
+    {% if llm_action.prompt %}
+    message = reply_llm.predict(session.event.message, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
     message = reply_llm.predict(session.event.message)
+    {% endif %}
     session.reply(message)
     {% if has_speech_output %}
     platform.reply_speech(message)
@@ -494,7 +508,11 @@ def {{ state.fallback_body.name }}(session: Session):
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'RAGReply') %}
 def {{ state.fallback_body.name }}(session: Session):
     {% for action in state.fallback_body.actions -%}
+    {% if action.prompt %}
+    rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
     rag_message = session.run_rag(session.event.message)
+    {% endif %}
     platform.reply_rag(session, rag_message)
     {% endfor -%}
 {% else %}

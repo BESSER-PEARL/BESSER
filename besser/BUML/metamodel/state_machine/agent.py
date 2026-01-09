@@ -53,15 +53,19 @@ class AgentReply(Action):
 class LLMReply(Action):
     """Primitive action that represents sending a reply using an LLM.
 
-    This action does not contain any attributes, as it always uses:
-    session.reply(llm.predict(session.event.message))
+    Args:
+        prompt (str, optional): Additional system prompt injected when calling the LLM.
+
+    Attributes:
+        prompt (str | None): Optional system prompt that augments the user message.
     """
 
-    def __init__(self):
+    def __init__(self, prompt: Optional[str] = None):
         super().__init__()
+        self.prompt: Optional[str] = prompt
 
     def __repr__(self):
-        return "LLMReply()"
+        return f"LLMReply(prompt={self.prompt!r})"
 
 
 class RAGReply(Action):
@@ -69,17 +73,20 @@ class RAGReply(Action):
 
     Args:
         rag_db_name (str): The logical name of the RAG database to query.
+        prompt (str, optional): Optional instructions passed to the LLM phase of the RAG answer.
 
     Attributes:
         rag_db_name (str): Identifier of the RAG database that should handle the reply.
+        prompt (str | None): Additional instructions for the downstream LLM.
     """
 
-    def __init__(self, rag_db_name: str):
+    def __init__(self, rag_db_name: str, prompt: Optional[str] = None):
         super().__init__()
         self.rag_db_name: str = rag_db_name
+        self.prompt: Optional[str] = prompt
 
     def __repr__(self):
-        return f"RAGReply(rag_db_name={self.rag_db_name!r})"
+        return f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r})"
 
 
 class IntentClassifierConfiguration(ABC):

@@ -680,14 +680,25 @@ def agent_model_to_code(model: Agent, file_path: str):
                         f.write(f"{state.name}.set_body({state.name}_body)\n")
                     elif isinstance(state.body.actions[0], LLMReply):
                         f.write(f"{state.name}_body = Body('{state.name}_body')\n")
-                        f.write(f"{state.name}_body.add_action(LLMReply())\n")
+                        for action in state.body.actions:
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                escaped_prompt = prompt.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(f"{state.name}_body.add_action(LLMReply(prompt='{escaped_prompt}'))\n")
+                            else:
+                                f.write(f"{state.name}_body.add_action(LLMReply())\n")
                         f.write(f"{state.name}.set_body({state.name}_body)\n")
                     elif isinstance(state.body.actions[0], RAGReply):
                         print("RAGReply found in state body")
                         f.write(f"{state.name}_body = Body('{state.name}_body')\n")
                         for action in state.body.actions:
                             rag_name = (action.rag_db_name or '').replace('\\', '\\\\').replace("'", "\\'")
-                            f.write(f"{state.name}_body.add_action(RAGReply('{rag_name}'))\n")
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                escaped_prompt = prompt.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(f"{state.name}_body.add_action(RAGReply('{rag_name}', prompt='{escaped_prompt}'))\n")
+                            else:
+                                f.write(f"{state.name}_body.add_action(RAGReply('{rag_name}'))\n")
                         f.write("\n")
                         f.write(f"{state.name}.set_body({state.name}_body)\n")
                     elif isinstance(state.body.actions[0], CustomCodeAction):
@@ -714,13 +725,24 @@ def agent_model_to_code(model: Agent, file_path: str):
                         f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
                     elif isinstance(state.fallback_body.actions[0], LLMReply):
                         f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
-                        f.write(f"{state.name}_fallback_body.add_action(LLMReply())\n")
+                        for action in state.fallback_body.actions:
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                escaped_prompt = prompt.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(f"{state.name}_fallback_body.add_action(LLMReply(prompt='{escaped_prompt}'))\n")
+                            else:
+                                f.write(f"{state.name}_fallback_body.add_action(LLMReply())\n")
                         f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
                     elif isinstance(state.fallback_body.actions[0], RAGReply):
                         f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
                         for action in state.fallback_body.actions:
                             rag_name = (action.rag_db_name or '').replace('\\', '\\\\').replace("'", "\\'")
-                            f.write(f"{state.name}_fallback_body.add_action(RAGReply('{rag_name}'))\n")
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                escaped_prompt = prompt.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(f"{state.name}_fallback_body.add_action(RAGReply('{rag_name}', prompt='{escaped_prompt}'))\n")
+                            else:
+                                f.write(f"{state.name}_fallback_body.add_action(RAGReply('{rag_name}'))\n")
                         f.write("\n")
                         f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
                     elif isinstance(state.fallback_body.actions[0], CustomCodeAction):

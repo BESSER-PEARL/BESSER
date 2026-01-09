@@ -524,10 +524,20 @@ async def transform_agent_model_json(input_data: DiagramInput):
 
     try:
         json_data = input_data.model_dump()
-        config = json_data.get("config", input_data.config or {}) or {}
-        if not config:
+        raw_config = json_data.get("config") if isinstance(json_data.get("config"), dict) else None
+        fallback_config = input_data.config if isinstance(input_data.config, dict) else None
+        base_config = raw_config if raw_config is not None else fallback_config
+        if not base_config:
             raise HTTPException(status_code=400, detail="Config is required for transformation")
 
+        config = deepcopy(base_config)
+        user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
+        if isinstance(user_profile_payload, dict):
+            config["userProfileModel"] = _generate_user_profile_document(user_profile_payload)
+        elif isinstance(config, dict) and "userProfileModel" in config:
+            config.pop("userProfileModel", None)
+
+        json_data["config"] = config
         # Convert to BUML model
         agent_model = process_agent_diagram(json_data)
 
@@ -650,6 +660,55 @@ async def _handle_user_diagram_generation(
     _normalize_user_model_output(object_model, temp_dir)
 
     return _create_file_response(temp_dir, generator_type)
+
+
+def _generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate the normalized JSON document for a stored user profile diagram."""
+    if not isinstance(user_profile_model, dict):
+        raise HTTPException(status_code=400, detail="userProfileModel must contain a serialized UserDiagram")
+
+    diagram_title = (
+        user_profile_model.get("title")
+        or user_profile_model.get("name")
+        or user_profile_model.get("id")
+        or "UserProfile"
+    )
+    prepared_payload = {
+        "title": diagram_title,
+        "diagramType": "UserDiagram",
+        "model": deepcopy(user_profile_model),
+        "generator": "json",
+    }
+
+    model_section = prepared_payload["model"]
+    if isinstance(model_section, dict):
+        model_section.setdefault("type", "UserDiagram")
+
+    temp_dir = tempfile.mkdtemp(prefix=f"user_profile_{uuid.uuid4().hex}_")
+    try:
+        object_model = process_object_diagram(prepared_payload, user_reference_domain_model)
+        generator_info = get_generator_info("json")
+        if not generator_info:
+            raise HTTPException(status_code=500, detail="JSON generator is not configured")
+        generator_class = generator_info.generator_class
+        generator_instance = generator_class(object_model, output_dir=temp_dir)
+        generator_instance.generate()
+
+        _normalize_user_model_output(object_model, temp_dir)
+
+        file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
+        json_path = os.path.join(temp_dir, f"{file_name}.json")
+        if not os.path.isfile(json_path):
+            raise HTTPException(status_code=500, detail="Failed to render user profile JSON document")
+
+        with open(json_path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to convert user profile model: {exc}") from exc
+    finally:
+        cleanup_temp_resources(temp_dir)
 
 
 def _normalize_user_model_output(object_model, temp_dir: str) -> None:

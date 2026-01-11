@@ -991,8 +991,16 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 {% do method_params.append((param.name, param_type, param.default_value)) %}
 {% endfor %}
 
+{% set method_code = "" %}
+{% if method.code_lang == 'BAL' %}
+{% set method_code = bal_to_python(parse_bal(model, class, method.code)) %}
+{% elif method.code_lang == 'Python' %}
+{% set method_code = method.code %}
+{% endif %}
+
 {# Detect if method is class-level by checking if it does NOT have 'self' as first param #}
-{% set is_class_method = '(self' not in method.code and '(self,' not in method.code %}
+{% set is_class_method = '(self' not in method_code and '(self,' not in method_code %}
+
 
 {% if "POST" in http_methods %}
 {% if is_class_method %}
@@ -1100,7 +1108,7 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
         import sys
         captured_output = io.StringIO()
         sys.stdout = captured_output
-        {% set method_lines = method.code.split('\n') %}
+        {% set method_lines = method_code.split('\n') %}
         {% set method_body = '\n'.join(method_lines[1:]) %}
         {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
 

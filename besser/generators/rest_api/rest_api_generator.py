@@ -5,6 +5,7 @@ from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse
 from besser.generators import GeneratorInterface
 from besser.generators.structural_utils import get_foreign_keys
 from besser.generators.action_language.PythonGenerator import bal_to_python
+from besser.generators.structural_utils import get_foreign_keys
 from besser.generators.pydantic_classes import PydanticGenerator
 
 class RESTAPIGenerator(GeneratorInterface):

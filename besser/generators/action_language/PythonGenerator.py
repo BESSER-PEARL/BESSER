@@ -8,6 +8,9 @@ from besser.BUML.metamodel.action_language.action_language import Condition, Blo
     Multiplicity, AnyType, OptionalType, FunctionDefinition, Parameter, AssignTarget, Nothing
 from besser.BUML.metamodel.action_language.visitors import BALVisitor
 
+def bal_to_python(method: FunctionDefinition) -> str:
+    generator = BALPythonGenerator()
+    return generator.generate(method)
 
 class PythonGenerationContext:
     pass
@@ -15,7 +18,7 @@ class PythonGenerationContext:
 def indent(lines):
     out = []
     for line in lines:
-        out.append('\t'+line)
+        out.append('    '+line)
     return out
 
 class BALPythonGenerator(BALVisitor[PythonGenerationContext, list[str]]):
@@ -28,6 +31,8 @@ class BALPythonGenerator(BALVisitor[PythonGenerationContext, list[str]]):
         pass
 
     def visit_Parameter(self, node: Parameter, context: PythonGenerationContext) -> list[str]:
+        if node.declared_type is None:
+            return [node.name]
         param_type = node.declared_type.accept(self, context)[0]
         expr = ""
         if node.default is not None:
@@ -59,7 +64,7 @@ class BALPythonGenerator(BALVisitor[PythonGenerationContext, list[str]]):
         return [node.clazz.name]
 
     def visit_SequenceType(self, node: SequenceType, context: PythonGenerationContext) -> list[str]:
-        return [f"set[{node.elementsType.accept(self, context)[0]}]"]
+        return [f"list[{node.elementsType.accept(self, context)[0]}]"]
 
     def visit_OptionalType(self, node: OptionalType, context: PythonGenerationContext) -> list[str]:
         return node.type.accept(self, context)

@@ -1,7 +1,9 @@
 # Generated from D:/Projects/BESSER/besser/BUML/notations/action_language/BESSERActionLanguage.g4 by ANTLR 4.13.2
 from antlr4 import *
-from win32comext.mapi.mapi import FORCE_SAVE
+# from win32comext.mapi.mapi import FORCE_SAVE
 
+
+from .BESSERActionLanguageLexer import BESSERActionLanguageLexer
 from .helpers import functions_for_sequence_type, base_classes, UnknownClassifier
 from ...metamodel.action_language.action_language import FunctionDefinition, Parameter, While, DoWhile, For, Iterator, \
     Statement, Block, Condition, AnyType, SequenceType, RealType, StringType, IntType, BoolType, Assignment, Ternary, \
@@ -17,7 +19,20 @@ if "." in __name__:
 else:
     from BESSERActionLanguageParser import BESSERActionLanguageParser
 
-# This class defines a complete generic visitor for a parse tree produced by BESSERActionLanguageParser.
+
+def parse_bal(domain_model: DomainModel, the_class: Class, code:str):
+    if "." in __name__:
+        from .BESSERActionLanguageParser import BESSERActionLanguageParser
+    else:
+        from BESSERActionLanguageParser import BESSERActionLanguageParser
+    lexer = BESSERActionLanguageLexer(InputStream(code))
+    stream = CommonTokenStream(lexer)
+    parser = BESSERActionLanguageParser(stream)
+
+    tree = parser.function_definition()
+
+    visitor = BESSERActionLanguageVisitor(domain_model, the_class)
+    return visitor.visit(tree)
 
 
 class BESSERActionLanguageVisitor(ParseTreeVisitor):
@@ -40,6 +55,9 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
             parameters.append(self.visit(param))
         for param in ctx.paramsDefault:
             parameters.append(self.visit(param))
+
+        if is_root and self.__method_class is not None:
+            parameters.insert(0, Parameter("self"))
 
         definition = FunctionDefinition(
             ctx.name.text,

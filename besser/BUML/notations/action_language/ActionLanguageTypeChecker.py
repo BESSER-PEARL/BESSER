@@ -12,6 +12,7 @@ from besser.BUML.notations.action_language.helpers import UnknownClassifier, bas
 from besser.generators.action_language.PythonGenerator import BALPythonGenerator, PythonGenerationContext
 
 
+
 class TypeCheckFeedback:
     def __init__(self, message: str, code_excerpt: str = None):
         self.__message = message
@@ -46,6 +47,11 @@ class TypeCheckingContext:
     def warnings(self) -> list[Warning]:
         return self.__warnings
 
+
+def check_bal(method: FunctionDefinition) -> (list[Warning], list[Error]):
+    generator = BALTypeChecker()
+    logs = generator.check(method)
+    return logs.warnings(), logs.errors()
 
 
 class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):

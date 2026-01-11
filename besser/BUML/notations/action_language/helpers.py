@@ -1,7 +1,5 @@
-from besser.BUML.metamodel.structural import Class
-
 from besser.BUML.metamodel.action_language.action_language import Type, FunctionType, IntType, StringType, RealType, \
-    BoolType, SequenceType, ObjectType, AnyType, OptionalType, EnumType, TypeUnion, Nothing, NoType
+    BoolType, SequenceType, ObjectType, AnyType, OptionalType, EnumType, TypeUnion, Nothing
 
 
 class UnknownClassifier(ObjectType, EnumType):

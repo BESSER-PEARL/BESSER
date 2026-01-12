@@ -70,7 +70,7 @@ class {{ class.name }}(
     __tablename__ = "{{class.name.lower()}}"
     {%- endif -%}
     {%- for parent in sort(class.parents()) %}
-    {%- if parent.is_abstract == False %}
+    {%- if parent.name not in concrete_parents %}
     id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
     {%- endif %}
     {%- endfor %}

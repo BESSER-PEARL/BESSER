@@ -3,6 +3,8 @@ BESSER Backend API
 
 This module provides FastAPI endpoints for the BESSER web modeling editor backend.
 It handles code generation from UML diagrams using various generators.
+
+The editor is available at: https://editor.besser-pearl.org
 """
 
 # Standard library imports
@@ -15,7 +17,9 @@ import tempfile
 import importlib.util
 import sys
 import asyncio
+import json
 from datetime import datetime
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
@@ -36,7 +40,8 @@ from besser.utilities.buml_code_builder.project_builder import project_to_code
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
     DiagramInput,
-    ProjectInput
+    ProjectInput,
+    FeedbackSubmission
 )
 
 # Backend services - Converters
@@ -62,6 +67,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 # Backend services - Other services
 from besser.utilities.web_modeling_editor.backend.services.validators import (
     check_ocl_constraint,
+)
+from besser.utilities.web_modeling_editor.backend.services.feedback_service import (
+    submit_feedback,
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import (
     run_docker_compose,
@@ -1384,6 +1392,34 @@ async def check_ocl(input_data: DiagramInput):
     print("Warning: /check-ocl is deprecated. Use /validate-diagram instead.")
     return await validate_diagram(input_data)
 
+
+@app.post("/besser_api/feedback")
+async def feedback_endpoint(feedback: FeedbackSubmission):
+    """
+    Feedback submission endpoint.
+    
+    Receives user feedback and processes it via the feedback service.
+    See feedback_service.py for implementation details.
+    
+    Args:
+        feedback: FeedbackSubmission model containing user feedback data
+        
+    Returns:
+        dict: Status message confirming feedback receipt
+        
+    Raises:
+        HTTPException: If feedback processing fails
+    """
+    try:
+        return submit_feedback(feedback)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+        )
+
+
+
 # Main application entry point
 if __name__ == "__main__":
     import uvicorn
@@ -1393,3 +1429,4 @@ if __name__ == "__main__":
         port=9000,
         log_level="info"
     )
+#The editor is available at: https://editor.besser-pearl.org

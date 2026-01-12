@@ -29,6 +29,7 @@ besser/.idea/workspace.xml
 
 # Backend
 besser/utilities/web_modeling_editor/backend/output
+besser/utilities/web_modeling_editor/backend/feedback_data
 
 # pylint
 .pylintrc

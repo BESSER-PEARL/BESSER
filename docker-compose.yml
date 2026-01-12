@@ -14,6 +14,11 @@ services:
     working_dir: /app/besser
     environment:
       - PYTHONPATH=/app
+      - FEEDBACK_EMAIL=${FEEDBACK_EMAIL}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     networks:
       - besser_network

@@ -219,7 +219,7 @@ def class_buml_to_json(domain_model):
                     # Add code attribute if it exists and is not empty
                     if hasattr(method, "code") and method.code:
                         method_element["code"] = method.code
-                    
+
                     # Add implementation type and diagram references
                     if hasattr(method, "implementation_type") and method.implementation_type:
                         # Map enum to string for JSON
@@ -232,7 +232,7 @@ def class_buml_to_json(domain_model):
                         method_element["implementationType"] = impl_type_map.get(
                             method.implementation_type, "none"
                         )
-                    
+
                     # Add state machine reference if present
                     state_machine_id = None
                     if hasattr(method, "_state_machine_id") and method._state_machine_id:
@@ -242,7 +242,7 @@ def class_buml_to_json(domain_model):
                         state_machine_id = method.state_machine.name
                     if state_machine_id:
                         method_element["stateMachineId"] = state_machine_id
-                    
+
                     quantum_circuit_id = None
                     if hasattr(method, "_quantum_circuit_id") and method._quantum_circuit_id:
                         quantum_circuit_id = method._quantum_circuit_id

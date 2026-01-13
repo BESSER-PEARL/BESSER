@@ -313,6 +313,7 @@ class MethodImplementationType(Enum):
     """
     NONE = "none"
     CODE = "code"
+    BAL = "besser_action_language"
     STATE_MACHINE = "state_machine"
     QUANTUM_CIRCUIT = "quantum_circuit"
 
@@ -723,6 +724,7 @@ class Method(TypedElement):
     A method can have different types of implementations:
     - NONE: Abstract method or signature only (UML description)
     - CODE: Python code implementation
+    - BAL: BESSER Action Language implementation
     - STATE_MACHINE: Behavior defined by a state machine
     - QUANTUM_CIRCUIT: Behavior defined by a quantum circuit
 

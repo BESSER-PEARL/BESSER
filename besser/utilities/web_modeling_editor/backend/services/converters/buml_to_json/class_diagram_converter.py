@@ -7,7 +7,8 @@ import ast
 from besser.BUML.metamodel.structural import (
     Class, Property, Method, DomainModel, PrimitiveDataType, Enumeration,
     EnumerationLiteral, BinaryAssociation, Generalization, Multiplicity,
-    UNLIMITED_MAX_MULTIPLICITY, Constraint, AssociationClass, Metadata
+    UNLIMITED_MAX_MULTIPLICITY, Constraint, AssociationClass, Metadata,
+    MethodImplementationType
 )
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     VISIBILITY_MAP, RELATIONSHIP_TYPES
@@ -218,6 +219,33 @@ def class_buml_to_json(domain_model):
                     # Add code attribute if it exists and is not empty
                     if hasattr(method, "code") and method.code:
                         method_element["code"] = method.code
+                    
+                    # Add implementation type and diagram references
+                    if hasattr(method, "implementation_type") and method.implementation_type:
+                        # Map enum to string for JSON
+                        impl_type_map = {
+                            MethodImplementationType.NONE: "none",
+                            MethodImplementationType.CODE: "code",
+                            MethodImplementationType.STATE_MACHINE: "state_machine",
+                            MethodImplementationType.QUANTUM_CIRCUIT: "quantum_circuit",
+                        }
+                        method_element["implementationType"] = impl_type_map.get(
+                            method.implementation_type, "none"
+                        )
+                    
+                    # Add state machine reference if present
+                    if hasattr(method, "_state_machine_id") and method._state_machine_id:
+                        method_element["stateMachineId"] = method._state_machine_id
+                    elif hasattr(method, "state_machine") and method.state_machine:
+                        # If we have an actual state machine object, use its name as ID
+                        method_element["stateMachineId"] = method.state_machine.name
+                    
+                    # Add quantum circuit reference if present
+                    if hasattr(method, "_quantum_circuit_id") and method._quantum_circuit_id:
+                        method_element["quantumCircuitId"] = method._quantum_circuit_id
+                    elif hasattr(method, "quantum_circuit") and method.quantum_circuit:
+                        # If we have an actual quantum circuit object, use its name as ID
+                        method_element["quantumCircuitId"] = method.quantum_circuit.name
 
                     elements[method_id] = method_element
                     method_ids.append(method_id)

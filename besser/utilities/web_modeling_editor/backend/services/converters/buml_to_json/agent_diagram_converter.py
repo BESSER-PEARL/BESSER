@@ -248,7 +248,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         isinstance(node.value.args[0].args[0], ast.Constant) and
                         isinstance(node.value.args[0].args[0].value, str)
                         ):
-                        actions[body_var] = node.value.args[0].args[0].value
+                        if body_var not in actions:
+                            actions[body_var] = [node.value.args[0].args[0].value]
+                        else:
+                            actions[body_var].append(node.value.args[0].args[0].value)
                     elif node.value.args[0].func.id == 'LLMReply':
                         actions[body_var] = 'LLMReply'
                 elif isinstance(node.value.args[0], ast.Name):
@@ -275,6 +278,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
         
         # Store the initial node ID for later use with transitions
 
+        print("DEBUG: Processing states and transitions...")
+        
         # Second pass: collect states and their configurations
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
@@ -423,208 +428,225 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             }
                                 
         # Third pass: process state bodies and transitions
+        print("DEBUG: Processing state bodies and transitions...")
+        
         for node in ast.walk(tree):
-            if (
-                isinstance(node, ast.Expr)
-                and isinstance(node.value, ast.Call)
-                and isinstance(node.value.func, ast.Attribute)
-            ):
+            try:
                 if (
-                    isinstance(node.value.func.value, ast.Call)
-                    and isinstance(node.value.func.value.func, ast.Attribute)
-                    and node.value.func.value.func.attr
-                    in [
-                        "when_event_go_to",
-                        "when_intent_matched",
-                        "when_no_intent_matched",
-                        "when_variable_matches_operation",
-                        "when_file_received"
-                    ]
+                    isinstance(node, ast.Expr)
+                    and isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Attribute)
                 ):
-                    source_state = node.value.func.value.func.value.id
-                    rel_id = str(uuid.uuid4())
+                    if (
+                        isinstance(node.value.func.value, ast.Call)
+                        and isinstance(node.value.func.value.func, ast.Attribute)
+                        and node.value.func.value.func.attr
+                        in [
+                            "when_event_go_to",
+                            "when_intent_matched",
+                            "when_no_intent_matched",
+                            "when_variable_matches_operation",
+                            "when_file_received",
+                        ]
+                    ):
+                        source_state = node.value.func.value.func.value.id
+                        rel_id = str(uuid.uuid4())
 
-                    condition_name = node.value.func.value.func.attr
-                    condition_value = ""
-                    if condition_name == "when_intent_matched":
-                        condition_value = node.value.func.value.args[0].id
-                    elif condition_name == "when_file_received":
-                        condition_value = node.value.func.value.args[0].value
-                    elif condition_name == "when_variable_matches_operation":
-                        condition_name = "when_variable_operation_matched"
-                        condition_value = {}
-                        for kw in node.value.func.value.keywords:
-                            if kw.arg == "operation":
-                                operator = kw.value.attr
-                                operator_map = {
-                                    "eq": "==",
-                                    "lt": "<",
-                                    "le": "<=",
-                                    "ge": ">=",
-                                    "gt": ">",
-                                    "ne": "!=",
-                                }
-                                condition_value["operator"] = operator_map.get(operator, operator)
-                            elif kw.arg == "var_name":
-                                condition_value["variable"] = kw.value.value
-                            elif kw.arg == "target":
-                                condition_value["targetValue"] = kw.value.value
-                    event_name = None
-                    target_state = node.value.args[0].id
-                    event_params = None
+                        condition_name = node.value.func.value.func.attr
+                        condition_value = ""
+                        if condition_name == "when_intent_matched":
+                            condition_value = node.value.func.value.args[0].id
+                        elif condition_name == "when_file_received":
+                            condition_value = node.value.func.value.args[0].value
+                        elif condition_name == "when_variable_matches_operation":
+                            condition_name = "when_variable_operation_matched"
+                            condition_value = {}
+                            for kw in node.value.func.value.keywords:
+                                if kw.arg == "operation":
+                                    operator = kw.value.attr
+                                    operator_map = {
+                                        "eq": "==",
+                                        "lt": "<",
+                                        "le": "<=",
+                                        "ge": ">=",
+                                        "gt": ">",
+                                        "ne": "!=",
+                                    }
+                                    condition_value["operator"] = operator_map.get(operator, operator)
+                                elif kw.arg == "var_name":
+                                    condition_value["variable"] = kw.value.value
+                                elif kw.arg == "target":
+                                    condition_value["targetValue"] = kw.value.value
+                        event_name = None
+                        target_state = node.value.args[0].id
+                        event_params = None
 
-                    if source_state in states and target_state in states:
-                        source_element = elements[states[source_state]["id"]]
-                        target_element = elements[states[target_state]["id"]]
+                        if source_state in states and target_state in states:
+                            source_element = elements[states[source_state]["id"]]
+                            target_element = elements[states[target_state]["id"]]
 
-                        source_dir, target_dir = determine_connection_direction(
-                            source_element["bounds"], target_element["bounds"]
-                        )
+                            source_dir, target_dir = determine_connection_direction(
+                                source_element["bounds"], target_element["bounds"]
+                            )
 
-                        source_point = calculate_connection_points(
-                            source_element["bounds"], source_dir
-                        )
-                        target_point = calculate_connection_points(
-                            target_element["bounds"], target_dir
-                        )
+                            source_point = calculate_connection_points(
+                                source_element["bounds"], source_dir
+                            )
+                            target_point = calculate_connection_points(
+                                target_element["bounds"], target_dir
+                            )
 
-                        path_points = calculate_path_points(
-                            source_point, target_point, source_dir, target_dir
-                        )
-                        rel_bounds = calculate_relationship_bounds(path_points)
+                            path_points = calculate_path_points(
+                                source_point, target_point, source_dir, target_dir
+                            )
+                            rel_bounds = calculate_relationship_bounds(path_points)
 
-                        relationships[rel_id] = {
-                            "id": rel_id,
-                            "name": event_name,
-                            "type": "AgentStateTransition",
-                            "owner": None,
-                            "bounds": rel_bounds,
-                            "path": path_points,
-                            "source": {
-                                "direction": source_dir,
-                                "element": states[source_state]["id"],
-                                "bounds": {
-                                    "x": source_point["x"],
-                                    "y": source_point["y"],
-                                    "width": 0,
-                                    "height": 0,
+                            relationships[rel_id] = {
+                                "id": rel_id,
+                                "name": event_name,
+                                "type": "AgentStateTransition",
+                                "owner": None,
+                                "bounds": rel_bounds,
+                                "path": path_points,
+                                "source": {
+                                    "direction": source_dir,
+                                    "element": states[source_state]["id"],
+                                    "bounds": {
+                                        "x": source_point["x"],
+                                        "y": source_point["y"],
+                                        "width": 0,
+                                        "height": 0,
+                                    },
                                 },
-                            },
-                            "target": {
-                                "direction": target_dir,
-                                "element": states[target_state]["id"],
-                                "bounds": {
-                                    "x": target_point["x"],
-                                    "y": target_point["y"],
-                                    "width": 0,
-                                    "height": 0,
+                                "target": {
+                                    "direction": target_dir,
+                                    "element": states[target_state]["id"],
+                                    "bounds": {
+                                        "x": target_point["x"],
+                                        "y": target_point["y"],
+                                        "width": 0,
+                                        "height": 0,
+                                    },
                                 },
-                            },
-                            "isManuallyLayouted": False,
-                            "condition": condition_name,
-                            "conditionValue": condition_value,
-                        }
+                                "isManuallyLayouted": False,
+                                "condition": condition_name,
+                                "conditionValue": condition_value,
+                            }
 
-                        if event_params:
-                            relationships[rel_id]["params"] = str(event_params)
-            
-                elif node.value.func.attr == "go_to":
-                    source_state = node.value.func.value.id
-                    rel_id = str(uuid.uuid4())
-
-                    condition_name = "auto"
-                    condition_value = ""
-                    target_state = node.value.args[0].id
-                    
-                    if source_state in states and target_state in states:
-                        source_element = elements[states[source_state]["id"]]
-                        target_element = elements[states[target_state]["id"]]
-
-                        source_dir, target_dir = determine_connection_direction(
-                            source_element["bounds"], target_element["bounds"]
-                        )
-
-                        source_point = calculate_connection_points(
-                            source_element["bounds"], source_dir
-                        )
-                        target_point = calculate_connection_points(
-                            target_element["bounds"], target_dir
-                        )
-
-                        path_points = calculate_path_points(
-                            source_point, target_point, source_dir, target_dir
-                        )
-                        rel_bounds = calculate_relationship_bounds(path_points)
-
-                        relationships[rel_id] = {
-                            "id": rel_id,
-                            "name": event_name,
-                            "type": "AgentStateTransition",
-                            "owner": None,
-                            "bounds": rel_bounds,
-                            "path": path_points,
-                            "source": {
-                                "direction": source_dir,
-                                "element": states[source_state]["id"],
-                                "bounds": {
-                                    "x": source_point["x"],
-                                    "y": source_point["y"],
-                                    "width": 0,
-                                    "height": 0,
-                                },
-                            },
-                            "target": {
-                                "direction": target_dir,
-                                "element": states[target_state]["id"],
-                                "bounds": {
-                                    "x": target_point["x"],
-                                    "y": target_point["y"],
-                                    "width": 0,
-                                    "height": 0,
-                                },
-                            },
-                            "isManuallyLayouted": False,
-                            "condition": condition_name,
-                            "conditionValue": condition_value,
-                        }
-
-                        if event_params:
-                            relationships[rel_id]["params"] = str(event_params)
+                            if event_params:
+                                relationships[rel_id]["params"] = str(event_params)
                 
-                # Handle set_body
-                elif node.value.func.attr == "set_body":
-                    try:
-                        function_name = None
-                        # Extract function name from Body('function_name', function_name) pattern
-                        if isinstance(node.value.args[0], ast.Name):
-                            function_name = node.value.args[0].id
-                        else:
-                            body_args = node.value.args[0].args
-                            if len(body_args) >= 2:
-                                if isinstance(body_args[1], ast.Name):
-                                    function_name = body_args[1].id
-                                elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
-                                    function_name = body_args[0].value
-                            if not function_name:
-                                continue
-                            
-                        state_name = node.value.func.value.id
-                        if state_name not in states:
-                            continue
-                            
-                        state = states[state_name]
+                    elif node.value.func.attr == "go_to":
+                        source_state = node.value.func.value.id
+                        rel_id = str(uuid.uuid4())
+
+                        condition_name = "auto"
+                        condition_value = ""
+                        target_state = node.value.args[0].id
                         
-                        if function_name in functions or actions[function_name] in functions:
-                            if actions.get(function_name) in functions:
-                                function_name = actions[function_name]
-                            result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
+                        if source_state in states and target_state in states:
+                            source_element = elements[states[source_state]["id"]]
+                            target_element = elements[states[target_state]["id"]]
+
+                            source_dir, target_dir = determine_connection_direction(
+                                source_element["bounds"], target_element["bounds"]
+                            )
+
+                            source_point = calculate_connection_points(
+                                source_element["bounds"], source_dir
+                            )
+                            target_point = calculate_connection_points(
+                                target_element["bounds"], target_dir
+                            )
+
+                            path_points = calculate_path_points(
+                                source_point, target_point, source_dir, target_dir
+                            )
+                            rel_bounds = calculate_relationship_bounds(path_points)
+
+                            relationships[rel_id] = {
+                                "id": rel_id,
+                                "name": "",
+                                "type": "AgentStateTransition",
+                                "owner": None,
+                                "bounds": rel_bounds,
+                                "path": path_points,
+                                "source": {
+                                    "direction": source_dir,
+                                    "element": states[source_state]["id"],
+                                    "bounds": {
+                                        "x": source_point["x"],
+                                        "y": source_point["y"],
+                                        "width": 0,
+                                        "height": 0,
+                                    },
+                                },
+                                "target": {
+                                    "direction": target_dir,
+                                    "element": states[target_state]["id"],
+                                    "bounds": {
+                                        "x": target_point["x"],
+                                        "y": target_point["y"],
+                                        "width": 0,
+                                        "height": 0,
+                                    },
+                                },
+                                "isManuallyLayouted": False,
+                                "condition": condition_name,
+                                "conditionValue": condition_value,
+                            }
+
+                    
+                    # Handle set_body
+                    elif node.value.func.attr == "set_body":
+                        try:
+                            function_name = None
+                            # Extract function name from Body('function_name', function_name) pattern
+                            if isinstance(node.value.args[0], ast.Name):
+                                function_name = node.value.args[0].id
+                            else:
+                                body_args = node.value.args[0].args
+                                if len(body_args) >= 2:
+                                    if isinstance(body_args[1], ast.Name):
+                                        function_name = body_args[1].id
+                                    elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
+                                        function_name = body_args[0].value
+                                if not function_name:
+                                    continue
+                                
+                            state_name = node.value.func.value.id
+                            if state_name not in states:
+                                continue
+                                
+                            state = states[state_name]
                             
-                            if result["replyType"] == "text":
-                                for reply in result["replies"]:
+                            if function_name in functions or (isinstance(actions.get(function_name), str) and actions.get(function_name) in functions):
+                                if (isinstance(actions.get(function_name), str) and actions.get(function_name) in functions):
+                                    function_name = actions[function_name]
+                                result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
+                                
+                                if result["replyType"] == "text":
+                                    for reply in result["replies"]:
+                                        body_id = str(uuid.uuid4())
+                                        elements[body_id] = {
+                                            "id": body_id,
+                                            "name": reply,
+                                            "type": "AgentStateBody",
+                                            "owner": state["id"],
+                                            "bounds": {
+                                                "x": elements[state["id"]]["bounds"]["x"],
+                                                "y": elements[state["id"]]["bounds"]["y"],
+                                                "width": 159,
+                                                "height": 30,
+                                            },
+                                            "replyType": "text"
+                                        }
+                                        elements[state["id"]]["bodies"].append(body_id)
+                                elif result["replyType"] == "llm":
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": reply,
+                                        "name": "AI response 🪄",
                                         "type": "AgentStateBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -633,134 +655,188 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "width": 159,
                                             "height": 30,
                                         },
-                                        "replyType": "text"
+                                        "replyType": "llm"
                                     }
                                     elements[state["id"]]["bodies"].append(body_id)
-                            elif result["replyType"] == "llm":
-                                body_id = str(uuid.uuid4())
-                                elements[body_id] = {
-                                    "id": body_id,
-                                    "name": "AI response 🪄",
-                                    "type": "AgentStateBody",
-                                    "owner": state["id"],
-                                    "bounds": {
-                                        "x": elements[state["id"]]["bounds"]["x"],
-                                        "y": elements[state["id"]]["bounds"]["y"],
-                                        "width": 159,
-                                        "height": 30,
-                                    },
-                                    "replyType": "llm"
-                                }
-                                elements[state["id"]]["bodies"].append(body_id)
-                            elif result["replyType"] == "code":
-                                body_id = str(uuid.uuid4())
-                                elements[body_id] = {
-                                    "id": body_id,
-                                    "name": result["code"],
-                                    "type": "AgentStateBody",
-                                    "owner": state["id"],
-                                    "bounds": {
-                                        "x": elements[state["id"]]["bounds"]["x"],
-                                        "y": elements[state["id"]]["bounds"]["y"],
-                                        "width": 159,
-                                        "height": 30,
-                                    },
-                                    "replyType": "code"
-                                }
-                                elements[state["id"]]["bodies"].append(body_id)
-                        elif function_name in actions:
-                            if actions[function_name] == 'LLMReply':
-                                body_id = str(uuid.uuid4())
-                                elements[body_id] = {
-                                    "id": body_id,
-                                    "name": "AI response 🪄",
-                                    "type": "AgentStateBody",
-                                    "owner": state["id"],
-                                    "bounds": {
-                                        "x": elements[state["id"]]["bounds"]["x"],
-                                        "y": elements[state["id"]]["bounds"]["y"],
-                                        "width": 159,
-                                        "height": 30,
-                                    },
-                                    "replyType": "llm"
-                                }
-                                elements[state["id"]]["bodies"].append(body_id)
-                                
-                            else:
-                                body_id = str(uuid.uuid4())
-                                elements[body_id] = {
-                                    "id": body_id,
-                                    "name": actions[function_name].replace("\\'", "'"),
-                                    "type": "AgentStateBody",
-                                    "owner": state["id"],
-                                    "bounds": {
-                                        "x": elements[state["id"]]["bounds"]["x"],
-                                        "y": elements[state["id"]]["bounds"]["y"],
-                                        "width": 159,
-                                        "height": 30,
-                                    },
-                                    "replyType": "text"
-                                }
-                                elements[state["id"]]["bodies"].append(body_id)
-                        
-
-                        else:
-                            # Fallback if function not found
-                            body_id = str(uuid.uuid4())
-                            elements[body_id] = {
-                                "id": body_id,
-                                "name": function_name,
-                                "type": "AgentStateBody",
-                                "owner": state["id"],
-                                "bounds": {
-                                    "x": elements[state["id"]]["bounds"]["x"],
-                                    "y": elements[state["id"]]["bounds"]["y"],
-                                    "width": 159,
-                                    "height": 30,
-                                },
-                            }
-                            elements[state["id"]]["bodies"].append(body_id)
-                        
-                    except Exception as e:
-                        continue
-
-                # Add handling for fallback bodies
-                elif node.value.func.attr == "set_fallback_body":
-                    try:
-                        # Extract function name from Body('function_name', function_name) pattern
-                        
-                        function_name = None
-                        # Extract function name from Body('function_name', function_name) pattern
-                        if isinstance(node.value.args[0], ast.Name):
-                            function_name = node.value.args[0].id
-                        else:
-                            body_args = node.value.args[0].args
-                            if len(body_args) >= 2:
-                                if isinstance(body_args[1], ast.Name):
-                                    function_name = body_args[1].id
-                                elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
-                                    function_name = body_args[0].value
-
-                            if not function_name:
-                                continue
-                    
-
-                        state_name = node.value.func.value.id
-                        if state_name not in states:
-                            continue
-                            
-                        state = states[state_name]
-                        
-                        if function_name in functions or actions[function_name] in functions:
-                            if actions[function_name] in functions:
-                                function_name = actions[function_name]
-                            result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
-                            if result["replyType"] == "text":
-                                for reply in result["replies"]:
+                                elif result["replyType"] == "code":
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {
                                         "id": body_id,
-                                        "name": reply,
+                                        "name": result["code"],
+                                        "type": "AgentStateBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "replyType": "code"
+                                    }
+                                    elements[state["id"]]["bodies"].append(body_id)
+                            elif function_name in actions:
+                                if actions[function_name] == 'LLMReply':
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": "AI response 🪄",
+                                        "type": "AgentStateBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "replyType": "llm"
+                                    }
+                                    elements[state["id"]]["bodies"].append(body_id)
+                                    
+                                else:
+                                    for message in actions[function_name]:
+                                        message = message.replace("\\'", "'")
+                                        body_id = str(uuid.uuid4())
+                                        elements[body_id] = {
+                                            "id": body_id,
+                                            "name": message,
+                                            "type": "AgentStateBody",
+                                            "owner": state["id"],
+                                            "bounds": {
+                                                "x": elements[state["id"]]["bounds"]["x"],
+                                                "y": elements[state["id"]]["bounds"]["y"],
+                                                "width": 159,
+                                                "height": 30,
+                                            },
+                                            "replyType": "text"
+                                        }
+                                        elements[state["id"]]["bodies"].append(body_id)
+                            
+
+                            else:
+                                # Fallback if function not found
+                                body_id = str(uuid.uuid4())
+                                elements[body_id] = {
+                                    "id": body_id,
+                                    "name": function_name,
+                                    "type": "AgentStateBody",
+                                    "owner": state["id"],
+                                    "bounds": {
+                                        "x": elements[state["id"]]["bounds"]["x"],
+                                        "y": elements[state["id"]]["bounds"]["y"],
+                                        "width": 159,
+                                        "height": 30,
+                                    },
+                                }
+                                elements[state["id"]]["bodies"].append(body_id)
+                            
+                        except Exception as e:
+                            import traceback
+                            traceback.print_exc()
+                            continue
+
+                    # Add handling for fallback bodies
+                    elif node.value.func.attr == "set_fallback_body":
+                        try:
+                            # Extract function name from Body('function_name', function_name) pattern
+                            
+                            function_name = None
+                            # Extract function name from Body('function_name', function_name) pattern
+                            if isinstance(node.value.args[0], ast.Name):
+                                function_name = node.value.args[0].id
+                            else:
+                                body_args = node.value.args[0].args
+                                if len(body_args) >= 2:
+                                    if isinstance(body_args[1], ast.Name):
+                                        function_name = body_args[1].id
+                                    elif isinstance(body_args[0], ast.Constant) and isinstance(body_args[0].value, str):
+                                        function_name = body_args[0].value
+
+                                if not function_name:
+                                    continue
+                        
+
+                            state_name = node.value.func.value.id
+                            if state_name not in states:
+                                continue
+                                
+                            state = states[state_name]
+                            
+                            if function_name in functions or actions[function_name] in functions:
+                                if actions[function_name] in functions:
+                                    function_name = actions[function_name]
+                                result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
+                                if result["replyType"] == "text":
+                                    for reply in result["replies"]:
+                                        body_id = str(uuid.uuid4())
+                                        elements[body_id] = {
+                                            "id": body_id,
+                                            "name": reply,
+                                            "type": "AgentStateFallbackBody",
+                                            "owner": state["id"],
+                                            "bounds": {
+                                                "x": elements[state["id"]]["bounds"]["x"],
+                                                "y": elements[state["id"]]["bounds"]["y"],
+                                                "width": 159,
+                                                "height": 30,
+                                            },
+                                            "replyType": "text"
+                                        }
+                                        elements[state["id"]]["fallbackBodies"].append(body_id)
+                                elif result["replyType"] == "llm":
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": "AI response 🪄",
+                                        "type": "AgentStateFallbackBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "replyType": "llm"
+                                    }
+                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                                elif result["replyType"] == "code":
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": result["code"],
+                                        "type": "AgentStateFallbackBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "replyType": "code"
+                                    }
+                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                            
+                            elif function_name in actions:
+                                if actions[function_name] == 'LLMReply':
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": "AI response 🪄",
+                                        "type": "AgentStateFallbackBody",
+                                        "owner": state["id"],
+                                        "bounds": {
+                                            "x": elements[state["id"]]["bounds"]["x"],
+                                            "y": elements[state["id"]]["bounds"]["y"],
+                                            "width": 159,
+                                            "height": 30,
+                                        },
+                                        "replyType": "llm"
+                                    }
+                                    elements[state["id"]]["fallbackBodies"].append(body_id)
+                                else:
+                                    body_id = str(uuid.uuid4())
+                                    elements[body_id] = {
+                                        "id": body_id,
+                                        "name": actions[function_name].replace("\\'", "'"),
                                         "type": "AgentStateFallbackBody",
                                         "owner": state["id"],
                                         "bounds": {
@@ -772,61 +848,13 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         "replyType": "text"
                                     }
                                     elements[state["id"]]["fallbackBodies"].append(body_id)
-                            elif result["replyType"] == "llm":
-                                body_id = str(uuid.uuid4())
-                                elements[body_id] = {
-                                    "id": body_id,
-                                    "name": "AI response 🪄",
-                                    "type": "AgentStateFallbackBody",
-                                    "owner": state["id"],
-                                    "bounds": {
-                                        "x": elements[state["id"]]["bounds"]["x"],
-                                        "y": elements[state["id"]]["bounds"]["y"],
-                                        "width": 159,
-                                        "height": 30,
-                                    },
-                                    "replyType": "llm"
-                                }
-                                elements[state["id"]]["fallbackBodies"].append(body_id)
-                            elif result["replyType"] == "code":
-                                body_id = str(uuid.uuid4())
-                                elements[body_id] = {
-                                    "id": body_id,
-                                    "name": result["code"],
-                                    "type": "AgentStateFallbackBody",
-                                    "owner": state["id"],
-                                    "bounds": {
-                                        "x": elements[state["id"]]["bounds"]["x"],
-                                        "y": elements[state["id"]]["bounds"]["y"],
-                                        "width": 159,
-                                        "height": 30,
-                                    },
-                                    "replyType": "code"
-                                }
-                                elements[state["id"]]["fallbackBodies"].append(body_id)
-                        
-                        elif function_name in actions:
-                            if actions[function_name] == 'LLMReply':
-                                body_id = str(uuid.uuid4())
-                                elements[body_id] = {
-                                    "id": body_id,
-                                    "name": "AI response 🪄",
-                                    "type": "AgentStateFallbackBody",
-                                    "owner": state["id"],
-                                    "bounds": {
-                                        "x": elements[state["id"]]["bounds"]["x"],
-                                        "y": elements[state["id"]]["bounds"]["y"],
-                                        "width": 159,
-                                        "height": 30,
-                                    },
-                                    "replyType": "llm"
-                                }
-                                elements[state["id"]]["fallbackBodies"].append(body_id)
+                            
                             else:
+                                # Fallback if function not found
                                 body_id = str(uuid.uuid4())
                                 elements[body_id] = {
                                     "id": body_id,
-                                    "name": actions[function_name].replace("\\'", "'"),
+                                    "name": function_name,
                                     "type": "AgentStateFallbackBody",
                                     "owner": state["id"],
                                     "bounds": {
@@ -835,29 +863,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         "width": 159,
                                         "height": 30,
                                     },
-                                    "replyType": "text"
                                 }
                                 elements[state["id"]]["fallbackBodies"].append(body_id)
-                        
-                        else:
-                            # Fallback if function not found
-                            body_id = str(uuid.uuid4())
-                            elements[body_id] = {
-                                "id": body_id,
-                                "name": function_name,
-                                "type": "AgentStateFallbackBody",
-                                "owner": state["id"],
-                                "bounds": {
-                                    "x": elements[state["id"]]["bounds"]["x"],
-                                    "y": elements[state["id"]]["bounds"]["y"],
-                                    "width": 159,
-                                    "height": 30,
-                                },
-                            }
-                            elements[state["id"]]["fallbackBodies"].append(body_id)
-                    except Exception as e:
-                        continue
-
+                        except Exception as e:
+                            continue
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                continue
         # Find initial state and create initial transition
         initial_state = None
         for state_key, state_info in states.items():

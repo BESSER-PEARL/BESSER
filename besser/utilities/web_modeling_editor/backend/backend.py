@@ -1410,6 +1410,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         raise e
     except Exception as e:
         print(f"Error in get_single_json_model: {str(e)}")
+        
         raise HTTPException(status_code=500, detail=f"Failed to process the uploaded file: {str(e)}")
 
 

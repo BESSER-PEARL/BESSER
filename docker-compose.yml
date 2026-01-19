@@ -28,14 +28,6 @@ services:
     networks:
       - besser_network
 
-  besser_redis:
-    image: redis/redis-stack-server:latest
-    container_name: besser_redis
-    volumes:
-      - apollon_redis_data:/data
-    networks:
-      - besser_network
-
   besser-wme-frontend:
     image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
     build:
@@ -43,16 +35,11 @@ services:
       dockerfile: Dockerfile.redis
     container_name: besser-wme-frontend
     environment:
-      - APOLLON_REDIS_URL=redis://besser_redis:6379
-      - APOLLON_REDIS_DIAGRAM_TTL=${APOLLON_REDIS_DIAGRAM_TTL}
-      - APOLLON_REDIS_MIGRATE_FROM_FILE=true
       - DEPLOYMENT_URL=${DEPLOYMENT_URL}
       - BACKEND_URL=${BACKEND_URL}
       - UML_BOT_WS_URL=${UML_BOT_WS_URL}
       - POSTHOG_KEY=${POSTHOG_KEY}
       - POSTHOG_HOST=${POSTHOG_HOST}
-    volumes:
-      - ./diagrams:/app/diagrams
     restart: always
     networks:
       - besser_network
@@ -76,9 +63,7 @@ services:
   #   depends_on:
   #     - besser_redis
 
-volumes:
-  apollon_redis_data:
-    driver: local
+volumes: {}
 
 networks:
   besser_network:

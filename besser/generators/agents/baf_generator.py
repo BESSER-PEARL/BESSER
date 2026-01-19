@@ -205,11 +205,8 @@ class BAFGenerator(GeneratorInterface):
                 print("Agent script generated in the location: " + agent_path)
         else: 
             with open(agent_path, mode="w", encoding="utf-8") as f:
-                print(self.config['personalizationrules'])
-                print(personalized_messages)
                 generated_code = agent_template.render(agent=self.model, config=self.config, personalized_messages=personalized_messages)
                 f.write(generated_code)
-                print("Agent script generated in the location: " + agent_path)
         if generate_code_assets:
             config_template = env.get_template('baf_config_template.py.j2')
             config_path = self.build_generation_path(file_name="config.ini")
@@ -217,7 +214,8 @@ class BAFGenerator(GeneratorInterface):
                 properties = sorted(self.model.properties, key=lambda prop: prop.section)
                 generated_code = config_template.render(properties=properties)
                 f.write(generated_code)
-                print("Agent config file generated in the location: " + config_path)        # Generate readme.txt using the Jinja2 template
+                print("Agent config file generated in the location: " + config_path)        
+            # Generate readme.txt using the Jinja2 template
             readme_template = env.get_template('readme.txt.j2')
             readme_path = self.build_generation_path(file_name="readme.txt")
             with open(readme_path, mode="w", encoding="utf-8") as f:

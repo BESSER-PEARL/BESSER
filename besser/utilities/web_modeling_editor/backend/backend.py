@@ -391,11 +391,37 @@ async def _handle_agent_generation(json_data: dict):
 
                 simplified_profile = _generate_user_profile_document(user_profile_payload)
 
+                agent_model_json = entry.get('agent_model')
+                agent_model_buml = None
+                if isinstance(agent_model_json, dict):
+                    mapping_payload = dict(json_data)
+                    mapping_payload['model'] = deepcopy(agent_model_json)
+                    try:
+                        agent_model_buml = process_agent_diagram(mapping_payload)
+                    except Exception as conversion_error:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Failed to convert personalizationMapping agent_model at index {index} to BUML: {conversion_error}",
+                        )
+
                 normalized_entry = dict(entry)
                 normalized_entry['user_profile'] = simplified_profile
+                if agent_model_buml is not None:
+                    normalized_entry['agent_model'] = agent_model_buml
                 normalized_mappings.append(normalized_entry)
 
             config['personalizationMapping'] = normalized_mappings
+            json_data['config'] = config
+
+        # Convert the root agent diagram JSON to BUML once and reuse when possible
+        try:
+            root_agent_model = process_agent_diagram(json_data)
+        except Exception as conversion_error:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to convert agent diagram to BUML: {conversion_error}",
+            )
+        print(config)
         languages = config.get('languages') if is_config_dict else None
         configuration_variants = config.get('configurations') if is_config_dict else None
         base_model_snapshot = config.get('baseModel') if is_config_dict else None
@@ -509,7 +535,7 @@ async def _handle_agent_generation(json_data: dict):
         elif configuration_variants and isinstance(configuration_variants, list):
             agent_model = process_agent_diagram(json_data)
             bundle_buffer = build_configurations_package(
-                agent_model,
+                root_agent_model,
                 configuration_variants,
                 generate_agent_files,
             )
@@ -520,8 +546,7 @@ async def _handle_agent_generation(json_data: dict):
             )
         else:
             # Single agent (default behavior)
-            agent_model = process_agent_diagram(json_data)
-            zip_buffer, file_name = generate_agent_files(agent_model, config)
+            zip_buffer, file_name = generate_agent_files(root_agent_model, config)
             return StreamingResponse(
                 zip_buffer,
                 media_type="application/zip",

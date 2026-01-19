@@ -377,7 +377,25 @@ async def _handle_agent_generation(json_data: dict):
     try:
         # Get languages from config if present
         config = json_data.get('config', {})
+
         is_config_dict = isinstance(config, dict)
+        if is_config_dict and isinstance(config.get('personalizationMapping'), list):
+            normalized_mappings = []
+            for index, entry in enumerate(config.get('personalizationMapping') or []):
+                if not isinstance(entry, dict):
+                    raise HTTPException(status_code=400, detail=f"personalizationMapping entry at index {index} must be an object")
+
+                user_profile_payload = entry.get('user_profile')
+                if user_profile_payload is None:
+                    raise HTTPException(status_code=400, detail=f"personalizationMapping entry at index {index} is missing 'user_profile'")
+
+                simplified_profile = _generate_user_profile_document(user_profile_payload)
+
+                normalized_entry = dict(entry)
+                normalized_entry['user_profile'] = simplified_profile
+                normalized_mappings.append(normalized_entry)
+
+            config['personalizationMapping'] = normalized_mappings
         languages = config.get('languages') if is_config_dict else None
         configuration_variants = config.get('configurations') if is_config_dict else None
         base_model_snapshot = config.get('baseModel') if is_config_dict else None

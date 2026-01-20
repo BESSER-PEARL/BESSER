@@ -413,15 +413,7 @@ async def _handle_agent_generation(json_data: dict):
             config['personalizationMapping'] = normalized_mappings
             json_data['config'] = config
 
-        # Convert the root agent diagram JSON to BUML once and reuse when possible
-        try:
-            root_agent_model = process_agent_diagram(json_data)
-        except Exception as conversion_error:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Failed to convert agent diagram to BUML: {conversion_error}",
-            )
-        print(config)
+
         languages = config.get('languages') if is_config_dict else None
         configuration_variants = config.get('configurations') if is_config_dict else None
         base_model_snapshot = config.get('baseModel') if is_config_dict else None
@@ -535,7 +527,7 @@ async def _handle_agent_generation(json_data: dict):
         elif configuration_variants and isinstance(configuration_variants, list):
             agent_model = process_agent_diagram(json_data)
             bundle_buffer = build_configurations_package(
-                root_agent_model,
+                agent_model,
                 configuration_variants,
                 generate_agent_files,
             )
@@ -544,9 +536,18 @@ async def _handle_agent_generation(json_data: dict):
                 media_type="application/zip",
                 headers={"Content-Disposition": f"attachment; filename={AGENT_OUTPUT_FILENAME}"},
             )
+        elif 'personalizationMapping' in config:
+            agent_model = process_agent_diagram(json_data)
+            zip_buffer, file_name = generate_agent_files(agent_model, config, generation_mode=GenerationMode.CODE_ONLY)
+            return StreamingResponse(
+                zip_buffer,
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={file_name}"},
+            )
         else:
             # Single agent (default behavior)
-            zip_buffer, file_name = generate_agent_files(root_agent_model, config)
+            agent_model = process_agent_diagram(json_data)
+            zip_buffer, file_name = generate_agent_files(agent_model, config)
             return StreamingResponse(
                 zip_buffer,
                 media_type="application/zip",

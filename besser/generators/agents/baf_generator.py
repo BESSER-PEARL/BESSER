@@ -104,7 +104,6 @@ class BAFGenerator(GeneratorInterface):
         else:
             self.generation_mode = GenerationMode.FULL
         if config_path:
-            print("Loading config from:", config_path)
             with open(config_path, 'r', encoding='utf-8') as f:
                 loaded_config = json.load(f)
                 self.config = flatten_agent_config_structure(loaded_config) if isinstance(loaded_config, dict) else loaded_config
@@ -157,7 +156,11 @@ class BAFGenerator(GeneratorInterface):
         )
 
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
+        env = Environment(
+            loader=FileSystemLoader(templates_path),
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
         env.globals['is_class'] = is_class
         env.globals['is_type'] = is_type
         env.globals['replace_bot_session_with_session_in_signature'] = replace_agent_session_with_session_in_signature
@@ -166,11 +169,8 @@ class BAFGenerator(GeneratorInterface):
         personalized_agent_path = self.build_generation_path(file_name="personalized_agent_model.py")
         personalized_json_path = self.build_generation_path(file_name="personalized_agent_model.json")
         personalized_messages = {}
-        print(self.config)
-
         config_for_personalization = dict(self.config) if self.config else None
-
-        if generate_personalized_assets and config_for_personalization:
+        if generate_personalized_assets and config_for_personalization and self.generation_mode != GenerationMode.CODE_ONLY:
             if 'personalizationrules' in config_for_personalization:
                 personalize_agent(self.model, config_for_personalization['personalizationrules'], personalized_messages)
             else:
@@ -192,12 +192,14 @@ class BAFGenerator(GeneratorInterface):
 
             if not generate_code_assets:
                 return
-
-        if not generate_code_assets:
-            return
-
-        if personalized_messages == {}:
             
+        if 'personalizationMapping' in config_for_personalization:
+            print("Generating agent with personalization mappings...")
+            with open(agent_path, mode="w", encoding="utf-8") as f:
+                generated_code = agent_template.render(agent=self.model, config=self.config, personalization_mapping=config_for_personalization['personalizationMapping'])
+                f.write(generated_code)
+        elif personalized_messages == {}:
+            print("ungunugneunun")
             with open(agent_path, mode="w", encoding="utf-8") as f:
                 # todo: how to handle llm variable names that are used in bodies?
                 generated_code = agent_template.render(agent=self.model, config=self.config)

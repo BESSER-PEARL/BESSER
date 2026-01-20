@@ -263,10 +263,12 @@ def _add_deployment_configs(directory: str, app_name: str):
     runtime: python
     plan: free
     buildCommand: pip install -r backend/requirements.txt
-    startCommand: cd backend && uvicorn main_api:app --host 0.0.0.0 --port 8000
+    startCommand: cd backend && uvicorn main_api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: 3.9.16
+      - key: PORT
+        value: 8000
 
   # Frontend (Free static site)
   - type: web

@@ -264,7 +264,7 @@ This application was created using the BESSER Web Modeling Editor, a low-code op
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/{owner}/{repo})
 
 **Why Render?**
-- ✅ **Truly FREE** - 750 hours/month for both frontend + backend
+- ✅ **Free Tier** - 750 hours/month for both frontend + backend
 - ✅ **One-Click Deploy** - No manual configuration needed
 - ✅ **No Payment Info Required** - Won't ask for credit card
 - ✅ **Auto SSL** - Free HTTPS certificates
@@ -274,7 +274,7 @@ Click the button above and Render will automatically:
 1. Deploy your FastAPI backend
 2. Deploy your React frontend
 3. Connect them together
-4. Give you live URLs!
+4. Give you live URLs
 
 ## Local Development
 

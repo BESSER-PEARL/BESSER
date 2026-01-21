@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   besser-wme-backend:
     image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
@@ -32,7 +30,7 @@ services:
     image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
     build:
       context: ./besser/utilities/web_modeling_editor/frontend
-      dockerfile: Dockerfile.redis
+      dockerfile: Dockerfile
     container_name: besser-wme-frontend
     environment:
       - DEPLOYMENT_URL=${DEPLOYMENT_URL}

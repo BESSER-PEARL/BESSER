@@ -1,6 +1,10 @@
 Welcome to BESSER's Documentation
 =================================
 
+.. note::
+   Checkout the latest repository: `BESSER-Dataset <https://github.com/BESSER-PEARL/BESSER-Dataset>`_
+   The B-UML Dataset is a large-scale dataset containing 5,000+ B-UML models for research in modeling languages and AI-assisted modeling.
+
 **BESSER** is a `low-modeling <https://modeling-languages.com/welcome-to-the-low-modeling-revolution/>`_
 `low-code <https://modeling-languages.com/low-code-vs-model-driven/>`_ open-source platform built on top
 of our Python-based personal interpretation of a "Universal Modeling Language" (yes, heavily inspired and

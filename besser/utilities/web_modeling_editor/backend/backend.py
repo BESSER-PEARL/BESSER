@@ -73,6 +73,8 @@ from besser.utilities.web_modeling_editor.backend.services.feedback_service impo
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import (
     run_docker_compose,
+    github_oauth_router,
+    github_deploy_router,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     cleanup_temp_resources,
@@ -106,6 +108,10 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],  # Expose Content-Disposition header to frontend
 )
+
+# Include GitHub OAuth and deployment routers
+app.include_router(github_oauth_router, prefix="/besser_api")
+app.include_router(github_deploy_router, prefix="/besser_api")
 
 # Constants
 API_VERSION = "1.0.0"

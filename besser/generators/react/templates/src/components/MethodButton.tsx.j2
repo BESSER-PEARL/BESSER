@@ -76,7 +76,7 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
   onError,
   className = "",
   style = {},
-  backendUrl = "http://localhost:8000",
+  backendUrl = process.env.REACT_APP_API_URL || "http://localhost:8000",
 }) => {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);

@@ -18,7 +18,7 @@ from pydantic import BaseModel
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET", "")
 GITHUB_REDIRECT_URI = os.getenv("GITHUB_REDIRECT_URI", "http://localhost:9000/besser_api/github/auth/callback")
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:8080")
+DEPLOYMENT_URL = os.getenv("DEPLOYMENT_URL", "http://localhost:8080")
 
 
 # In-memory session store (replace with Redis in production)
@@ -85,7 +85,7 @@ async def github_callback(code: str, state: str):
     # Verify state parameter
     if state not in _oauth_sessions:
         return RedirectResponse(
-            url=f"{FRONTEND_URL}?error=invalid_state",
+            url=f"{DEPLOYMENT_URL}?error=invalid_state",
             status_code=302
         )
     
@@ -110,14 +110,14 @@ async def github_callback(code: str, state: str):
         
         if "error" in token_data:
             return RedirectResponse(
-                url=f"{FRONTEND_URL}?error={token_data['error']}",
+                url=f"{DEPLOYMENT_URL}?error={token_data['error']}",
                 status_code=302
             )
         
         access_token = token_data.get("access_token")
         if not access_token:
             return RedirectResponse(
-                url=f"{FRONTEND_URL}?error=no_access_token",
+                url=f"{DEPLOYMENT_URL}?error=no_access_token",
                 status_code=302
             )
         
@@ -146,13 +146,13 @@ async def github_callback(code: str, state: str):
         
         # Redirect to frontend with session ID
         return RedirectResponse(
-            url=f"{FRONTEND_URL}?github_session={session_id}&username={username}",
+            url=f"{DEPLOYMENT_URL}?github_session={session_id}&username={username}",
             status_code=302
         )
         
     except requests.RequestException as e:
         return RedirectResponse(
-            url=f"{FRONTEND_URL}?error=github_api_error",
+            url=f"{DEPLOYMENT_URL}?error=github_api_error",
             status_code=302
         )
 

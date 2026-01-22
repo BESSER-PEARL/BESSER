@@ -504,6 +504,10 @@ class ReactGenerator(GeneratorInterface):
             )
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("line") or "#4CAF50"
+            # Serialize series with data bindings
+            series_list = self._serialize_chart_series(element.series)
+            if series_list:
+                node["series"] = series_list
 
         if isinstance(element, BarChart):
             node["title"] = element.title or self._humanize(element.name)
@@ -523,6 +527,10 @@ class ReactGenerator(GeneratorInterface):
             )
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("bar") or "#3498db"
+            # Serialize series with data bindings
+            series_list = self._serialize_chart_series(element.series)
+            if series_list:
+                node["series"] = series_list
 
         if isinstance(element, PieChart):
             node["title"] = element.title or self._humanize(element.name)
@@ -541,6 +549,10 @@ class ReactGenerator(GeneratorInterface):
             )
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
+            # Serialize series with data bindings
+            series_list = self._serialize_chart_series(element.series)
+            if series_list:
+                node["series"] = series_list
 
         if isinstance(element, RadarChart):
             node["title"] = element.title or self._humanize(element.name)
@@ -558,6 +570,10 @@ class ReactGenerator(GeneratorInterface):
             )
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
+            # Serialize series with data bindings
+            series_list = self._serialize_chart_series(element.series)
+            if series_list:
+                node["series"] = series_list
 
         if isinstance(element, RadialBarChart):
             node["title"] = element.title or self._humanize(element.name)
@@ -574,6 +590,10 @@ class ReactGenerator(GeneratorInterface):
             )
             chart_colors = self._extract_chart_colors(element)
             node["color"] = element.primary_color or chart_colors.get("palette") or "#8884d8"
+            # Serialize series with data bindings
+            series_list = self._serialize_chart_series(element.series)
+            if series_list:
+                node["series"] = series_list
 
         if isinstance(element, Table):
             node["title"] = element.title or self._humanize(element.name)
@@ -672,6 +692,12 @@ class ReactGenerator(GeneratorInterface):
             node["agent_name"] = element.agent_name or ""
             node["agent_title"] = element.agent_title or "BESSER Agent"
 
+        # Clean up raw GrapesJS series from attributes for chart components
+        # We use the processed series array instead of the raw JSON string
+        if isinstance(element, (LineChart, BarChart, PieChart, RadarChart, RadialBarChart)):
+            if "attributes" in node and isinstance(node["attributes"], dict) and "series" in node["attributes"]:
+                node["attributes"] = {k: v for k, v in node["attributes"].items() if k != "series"}
+
         binding_data = self._serialize_data_binding(getattr(element, "data_binding", None))
         if binding_data:
             node["data_binding"] = binding_data
@@ -747,20 +773,90 @@ class ReactGenerator(GeneratorInterface):
         label_field = getattr(binding, "label_field", None)
         data_field = getattr(binding, "data_field", None)
         data_filter = getattr(binding, "data_filter", None)
+        label_field_path = getattr(binding, "label_field_path", None)
+        data_field_path = getattr(binding, "data_field_path", None)
         
         endpoint = None
         if domain and getattr(domain, "name", None):
             endpoint = f"/{domain.name.lower()}/"
 
+        # Use path for nested fields, otherwise use field attribute name
+        label_field_value = label_field_path if label_field_path else (getattr(label_field, "name", None) if label_field else None)
+        data_field_value = data_field_path if data_field_path else (getattr(data_field, "name", None) if data_field else None)
+
         return self._clean_dict(
             {
                 "entity": getattr(domain, "name", None),
                 "endpoint": endpoint,
-                "label_field": getattr(label_field, "name", None),
-                "data_field": getattr(data_field, "name", None),
+                "label_field": label_field_value,
+                "data_field": data_field_value,
                 "filter": str(data_filter) if data_filter else None,
             }
         )
+
+    def _serialize_chart_series(self, series_list) -> Optional[List[Dict[str, Any]]]:
+        """Serialize chart series with their data bindings."""
+        if not series_list:
+            return None
+        
+        serialized = []
+        default_colors = ["#4CAF50", "#2196F3", "#FF9800", "#E91E63", "#9C27B0", "#00BCD4", "#FF5722", "#795548"]
+        
+        for idx, series in enumerate(series_list):
+            binding = getattr(series, "data_binding", None)
+            styling = getattr(series, "styling", None)
+            
+            # Extract color from styling or use default
+            # Check multiple color properties in order of preference
+            color = None
+            if styling:
+                color_obj = getattr(styling, "color", None)
+                if color_obj:
+                    # Try primary_color first (set by chart parser), then line_color, bar_color, background_color
+                    color = (getattr(color_obj, "primary_color", None) or 
+                             getattr(color_obj, "line_color", None) or 
+                             getattr(color_obj, "bar_color", None) or
+                             getattr(color_obj, "background_color", None))
+            if not color:
+                color = default_colors[idx % len(default_colors)]
+            
+            series_data: Dict[str, Any] = {
+                "name": series.name,
+                "label": series.label or series.name,
+                "color": color,
+            }
+            
+            # Add data binding info if available
+            if binding:
+                domain = getattr(binding, "domain_concept", None)
+                label_field = getattr(binding, "label_field", None)
+                data_field = getattr(binding, "data_field", None)
+                filter_expression = getattr(binding, "filter_expression", None)
+                
+                if domain:
+                    series_data["dataSource"] = domain.name.lower()
+                    series_data["endpoint"] = f"/{domain.name.lower()}/"
+                
+                # Use label_field_path for nested fields, otherwise use label_field attribute
+                label_field_path = getattr(binding, "label_field_path", None)
+                if label_field_path:
+                    series_data["labelField"] = label_field_path
+                elif label_field:
+                    series_data["labelField"] = getattr(label_field, "name", None)
+                
+                # Use data_field_path for nested fields, otherwise use data_field attribute
+                data_field_path = getattr(binding, "data_field_path", None)
+                if data_field_path:
+                    series_data["dataField"] = data_field_path
+                elif data_field:
+                    series_data["dataField"] = getattr(data_field, "name", None)
+                
+                if filter_expression:
+                    series_data["filter"] = str(filter_expression)
+            
+            serialized.append(self._clean_dict(series_data))
+        
+        return serialized if serialized else None
 
     # --------------------------------------------------------------------- #
     # Styling helpers

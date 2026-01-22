@@ -1,0 +1,47 @@
+Version 6.0.1
+==============
+
+Fixes for chart data binding with nested fields, series colors, and GUI code generation.
+
+Bug Fixes
+=========
+
+Chart Data Binding for Nested Fields
+-------------------------------------
+
+- All chart types (LineChart, BarChart, PieChart, RadarChart, RadialBarChart) now support 
+  dot notation for nested fields (e.g., ``measures.value``).
+
+- Added ``getNestedValue()`` helper to access nested properties and handle arrays within paths.
+
+- Charts automatically transform nested data to ``{ name: ..., value: ... }`` format for Recharts.
+
+- **Renderer.tsx** detects nested fields and appends ``?detailed=true`` to API requests.
+
+Series Color & Filter
+---------------------
+
+- Series colors from the UI editor are now preserved in generated code via the ``Styling`` class.
+
+- Added ``filter_expression`` property to ``DataBinding`` for storing filter strings from series configuration.
+
+- Removed duplicate raw ``attributes.series`` from JSON output.
+
+GUI Diagram Code Generation
+-----------------------------
+
+- Fixed ``web_app`` generator invocation from the GUI No-Code editor.
+- Users can now generate web apps directly without "No diagram available" errors.
+
+Technical Notes
+===============
+
+- All five chart types support the same data binding and color preservation capabilities.
+- Filter expressions are serialized to the output JSON but not yet enforced in the frontend.
+- No breaking changes - existing charts work as before.
+
+Migration Guide
+===============
+
+If using complex models to work around missing nested data, you can now simplify to use 
+dot notation directly (e.g., ``category.name``, ``measures.value``).

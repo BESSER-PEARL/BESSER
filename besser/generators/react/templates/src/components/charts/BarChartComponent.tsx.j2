@@ -21,6 +21,22 @@ interface Props {
   styles?: CSSProperties;
 }
 
+// Helper to get nested values using dot notation (e.g., "measures.value")
+const getNestedValue = (obj: any, path: string): any => {
+  if (!obj || !path) return undefined;
+  const parts = path.split('.');
+  let current = obj;
+  for (const part of parts) {
+    if (current === null || current === undefined) return undefined;
+    if (Array.isArray(current)) {
+      current = current[0];
+      if (current === undefined) return undefined;
+    }
+    current = current[part];
+  }
+  return current;
+};
+
 const resolveColor = (
   explicit?: string,
   options?: Record<string, any>,
@@ -41,6 +57,22 @@ export const BarChartComponent: React.FC<Props> = ({
   options,
   styles,
 }) => {
+  // Transform data if using nested fields (dot notation)
+  const isNestedField = (field: string) => field?.includes('.') || false;
+  const chartData = React.useMemo(() => {
+    if (!isNestedField(labelField) && !isNestedField(dataField)) {
+      return data; // No transformation needed
+    }
+    return data.map((item: any) => ({
+      name: isNestedField(labelField) ? getNestedValue(item, labelField) : item[labelField],
+      value: isNestedField(dataField) ? getNestedValue(item, dataField) : item[dataField],
+    }));
+  }, [data, labelField, dataField]);
+
+  // Use transformed field names if we did transformation
+  const actualLabelField = (isNestedField(labelField) || isNestedField(dataField)) ? 'name' : labelField;
+  const actualDataField = (isNestedField(labelField) || isNestedField(dataField)) ? 'value' : dataField;
+
   const containerStyle: CSSProperties = {
     width: "100%",
     height: "400px",
@@ -60,7 +92,7 @@ export const BarChartComponent: React.FC<Props> = ({
       {title && <h3 style={{ textAlign: "center", marginBottom: "10px" }}>{title}</h3>}
       <ResponsiveContainer width="100%" height={360}>
         <BarChart
-          data={data}
+          data={chartData}
           margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
           layout={orientation === "horizontal" ? "vertical" : "horizontal"}
           barSize={options?.barWidth}
@@ -71,16 +103,16 @@ export const BarChartComponent: React.FC<Props> = ({
           )}
           <XAxis
             type={orientation === "horizontal" ? "number" : "category"}
-            dataKey={orientation === "horizontal" ? dataField : labelField}
+            dataKey={orientation === "horizontal" ? actualDataField : actualLabelField}
           />
           <YAxis
             type={orientation === "horizontal" ? "category" : "number"}
-            dataKey={orientation === "horizontal" ? labelField : undefined}
+            dataKey={orientation === "horizontal" ? actualLabelField : undefined}
           />
           {showTooltip && <Tooltip />}
           {showLegend && <Legend verticalAlign={legendPosition} />}
           <Bar
-            dataKey={dataField}
+            dataKey={actualDataField}
             fill={resolvedColor}
             stackId={options?.stacked ? "stack" : undefined}
             isAnimationActive={options?.animate ?? true}

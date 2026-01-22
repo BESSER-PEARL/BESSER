@@ -25,6 +25,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   
   // All hooks must be at the top level - declare all states here
   const [chartData, setChartData] = useState<any[]>(component.data ?? []);
+  const [seriesData, setSeriesData] = useState<{[key: string]: any[]}>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listData, setListData] = useState<any[]>([]);
@@ -38,7 +39,56 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     });
   }
 
-  // Chart and metric card data fetching effect
+  // Helper to check if a field uses dot notation (nested field like measures.value)
+  const isNestedField = (field: string | undefined) => field?.includes('.') || false;
+
+  // Chart series data fetching effect - fetches data for each series with an endpoint
+  useEffect(() => {
+    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart"].includes(component.type)) {
+      const series = component.series;
+      if (series && Array.isArray(series) && series.length > 0) {
+        // Check if any series has an endpoint to fetch
+        const seriesWithEndpoints = series.filter((s: any) => s.endpoint || s.dataSource);
+        if (seriesWithEndpoints.length > 0) {
+          setLoading(true);
+          setError(null);
+          const backendBase = process.env.REACT_APP_API_URL || "http://localhost:8000";
+          
+          const fetchPromises = seriesWithEndpoints.map((s: any) => {
+            const endpoint = s.endpoint || `/${s.dataSource}/`;
+            // Check if this series uses nested fields (e.g., measures.value) - need detailed=true
+            const labelField = s['label-field'] || s.labelField;
+            const dataField = s['data-field'] || s.dataField;
+            const needsDetailed = isNestedField(labelField) || isNestedField(dataField);
+            const detailedParam = needsDetailed ? '?detailed=true' : '';
+            const url = endpoint.startsWith("/") ? backendBase + endpoint + detailedParam : endpoint + detailedParam;
+            return axios.get(url)
+              .then((res) => {
+                let data: any[] = [];
+                if (Array.isArray(res.data)) {
+                  data = res.data;
+                } else if (res.data && typeof res.data === 'object') {
+                  const arrayKey = Object.keys(res.data).find(key => Array.isArray(res.data[key]));
+                  if (arrayKey) data = res.data[arrayKey];
+                }
+                return { seriesName: s.name, data };
+              })
+              .catch(() => ({ seriesName: s.name, data: [] }));
+          });
+          
+          Promise.all(fetchPromises)
+            .then((results) => {
+              const dataMap: {[key: string]: any[]} = {};
+              results.forEach((r) => { dataMap[r.seriesName] = r.data; });
+              setSeriesData(dataMap);
+            })
+            .finally(() => setLoading(false));
+        }
+      }
+    }
+  }, [component.type, component.series]);
+
+  // Chart and metric card data fetching effect (legacy single data_binding)
   useEffect(() => {
     if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card", "table"].includes(component.type)) {
       const endpoint = component.data_binding?.endpoint;
@@ -53,8 +103,12 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
           (col: any) => typeof col === 'object' && col.column_type === 'lookup'
         );
         
-        // Add detailed=true query param if there are lookup columns
-        const urlParams = hasLookupColumns ? '?detailed=true' : '';
+        // Check if data_binding uses nested fields (dot notation like measures.value)
+        const hasNestedFields = isNestedField(component.data_binding?.label_field) || 
+                                isNestedField(component.data_binding?.data_field);
+        
+        // Add detailed=true query param if there are lookup columns or nested fields
+        const urlParams = (hasLookupColumns || hasNestedFields) ? '?detailed=true' : '';
         const url = endpoint.startsWith("/") 
           ? backendBase + endpoint + urlParams
           : endpoint + urlParams;
@@ -504,6 +558,18 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
     
+    // Check if we have series with data bindings
+    const hasSeries = component.series && Array.isArray(component.series) && component.series.length > 0;
+    
+    // Prepare series with fetched data
+    const preparedSeries = hasSeries ? component.series.map((s: any) => {
+      const fetchedData = seriesData[s.name] || [];
+      return {
+        ...s,
+        fetchedData: fetchedData,
+      };
+    }) : [];
+    
     // Use configured field names from data_binding, with intelligent fallback
     let actualLabelField = component.data_binding?.label_field || "name";
     let actualDataField = component.data_binding?.data_field || "value";
@@ -538,6 +604,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         title={component.title || component.name}
         color={component.color}
         data={chartData}
+        series={preparedSeries}
         labelField={actualLabelField}
         dataField={actualDataField}
         options={component.chart || {}}

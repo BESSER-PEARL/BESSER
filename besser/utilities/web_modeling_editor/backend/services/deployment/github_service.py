@@ -316,7 +316,6 @@ Learn more about BESSER:
 
 ---
 
-*Generated on {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UTC*
 """
         
         return readme

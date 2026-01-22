@@ -161,7 +161,7 @@ async def deploy_webapp_to_github(
         generator.generate()
         
         # Add deployment configuration files
-        _add_deployment_configs(temp_dir, repo_name)
+        _add_deployment_configs(temp_dir, repo_name, has_agent=agent_model is not None)
         
         # Create GitHub repository
         repo_info = github.create_repository(
@@ -247,15 +247,16 @@ def _sanitize_repo_name(name: str) -> str:
     return name
 
 
-def _add_deployment_configs(directory: str, app_name: str):
+def _add_deployment_configs(directory: str, app_name: str, has_agent: bool = False):
     """
     Add Render deployment configuration (only free platform for full-stack auto-deploy).
     
     Args:
         directory: Path to generated app directory
         app_name: Application name
+        has_agent: Whether the app includes an agent service
     """
-    # Render configuration - Full stack (backend + frontend) FREE with one click!
+    # Render configuration - Full stack (backend + frontend + optional agent)
     render_config = f"""services:
   # Backend API (Free tier - 750 hours/month, spins down after 15 min idle)
   - type: web
@@ -282,17 +283,41 @@ def _add_deployment_configs(directory: str, app_name: str):
         destination: /index.html
 """
     
+    # Add agent service if the app includes an agent
+    if has_agent:
+        agent_config = f"""
+  # Agent Service (Free tier - WebSocket-based AI agent)
+  - type: web
+    name: {app_name}-agent
+    runtime: python
+    plan: free
+    buildCommand: pip install -r agent/requirements.txt
+    startCommand: cd agent && python main.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.9.16
+      - key: PORT
+        value: 8765
+"""
+        render_config += agent_config
+    
     render_path = os.path.join(directory, "render.yaml")
     with open(render_path, "w") as f:
         f.write(render_config)
     
-    # Create .env.production for frontend with backend URL
+    # Create .env.production for frontend with backend URL (and agent URL if applicable)
     env_production = f"""# Production environment variables
 # Backend API URL - Update this with your deployed backend URL
 REACT_APP_API_URL=https://{app_name}-backend.onrender.com
-
-# For Fly.io backend, use: https://{app_name}-backend.fly.dev
-# For local development, use: http://localhost:8000
+"""
+    
+    if has_agent:
+        env_production += f"""# Agent WebSocket URL - Update this with your deployed agent URL
+REACT_APP_AGENT_URL=wss://{app_name}-agent.onrender.com
+"""
+    
+    env_production += """
+# For local development, use: http://localhost:8000 (backend) and ws://localhost:8765 (agent)
 """
     
     env_prod_path = os.path.join(directory, "frontend", ".env.production")
@@ -302,6 +327,10 @@ REACT_APP_API_URL=https://{app_name}-backend.onrender.com
     # Create .env for local development
     env_local = """# Local development environment variables
 REACT_APP_API_URL=http://localhost:8000
+"""
+    
+    if has_agent:
+        env_local += """REACT_APP_AGENT_URL=ws://localhost:8765
 """
     
     env_local_path = os.path.join(directory, "frontend", ".env")

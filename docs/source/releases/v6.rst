@@ -1,0 +1,7 @@
+Version 6
+=========
+
+.. toctree::
+   :maxdepth: 1
+
+   v6/v6.0.0

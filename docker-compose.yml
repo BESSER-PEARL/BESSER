@@ -10,15 +10,10 @@ services:
       - ./:/app
       - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /app/besser
+    env_file:
+      - ./.env
     environment:
       - PYTHONPATH=/app
-      - FEEDBACK_EMAIL=${FEEDBACK_EMAIL}
-      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
-      - SMTP_PORT=${SMTP_PORT:-587}
-      - SMTP_USERNAME=${SMTP_USERNAME}
-      - SMTP_PASSWORD=${SMTP_PASSWORD}
-      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
-      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
       - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:9000/besser_api/github/auth/callback}
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     networks:
@@ -30,12 +25,8 @@ services:
       context: ./besser/utilities/web_modeling_editor/frontend
       dockerfile: Dockerfile
     container_name: besser-wme-frontend
-    environment:
-      - DEPLOYMENT_URL=${DEPLOYMENT_URL}
-      - BACKEND_URL=${BACKEND_URL}
-      - UML_BOT_WS_URL=${UML_BOT_WS_URL}
-      - POSTHOG_KEY=${POSTHOG_KEY}
-      - POSTHOG_HOST=${POSTHOG_HOST}
+    env_file:
+      - ./besser/utilities/web_modeling_editor/frontend/packages/webapp/webpack/.env
     restart: always
     networks:
       - besser_network
@@ -48,8 +39,9 @@ services:
   #     context: ./besser/utilities/web_modeling_editor/frontend/ModelingAgent
   #     dockerfile: Dockerfile
   #   container_name: besser-wme-modeling-agent
+  #   env_file:
+  #     - ./.env
   #   environment:
-  #     - OPENAI_API_KEY=${OPENAI_API_KEY}
   #     - PYTHONUNBUFFERED=1
   #   ports:
   #     - "8765:8765"

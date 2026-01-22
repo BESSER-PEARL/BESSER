@@ -23,7 +23,7 @@ services:
     image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
     container_name: besser-wme-frontend
     env_file:
-      - ./besser/utilities/web_modeling_editor/frontend/packages/webapp/webpack/.env
+      - ./.env
     restart: always
     networks:
       - besser_network

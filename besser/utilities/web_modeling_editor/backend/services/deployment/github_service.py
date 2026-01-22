@@ -341,6 +341,196 @@ Learn more about BESSER:
             "github": repo_url,
             "render": f"https://render.com/deploy?repo={repo_url}"
         }
+    
+    def get_user_repositories(
+        self,
+        per_page: int = 100,
+        sort: str = "updated"
+    ) -> List[Dict[str, Any]]:
+        """
+        Get list of repositories for the authenticated user.
+        
+        Args:
+            per_page: Number of repositories per page (max 100)
+            sort: Sort by 'created', 'updated', 'pushed', 'full_name'
+            
+        Returns:
+            List of repository information dictionaries
+        """
+        params = {
+            "per_page": min(per_page, 100),
+            "sort": sort,
+            "affiliation": "owner"  # Only repos owned by user
+        }
+        
+        response = requests.get(
+            f"{self.base_url}/user/repos",
+            headers=self.headers,
+            params=params,
+            timeout=15
+        )
+        response.raise_for_status()
+        
+        repos = response.json()
+        # Return simplified repo info
+        return [
+            {
+                "id": r.get("id"),
+                "name": r.get("name"),
+                "full_name": r.get("full_name"),
+                "description": r.get("description"),
+                "html_url": r.get("html_url"),
+                "private": r.get("private"),
+                "updated_at": r.get("updated_at"),
+                "default_branch": r.get("default_branch", "main"),
+            }
+            for r in repos
+        ]
+    
+    def get_commits(
+        self,
+        owner: str,
+        repo_name: str,
+        path: Optional[str] = None,
+        per_page: int = 30
+    ) -> List[Dict[str, Any]]:
+        """
+        Get commit history for a repository or specific file.
+        
+        Args:
+            owner: Repository owner
+            repo_name: Repository name
+            path: Optional file path to filter commits
+            per_page: Number of commits to return
+            
+        Returns:
+            List of commit information dictionaries
+        """
+        params = {"per_page": per_page}
+        if path:
+            params["path"] = path
+        
+        response = requests.get(
+            f"{self.base_url}/repos/{owner}/{repo_name}/commits",
+            headers=self.headers,
+            params=params,
+            timeout=15
+        )
+        response.raise_for_status()
+        
+        commits = response.json()
+        return [
+            {
+                "sha": c.get("sha"),
+                "message": c.get("commit", {}).get("message", ""),
+                "author": c.get("commit", {}).get("author", {}).get("name", "Unknown"),
+                "date": c.get("commit", {}).get("author", {}).get("date", ""),
+                "html_url": c.get("html_url", ""),
+            }
+            for c in commits
+        ]
+    
+    def get_file_content(
+        self,
+        owner: str,
+        repo_name: str,
+        file_path: str,
+        branch: str = "main",
+        ref: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get content of a file from the repository.
+        
+        Args:
+            owner: Repository owner
+            repo_name: Repository name
+            file_path: Path to file in repository
+            branch: Branch name (ignored if ref is provided)
+            ref: Specific commit SHA to get file from (optional)
+            
+        Returns:
+            Dictionary with file content and metadata, or None if not found
+        """
+        # Use ref (commit SHA) if provided, otherwise use branch
+        params = {"ref": ref if ref else branch}
+        
+        response = requests.get(
+            f"{self.base_url}/repos/{owner}/{repo_name}/contents/{file_path}",
+            headers=self.headers,
+            params=params,
+            timeout=15
+        )
+        
+        if response.status_code == 404:
+            return None
+        
+        response.raise_for_status()
+        data = response.json()
+        
+        # Decode content from base64
+        content = None
+        if data.get("content"):
+            content = base64.b64decode(data["content"]).decode("utf-8")
+        
+        return {
+            "sha": data.get("sha"),
+            "content": content,
+            "path": data.get("path"),
+            "size": data.get("size"),
+        }
+    
+    def create_or_update_file(
+        self,
+        owner: str,
+        repo_name: str,
+        file_path: str,
+        content: str,
+        commit_message: str,
+        branch: str = "main"
+    ) -> Dict[str, Any]:
+        """
+        Create or update a file in the repository.
+        
+        Args:
+            owner: Repository owner
+            repo_name: Repository name
+            file_path: Path to file in repository
+            content: File content (string)
+            commit_message: Commit message
+            branch: Branch name
+            
+        Returns:
+            API response with commit info
+        """
+        # Check if file exists to get its SHA
+        existing = self.get_file_content(owner, repo_name, file_path, branch)
+        
+        # Encode content
+        content_b64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
+        
+        data = {
+            "message": commit_message,
+            "content": content_b64,
+            "branch": branch
+        }
+        
+        # If file exists, include SHA for update
+        if existing and existing.get("sha"):
+            data["sha"] = existing["sha"]
+        
+        response = requests.put(
+            f"{self.base_url}/repos/{owner}/{repo_name}/contents/{file_path}",
+            headers=self.headers,
+            json=data,
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        return {
+            "commit_sha": result.get("commit", {}).get("sha"),
+            "content_sha": result.get("content", {}).get("sha"),
+        }
 
 
 def create_github_service(access_token: str) -> GitHubService:

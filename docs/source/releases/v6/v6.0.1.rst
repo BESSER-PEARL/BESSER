@@ -11,20 +11,15 @@ Chart Data Binding for Nested Fields
 
 - All chart types (LineChart, BarChart, PieChart, RadarChart, RadialBarChart) now support 
   dot notation for nested fields (e.g., ``measures.value``).
-
 - Added ``getNestedValue()`` helper to access nested properties and handle arrays within paths.
-
 - Charts automatically transform nested data to ``{ name: ..., value: ... }`` format for Recharts.
-
 - **Renderer.tsx** detects nested fields and appends ``?detailed=true`` to API requests.
 
 Series Color & Filter
 ---------------------
 
 - Series colors from the UI editor are now preserved in generated code via the ``Styling`` class.
-
 - Added ``filter_expression`` property to ``DataBinding`` for storing filter strings from series configuration.
-
 - Removed duplicate raw ``attributes.series`` from JSON output.
 
 GUI Diagram Code Generation

@@ -8,6 +8,11 @@ import {
   Tooltip,
 } from "recharts";
 
+interface SeriesConfig {
+  name: string;
+  color?: string;
+}
+
 interface Props {
   id: string;
   title?: string;
@@ -15,6 +20,7 @@ interface Props {
   data: any[];
   labelField: string;
   dataField: string;
+  series?: SeriesConfig[];
   options?: Record<string, any>;
   styles?: CSSProperties;
 }
@@ -44,12 +50,24 @@ export const PieChartComponent: React.FC<Props> = ({
   data,
   labelField,
   dataField,
+  series,
   options,
   styles,
 }) => {
+  const seriesForPie = series && series.length > 0 ? series[0] : undefined;
+  const effectiveLabelField = seriesForPie ? "name" : labelField;
+  const effectiveDataField = seriesForPie ? seriesForPie.name || dataField : dataField;
+
   // Transform data if using nested fields (dot notation)
   const isNestedField = (field: string) => field?.includes('.') || false;
   const chartData = React.useMemo(() => {
+    if (seriesForPie) {
+      return data.map((item: any) => ({
+        name: item?.[effectiveLabelField] ?? item?.name ?? item?.label,
+        value: item?.[effectiveDataField] ?? item?.value,
+      }));
+    }
+
     if (!isNestedField(labelField) && !isNestedField(dataField)) {
       return data; // No transformation needed
     }
@@ -57,11 +75,17 @@ export const PieChartComponent: React.FC<Props> = ({
       name: isNestedField(labelField) ? getNestedValue(item, labelField) : item[labelField],
       value: isNestedField(dataField) ? getNestedValue(item, dataField) : item[dataField],
     }));
-  }, [data, labelField, dataField]);
+  }, [data, labelField, dataField, seriesForPie, effectiveDataField, effectiveLabelField]);
 
   // Use transformed field names if we did transformation
-  const actualLabelField = (isNestedField(labelField) || isNestedField(dataField)) ? 'name' : labelField;
-  const actualDataField = (isNestedField(labelField) || isNestedField(dataField)) ? 'value' : dataField;
+  const actualLabelField =
+    seriesForPie
+      ? "name"
+      : (isNestedField(labelField) || isNestedField(dataField)) ? 'name' : labelField;
+  const actualDataField =
+    seriesForPie
+      ? seriesForPie.name || 'value'
+      : (isNestedField(labelField) || isNestedField(dataField)) ? 'value' : dataField;
 
   // Extract color from styles if available
   const styleColorPalette = styles && (styles as any)['--chart-color-palette'];
@@ -69,7 +93,9 @@ export const PieChartComponent: React.FC<Props> = ({
   
   // Determine which color palette to use
   let pieColors: string[];
-  if (color && color !== 'default') {
+  if (seriesForPie?.color) {
+    pieColors = [seriesForPie.color];
+  } else if (color && color !== 'default') {
     pieColors = [color]; // Use specified color
   } else if (styleColorPalette === 'default') {
     pieColors = defaultPalette; // Use default palette

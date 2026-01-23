@@ -58,7 +58,7 @@ platform = agent.use_websocket_platform()
 {% elif platform_name == 'telegram' %}
 platform = agent.use_telegram_platform()
 {% elif platform_name == 'streamlit' %}
-platform = agent.use_streamlit_platform(use_ui=True)
+platform = agent.use_websocket_platform(use_ui=True)
 {% elif agent.platforms and agent.platforms|length > 0 %}
     {% set found_platform = false %}
     {% for platform in agent.platforms %}
@@ -70,7 +70,7 @@ platform = agent.use_websocket_platform(use_ui=True)
 platform = agent.use_telegram_platform()
                 {% set found_platform = true %}
             {% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
-platform = agent.use_streamlit_platform()
+platform = agent.use_websocket_platform(use_ui=True)
                 {% set found_platform = true %}
             {% endif %}
         {% endif %}
@@ -463,10 +463,11 @@ def {{ fallback_name }}(session: Session):
 {{ state_name }}.when_event_go_to({{ transition.event.name }}, {{ dest_name }}, event_params={{ transition.event_params }})
 {% endif %}
 {% endfor %}
-{% if has_personalization and personalization_mapping and profile_names %}
-{% for target_profile in profile_names %}
-{% if not current_profile_name or target_profile != current_profile_name %}
-{{ state_name }}.when_variable_matches_operation('user_profile', operator.eq, '{{ target_profile }}').go_to(router_initial_state)
+{% if personalization_mapping %}
+{% for target_profile in personalization_mapping %}
+{% set target_profile_name = target_profile.name if target_profile.name is defined else 'variant_' ~ loop.index %}
+{% if not current_profile_name or target_profile_name != current_profile_name %}
+{{ state_name }}.when_variable_matches_operation('user_profile', operator.eq, '{{ target_profile_name }}').go_to(router_initial_state)
 {% endif %}
 {% endfor %}
 {% endif %}

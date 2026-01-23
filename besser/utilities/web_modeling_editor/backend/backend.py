@@ -186,12 +186,36 @@ def generate_agent_files(agent_model, config, generation_mode: GenerationMode = 
             generator = generator_class(agent_model, config=config, generation_mode=generation_mode)
         
         generator.generate()
+
+        # Prepare user profile bundle when personalization mappings are provided
+        user_profiles_path = None
+        if isinstance(config, dict) and isinstance(config.get('personalizationMapping'), list):
+            user_profiles = []
+            for idx, entry in enumerate(config.get('personalizationMapping')):
+                if not isinstance(entry, dict):
+                    continue
+                profile_data = entry.get('user_profile')
+                profile_name = entry.get('name') or f"variant_{idx + 1}"
+                if profile_data is not None:
+                    user_profiles.append({
+                        "name": profile_name,
+                        "user_profile": profile_data,
+                    })
+
+            if user_profiles:
+                user_profiles_path = os.path.join(temp_dir, "user_profiles.json")
+                with open(user_profiles_path, "w", encoding="utf-8") as profiles_file:
+                    json.dump(user_profiles, profiles_file, indent=2)
         
         # Create a zip file with all the generated files
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             # Add the agent model file
             zip_file.write(agent_file, os.path.basename(agent_file))
+
+            # Add user profiles if generated
+            if user_profiles_path and os.path.exists(user_profiles_path):
+                zip_file.write(user_profiles_path, os.path.basename(user_profiles_path))
             
             # Add all files from the output directory
             if os.path.exists(OUTPUT_DIR):

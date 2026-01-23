@@ -26,7 +26,7 @@ from besser.agent.nlp.rag.rag import RAG
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
 
 # Create the bot
-agent = Agent('{{ agent.name }}')
+agent = Agent('{{ agent.name }}'{% if personalization_mapping is defined and personalization_mapping %}, user_profiles_path='user_profiles.json', persist_sessions=True{% endif %})
 # Load bot properties stored in a dedicated file
 agent.load_properties('config.ini')
 
@@ -36,6 +36,8 @@ agent.load_properties('config.ini')
 platform = agent.use_websocket_platform(use_ui=True)
 {% elif platform.__class__.__name__ == 'TelegramPlatform' %}
 telegram_platform = agent.use_telegram_platform()
+{% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
+platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
 {% endif %}
 {% endfor %}
 
@@ -58,7 +60,7 @@ platform = agent.use_websocket_platform()
 {% elif platform_name == 'telegram' %}
 platform = agent.use_telegram_platform()
 {% elif platform_name == 'streamlit' %}
-platform = agent.use_websocket_platform(use_ui=True)
+platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
 {% elif agent.platforms and agent.platforms|length > 0 %}
     {% set found_platform = false %}
     {% for platform in agent.platforms %}
@@ -70,7 +72,7 @@ platform = agent.use_websocket_platform(use_ui=True)
 platform = agent.use_telegram_platform()
                 {% set found_platform = true %}
             {% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
-platform = agent.use_websocket_platform(use_ui=True)
+platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
                 {% set found_platform = true %}
             {% endif %}
         {% endif %}
@@ -441,6 +443,7 @@ def {{ fallback_name }}(session: Session):
 {% endif %}
 {{ state_name }}.set_fallback_body({{ fallback_name }})
 {% endif %}
+{% set auto_ns = namespace(found=False) %}
 {% for transition in state.transitions %}
 {% set dest_name = transition.dest.name ~ suffix_part %}
 {% if is_class(transition.conditions, 'IntentMatcher') %}
@@ -456,6 +459,7 @@ def {{ fallback_name }}(session: Session):
 {{ state_name }}.when_file_received({% if transition.conditions.allowed_types %}{% if is_type(transition.conditions.allowed_types, 'str') %}'{{ transition.conditions.allowed_types }}'{% else %}{{ transition.conditions.allowed_types }}{% endif %}{% endif %}).go_to({{ dest_name }})
 {% elif is_class(transition.conditions, 'Auto')%}
 {{ state_name }}.go_to({{ dest_name }})
+{% set auto_ns.found = True %}
 {% else %}
 {% if transition.event.name not in ns.custom_events %}
 {% set ns.custom_events = ns.custom_events + [transition.event.name] %}
@@ -463,7 +467,7 @@ def {{ fallback_name }}(session: Session):
 {{ state_name }}.when_event_go_to({{ transition.event.name }}, {{ dest_name }}, event_params={{ transition.event_params }})
 {% endif %}
 {% endfor %}
-{% if personalization_mapping %}
+{% if personalization_mapping and not auto_ns.found %}
 {% for target_profile in personalization_mapping %}
 {% set target_profile_name = target_profile.name if target_profile.name is defined else 'variant_' ~ loop.index %}
 {% if not current_profile_name or target_profile_name != current_profile_name %}

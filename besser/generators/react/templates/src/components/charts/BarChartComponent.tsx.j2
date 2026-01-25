@@ -1,4 +1,4 @@
-import React, { CSSProperties } from "react";
+import React, { CSSProperties, useCallback, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -66,6 +66,8 @@ export const BarChartComponent: React.FC<Props> = ({
   options,
   styles,
 }) => {
+  const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+
   // Transform data if using nested fields (dot notation) and no multi-series
   const isNestedField = (field: string) => field?.includes('.') || false;
   const chartData = React.useMemo(() => {
@@ -105,6 +107,44 @@ export const BarChartComponent: React.FC<Props> = ({
   const legendPosition = options?.legendPosition || "top";
   const resolvedColor = resolveColor(color, options, styles);
 
+  const handleLegendClick = useCallback((dataKey: string) => {
+    setHiddenSeries((prev) => {
+      const next = new Set(prev);
+      if (next.has(dataKey)) {
+        next.delete(dataKey);
+      } else {
+        next.add(dataKey);
+      }
+      return next;
+    });
+  }, []);
+
+  const renderLegend = (props: any) => {
+    const { payload } = props;
+    if (!payload) return null;
+    return (
+      <div style={{ display: "flex", justifyContent: "center", gap: "14px", flexWrap: "wrap", padding: "8px" }}>
+        {payload.map((entry: any, index: number) => (
+          <div
+            key={`legend-${index}`}
+            onClick={() => handleLegendClick(entry.dataKey)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              cursor: "pointer",
+              opacity: hiddenSeries.has(entry.dataKey) ? 0.4 : 1,
+              textDecoration: hiddenSeries.has(entry.dataKey) ? "line-through" : "none",
+            }}
+          >
+            <span style={{ width: 12, height: 12, backgroundColor: entry.color, borderRadius: 2 }} />
+            <span style={{ fontSize: 13, color: "#374151" }}>{entry.value}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   return (
     <div id={id} style={containerStyle}>
       {title && <h3 style={{ textAlign: "center", marginBottom: "10px" }}>{title}</h3>}
@@ -128,7 +168,7 @@ export const BarChartComponent: React.FC<Props> = ({
             dataKey={orientation === "horizontal" ? actualLabelField : undefined}
           />
           {showTooltip && <Tooltip />}
-          {showLegend && <Legend verticalAlign={legendPosition} />}
+          {showLegend && <Legend verticalAlign={legendPosition} content={renderLegend} />}
           {series && series.length > 0 ? (
             series.map((s, index) => (
               <Bar
@@ -138,6 +178,7 @@ export const BarChartComponent: React.FC<Props> = ({
                 fill={s.color || defaultSeriesColors[index % defaultSeriesColors.length]}
                 stackId={options?.stacked ? "stack" : undefined}
                 isAnimationActive={options?.animate ?? true}
+                hide={hiddenSeries.has(s.name || "")}
               />
             ))
           ) : (
@@ -146,6 +187,7 @@ export const BarChartComponent: React.FC<Props> = ({
               fill={resolvedColor}
               stackId={options?.stacked ? "stack" : undefined}
               isAnimationActive={options?.animate ?? true}
+              hide={hiddenSeries.has(actualDataField)}
             />
           )}
         </BarChart>

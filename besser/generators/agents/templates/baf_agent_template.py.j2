@@ -2,6 +2,7 @@
 # import sys
 # sys.path.append("/Path/to/directory/besser-agentic-framework") # Replace with your directory path
 
+import json
 import logging
 import operator
 
@@ -25,6 +26,41 @@ from besser.agent.nlp.rag.rag import RAG
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
 
+
+def build_agent_configuration_prompt(agent_configuration: dict) -> str:
+    base_prompt = """
+You are a personalized AI assistant.
+
+You will be provided with an object called `agent_configuration` as a JSON string.
+This object defines how you should present yourself and formulate your responses.
+
+It controls stylistic and presentation aspects such as:
+- Response language
+- Level of formality
+- Language complexity
+- Sentence length
+- And more
+
+You must strictly follow the preferences defined in `agent_configuration` for all responses.
+
+Here is the current agent configuration (JSON):
+
+{agent_configuration_json}
+"""
+    return base_prompt.format(agent_configuration_json=json.dumps(agent_configuration, indent=2))
+
+
+def build_user_profile_prompt(user_profile: dict) -> str:
+    profile_prompt = """
+You have access to the current user's profile encoded as JSON.
+Leverage these traits whenever the agent configuration instructs you to adapt content.
+
+Here is the active user profile (JSON):
+
+{user_profile_json}
+"""
+    return profile_prompt.format(user_profile_json=json.dumps(user_profile, indent=2))
+
 # Create the bot
 agent = Agent('{{ agent.name }}'{% if personalization_mapping is defined and personalization_mapping %}, user_profiles_path='user_profiles.json', persist_sessions=True{% endif %})
 # Load bot properties stored in a dedicated file
@@ -45,7 +81,19 @@ platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping
 # Collect profile names from provided personalization mappings
 profile_names = []
 {% for entry in personalization_mapping %}
-profile_names.append('{{ entry.get("name", "variant_" ~ loop.index) }}')
+{% set profile_name = entry.get("name", "variant_" ~ loop.index) %}
+{% set profile_slug = profile_name | replace(' ', '_') | replace('-', '_') %}
+profile_names.append('{{ profile_name }}')
+agent_configuration_{{ profile_slug }} = json.loads(r'''{{ entry.get("configuration", {}) | tojson(indent=2) }}''')
+user_profile_{{ profile_slug }} = json.loads(r'''{{ entry.get("user_profile", {}) | tojson(indent=2) }}''')
+context_prompt_{{ profile_slug }} = build_agent_configuration_prompt(agent_configuration_{{ profile_slug }})
+profile_context_enabled_{{ profile_slug }} = False
+{% set personalization_config = entry.get("configuration", {}) %}
+{% set personalization_content = personalization_config.get("content", {}) %}
+{% if personalization_content.get("adaptContentToUserProfile") and personalization_content.get("userProfileName") == profile_name %}
+profile_prompt_{{ profile_slug }} = build_user_profile_prompt(user_profile_{{ profile_slug }})
+profile_context_enabled_{{ profile_slug }} = True
+{% endif %}
 {% endfor %}
 {% endif %}
 {% if personalized_messages is defined and personalized_messages %}
@@ -81,19 +129,23 @@ platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping
 platform = agent.use_websocket_platform(use_ui=True)
 {% endif %}
 # LLM instantiation based on config['llm']
+{% set has_reply_llm_state = namespace(value=false) %}
 {% if config and 'llm' in config and config['llm'] %}
+{% set has_reply_llm_state.value = true %}
     {% if config['llm']['provider'] == 'openai' %}
 reply_llm = LLMOpenAI(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
+
     {% elif config['llm']['provider'] == 'huggingface' %}
 reply_llm = LLMHuggingFace(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
+
     {% elif config['llm']['provider'] == 'huggingfaceapi' %}
 reply_llm_api = LLMHuggingFaceAPI(
     agent=agent,
@@ -106,6 +158,7 @@ reply_llm = LLMReplicate(
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
+
     {% endif %}
 {% endif %}
 {% if config and 'inputModalities' in config and 'speech' in config['inputModalities'] %}
@@ -229,8 +282,10 @@ reply_llm = {{ llm.__class__.__name__}}(
     num_previous_messages={{ llm.num_previous_messages }},
     {% endif %}
 )
+{% set has_reply_llm_state.value = true %}
 {% endfor %}
 {% endif %}
+{% set has_reply_llm = has_reply_llm_state.value %}
 
 {% if agent.default_ic_config != None %}
 agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
@@ -358,12 +413,27 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
 {% for state in agent_model.states %}
 {% set state_name = state.name ~ suffix_part %}
 # {{ state.name }}{% if suffix %} ({{ suffix }}){% endif %}
+{% set inject_profile_context = has_personalization and suffix and state.initial %}
 
 {% if state.body != None %}
 {% set body_name = state.body.name ~ suffix_part %}
 {% if body_name not in ns.bodies %}
 {% if state.body.actions and is_class(state.body.actions[0], 'AgentReply') %}
 def {{ body_name }}(session: Session):
+    {% if inject_profile_context and has_reply_llm %}
+    reply_llm.add_user_context(
+        session=session,
+        context=context_prompt_{{ suffix }},
+        context_name='agent_configuration_{{ suffix }}'
+    )
+    {% if profile_context_enabled_{{ suffix }} %}
+    reply_llm.add_user_context(
+        session=session,
+        context=profile_prompt_{{ suffix }},
+        context_name='user_profile_{{ suffix }}'
+    )
+    {% endif %}
+    {% endif %}
     {% for action in state.body.actions %}
     {% if personalized_messages is defined and personalized_messages and not suffix %}
     session.reply(choose_variant_for_message('{{ action.message }}', session))
@@ -376,6 +446,20 @@ def {{ body_name }}(session: Session):
     {% endfor %}
 {% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
 def {{ body_name }}(session: Session):
+    {% if inject_profile_context and has_reply_llm %}
+    reply_llm.add_user_context(
+        session=session,
+        context=context_prompt_{{ suffix }},
+        context_name='agent_configuration_{{ suffix }}'
+    )
+    {% if profile_context_enabled_{{ suffix }} %}
+    reply_llm.add_user_context(
+        session=session,
+        context=profile_prompt_{{ suffix }},
+        context_name='user_profile_{{ suffix }}'
+    )
+    {% endif %}
+    {% endif %}
     {% set llm_action = state.body.actions[0] %}
     {% if llm_action.prompt %}
     message = reply_llm.predict(session.event.message, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
@@ -388,6 +472,20 @@ def {{ body_name }}(session: Session):
     {% endif %}
 {% elif state.body.actions and is_class(state.body.actions[0], 'RAGReply') %}
 def {{ body_name }}(session: Session):
+    {% if inject_profile_context and has_reply_llm %}
+    reply_llm.add_user_context(
+        session=session,
+        context=context_prompt_{{ suffix }},
+        context_name='agent_configuration_{{ suffix }}'
+    )
+    {% if profile_context_enabled_{{ suffix }} %}
+    reply_llm.add_user_context(
+        session=session,
+        context=profile_prompt_{{ suffix }},
+        context_name='user_profile_{{ suffix }}'
+    )
+    {% endif %}
+    {% endif %}
     {% for action in state.body.actions %}
     {% if action.prompt %}
     rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')

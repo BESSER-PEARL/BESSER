@@ -193,7 +193,7 @@ class BAFGenerator(GeneratorInterface):
             if not generate_code_assets:
                 return
             
-        if 'personalizationMapping' in config_for_personalization:
+        if config_for_personalization and 'personalizationMapping' in config_for_personalization:
             print("Generating agent with personalization mappings...")
             with open(agent_path, mode="w", encoding="utf-8") as f:
                 generated_code = agent_template.render(agent=self.model, config=self.config, personalization_mapping=config_for_personalization['personalizationMapping'])
@@ -207,7 +207,7 @@ class BAFGenerator(GeneratorInterface):
                 print("Agent script generated in the location: " + agent_path)
         else: 
             with open(agent_path, mode="w", encoding="utf-8") as f:
-                generated_code = agent_template.render(agent=self.model, config=self.config, personalized_messages=personalized_messages)
+                generated_code = agent_template.render(agent=self.model, config=self.config, personalization_mapping=[])
                 f.write(generated_code)
         if generate_code_assets:
             config_template = env.get_template('baf_config_template.py.j2')

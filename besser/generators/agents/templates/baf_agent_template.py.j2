@@ -26,7 +26,7 @@ from besser.agent.nlp.rag.rag import RAG
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
 
-
+{% if personalization_mapping is defined and personalization_mapping %}
 def build_agent_configuration_prompt(agent_configuration: dict) -> str:
     base_prompt = """
 You are a personalized AI assistant.
@@ -61,6 +61,8 @@ Here is the active user profile (JSON):
 """
     return profile_prompt.format(user_profile_json=json.dumps(user_profile, indent=2))
 
+{% endif %}
+
 # Create the bot
 agent = Agent('{{ agent.name }}'{% if personalization_mapping is defined and personalization_mapping %}, user_profiles_path='user_profiles.json', persist_sessions=True{% endif %})
 # Load bot properties stored in a dedicated file
@@ -80,19 +82,21 @@ platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping
 {% if personalization_mapping is defined and personalization_mapping %}
 # Collect profile names from provided personalization mappings
 profile_names = []
+agent_configurations = {}
+user_profiles = {}
+context_prompts = {}
+profile_prompts = {}
 {% for entry in personalization_mapping %}
 {% set profile_name = entry.get("name", "variant_" ~ loop.index) %}
 {% set profile_slug = profile_name | replace(' ', '_') | replace('-', '_') %}
 profile_names.append('{{ profile_name }}')
-agent_configuration_{{ profile_slug }} = json.loads(r'''{{ entry.get("configuration", {}) | tojson(indent=2) }}''')
-user_profile_{{ profile_slug }} = json.loads(r'''{{ entry.get("user_profile", {}) | tojson(indent=2) }}''')
-context_prompt_{{ profile_slug }} = build_agent_configuration_prompt(agent_configuration_{{ profile_slug }})
-profile_context_enabled_{{ profile_slug }} = False
+agent_configurations['{{ profile_slug }}'] = json.loads(r'''{{ entry.get("configuration", {}) | tojson(indent=2) }}''')
+user_profiles['{{ profile_slug }}'] = json.loads(r'''{{ entry.get("user_profile", {}) | tojson(indent=2) }}''')
+context_prompts['{{ profile_slug }}'] = build_agent_configuration_prompt(agent_configurations['{{ profile_slug }}'])
 {% set personalization_config = entry.get("configuration", {}) %}
 {% set personalization_content = personalization_config.get("content", {}) %}
 {% if personalization_content.get("adaptContentToUserProfile") and personalization_content.get("userProfileName") == profile_name %}
-profile_prompt_{{ profile_slug }} = build_user_profile_prompt(user_profile_{{ profile_slug }})
-profile_context_enabled_{{ profile_slug }} = True
+profile_prompts['{{ profile_slug }}'] = build_user_profile_prompt(user_profiles['{{ profile_slug }}'])
 {% endif %}
 {% endfor %}
 {% endif %}
@@ -406,7 +410,7 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
 {{ state.name }}.set_global({{ intent.name }})
 {% endfor %}
 {% endif %}
-{% macro render_state_bodies_and_transitions(agent_model, suffix=None, current_profile_name=None) %}
+{% macro render_state_bodies_and_transitions(agent_model, suffix=None, current_profile_name=None, configuration=None) %}
 {% if agent_model and agent_model.states %}
 {% set ns = namespace(custom_events=[], bodies=[]) %}
 {% set suffix_part = '_' ~ suffix if suffix else '' %}
@@ -423,13 +427,13 @@ def {{ body_name }}(session: Session):
     {% if inject_profile_context and has_reply_llm %}
     reply_llm.add_user_context(
         session=session,
-        context=context_prompt_{{ suffix }},
+        context=context_prompts.get('{{ suffix }}'),
         context_name='agent_configuration_{{ suffix }}'
     )
-    {% if profile_context_enabled_{{ suffix }} %}
+    {% if content in configuration and adaptContentToUserProfile in configuration.content%}
     reply_llm.add_user_context(
         session=session,
-        context=profile_prompt_{{ suffix }},
+        context=profile_prompts.get('{{ suffix }}'),
         context_name='user_profile_{{ suffix }}'
     )
     {% endif %}
@@ -449,14 +453,14 @@ def {{ body_name }}(session: Session):
     {% if inject_profile_context and has_reply_llm %}
     reply_llm.add_user_context(
         session=session,
-        context=context_prompt_{{ suffix }},
-        context_name='agent_configuration_{{ suffix }}'
+        context=context_prompts.get('{{ suffix }}'),
+        context_name='agent_configuration'
     )
-    {% if profile_context_enabled_{{ suffix }} %}
+    {% if content in configuration and adaptContentToUserProfile in configuration.content%}
     reply_llm.add_user_context(
         session=session,
-        context=profile_prompt_{{ suffix }},
-        context_name='user_profile_{{ suffix }}'
+        context=profile_prompts.get('{{ suffix }}''),
+        context_name='user_profile'
     )
     {% endif %}
     {% endif %}
@@ -475,14 +479,14 @@ def {{ body_name }}(session: Session):
     {% if inject_profile_context and has_reply_llm %}
     reply_llm.add_user_context(
         session=session,
-        context=context_prompt_{{ suffix }},
-        context_name='agent_configuration_{{ suffix }}'
+        context=context_prompts.get('{{ suffix }}'),
+        context_name='agent_configuration'
     )
-    {% if profile_context_enabled_{{ suffix }} %}
+    {% if content in config and adaptContentToUserProfile in config.content %}
     reply_llm.add_user_context(
         session=session,
-        context=profile_prompt_{{ suffix }},
-        context_name='user_profile_{{ suffix }}'
+        context=profile_prompts.get('{{ suffix }}'),
+        context_name='user_profile'
     )
     {% endif %}
     {% endif %}
@@ -588,7 +592,7 @@ def {{ fallback_name }}(session: Session):
 {% set profile_suffix = (mapping.name if mapping.name is defined else 'variant_' ~ loop.index) | replace(' ', '_') | replace('-', '_') %}
 {% set profile_agent = mapping.agent_model if mapping.agent_model is defined else mapping.model %}
 {% set profile_name = mapping.name if mapping.name is defined else 'variant_' ~ loop.index %}
-{{ render_state_bodies_and_transitions(profile_agent, profile_suffix, profile_name) }}
+{{ render_state_bodies_and_transitions(profile_agent, profile_suffix, profile_name, mapping.configuration) }}
 {% endfor %}
 {% endif %}
 

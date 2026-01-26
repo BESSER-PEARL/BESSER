@@ -105,7 +105,19 @@ personalized_messages = json.loads(r'''{{ personalized_messages | tojson(indent=
 # load the personalization rules from the generator context into a Python variable called `rules`
 rules = json.loads(r'''{{ config['personalizationrules'] | tojson(indent=2) }}''')
 {% endif %}
-{% set has_speech_output = config and config.outputModalities and 'speech' in config.outputModalities | map('lower') %}
+{% set has_speech_output = config and config.outputModalities and ('speech' in (config.outputModalities | map('lower'))) %}
+
+{# If base config lacks speech, check personalization mappings for speech output #}
+{% if not has_speech_output and personalization_mapping is defined and personalization_mapping %}
+    {% for entry in personalization_mapping %}
+        {% set entry_config = entry.get('configuration', {}) %}
+        {% set entry_outputs = entry_config.get('outputModalities') %}
+        {% if entry_outputs and ('speech' in (entry_outputs | map('lower'))) %}
+            {% set has_speech_output = true %}
+        {% endif %}
+    {% endfor %}
+{% endif %}
+
 {% set platform_name = config['agentPlatform'] if config and 'agentPlatform' in config else None %}
 {% if platform_name == 'websocket' %}
 platform = agent.use_websocket_platform()
@@ -414,6 +426,7 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
 {% if agent_model and agent_model.states %}
 {% set ns = namespace(custom_events=[], bodies=[]) %}
 {% set suffix_part = '_' ~ suffix if suffix else '' %}
+{% set speech_enabled = has_speech_output or (configuration and configuration.outputModalities and ('speech' in (configuration.outputModalities | map('lower')))) %}
 {% for state in agent_model.states %}
 {% set state_name = state.name ~ suffix_part %}
 # {{ state.name }}{% if suffix %} ({{ suffix }}){% endif %}
@@ -444,7 +457,7 @@ def {{ body_name }}(session: Session):
     {% else %}
     session.reply('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% endif %}
-    {% if has_speech_output %}
+    {% if speech_enabled %}
     platform.reply_speech('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% endif %}
     {% endfor %}
@@ -471,7 +484,7 @@ def {{ body_name }}(session: Session):
     message = reply_llm.predict(session.event.message)
     {% endif %}
     session.reply(message)
-    {% if has_speech_output %}
+    {% if speech_enabled %}
     platform.reply_speech(message)
     {% endif %}
 {% elif state.body.actions and is_class(state.body.actions[0], 'RAGReply') %}
@@ -512,7 +525,7 @@ def {{ body_name }}(session: Session):
 def {{ fallback_name }}(session: Session):
     {% for action in state.fallback_body.actions %}
     session.reply('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}')
-    {% if has_speech_output %}
+    {% if speech_enabled %}
     platform.reply_speech('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}')
     {% endif %}
     {% endfor %}
@@ -525,7 +538,7 @@ def {{ fallback_name }}(session: Session):
     message = reply_llm.predict(session.event.message)
     {% endif %}
     session.reply(message)
-    {% if has_speech_output %}
+    {% if speech_enabled %}
     platform.reply_speech(message)
     {% endif %}
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'RAGReply') %}
@@ -581,7 +594,7 @@ def {{ fallback_name }}(session: Session):
 {% endif %}
 {% endmacro %}
 
-{{ render_state_bodies_and_transitions(agent) }}
+{{ render_state_bodies_and_transitions(agent,configuration=config) }}
 
 
 {% if has_personalization %}

@@ -63,7 +63,8 @@ async def github_login(request: Request):
     _cleanup_old_sessions()
     
     # Build GitHub authorization URL
-    scopes = "repo,user"  # Request permission to create repos
+    # Request permissions to manage repos and create gists
+    scopes = "repo,gist,user"
     auth_url = (
         f"https://github.com/login/oauth/authorize"
         f"?client_id={GITHUB_CLIENT_ID}"

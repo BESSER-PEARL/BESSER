@@ -387,6 +387,111 @@ Learn more about BESSER:
             for r in repos
         ]
     
+    def get_branches(
+        self,
+        owner: str,
+        repo_name: str,
+        per_page: int = 100
+    ) -> List[str]:
+        """
+        Get list of branches for a repository.
+        
+        Args:
+            owner: Repository owner
+            repo_name: Repository name
+            per_page: Number of branches per page (max 100)
+            
+        Returns:
+            List of branch names
+        """
+        params = {"per_page": min(per_page, 100)}
+        
+        response = requests.get(
+            f"{self.base_url}/repos/{owner}/{repo_name}/branches",
+            headers=self.headers,
+            params=params,
+            timeout=15
+        )
+        response.raise_for_status()
+        
+        branches = response.json()
+        return [b.get("name") for b in branches]
+    
+    def file_exists(
+        self,
+        owner: str,
+        repo_name: str,
+        file_path: str,
+        branch: str = "main"
+    ) -> bool:
+        """
+        Check if a file exists in the repository.
+        
+        Args:
+            owner: Repository owner
+            repo_name: Repository name
+            file_path: Path to file in repository
+            branch: Branch name
+            
+        Returns:
+            True if file exists, False otherwise
+        """
+        params = {"ref": branch}
+        
+        response = requests.get(
+            f"{self.base_url}/repos/{owner}/{repo_name}/contents/{file_path}",
+            headers=self.headers,
+            params=params,
+            timeout=10
+        )
+        
+        
+        return response.status_code == 200
+    
+    def get_repository_contents(
+        self,
+        owner: str,
+        repo_name: str,
+        path: str = "",
+        branch: str = "main"
+    ) -> List[Dict[str, Any]]:
+        """
+        Get contents of a repository path.
+        
+        Args:
+            owner: Repository owner
+            repo_name: Repository name
+            path: Path to directory (empty for root)
+            branch: Branch name
+            
+        Returns:
+            List of file/directory objects
+        """
+        params = {"ref": branch}
+        
+        # Ensure path doesn't start with /
+        if path.startswith("/"):
+            path = path[1:]
+            
+        url = f"{self.base_url}/repos/{owner}/{repo_name}/contents/{path}"
+        
+        response = requests.get(
+            url,
+            headers=self.headers,
+            params=params,
+            timeout=15
+        )
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        # If result is a dict, it's a single file. Wrap in list.
+        if isinstance(data, dict):
+            return [data]
+            
+        # Sort: directories first, then files
+        return sorted(data, key=lambda x: (x.get("type") != "dir", x.get("name").lower()))
+    
     def get_commits(
         self,
         owner: str,
@@ -530,6 +635,50 @@ Learn more about BESSER:
         return {
             "commit_sha": result.get("commit", {}).get("sha"),
             "content_sha": result.get("content", {}).get("sha"),
+        }
+    
+    def create_gist(
+        self,
+        content: str,
+        filename: str,
+        description: str = "",
+        is_public: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Create a GitHub Gist.
+        
+        Args:
+            content: Content of the gist file
+            filename: Name of the file in the gist
+            description: Gist description
+            is_public: Whether the gist is public
+            
+        Returns:
+            Dictionary with gist URL and ID
+        """
+        data = {
+            "description": description,
+            "public": is_public,
+            "files": {
+                filename: {
+                    "content": content
+                }
+            }
+        }
+        
+        response = requests.post(
+            f"{self.base_url}/gists",
+            headers=self.headers,
+            json=data,
+            timeout=15
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        return {
+            "gist_id": result.get("id"),
+            "gist_url": result.get("html_url"),
+            "raw_url": result.get("files", {}).get(filename, {}).get("raw_url"),
         }
 
 

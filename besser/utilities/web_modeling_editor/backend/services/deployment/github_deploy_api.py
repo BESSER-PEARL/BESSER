@@ -12,6 +12,7 @@ import zipfile
 import tempfile
 import shutil
 import json
+import requests
 from typing import Optional, List
 from datetime import datetime
 
@@ -413,6 +414,7 @@ class CreateRepoForProjectRequest(BaseModel):
     description: str = ""
     is_private: bool = False
     project_data: dict
+    file_path: str = "besser-project.json"
 
 
 class CreateRepoForProjectResponse(BaseModel):
@@ -449,6 +451,122 @@ async def get_user_repositories(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch repositories: {str(e)}")
+
+
+class GitHubBranchesListResponse(BaseModel):
+    """Response for list of branches."""
+    branches: List[str]
+
+
+@router.get("/branches", response_model=GitHubBranchesListResponse)
+async def get_repository_branches(
+    owner: str = Query(..., description="Repository owner"),
+    repo: str = Query(..., description="Repository name"),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
+):
+    """
+    Get list of branches for a repository.
+    """
+    if not github_session:
+        raise HTTPException(status_code=401, detail="GitHub authentication required")
+    
+    access_token = get_user_token(github_session)
+    if not access_token:
+        raise HTTPException(status_code=401, detail="GitHub session expired")
+    
+    try:
+        github = create_github_service(access_token)
+        branches = github.get_branches(owner, repo)
+        
+        return GitHubBranchesListResponse(branches=branches)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch branches: {str(e)}")
+
+
+class FileExistsResponse(BaseModel):
+    """Response for file existence check."""
+    exists: bool
+    path: str
+
+
+@router.get("/file/exists", response_model=FileExistsResponse)
+async def check_file_exists(
+    owner: str = Query(..., description="Repository owner"),
+    repo: str = Query(..., description="Repository name"),
+    branch: str = Query("main", description="Branch name"),
+    file_path: str = Query(..., description="File path to check"),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
+):
+    """
+    Check if a file exists in a GitHub repository.
+    """
+    if not github_session:
+        raise HTTPException(status_code=401, detail="GitHub authentication required")
+    
+    access_token = get_user_token(github_session)
+    if not access_token:
+        raise HTTPException(status_code=401, detail="GitHub session expired")
+    
+    try:
+        github = create_github_service(access_token)
+        exists = github.file_exists(owner, repo, file_path, branch)
+        
+        return FileExistsResponse(exists=exists, path=file_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to check file existence: {str(e)}")
+
+
+
+class GitHubContentItem(BaseModel):
+    """Item in a repository directory."""
+    name: str
+    path: str
+    type: str  # "file" or "dir"
+    size: Optional[int] = 0
+    sha: str
+
+
+class GitHubContentsResponse(BaseModel):
+    """Response for repository contents."""
+    contents: List[GitHubContentItem]
+
+
+@router.get("/contents", response_model=GitHubContentsResponse)
+async def get_repository_contents(
+    owner: str = Query(..., description="Repository owner"),
+    repo: str = Query(..., description="Repository name"),
+    path: str = Query("", description="Path to directory"),
+    branch: str = Query("main", description="Branch name"),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
+):
+    """
+    Get contents of a repository path.
+    """
+    if not github_session:
+        raise HTTPException(status_code=401, detail="GitHub authentication required")
+    
+    access_token = get_user_token(github_session)
+    if not access_token:
+        raise HTTPException(status_code=401, detail="GitHub session expired")
+    
+    try:
+        github = create_github_service(access_token)
+        contents = github.get_repository_contents(owner, repo, path, branch)
+        
+        return GitHubContentsResponse(
+            contents=[
+                GitHubContentItem(
+                    name=item.get("name"),
+                    path=item.get("path"),
+                    type=item.get("type"),
+                    size=item.get("size", 0),
+                    sha=item.get("sha")
+                )
+                for item in contents
+            ]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch contents: {str(e)}")
 
 
 @router.get("/commits", response_model=GitHubCommitsListResponse)
@@ -660,10 +778,11 @@ async def create_repository_for_project(
         
         # Save project to repo
         project_json = json.dumps(request.project_data, indent=2)
+        file_path = request.file_path if hasattr(request, 'file_path') and request.file_path else "besser-project.json"
         save_result = github.create_or_update_file(
             owner=username,
             repo_name=repo_name,
-            file_path="besser-project.json",
+            file_path=file_path,
             content=project_json,
             commit_message=f"Initial commit: {request.project_data.get('name', 'BESSER Project')}",
             branch="main"
@@ -681,7 +800,7 @@ This repository contains a [BESSER](https://github.com/BESSER-PEARL/BESSER) proj
 
 ## Files
 
-- `besser-project.json` - The project definition file
+- `{file_path}` - The project definition file
 
 ## Opening the Project
 
@@ -715,3 +834,77 @@ This repository contains a [BESSER](https://github.com/BESSER-PEARL/BESSER) proj
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create repository: {str(e)}")
+
+
+# ============================================================================
+# GitHub Gist API
+# ============================================================================
+
+class CreateGistRequest(BaseModel):
+    """Request to create a GitHub Gist."""
+    project_data: dict
+    description: str = ""
+    is_public: bool = False
+
+
+class CreateGistResponse(BaseModel):
+    """Response for Gist creation."""
+    success: bool
+    gist_url: str
+    gist_id: str
+    message: str
+
+
+@router.post("/gist/create", response_model=CreateGistResponse)
+async def create_gist_from_project(
+    request: CreateGistRequest,
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session")
+):
+    """
+    Create a GitHub Gist from project data.
+    
+    This creates a shareable Gist containing the project JSON.
+    Useful for quick sharing without creating a full repository.
+    """
+    if not github_session:
+        raise HTTPException(status_code=401, detail="GitHub authentication required")
+    
+    access_token = get_user_token(github_session)
+    if not access_token:
+        raise HTTPException(status_code=401, detail="GitHub session expired")
+    
+    try:
+        github = create_github_service(access_token)
+        
+        # Convert project to JSON
+        project_json = json.dumps(request.project_data, indent=2)
+        
+        # Get project name for filename
+        project_name = request.project_data.get("name", "besser-project")
+        filename = f"{project_name.lower().replace(' ', '-')}.json"
+        
+        # Create gist
+        result = github.create_gist(
+            content=project_json,
+            filename=filename,
+            description=request.description or f"BESSER Project: {project_name}",
+            is_public=request.is_public
+        )
+        
+        return CreateGistResponse(
+            success=True,
+            gist_url=result.get("gist_url", ""),
+            gist_id=result.get("gist_id", ""),
+            message=f"Gist created successfully"
+        )
+    except requests.HTTPError as e:
+        status_code = e.response.status_code if e.response is not None else 500
+        # GitHub returns 404/403 when the token lacks the "gist" scope or gists are disabled
+        if status_code in (403, 404):
+            detail = "GitHub token is missing access to gists. Please reconnect GitHub and grant the 'gist' scope."
+        else:
+            detail = f"GitHub API error while creating Gist: {str(e)}"
+        raise HTTPException(status_code=status_code, detail=detail)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create Gist: {str(e)}")
+

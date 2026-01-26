@@ -9,6 +9,13 @@ besser_venv/
 .env
 venv/
 
+# Environment files (keep .env.example committed, ignore actual .env files)
+.env.local
+.env.prod
+besser/utilities/web_modeling_editor/frontend/packages/webapp/webpack/.env
+besser/utilities/web_modeling_editor/frontend/packages/webapp/webpack/.env.local
+besser/utilities/web_modeling_editor/frontend/packages/webapp/webpack/.env.prod
+
 # package
 /dist/
 buml.egg-info/
@@ -33,6 +40,3 @@ besser/utilities/web_modeling_editor/backend/feedback_data
 
 # pylint
 .pylintrc
-
-TEST_GUI/react_output_test/*
-

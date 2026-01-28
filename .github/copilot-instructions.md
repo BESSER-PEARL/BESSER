@@ -1,0 +1,172 @@
+# GitHub Copilot Instructions for the BESSER Backend Repository
+
+These instructions tailor Copilot suggestions to the structure of the `BESSER`
+repository, which implements the **backend** for the BESSER Web Modeling Editor
+and the core B-UML SDK. The web editor's frontend lives in
+[`BESSER_WME_standalone`](https://github.com/BESSER-PEARL/BESSER_WME_standalone);
+avoid authoring UI code here unless you are touching the embedded frontend submodule
+under `besser/utilities/web_modeling_editor/frontend`.
+
+## Orientation
+- Prioritize changes in the Python packages located in `besser/`:
+  - `BUML/` contains the metamodel, textual/graphical notations, and the validation logic consumed by generators.
+  - `generators/` contains backend code generators (Django, SQLAlchemy, Flutter, etc.).
+  - `utilities/` hosts shared helpers (templating, configuration, CLI tools) that back both the SDK and the editor services.
+- When enhancing the web modeling editor backend, reuse these utilities rather than duplicating logic in ad-hoc modules.
+- Keep documentation in sync—many backend changes require updates under `docs/source/` or in `CONTRIBUTING.md`.
+
+## General Coding Guidelines
+- Write clear, maintainable, and well-documented code.
+- Follow the conventions already established in the touched package.
+- Use descriptive names and add or update docstrings for public APIs.
+- Prefer type annotations for function signatures where practical.
+- Avoid duplication—promote helpers into `besser.utilities` when multiple generators or services share behavior.
+- Cover new behavior with tests in `tests/`, especially around metamodel semantics and generator output.
+- Ensure all code passes linting, formatting, and pytest before committing.
+
+## Python Code Style
+- Follow [PEP 8](https://peps.python.org/pep-0008/) with 4-space indentation and
+  a 120-character soft line limit.
+- Use [PEP 484](https://peps.python.org/pep-0484/) type hints to clarify
+  interfaces between metamodel elements, generators, and utilities.
+- Organize imports as standard library, third-party, then local modules.
+- Avoid wildcard imports and implicit re-exports.
+- Use f-strings for formatting, snake_case for functions/variables, PascalCase for classes, and UPPER_CASE for module constants.
+- Keep docstrings (PEP 257) up to date, including examples for DSL usage when relevant.
+- Prefer dataclasses or attrs-style patterns already present in the package you touch.
+- Favor small, composable functions; promote reusable logic to `besser.utilities`.
+
+## TypeScript / Frontend Touchpoints
+- TypeScript should rarely appear in this repository. If you must edit the frontend submodule under `besser/utilities/web_modeling_editor/frontend`, follow the conventions upstream in `BESSER_WME_standalone`:
+  - Enable strict compiler options.
+  - Prefer `interface` for object shapes, `const` for immutable bindings, and explicit return types.
+  - Run the frontend toolchain in that submodule (`npm install`, `npm test`) and keep linting/formatting consistent with its configuration.
+  - Keep component logic lean—delegate backend interactions to the Python services exposed by this repository.
+- All other UI changes belong in the dedicated frontend repository.
+
+## Documentation Expectations
+- Update reStructuredText files under `docs/source/` when backend behavior or
+  contributor workflows change. Build locally with `cd docs && make html`.
+- Keep `README.md`, `CONTRIBUTING.md`, and the contributor/AI-assistant guides
+  aligned with new features or tooling.
+- Mirror updates in `CONTRIBUTING.md` or `README.md` when changing onboarding steps.
+- Document environment setup steps any time dependencies or workflows change
+  (e.g., new generator prerequisites, updated CLI flags).
+- Reference modules using Sphinx roles like `:mod:` and `:class:` to help readers find backend entry points.
+- Place shared images in `docs/source/_static/` or `docs/source/img/`.
+
+## Where to Contribute
+
+The repository is organized around four main pillars. Use this guide to understand the scope of each pillar and to follow best practices when you open a pull request.
+
+### B-UML Language Core (`besser/BUML`)
+
+- Own the metamodel: new concepts and relationships start in this folder. Keep naming consistent with the rest of B-UML.
+- Update serialization: whenever you add or modify model elements, extend the serializers/deserializers so BUML models round-trip cleanly.
+- Protect behavior with tests: place unit tests under `tests/buml` and cover both valid and invalid scenarios.
+- Document everything: reflect the changes in `docs/source/buml_language.rst` and any other affected guides to help users reason about the new constructs.
+
+### Platform Utilities (`besser/utilities`)
+
+- Reuse before reinventing: common converters, validation helpers, and processors should live here so other parts of the platform can import them.
+- Keep scripts idempotent: utilities are often used in CI and automation, so make sure rerunning them is safe.
+- Explain usage: every new tool needs a short README section plus an entry in `docs/source/utilities.rst` outlining invocation examples and configuration flags.
+
+### Code Generators (`besser/generators`)
+
+- Mirror the existing layout: split templates, transformers, and configuration objects into separate modules so the generator stays maintainable.
+- Stay deterministic: generators should produce the same result for the same model; avoid timestamp-based file names unless explicitly required.
+- Provide samples: include fixtures under `examples` or `tests/generators` that demonstrate the expected output.
+- Wire documentation: annotate `docs/source/generators` with usage instructions, prerequisites, and troubleshooting tips.
+
+### Web Modeling Editor Backend (`besser/utilities/web_modeling_editor`)
+
+- The editor backend is located at `besser/utilities/web_modeling_editor` (Python backend services).
+- The frontend is a submodule at `besser/utilities/web_modeling_editor/frontend` (TypeScript/React).
+- Synchronize with the frontend: for every API change, communicate with the UI maintainers and update TypeScript types or schemas as needed.
+- Cover converters: backend services contain JSON <-> B-UML converters for diagrams; extend both directions and add tests whenever you introduce a new concept.
+- Respect validation contracts: make sure FastAPI/Flask models, Pydantic schemas, and business rules stay aligned with the BUML definitions.
+- Document endpoints: update `docs/source/web_editor.rst` and `docs/source/api` whenever you add, rename, or delete API endpoints so integrators can keep up.
+
+### Contribution Checklist
+
+Regardless of the area:
+
+1. Discuss the idea first (issue tracker or community chat) to avoid duplicated effort.
+2. Write or update automated tests that demonstrate the new behavior.
+3. Run the relevant commands locally (`pytest`, `npm test`, `make docs`, etc.) and ensure they pass.
+4. Describe migrations, breaking changes, and manual steps clearly in your pull request description.
+
+## Guide: Create a New Generator
+
+Use this playbook when you want to add support for a new technology stack (e.g., FastAPI, Spring Boot, Vue) in BESSER.
+
+### 1. Define the Scope
+
+- Identify the target runtime, deployment model, and tooling (framework versions, package managers, Docker images).
+- Document the mapping rules between B-UML constructs and generated artifacts inside `docs/source/generators` so the community can review the expected behavior.
+
+### 2. Bootstrap the Module
+
+- Copy the minimal scaffold from an existing generator (folder structure, setup module, test layout) and rename all packages, entry points, and CLI hooks.
+- Keep reusable helpers inside `besser/utilities`. Only generator-specific code should live under your new folder in `besser/generators`.
+
+### 3. Implement Transformations
+
+- Build a clear pipeline: BUML model -> intermediate representation -> rendered files.
+- Respect the generator service interface so the component can be triggered from both the CLI and the web modeling editor backend.
+- Store templates separately (Jinja2, f-strings, etc.) and favor small, composable functions to simplify testing.
+
+### 4. Add Regression Tests
+
+- Place unit and integration tests under `tests/generators/<your-generator>`.
+- Use small BUML fixture models to test mappings in isolation and full-generation scenarios.
+- Validate both structure (e.g., class names, endpoints) and content (e.g., business logic snippets, configuration files).
+
+### 5. Document and Demo
+
+- Extend `docs/source/examples.rst` (or add a new section) with a walkthrough that starts from a BUML model and ends with the generated artifact running locally.
+- List prerequisites (installed toolchains, environment variables, Docker images) and troubleshooting hints.
+- Attach screenshots, logs, or GIFs if they make reviewer validation easier.
+
+## Guide: Add a New Sub-DSL
+
+This guide covers the full lifecycle for extending B-UML with a new domain-specific branch and plugging it into the web modeling editor.
+
+### 1. Design the Metamodel
+
+- Model the core concepts, relationships, and constraints first (UML class diagrams or plain sketches help).
+- Implement the new elements inside `besser/BUML` by extending the existing metamodel packages.
+- Keep naming consistent, reuse base classes where possible, and document the semantics in `docs/source/buml_language`.
+
+### 2. Implement Persistence and Validation
+
+- Update serializers/deserializers so the new objects can be exported/imported alongside the rest of the BUML model.
+- Add schema migrations or compatibility layers if the JSON/YAML representation changes.
+- Cover business rules with unit tests under `tests/buml` (valid models) and `tests/buml_invalid` (error cases).
+
+### 3. Extend Utilities and Converters
+
+- Update helpers under `besser/utilities` (diagram processors, converters, validators) to recognize the new sub-DSL artifacts.
+- Keep the converters symmetrical: JSON <-> BUML and BUML <-> JSON must support the same features.
+- Document any new CLI entry points or scripts within `docs/source/utilities`.
+
+### 4. Integrate with the Web Modeling Editor
+
+- Frontend: add the visual palette elements, properties panels, and canvas behaviors in `besser/utilities/web_modeling_editor/frontend`. Follow the existing component patterns (React/TypeScript) and add Storybook demos if available.
+- Backend: expose REST/WS endpoints, validation routes, and persistence logic under `besser/utilities/web_modeling_editor`. Align FastAPI/Flask schemas with the BUML definitions.
+- Sync contracts: update shared type definitions so frontend and backend stay compatible (e.g., OpenAPI schemas, TS types).
+
+### 5. Update Documentation and Examples
+
+- Describe the new DSL in `docs/source/web_editor.rst` (UI usage) and `docs/source/api` (service endpoints).
+- Provide at least one runnable sample in `docs/source/examples` showing how to model with the new DSL and, if relevant, how generators consume it.
+- Highlight migration advice or compatibility notes so existing users know how the change affects their projects.
+
+---
+
+_Note: These instructions are also available as `.cursorrules` in the repository root for Cursor IDE compatibility. The canonical source is this file for GitHub Copilot._
+
+_Following these guidelines helps Copilot propose changes that respect the
+architecture of the BESSER backend and keeps human and AI contributions
+consistent._

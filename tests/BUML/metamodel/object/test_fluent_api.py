@@ -68,7 +68,7 @@ gen_Coach_Person = Generalization(general=Person, specific=Coach)
 
 # Domain Model
 domain_model = DomainModel(
-    name="Team-Playermodel",
+    name="Team_Playermodel",
     types={Person, Player, Team, Coach},
     associations={person_team_asso, team_player_asso, Team_Coach},
     generalizations={gen_Player_Person, gen_Coach_Person}

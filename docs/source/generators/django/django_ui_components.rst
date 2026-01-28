@@ -1,5 +1,9 @@
-Django App with Admin Panel & UI Components
-===========================================
+Django App with Admin Panel & UI Components (deprecated)
+========================================================
+
+.. warning::
+
+   This code generator is **deprecated** and may be discontinued in future versions.
 
 **B-UML Models required**
 

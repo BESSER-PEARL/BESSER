@@ -1,6 +1,32 @@
 from django.contrib import admin
 from {{app_name}}.models import *
-
 {% for class in model.get_classes() %}
+
+{%- if class.methods %}
+{%- set method_list = sort(class.methods) %}
+# Admin actions for {{class.name}} methods
+{%- for method in method_list %}
+
+@admin.action(description='Execute {{method.name}}() on selected {{class.name|lower}}s')
+def {{class.name|lower}}_{{method.name}}_action(modeladmin, request, queryset):
+    """Execute {{method.name}} on selected objects"""
+    count = 0
+    for obj in queryset:
+        try:
+            obj.{{method.name}}()
+            count += 1
+        except Exception as e:
+            modeladmin.message_user(request, f"Error executing {{method.name}} on {obj}: {str(e)}", level='ERROR')
+    if count > 0:
+        modeladmin.message_user(request, f"Successfully executed {{method.name}}() on {count} {{class.name|lower}}(s)")
+
+{% endfor %}
+class {{class.name}}Admin(admin.ModelAdmin):
+    list_display = [{% for attr in sort(class.attributes) %}'{{attr.name}}'{% if not loop.last %}, {% endif %}{% endfor %}]
+    actions = [{% for method in method_list %}{{class.name|lower}}_{{method.name}}_action{% if not loop.last %}, {% endif %}{% endfor %}]
+
+admin.site.register({{class.name}}, {{class.name}}Admin)
+{% else %}
 admin.site.register({{class.name}})
+{% endif %}
 {% endfor %}

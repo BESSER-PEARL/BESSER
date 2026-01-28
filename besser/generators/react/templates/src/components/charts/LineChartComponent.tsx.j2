@@ -1,0 +1,249 @@
+import React, { CSSProperties, useState, useCallback } from "react";
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+
+interface SeriesConfig {
+  name: string;
+  label?: string;
+  color?: string;
+  'data-source'?: string;
+  dataSource?: string;
+  endpoint?: string;
+  'label-field'?: string;
+  labelField?: string;
+  'data-field'?: string;
+  dataField?: string;
+  filter?: string;
+  data?: Array<{ name: string; value: number }>;
+  fetchedData?: any[];  // Pre-fetched data from Renderer
+}
+
+interface Props {
+  id: string;
+  title?: string;
+  color?: string;
+  data?: any[];
+  series?: SeriesConfig[];
+  labelField?: string;
+  dataField?: string | string[];
+  options?: Record<string, any>;
+  styles?: CSSProperties;
+}
+
+const defaultColors = ["#4a90e2", "#10B981", "#F97316", "#F43F5E", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"];
+
+// Helper to get nested value from object using dot notation (e.g., "measures.value")
+// Handles arrays by getting first element's value
+const getNestedValue = (obj: any, path: string): any => {
+  if (!path || !obj) return undefined;
+  // If no dot, just return direct property
+  if (!path.includes('.')) return obj[path];
+  // Navigate through nested properties
+  const parts = path.split('.');
+  let value = obj;
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (value == null) return undefined;
+    
+    // If current value is an array, get the first element and continue from there
+    if (Array.isArray(value)) {
+      if (value.length === 0) return undefined;
+      // Get first element
+      value = value[0];
+    }
+    
+    value = value[part];
+  }
+  return value;
+};
+
+export const LineChartComponent: React.FC<Props> = ({
+  id,
+  title,
+  color,
+  data: propData,
+  series: propSeries,
+  labelField,
+  dataField,
+  options,
+  styles,
+}) => {
+  // Track visible series for clickable legend
+  const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+
+  // Normalize series from props or create from single dataField
+  const series: SeriesConfig[] = React.useMemo(() => {
+    if (propSeries && propSeries.length > 0) {
+      return propSeries;
+    }
+    if (Array.isArray(dataField)) {
+      return dataField.map((field, i) => ({
+        name: field,
+        color: defaultColors[i % defaultColors.length],
+        dataField: field,
+        labelField: labelField || 'name',
+      }));
+    }
+    if (dataField) {
+      return [{
+        name: dataField,
+        color: color || defaultColors[0],
+        dataField,
+        labelField: labelField || 'name',
+      }];
+    }
+    return [];
+  }, [propSeries, dataField, color, labelField]);
+
+  // Merge all series data into a single dataset for recharts
+  const mergedData = React.useMemo(() => {
+    if (propData && propData.length > 0) {
+      const firstRow = propData[0] || {};
+      const hasSeriesKeys = series.some((s) => firstRow[s.name] !== undefined);
+      if (!series.length || hasSeriesKeys) {
+        return propData.map((item) => ({
+          ...item,
+          name:
+            getNestedValue(item, labelField || 'name') ??
+            item?.name ??
+            item?.label,
+        }));
+      }
+    }
+    
+    const dataMap = new Map<string, any>();
+    
+    series.forEach((s) => {
+      const labelFieldName =
+        s['label-field'] ||
+        s.labelField ||
+        (Array.isArray(labelField) ? labelField[0] : labelField) ||
+        'name';
+      const dataFieldName =
+        s['data-field'] ||
+        s.dataField ||
+        s.name ||
+        (Array.isArray(dataField) ? dataField[0] : dataField) ||
+        'value';
+      const data = s.fetchedData ?? s.data ?? [];
+      data.forEach((point: any) => {
+        const key =
+          getNestedValue(point, labelFieldName) ??
+          point?.[labelFieldName] ??
+          point?.name ??
+          point?.label ??
+          '';
+        if (!dataMap.has(key)) {
+          dataMap.set(key, { name: key });
+        }
+        const rawValue =
+          getNestedValue(point, dataFieldName) ??
+          point?.[dataFieldName] ??
+          point?.value;
+        const numericValue =
+          typeof rawValue === 'number' ? rawValue : parseFloat(rawValue);
+        dataMap.get(key)[s.name] = Number.isFinite(numericValue) ? numericValue : 0;
+      });
+    });
+    
+    if (dataMap.size > 0) {
+      return Array.from(dataMap.values());
+    }
+
+    return propData || [];
+  }, [propData, series, labelField, dataField]);
+
+  const containerStyle: CSSProperties = {
+    width: "100%",
+    height: "400px",
+    marginBottom: "20px",
+    ...styles,
+  };
+
+  const strokeWidth = options?.lineWidth ?? 2;
+  const showGrid = options?.showGrid ?? true;
+  const showLegend = options?.showLegend ?? true;
+  const showTooltip = options?.showTooltip ?? true;
+  const legendPosition = options?.legendPosition || "top";
+
+  // Handle legend click to toggle series visibility
+  const handleLegendClick = useCallback((dataKey: string) => {
+    setHiddenSeries(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(dataKey)) {
+        newSet.delete(dataKey);
+      } else {
+        newSet.add(dataKey);
+      }
+      return newSet;
+    });
+  }, []);
+
+  // Custom legend with clickable items
+  const renderLegend = (props: any) => {
+    const { payload } = props;
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', flexWrap: 'wrap', padding: '10px' }}>
+        {payload.map((entry: any, index: number) => (
+          <div
+            key={`legend-${index}`}
+            onClick={() => handleLegendClick(entry.dataKey)}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              cursor: 'pointer',
+              opacity: hiddenSeries.has(entry.dataKey) ? 0.4 : 1,
+              textDecoration: hiddenSeries.has(entry.dataKey) ? 'line-through' : 'none',
+              transition: 'opacity 0.2s',
+            }}
+          >
+            <span style={{
+              width: '14px',
+              height: '14px',
+              backgroundColor: entry.color,
+              borderRadius: '2px',
+            }} />
+            <span style={{ fontSize: '14px', color: '#374151' }}>{entry.value}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  return (
+    <div id={id} style={containerStyle}>
+      {title && <h3 style={{ textAlign: "center", marginBottom: "10px" }}>{title}</h3>}
+      <ResponsiveContainer width="100%" height={360}>
+        <LineChart data={mergedData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+          {showGrid && <CartesianGrid strokeDasharray="3 3" stroke={options?.gridColor} />}
+          <XAxis dataKey="name" />
+          <YAxis />
+          {showTooltip && <Tooltip />}
+          {showLegend && <Legend verticalAlign={legendPosition} content={renderLegend} />}
+          {series.map((s, index) => (
+            <Line
+              key={s.name}
+              type={options?.curveType || "monotone"}
+              dataKey={s.name}
+              name={s.name}
+              stroke={s.color || defaultColors[index % defaultColors.length]}
+              strokeWidth={strokeWidth}
+              dot={options?.dotSize ? { r: options.dotSize } : true}
+              isAnimationActive={options?.animate ?? true}
+              hide={hiddenSeries.has(s.name)}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+};

@@ -6,7 +6,7 @@ You can create the application in two ways:
 
 1. :doc:`Django App with Admin Panel </generators/django/django_admin_panel>` — A Django application with database models and CRUD functionality, accessible via Django’s admin panel.
 
-2. :doc:`Django App with Admin Panel & UI Components </generators/django/django_ui_components>` — Includes everything from the Admin Panel version, plus predefined user interfaces such as forms and templates.
+2. :doc:`Django App with Admin Panel & UI Components </generators/django/django_ui_components>` (**deprecated**) — Includes everything from the Admin Panel version, plus predefined user interfaces such as forms and templates.
 
 .. note::
 

@@ -1,0 +1,893 @@
+"""
+Chart component parsers for GUI diagrams.
+"""
+
+import json
+from typing import Dict, Any, List
+from besser.BUML.metamodel.gui import (
+    Alignment, BarChart, DataBinding, LineChart,
+    PieChart, RadarChart, RadialBarChart, Table,
+    Color, Position, Size, Styling, MetricCard, DataAggregation
+)
+from besser.BUML.metamodel.gui.dashboard import (
+    AgentComponent, Column, FieldColumn, LookupColumn, ExpressionColumn
+)
+from besser.BUML.metamodel.gui.dashboard import AgentComponent, Series
+from .styling import ensure_styling_parts
+from .utils import clean_attribute_name, get_element_by_id, parse_bool, sanitize_name
+
+# TODO: Uncomment when backend aggregation is ready
+# def _parse_aggregation(aggregation_str: str) -> DataAggregation:
+#     """
+#     Parse aggregation string from JSON attributes to DataAggregation enum.
+    
+#     Args:
+#         aggregation_str: String value like "sum", "average", "count", etc.
+        
+#     Returns:
+#         DataAggregation enum value or None if invalid
+#     """
+#     if not aggregation_str or not isinstance(aggregation_str, str):
+#         return None
+    
+#     aggregation_map = {
+#         'sum': DataAggregation.SUM,
+#         'avg': DataAggregation.AVG,
+#         'average': DataAggregation.AVG,
+#         'count': DataAggregation.COUNT,
+#         'min': DataAggregation.MIN,
+#         'minimum': DataAggregation.MIN,
+#         'max': DataAggregation.MAX,
+#         'maximum': DataAggregation.MAX,
+#         'median': DataAggregation.MEDIAN,
+#         'first': DataAggregation.FIRST,
+#         'last': DataAggregation.LAST,
+#     }
+    
+#     return aggregation_map.get(aggregation_str.lower())
+
+
+def _parse_chart_data_binding(attrs: Dict[str, Any], class_model, domain_model) -> tuple:
+    """
+    Parse common chart data binding attributes.
+    
+    Supports both simple UUIDs (e.g., "abc123") and dot notation for related class attributes 
+    (e.g., "measure.xyz789" where "measure" is the relationship role and "xyz789" is the attribute UUID).
+    
+    Returns:
+        Tuple of (domain_class, label_field, data_field, label_field_path, data_field_path)
+        - label_field/data_field: Property objects for direct attributes, None for nested
+        - label_field_path/data_field_path: String paths like "measure.value" for nested, None for direct
+    """
+    # Helper to parse field value which may be UUID or dot notation
+    def parse_field_value(field_value: str, domain_class):
+        """
+        Parse a field value which may be:
+        - A simple UUID pointing to an attribute
+        - Dot notation like "relationship.attributeId" for related class attributes
+        
+        Returns: (field_object_or_None, path_string_or_None)
+        """
+        if not field_value:
+            return None, None
+        
+        # Check for dot notation (relationship.attributeId)
+        if '.' in field_value:
+            parts = field_value.split('.', 1)
+            relationship_role = parts[0]
+            attr_id = parts[1]
+            
+            # Look up the attribute by ID in the class model
+            attr_el = get_element_by_id(class_model, attr_id)
+            if attr_el:
+                attr_name = clean_attribute_name(attr_el.get('name', attr_id))
+                # Return None for object, path string for nested access
+                return None, f"{relationship_role}.{attr_name}"
+            else:
+                # Fallback: assume attr_id is already a name
+                return None, f"{relationship_role}.{attr_id}"
+        else:
+            # Simple UUID - look up element by ID
+            field_el = get_element_by_id(class_model, field_value)
+            if field_el:
+                field_name = field_el.get('name')
+                if field_name:
+                    field_name = clean_attribute_name(field_name)
+                    if domain_class:
+                        # Try to find the attribute object in the domain class
+                        field_obj = next((a for a in domain_class.attributes if clean_attribute_name(a.name) == field_name), None)
+                        if field_obj:
+                            return field_obj, None
+                    # Return None for object if not found, but we can use the name as path
+                    return None, field_name
+            return None, None
+    
+    # Resolve data source
+    data_source_el = get_element_by_id(class_model, attrs.get('data-source'))
+    data_source_name = data_source_el.get('name') if data_source_el else None
+    domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
+    
+    # Parse label and data fields
+    label_field_raw = attrs.get('label-field')
+    data_field_raw = attrs.get('data-field')
+    
+    label_field, label_field_path = parse_field_value(label_field_raw, domain_class)
+    data_field, data_field_path = parse_field_value(data_field_raw, domain_class)
+
+    return domain_class, label_field, data_field, label_field_path, data_field_path
+
+
+def _attach_chart_metadata(chart, component: Dict[str, Any]) -> None:
+    """Helper to attach GrapesJS metadata to chart component for code generation fidelity."""
+    if not chart:
+        return
+
+    attributes = component.get("attributes", {})
+    if isinstance(attributes, dict):
+        chart.component_id = attributes.get("id") or component.get("id")
+    else:
+        chart.component_id = component.get("id")
+
+    chart.component_type = component.get("type")
+    chart.tag_name = component.get("tagName")
+    chart.css_classes = [cls if isinstance(cls, str) else cls.get("name", "") for cls in (component.get("classes") or [])]
+    chart.custom_attributes = dict(attributes) if isinstance(attributes, dict) else {}
+
+
+def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> LineChart:
+    """
+    Parses a line chart component, resolving data binding from class_model and domain_model.
+    
+    Args:
+        view_comp: Component dict from GrapesJS
+        class_model: Class model for object resolution
+        domain_model: Domain metamodel for object resolution
+        
+    Returns:
+        LineChart instance
+    """
+    attrs = view_comp.get('attributes', {})
+
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'LineChart'
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('LineChart')
+    if not chart_title:
+        chart_title = 'LineChart'
+    if not title_value:
+        title_value = chart_title.replace('_', ' ').title()
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
+    # Parse series list
+    series_objs = []
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except Exception:
+            series_json = []
+    if isinstance(series_json, list):
+        for s in series_json:
+            s_attrs = s if isinstance(s, dict) else {}
+            s_raw_name = s_attrs.get('name', 'Series')
+            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
+            
+            # Extract filter from series attributes
+            series_filter = s_attrs.get('filter')
+            if series_filter and isinstance(series_filter, str) and series_filter.strip():
+                data_filter = series_filter.strip()
+            else:
+                data_filter = None
+            
+            data_binding = None
+            if domain_class:
+                data_binding = DataBinding(
+                    domain_concept=domain_class,
+                    label_field=label_field,
+                    data_field=data_field,
+                    label_field_path=label_field_path,
+                    data_field_path=data_field_path,
+                    filter_expression=data_filter
+                )
+            
+            # Extract color from series attributes and create styling
+            styling = None
+            series_color = s_attrs.get('color')
+            if series_color and isinstance(series_color, str) and series_color.strip():
+                # Create styling with color - use line_color for line charts
+                color_obj = Color(line_color=series_color, background_color=series_color, primary_color=series_color)
+                styling = Styling(color=color_obj)
+            elif 'styling' in s_attrs:
+                from .styling import styling_from_css
+                styling = styling_from_css(s_attrs['styling'])
+            
+            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+
+    line_chart = LineChart(
+        name=chart_title,
+        series=series_objs,
+        line_width=int(attrs.get('line-width', 2)),
+        show_grid=parse_bool(attrs.get('show-grid'), True),
+        show_legend=parse_bool(attrs.get('show-legend'), True),
+        show_tooltip=parse_bool(attrs.get('show-tooltip'), True),
+        curve_type=attrs.get('curve-type', 'monotone'),
+        animate=parse_bool(attrs.get('animate'), True),
+        legend_position=attrs.get('legend-position', 'top'),
+        grid_color=attrs.get('grid-color', '#e0e0e0'),
+        dot_size=int(attrs.get('dot-size', 5)),
+        title=title_value,
+        primary_color=primary_color
+    )
+    _attach_chart_metadata(line_chart, view_comp)
+    return line_chart
+
+
+def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> BarChart:
+    """
+    Parses a bar chart component, resolving data binding from class_model and domain_model.
+    
+    Args:
+        view_comp: Component dict from GrapesJS
+        class_model: Class model for object resolution
+        domain_model: Domain metamodel for object resolution
+        
+    Returns:
+        BarChart instance
+    """
+    attrs = view_comp.get('attributes', {})
+
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'BarChart'
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('BarChart')
+    if not chart_title:
+        chart_title = 'BarChart'
+    if not title_value:
+        title_value = chart_title.replace('_', ' ').title()
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
+    # Parse series list
+    series_objs = []
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except Exception:
+            series_json = []
+    if isinstance(series_json, list):
+        for s in series_json:
+            s_attrs = s if isinstance(s, dict) else {}
+            s_raw_name = s_attrs.get('name', 'Series')
+            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
+            
+            # Extract filter from series attributes
+            series_filter = s_attrs.get('filter')
+            if series_filter and isinstance(series_filter, str) and series_filter.strip():
+                data_filter = series_filter.strip()
+            else:
+                data_filter = None
+            
+            data_binding = None
+            if domain_class:
+                data_binding = DataBinding(
+                    domain_concept=domain_class,
+                    label_field=label_field,
+                    data_field=data_field,
+                    label_field_path=label_field_path,
+                    data_field_path=data_field_path,
+                    filter_expression=data_filter
+                )
+            
+            # Extract color from series attributes and create styling
+            styling = None
+            series_color = s_attrs.get('color')
+            if series_color and isinstance(series_color, str) and series_color.strip():
+                # Create styling with color - use bar_color for bar charts
+                color_obj = Color(bar_color=series_color, background_color=series_color, primary_color=series_color)
+                styling = Styling(color=color_obj)
+            elif 'styling' in s_attrs:
+                from .styling import styling_from_css
+                styling = styling_from_css(s_attrs['styling'])
+            
+            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+
+    bar_chart = BarChart(
+        name=chart_title,
+        series=series_objs,
+        bar_width=int(attrs.get('bar-width', 30)),
+        orientation=attrs.get('orientation', 'vertical'),
+        show_grid=parse_bool(attrs.get('show-grid'), True),
+        show_legend=parse_bool(attrs.get('show-legend'), True),
+        show_tooltip=parse_bool(attrs.get('show-tooltip'), True),
+        stacked=parse_bool(attrs.get('stacked'), False),
+        animate=parse_bool(attrs.get('animate'), True),
+        legend_position=attrs.get('legend-position', 'top'),
+        grid_color=attrs.get('grid-color', '#e0e0e0'),
+        bar_gap=int(attrs.get('bar-gap', 4)),
+        title=title_value,
+        primary_color=primary_color
+    )
+    _attach_chart_metadata(bar_chart, view_comp)
+    return bar_chart
+
+
+def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> PieChart:
+    """
+    Parses a pie chart component, resolving data binding from class_model and domain_model.
+    
+    Args:
+        view_comp: Component dict from GrapesJS
+        class_model: Class model for object resolution
+        domain_model: Domain metamodel for object resolution
+        
+    Returns:
+        PieChart instance
+    """
+    attrs = view_comp.get('attributes', {})
+
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'PieChart'
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('PieChart')
+    if not chart_title:
+        chart_title = 'PieChart'
+    if not title_value:
+        title_value = chart_title.replace('_', ' ').title()
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
+    # Parse series list
+    series_objs = []
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except Exception:
+            series_json = []
+    if isinstance(series_json, list):
+        for s in series_json:
+            s_attrs = s if isinstance(s, dict) else {}
+            s_raw_name = s_attrs.get('name', 'Series')
+            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
+            
+            # Extract filter from series attributes
+            series_filter = s_attrs.get('filter')
+            if series_filter and isinstance(series_filter, str) and series_filter.strip():
+                data_filter = series_filter.strip()
+            else:
+                data_filter = None
+            
+            data_binding = None
+            if domain_class:
+                data_binding = DataBinding(
+                    domain_concept=domain_class,
+                    label_field=label_field,
+                    data_field=data_field,
+                    label_field_path=label_field_path,
+                    data_field_path=data_field_path,
+                    filter_expression=data_filter
+                )
+            styling = None
+            if 'styling' in s_attrs:
+                from .styling import styling_from_css
+                styling = styling_from_css(s_attrs['styling'])
+            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+
+    show_legend = parse_bool(attrs.get('show-legend'), True)
+    show_labels = parse_bool(attrs.get('show-labels'), True)
+
+    legend_pos_map = {
+        'top': Alignment.TOP,
+        'right': Alignment.RIGHT,
+        'bottom': Alignment.BOTTOM,
+        'left': Alignment.LEFT
+    }
+    label_pos_map = {
+        'inside': Alignment.INSIDE,
+        'outside': Alignment.OUTSIDE
+    }
+
+    legend_position_str = attrs.get('legend-position', 'left')
+    label_position_str = attrs.get('label-position', 'inside')
+
+    legend_position = legend_pos_map.get(legend_position_str, Alignment.LEFT)
+    label_position = label_pos_map.get(label_position_str, Alignment.INSIDE)
+
+    pie_chart = PieChart(
+        name=chart_title,
+        series=series_objs,
+        show_legend=show_legend,
+        legend_position=legend_position,
+        show_labels=show_labels,
+        label_position=label_position,
+        padding_angle=int(attrs.get('padding-angle', 0)),
+        inner_radius=int(attrs.get('inner-radius', 0)),
+        outer_radius=int(attrs.get('outer-radius', 80)),
+        start_angle=int(attrs.get('start-angle', 0)),
+        end_angle=int(attrs.get('end-angle', 360)),
+        title=title_value,
+        primary_color=primary_color
+    )
+    _attach_chart_metadata(pie_chart, view_comp)
+    return pie_chart
+
+
+def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> RadarChart:
+    """
+    Parses a radar chart component, resolving data binding from class_model and domain_model.
+    
+    Args:
+        view_comp: Component dict from GrapesJS
+        class_model: Class model for object resolution
+        domain_model: Domain metamodel for object resolution
+        
+    Returns:
+        RadarChart instance
+    """
+    attrs = view_comp.get('attributes', {})
+
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'RadarChart'
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('RadarChart')
+    if not chart_title:
+        chart_title = 'RadarChart'
+    if not title_value:
+        title_value = chart_title.replace('_', ' ').title()
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
+    # Parse series list
+    series_objs = []
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except Exception:
+            series_json = []
+    if isinstance(series_json, list):
+        for s in series_json:
+            s_attrs = s if isinstance(s, dict) else {}
+            s_raw_name = s_attrs.get('name', 'Series')
+            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+            domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(s_attrs, class_model, domain_model)
+            
+            # Extract filter from series attributes
+            series_filter = s_attrs.get('filter')
+            if series_filter and isinstance(series_filter, str) and series_filter.strip():
+                data_filter = series_filter.strip()
+            else:
+                data_filter = None
+            
+            data_binding = None
+            if domain_class:
+                data_binding = DataBinding(
+                    domain_concept=domain_class,
+                    label_field=label_field,
+                    data_field=data_field,
+                    label_field_path=label_field_path,
+                    data_field_path=data_field_path,
+                    filter_expression=data_filter
+                )
+            styling = None
+            if 'styling' in s_attrs:
+                from .styling import styling_from_css
+                styling = styling_from_css(s_attrs['styling'])
+            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+
+    radar_chart = RadarChart(
+        name=chart_title,
+        series=series_objs,
+        show_grid=parse_bool(attrs.get('show-grid'), True),
+        show_tooltip=parse_bool(attrs.get('show-tooltip'), True),
+        show_radius_axis=parse_bool(attrs.get('show-radius-axis'), True),
+        show_legend=parse_bool(attrs.get('show-legend'), True),
+        legend_position=attrs.get('legend-position', 'top'),
+        dot_size=int(attrs.get('dot-size', 3)),
+        grid_type=attrs.get('grid-type', 'polygon'),
+        stroke_width=int(attrs.get('stroke-width', 2)),
+        title=title_value,
+        primary_color=primary_color
+    )
+    _attach_chart_metadata(radar_chart, view_comp)
+    return radar_chart
+
+
+def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> RadialBarChart:
+    """
+    Parses a radial bar chart component, mapping features/values to label/data fields.
+    
+    Args:
+        view_comp: Component dict from GrapesJS
+        class_model: Class model for object resolution
+        domain_model: Domain metamodel for object resolution
+        
+    Returns:
+        RadialBarChart instance
+    """
+    attrs = view_comp.get('attributes', {})
+
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'RadialBarChart'
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('RadialBarChart')
+    if not chart_title:
+        chart_title = 'RadialBarChart'
+    if not title_value:
+        title_value = chart_title.replace('_', ' ').title()
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
+    # Parse series list
+    series_objs = []
+    series_json = attrs.get('series') or view_comp.get('series')
+    if isinstance(series_json, str):
+        try:
+            series_json = json.loads(series_json)
+        except Exception:
+            series_json = []
+    if isinstance(series_json, list):
+        for s in series_json:
+            s_attrs = s if isinstance(s, dict) else {}
+            s_raw_name = s_attrs.get('name', 'Series')
+            s_name = s_raw_name.replace(' ', '_') if isinstance(s_raw_name, str) else 'Series'
+            data_source_el = get_element_by_id(class_model, s_attrs.get('data-source'))
+            features_el = get_element_by_id(class_model, s_attrs.get('features')) or get_element_by_id(class_model, s_attrs.get('label-field'))
+            values_el = get_element_by_id(class_model, s_attrs.get('values')) or get_element_by_id(class_model, s_attrs.get('data-field'))
+            data_source_name = data_source_el.get('name') if data_source_el else None
+            features_name = features_el.get('name') if features_el else None
+            values_name = values_el.get('name') if values_el else None
+            if features_name:
+                features_name = clean_attribute_name(features_name)
+            if values_name:
+                values_name = clean_attribute_name(values_name)
+            domain_class = domain_model.get_class_by_name(data_source_name) if data_source_name else None
+            label_field = None
+            data_field = None
+            if domain_class:
+                if features_name:
+                    label_field = next((a for a in domain_class.attributes if a.name == features_name), None)
+                if values_name:
+                    data_field = next((a for a in domain_class.attributes if a.name == values_name), None)
+            
+            # Extract filter from series attributes
+            series_filter = s_attrs.get('filter')
+            if series_filter and isinstance(series_filter, str) and series_filter.strip():
+                data_filter = series_filter.strip()
+            else:
+                data_filter = None
+            
+            data_binding = None
+            if domain_class:
+                data_binding = DataBinding(
+                    domain_concept=domain_class,
+                    label_field=label_field,
+                    data_field=data_field,
+                    filter_expression=data_filter
+                )
+            styling = None
+            if 'styling' in s_attrs:
+                from .styling import styling_from_css
+                styling = styling_from_css(s_attrs['styling'])
+            series_objs.append(Series(name=s_name, label=s_raw_name, data_binding=data_binding, styling=styling))
+
+    radial_bar_chart = RadialBarChart(
+        name=chart_title,
+        series=series_objs,
+        start_angle=int(attrs.get('start-angle', 0)),
+        end_angle=int(attrs.get('end-angle', 360)),
+        inner_radius=int(attrs.get('inner-radius', 30)),
+        outer_radius=int(attrs.get('outer-radius', 80)),
+        show_legend=parse_bool(attrs.get('show-legend'), True),
+        legend_position=attrs.get('legend-position', 'top'),
+        show_tooltip=parse_bool(attrs.get('show-tooltip'), True),
+        title=title_value,
+        primary_color=primary_color
+    )
+    _attach_chart_metadata(radial_bar_chart, view_comp)
+    return radial_bar_chart
+
+
+def _parse_table_columns(columns_json, domain_class, class_model) -> List[Column]:
+    """
+    Parse the columns data from table traits into Column objects.
+    Handles both array (new format) and JSON string (legacy format).
+    
+    Args:
+        columns_json: Array or JSON string containing column definitions
+        domain_class: Domain class for resolving field references
+        class_model: Class model for object resolution
+        
+    Returns:
+        List of Column objects (FieldColumn, LookupColumn, or ExpressionColumn)
+    """
+    if not columns_json:
+        return []
+    
+    # Handle both array (new format) and string (legacy format)
+    if isinstance(columns_json, list):
+        columns_data = columns_json
+    elif isinstance(columns_json, str):
+        try:
+            columns_data = json.loads(columns_json)
+        except (json.JSONDecodeError, TypeError):
+            return []
+    else:
+        return []
+    
+    if not isinstance(columns_data, list):
+        return []
+    
+    columns_list = []
+    
+    for col_data in columns_data:
+        if not isinstance(col_data, dict):
+            continue
+        
+        column_type = col_data.get('columnType', 'field').lower()
+        label = col_data.get('label', '')
+        
+        if column_type == 'field':
+            # Parse FieldColumn
+            field_name = col_data.get('field', '')
+            # Remove leading '+ ' if present
+            field_name = field_name.lstrip('+ ').strip()
+            
+            if domain_class and field_name:
+                # Find the attribute in the domain class (including inherited attributes)
+                field_attr = None
+                for attr in domain_class.all_attributes():
+                    if attr.name == field_name:
+                        field_attr = attr
+                        break
+                
+                if field_attr:
+                    column = FieldColumn(label=label, field=field_attr)
+                    columns_list.append(column)
+        
+        elif column_type == 'lookup':
+            # Parse LookupColumn
+            # GrapesJS stores the relationship path in 'field' for lookup columns
+            lookup_path = col_data.get('path') or col_data.get('field', '')
+            lookup_field_name = col_data.get('lookupField', '')
+            
+            if domain_class and lookup_path:
+                # Find the relationship end (path) - including inherited associations
+                path_end = None
+                for end in domain_class.all_association_ends():
+                    if end.name == lookup_path:
+                        path_end = end
+                        break
+                
+                if path_end and path_end.type:
+                    target_class = path_end.type
+                    # Find the lookup field in the target class (including inherited attributes)
+                    lookup_field_attr = None
+                    if lookup_field_name:
+                        for attr in target_class.all_attributes():
+                            if attr.name == lookup_field_name:
+                                lookup_field_attr = attr
+                                break
+                    
+                    # If no lookup field specified, use first attribute
+                    if not lookup_field_attr and target_class.all_attributes():
+                        lookup_field_attr = list(target_class.all_attributes())[0]
+                    
+                    if lookup_field_attr:
+                        column = LookupColumn(
+                            label=label,
+                            path=path_end,
+                            field=lookup_field_attr
+                        )
+                        columns_list.append(column)
+        
+        elif column_type == 'expression':
+            # Parse ExpressionColumn
+            expression = col_data.get('expression', '')
+            if expression:
+                column = ExpressionColumn(label=label, expression=expression)
+                columns_list.append(column)
+    
+    return columns_list
+
+
+def parse_table(view_comp: Dict[str, Any], class_model, domain_model) -> Table:
+    """
+    Parses a table component, resolving data binding, columns, and presentation options.
+    """
+    attrs = view_comp.get('attributes', {})
+
+    # Parse common data binding fields
+    domain_class, label_field, data_field, label_field_path, data_field_path = _parse_chart_data_binding(
+        attrs, class_model, domain_model
+    )
+
+    raw_title = attrs.get('chart-title')
+    title_value = raw_title.strip() if isinstance(raw_title, str) else None
+    name_seed = raw_title if isinstance(raw_title, str) else 'Table'
+    chart_title = sanitize_name(name_seed) if name_seed else sanitize_name('Table')
+    if not chart_title:
+        chart_title = 'Table'
+    if not title_value:
+        title_value = chart_title.replace('_', ' ').title()
+
+    primary_color = attrs.get('chart-color')
+    if not isinstance(primary_color, str) or not primary_color.strip():
+        primary_color = None
+
+    data_binding = None
+    if domain_class:
+        data_binding = DataBinding(
+            domain_concept=domain_class,
+            label_field=label_field,
+            data_field=data_field,
+            label_field_path=label_field_path,
+            data_field_path=data_field_path
+        )
+
+    def _bool_attr(key: str, default: bool) -> bool:
+        return parse_bool(attrs.get(key), default)
+
+    def _int_attr(key: str, default: int) -> int:
+        try:
+            return int(attrs.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    # Parse columns from the JSON trait
+    columns_json = attrs.get('columns', '')
+    columns_list = _parse_table_columns(columns_json, domain_class, class_model)
+
+    table = Table(
+        name=chart_title,
+        show_header=_bool_attr('show-header', True),
+        striped_rows=_bool_attr('striped-rows', False),
+        show_pagination=_bool_attr('show-pagination', True),
+        rows_per_page=_int_attr('rows-per-page', 5),
+        title=title_value,
+        primary_color=primary_color,
+        columns=columns_list,
+        action_buttons=_bool_attr('action-buttons', False)
+    )
+
+    table.data_binding = data_binding
+    _attach_chart_metadata(table, view_comp)
+    return table
+
+def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
+    """
+    Apply chart-specific color styling based on chart type.
+    
+    Args:
+        element: Chart ViewComponent instance
+        attributes: Component attributes dict
+    """
+
+    color_value = None
+    if isinstance(attributes, dict):
+        color_value = attributes.get("chart-color") or attributes.get("color")
+    if not color_value:
+        return
+
+    element.styling = ensure_styling_parts(
+        element.styling or Styling(size=Size(), position=Position(), color=Color())
+    )
+
+    if isinstance(element, LineChart):
+        element.styling.color.line_color = color_value
+    elif isinstance(element, BarChart):
+        element.styling.color.bar_color = color_value
+    elif isinstance(element, PieChart):
+        element.styling.color.color_palette = color_value
+    elif isinstance(element, RadarChart):
+        element.styling.color.line_color = color_value
+    elif isinstance(element, RadialBarChart):
+        element.styling.color.bar_color = color_value
+    elif isinstance(element, Table):
+        element.styling.color.background_color = color_value
+
+
+def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> MetricCard:
+    """
+    Parse a metric card component from JSON to BUML MetricCard.
+    
+    Args:
+        view_comp: Component dictionary from GrapesJS JSON
+        class_model: Class diagram model
+        domain_model: Domain model containing classes
+        
+    Returns:
+        MetricCard instance with data binding
+    """
+    attrs = view_comp.get("attributes", {})
+    
+    # Parse basic metric card properties
+    metric_title = attrs.get('metric-title', 'Metric Title')
+    format_value = attrs.get('format', 'number')
+    value_color = attrs.get('value-color', '#2c3e50')
+    value_size = int(attrs.get('value-size', 32))
+    show_trend = parse_bool(attrs.get('show-trend'), True)
+    positive_color = attrs.get('positive-color', '#27ae60')
+    negative_color = attrs.get('negative-color', '#e74c3c')
+    
+    # Parse data binding
+    domain_class, _, data_field, _, data_field_path = _parse_chart_data_binding(attrs, class_model, domain_model)
+    
+    # Create data binding if we have a domain class
+    data_binding = None
+    if domain_class:
+        # Use sanitized name for the DataBinding
+        binding_name = sanitize_name(f"{metric_title}_binding")
+        data_binding = DataBinding(
+            name=binding_name,
+            domain_concept=domain_class,
+            label_field=None,  # Metric cards don't need label field
+            data_field=data_field,
+            data_field_path=data_field_path
+        )
+    
+    # Create metric card
+    metric_card = MetricCard(
+        name=sanitize_name(metric_title),
+        metric_title=metric_title,
+        format=format_value,
+        value_color=value_color,
+        value_size=value_size,
+        show_trend=show_trend,
+        positive_color=positive_color,
+        negative_color=negative_color,
+        title=None,
+        primary_color=value_color
+    )
+    
+    metric_card.data_binding = data_binding
+    _attach_chart_metadata(metric_card, view_comp)
+    
+    return metric_card
+
+
+def parse_agent_component(view_comp: Dict[str, Any], class_model, domain_model) -> AgentComponent:
+    """
+    Parse an agent component from JSON to BUML AgentComponent.
+    
+    Args:
+        view_comp: Component dictionary from GrapesJS JSON
+        class_model: Class diagram model (not used for agent, but kept for consistency)
+        domain_model: Domain model (not used for agent, but kept for consistency)
+        
+    Returns:
+        AgentComponent instance
+    """
+    attrs = view_comp.get("attributes", {})
+    
+    # Parse agent component properties
+    agent_name = attrs.get('agent-name', '')
+    agent_title = attrs.get('agent-title', 'BESSER Agent')
+
+    
+    # Create agent component
+    agent_component = AgentComponent(
+        name=sanitize_name(agent_title or 'AgentComponent'),
+        agent_name=agent_name,
+        agent_title=agent_title,
+        description=f"Agent component for {agent_name or 'agent'}",
+    )
+    
+    _attach_chart_metadata(agent_component, view_comp)
+    
+    return agent_component

@@ -22,3 +22,13 @@ class DiagramInput(BaseModel):
     generator: Optional[str] = None
     config: Optional[dict] = None
     referenceDiagramData: Optional[Dict[str, Any]] = None
+
+
+class FeedbackSubmission(BaseModel):
+    """Model for user feedback submissions."""
+    satisfaction: Literal["happy", "neutral", "sad"]
+    category: str = ""
+    feedback: str
+    email: Optional[str] = None
+    timestamp: str
+    user_agent: str

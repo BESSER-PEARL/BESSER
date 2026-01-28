@@ -21,6 +21,10 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
 def parse_buml_content(content: str) -> DomainModel:
     """Parse B-UML content from a Python file and return a DomainModel and OCL constraints."""
     try:
+        # If caller already passed a DomainModel instance, return it directly.
+        if isinstance(content, DomainModel):
+            return content
+
         # Create a safe environment for eval without any generators
         safe_globals = {
             "Class": Class,
@@ -39,6 +43,10 @@ def parse_buml_content(content: str) -> DomainModel:
             "IntegerType": PrimitiveDataType("int"),
             "DateType": PrimitiveDataType("date"),
         }
+
+        # Ensure we have a string before preprocessing
+        if not isinstance(content, str):
+            raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
         # Pre-process the content to remove generator-related lines
         cleaned_lines = []
@@ -100,6 +108,9 @@ def class_buml_to_json(domain_model):
     # Track position
     current_column = 0
     current_row = 0
+    
+    # Track comments to create
+    comments_to_create = []  # [(comment_text, linked_class_id)]
 
     def get_position():
         nonlocal current_column, current_row
@@ -135,16 +146,13 @@ def class_buml_to_json(domain_model):
             if isinstance(type_obj, Class):
                 for attr in type_obj.attributes:
                     attr_id = str(uuid.uuid4())
-                    visibility_symbol = next(
-                        k for k, v in VISIBILITY_MAP.items() if v == attr.visibility
-                    )
                     attr_type = (
                         attr.type.name if hasattr(attr.type, "name") else str(attr.type)
                     )
 
                     elements[attr_id] = {
                         "id": attr_id,
-                        "name": f"{visibility_symbol} {attr.name}: {attr_type}",
+                        "name": attr.name, 
                         "type": "ClassAttribute",
                         "owner": element_id,
                         "bounds": {
@@ -153,6 +161,8 @@ def class_buml_to_json(domain_model):
                             "width": 159,
                             "height": 30,
                         },
+                        "visibility": attr.visibility,
+                        "attributeType": attr_type,
                     }
                     attribute_ids.append(attr_id)
                     y_offset += 30
@@ -192,7 +202,7 @@ def class_buml_to_json(domain_model):
                         )
                         method_signature += f": {return_type}"
 
-                    elements[method_id] = {
+                    method_element = {
                         "id": method_id,
                         "name": method_signature,
                         "type": "ClassMethod",
@@ -204,6 +214,12 @@ def class_buml_to_json(domain_model):
                             "height": 30,
                         },
                     }
+                    
+                    # Add code attribute if it exists and is not empty
+                    if hasattr(method, "code") and method.code:
+                        method_element["code"] = method.code
+
+                    elements[method_id] = method_element
                     method_ids.append(method_id)
                     y_offset += 30
 
@@ -263,6 +279,8 @@ def class_buml_to_json(domain_model):
             if isinstance(type_obj, Class) and hasattr(type_obj, 'metadata') and type_obj.metadata:
                 if type_obj.metadata.description:
                     element_data["description"] = type_obj.metadata.description
+                    # Also create a comment element linked to this class
+                    comments_to_create.append((type_obj.metadata.description, element_id))
                 if type_obj.metadata.uri:
                     element_data["uri"] = type_obj.metadata.uri
                 if type_obj.metadata.icon:
@@ -448,6 +466,67 @@ def class_buml_to_json(domain_model):
                 "path": [{"x": 0, "y": 0}, {"x": 0, "y": 0}],
                 "isManuallyLayouted": False,
             }
+    
+    # Create comment elements from metadata descriptions
+    for comment_text, linked_class_id in comments_to_create:
+        comment_id = str(uuid.uuid4())
+        x, y = get_position()
+        
+        # Create comment element
+        elements[comment_id] = {
+            "id": comment_id,
+            "name": comment_text,
+            "type": "Comments",
+            "owner": None,
+            "bounds": {
+                "x": x,
+                "y": y,
+                "width": 160,
+                "height": 100,
+            },
+        }
+        
+        # Create Link relationship from comment to class
+        rel_id = str(uuid.uuid4())
+        relationships[rel_id] = {
+            "id": rel_id,
+            "name": "",
+            "type": "Link",
+            "owner": None,
+            "source": {
+                "direction": "Right",
+                "element": comment_id,
+                "multiplicity": "",
+                "role": "",
+            },
+            "target": {
+                "direction": "Left",
+                "element": linked_class_id,
+                "multiplicity": "",
+                "role": "",
+            },
+            "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
+            "path": [{"x": 0, "y": 0}, {"x": 0, "y": 0}],
+            "isManuallyLayouted": False,
+        }
+    
+    # Handle domain model level comments (unlinked comments)
+    if hasattr(domain_model, 'metadata') and domain_model.metadata and domain_model.metadata.description:
+        comment_id = str(uuid.uuid4())
+        x, y = get_position()
+        
+        elements[comment_id] = {
+            "id": comment_id,
+            "name": domain_model.metadata.description,
+            "type": "Comments",
+            "owner": None,
+            "bounds": {
+                "x": x,
+                "y": y,
+                "width": 160,
+                "height": 100,
+            },
+        }
 
     # Create the final structure
     result = {

@@ -11,7 +11,7 @@ from sqlalchemy.ext.declarative import AbstractConcreteBase
 from sqlalchemy.orm import (
     column_property, DeclarativeBase, Mapped, mapped_column, relationship
 )
-from datetime import datetime, time, date
+from datetime import datetime as dt_datetime, time as dt_time, date as dt_date
 
 class Base(DeclarativeBase):
     pass
@@ -70,7 +70,7 @@ class {{ class.name }}(
     __tablename__ = "{{class.name.lower()}}"
     {%- endif -%}
     {%- for parent in sort(class.parents()) %}
-    {%- if parent.is_abstract == False %}
+    {%- if parent.name not in concrete_parents %}
     id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
     {%- endif %}
     {%- endfor %}
@@ -108,7 +108,7 @@ class {{ class.name }}(
             {#- Foreign Key #}
             {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}
     {{end.name}}_id: Mapped[int] = mapped_column(ForeignKey("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
-            {%- if end.multiplicity.min > 0 %}, nullable=False{% endif %}
+            {%- if end.multiplicity.min == 0 %}, nullable=True{%- endif %}
             {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
         {%- endif %}
     {%- endfor %}
@@ -146,7 +146,7 @@ class {{ asso_class.name }}(Base):
     {%- if end.multiplicity.max == 1 and ns.other_end_max == 1 %}, unique=True{% endif %})
     {%- endfor %}
     {%- for attribute in sort(asso_class.attributes) %}
-    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {{ attribute.name }}: Mapped[{{ helper.mapped_type(attribute.type.name) }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
     {%- if attribute.is_id or (attribute.name == ids.get(asso_class.name)) %}, primary_key=True{% endif %})
     {%- endfor %}
 {% endfor %}
@@ -199,6 +199,8 @@ DATABASE_URL = "postgresql+psycopg2://username:password@localhost:5432/db_name" 
 DATABASE_URL = "mysql+pymysql://username:password@localhost:3306/db_name"  # MySQL or MariaDB connection
 {%- elif dbms == "mssql" %}
 DATABASE_URL = "mssql+pyodbc://username:password@localhost:1433/db_name?driver=SQL+Server" # MSSQL connection
+{%- elif dbms == "oracle" %}
+DATABASE_URL = "oracle+oracledb://username:password@localhost:1521/?service_name=your_service"
 {% else %}
     {# Fallback if the DBMS is invalid or not supported. This is just a safety measure. #}
     raise ValueError("Invalid DBMS. Valid options are sqlite, postgresql, and mysql.")

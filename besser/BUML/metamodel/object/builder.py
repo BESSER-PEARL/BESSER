@@ -1,4 +1,4 @@
-from besser.BUML.metamodel.object import Object
+from besser.BUML.metamodel.object import Object, AttributeLink, DataValue
 
 class ObjectBuilder:
     def __init__(self, classifier):
@@ -41,7 +41,26 @@ class ObjectBuilder:
 
         # Build AttributeLinks
         for attr_name, value in self._attributes.items():
-            setattr(obj, attr_name, value)
+            # Special handling for "name" attribute to avoid shadowing the object's name property
+            # Create AttributeLink directly instead of using setattr
+            if attr_name == "name":
+                # Find the "name" property in the classifier
+                name_property = None
+                for attr in self.classifier.attributes | self.classifier.inherited_attributes():
+                    if attr.name == "name":
+                        name_property = attr
+                        break
+                
+                if name_property:
+                    # Create AttributeLink directly for the "name" attribute
+                    data_value = DataValue(classifier=name_property.type, value=value)
+                    attr_link = AttributeLink(value=data_value, attribute=name_property)
+                    obj.add_slot(attr_link)
+                else:
+                    # If "name" is not a classifier attribute, use setattr (will go through __setattr__)
+                    setattr(obj, attr_name, value)
+            else:
+                setattr(obj, attr_name, value)
 
         # Build Links
         for target, tgt_end in self._links:

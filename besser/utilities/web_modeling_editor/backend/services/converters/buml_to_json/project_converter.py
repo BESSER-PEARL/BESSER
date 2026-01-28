@@ -12,6 +12,7 @@ from .class_diagram_converter import parse_buml_content, class_buml_to_json
 from .state_machine_converter import state_machine_to_json
 from .agent_diagram_converter import agent_buml_to_json
 from .object_diagram_converter import object_buml_to_json
+from .gui_diagram_converter import gui_buml_to_json
 
 
 def empty_model(diagram_type: str) -> Dict[str, Any]:
@@ -24,6 +25,18 @@ def empty_model(diagram_type: str) -> Dict[str, Any]:
     Returns:
         Dictionary representing empty model structure
     """
+    # GUINoCodeDiagram has a different structure with pages instead of elements
+    if diagram_type == "GUINoCodeDiagram":
+        return {
+            "version": "3.0.0",
+            "type": diagram_type,
+            "size": {"width": 1400, "height": 740},
+            "pages": [],
+            "styles": [],
+            "assets": [],
+            "symbols": []
+        }
+    
     return {
         "version": "3.0.0",
         "type": diagram_type,
@@ -82,9 +95,10 @@ def project_to_json(content: str) -> Dict[str, Any]:
     project_owner = project_owner.group(1) if project_owner else "Unknown"
 
     section_extractors = {
-        'domain_model': ('STRUCTURAL', ['OBJECT', 'AGENT', 'STATE MACHINE']),
-        'object_model': ('OBJECT', ['AGENT', 'STATE MACHINE']),
-        'agent': ('AGENT', ['STATE MACHINE']),
+        'domain_model': ('STRUCTURAL', ['OBJECT', 'AGENT', 'GUI', 'STATE MACHINE']),
+        'object_model': ('OBJECT', ['AGENT', 'GUI', 'STATE MACHINE']),
+        'agent': ('AGENT', ['GUI', 'STATE MACHINE']),
+        'gui_model': ('GUI', ['STATE MACHINE']),
         'sm': ('STATE MACHINE', []),
     }
 
@@ -134,6 +148,15 @@ def project_to_json(content: str) -> Dict[str, Any]:
                 "lastUpdate": last_update
             }
 
+        elif model_name == "gui_model":
+            model = gui_buml_to_json(section_code)
+            diagram_jsons["GUINoCodeDiagram"] = {
+                "id": diagram_id,
+                "title": "GUI Diagram",
+                "model": model,
+                "lastUpdate": last_update
+            }
+
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
             diagram_jsons["StateMachineDiagram"] = {
@@ -150,7 +173,8 @@ def project_to_json(content: str) -> Dict[str, Any]:
         "ClassDiagram": "ClassDiagram",
         "ObjectDiagram": "ObjectDiagram",
         "AgentDiagram": "AgentDiagram",
-        "StateMachineDiagram": "StateMachineDiagram"
+        "StateMachineDiagram": "StateMachineDiagram",
+        "GUINoCodeDiagram": "GUINoCodeDiagram"
     }
 
     for diagram_type, model_type in diagram_defaults.items():

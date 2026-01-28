@@ -25,6 +25,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   
   // All hooks must be at the top level - declare all states here
   const [chartData, setChartData] = useState<any[]>(component.data ?? []);
+  const [seriesData, setSeriesData] = useState<{[key: string]: any[]}>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [listData, setListData] = useState<any[]>([]);
@@ -38,7 +39,146 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     });
   }
 
-  // Chart and metric card data fetching effect
+  // Helper to check if a field uses dot notation (nested field like measures.value)
+  const isNestedField = (field: string | undefined) => field?.includes('.') || false;
+
+  // Helper to get nested value from object using dot notation (e.g., "measures.value")
+  const getNestedValue = (obj: any, path: string): any => {
+    if (!path || !obj) return undefined;
+    if (!path.includes('.')) return obj[path];
+    const parts = path.split('.');
+    let value = obj;
+    for (const part of parts) {
+      if (value == null) return undefined;
+      if (Array.isArray(value)) value = value[0];
+      if (value == null) return undefined;
+      value = value[part];
+    }
+    return value;
+  };
+
+  // Helper to parse series definitions that may come as strings from the designer
+  const parseSeries = (rawSeries: any): any[] => {
+    if (!rawSeries) return [];
+    if (Array.isArray(rawSeries)) return rawSeries;
+    if (typeof rawSeries === "string") {
+      try {
+        const parsed = JSON.parse(rawSeries);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
+  const resolveSeriesName = (s: any, index: number) => s?.name || s?.label || `Series ${index + 1}`;
+  const resolveSeriesLabelField = (s: any) =>
+    s?.labelField || s?.["label-field"] || component.data_binding?.label_field || "name";
+  const resolveSeriesDataField = (s: any) =>
+    s?.dataField || s?.["data-field"] || component.data_binding?.data_field || "value";
+  const toNumeric = (value: any) => {
+    if (value === null || value === undefined) return 0;
+    const num = typeof value === "number" ? value : parseFloat(value);
+    return Number.isFinite(num) ? num : 0;
+  };
+
+  // Normalize series with resolved names/fields and attach pre-fetched data if present
+  const normalizedSeries = parseSeries(component.series).map((s: any, index: number) => ({
+    ...s,
+    name: resolveSeriesName(s, index),
+    labelField: resolveSeriesLabelField(s),
+    dataField: resolveSeriesDataField(s),
+    fetchedData: s.fetchedData,
+  }));
+
+  // Helper to prepare chart data from series - merges fetched series data into chart-ready format
+  const prepareChartDataFromSeries = (
+    series: any[],
+    seriesDataMap: { [key: string]: any[] }
+  ): any[] => {
+    if (!series || series.length === 0) return [];
+
+    const combined: Record<string, any> = {};
+    series.forEach((s) => {
+      const sourceData = seriesDataMap[s.name] ?? s.fetchedData ?? s.data ?? [];
+      if (!Array.isArray(sourceData)) return;
+
+      sourceData.forEach((item: any) => {
+        const label = getNestedValue(item, s.labelField) ?? item?.[s.labelField] ?? item?.name ?? item?.label ?? "";
+        const value = toNumeric(getNestedValue(item, s.dataField) ?? item?.[s.dataField] ?? item?.value);
+        const key = String(label ?? "");
+
+        if (!combined[key]) {
+          combined[key] = { name: key };
+        }
+        combined[key][s.name] = value;
+      });
+    });
+
+    return Object.values(combined);
+  };
+
+  // Helper to prepare series with fetched data for multi-series charts (like LineChart)
+  const prepareSeries = (series: any[], seriesDataMap: { [key: string]: any[] }): any[] => {
+    if (!series || series.length === 0) return [];
+    return series.map((s: any, index: number) => ({
+      ...s,
+      name: resolveSeriesName(s, index),
+      labelField: resolveSeriesLabelField(s),
+      dataField: resolveSeriesDataField(s),
+      fetchedData: seriesDataMap[resolveSeriesName(s, index)] ?? s.fetchedData,
+    }));
+  };
+
+  // Chart series data fetching effect - fetches data for each series with an endpoint
+  useEffect(() => {
+    const series = normalizedSeries;
+    if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart"].includes(component.type)) {
+      if (series && Array.isArray(series) && series.length > 0) {
+        // Check if any series has an endpoint to fetch
+        const seriesWithEndpoints = series.filter((s: any) => s.endpoint || s.dataSource || s["data-source"]);
+        if (seriesWithEndpoints.length > 0) {
+          setLoading(true);
+          setError(null);
+          const backendBase = process.env.REACT_APP_API_URL || "http://localhost:8000";
+          
+          const fetchPromises = seriesWithEndpoints.map((s: any) => {
+            const seriesName = s.name || s.label || "Series";
+            const endpoint = s.endpoint || `/${s.dataSource || s["data-source"]}/`;
+            // Check if this series uses nested fields (e.g., measures.value) - need detailed=true
+            const labelField = s.labelField || s["label-field"];
+            const dataField = s.dataField || s["data-field"];
+            const needsDetailed = isNestedField(labelField) || isNestedField(dataField);
+            const detailedParam = needsDetailed ? '?detailed=true' : '';
+            const url = endpoint.startsWith("/") ? backendBase + endpoint + detailedParam : endpoint + detailedParam;
+            return axios.get(url)
+              .then((res) => {
+                let data: any[] = [];
+                if (Array.isArray(res.data)) {
+                  data = res.data;
+                } else if (res.data && typeof res.data === 'object') {
+                  const arrayKey = Object.keys(res.data).find(key => Array.isArray(res.data[key]));
+                  if (arrayKey) data = res.data[arrayKey];
+                }
+                return { seriesName, data };
+              })
+              .catch(() => ({ seriesName, data: [] }));
+          });
+          
+          Promise.all(fetchPromises)
+            .then((results) => {
+              const dataMap: {[key: string]: any[]} = {};
+              results.forEach((r) => { dataMap[r.seriesName] = r.data; });
+              setSeriesData(dataMap);
+            })
+            .finally(() => setLoading(false));
+        }
+      }
+    }
+  }, [component.type, component.series]);
+
+  // Chart and metric card data fetching effect (legacy single data_binding)
   useEffect(() => {
     if (["bar-chart", "line-chart", "pie-chart", "radial-bar-chart", "radar-chart", "metric-card", "table"].includes(component.type)) {
       const endpoint = component.data_binding?.endpoint;
@@ -46,15 +186,19 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
         setLoading(true);
         setError(null);
         // Always use backend base URL for relative endpoints
-        const backendBase = "http://localhost:8000";
+        const backendBase = process.env.REACT_APP_API_URL || "http://localhost:8000";
         
         // Check if table has lookup columns - if so, request detailed data with joins
         const hasLookupColumns = component.chart?.columns?.some(
           (col: any) => typeof col === 'object' && col.column_type === 'lookup'
         );
         
-        // Add detailed=true query param if there are lookup columns
-        const urlParams = hasLookupColumns ? '?detailed=true' : '';
+        // Check if data_binding uses nested fields (dot notation like measures.value)
+        const hasNestedFields = isNestedField(component.data_binding?.label_field) || 
+                                isNestedField(component.data_binding?.data_field);
+        
+        // Add detailed=true query param if there are lookup columns or nested fields
+        const urlParams = (hasLookupColumns || hasNestedFields) ? '?detailed=true' : '';
         const url = endpoint.startsWith("/") 
           ? backendBase + endpoint + urlParams
           : endpoint + urlParams;
@@ -102,7 +246,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       const source = component.data_sources[0];
       const endpoint = source.endpoint || `/${source.domain?.toLowerCase()}/`;
       if (endpoint) {
-        const backendBase = "http://localhost:8000";
+        const backendBase = process.env.REACT_APP_API_URL || "http://localhost:8000";
         const url = endpoint.startsWith("/") ? backendBase + endpoint : endpoint;
         axios.get(url)
           .then((res) => {
@@ -113,6 +257,20 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
       }
     }
   }, [component.type, component.data_sources]);
+
+  // Derived data for charts
+  const preparedSeries = prepareSeries(normalizedSeries, seriesData);
+  const hasSeries = preparedSeries.length > 0;
+  const seriesChartData = hasSeries ? prepareChartDataFromSeries(preparedSeries, seriesData) : [];
+  const defaultLabelField = component.data_binding?.label_field || "name";
+  const defaultDataField = component.data_binding?.data_field || "value";
+  const resolvedLabelField = hasSeries ? "name" : defaultLabelField;
+  const resolvedDataField = hasSeries
+    ? (preparedSeries.length === 1 ? preparedSeries[0].name || defaultDataField : defaultDataField)
+    : defaultDataField;
+  const finalChartData = hasSeries
+    ? (seriesChartData.length > 0 ? seriesChartData : chartData)
+    : chartData;
 
   if (component.type === "container" || component.type === "wrapper" || component.type === "component") {
     // Use the actual HTML tag if available, otherwise default to div
@@ -195,7 +353,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
           instanceSourceTableId={instanceSource}
           className={component.class_list?.join(' ')}
           style={style}
-          backendUrl="http://localhost:8000"
+          backendUrl={process.env.REACT_APP_API_URL || "http://localhost:8000"}
         />
       );
     }
@@ -213,7 +371,7 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
           isClassMethod={methodConfig.is_class_method || false}
           className={component.class_list?.join(' ')}
           style={style}
-          backendUrl="http://localhost:8000"
+          backendUrl={process.env.REACT_APP_API_URL || "http://localhost:8000"}
         />
       );
     }
@@ -408,42 +566,15 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
     
-    // Use configured field names from data_binding, with intelligent fallback
-    let actualLabelField = component.data_binding?.label_field || "name";
-    let actualDataField = component.data_binding?.data_field || "value";
-    
-    // If data_binding fields look like UUIDs (contain hyphens and are long), detect from data
-    const isUUID = (str: string) => str && str.length > 20 && str.includes('-');
-    
-    if ((isUUID(actualLabelField) || isUUID(actualDataField)) && chartData && chartData.length > 0) {
-      const firstItem = chartData[0];
-      const keys = Object.keys(firstItem);
-      
-      if (isUUID(actualLabelField)) {
-        actualLabelField = keys.find(k => ['name', 'label', 'attribute'].includes(k.toLowerCase())) || 
-                          keys.find(k => typeof firstItem[k] === 'string') || 
-                          'name';
-      }
-      
-      if (isUUID(actualDataField)) {
-        actualDataField = keys.find(k => ['value', 'count', 'amount'].includes(k.toLowerCase())) || 
-                         keys.find(k => typeof firstItem[k] === 'number') || 
-                         'value';
-      }
-      
-      console.log(`[Radar Chart] Detected fields from data - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
-    } else {
-      console.log(`[Radar Chart] Using configured fields - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
-    }
-    
     return (
       <RadarChartComponent
         id={component.id}
         title={component.title || component.name}
         color={component.color}
-        data={chartData}
-        labelField={actualLabelField}
-        dataField={actualDataField}
+        data={finalChartData}
+        series={preparedSeries}
+        labelField={resolvedLabelField}
+        dataField={resolvedDataField}
         options={component.chart || {}}
         styles={style}
       />
@@ -456,42 +587,15 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
     
-    // Use configured field names from data_binding, with intelligent fallback
-    let actualLabelField = component.data_binding?.label_field || "name";
-    let actualDataField = component.data_binding?.data_field || "value";
-    
-    // If data_binding fields look like UUIDs (contain hyphens and are long), detect from data
-    const isUUID = (str: string) => str && str.length > 20 && str.includes('-');
-    
-    if ((isUUID(actualLabelField) || isUUID(actualDataField)) && chartData && chartData.length > 0) {
-      const firstItem = chartData[0];
-      const keys = Object.keys(firstItem);
-      
-      if (isUUID(actualLabelField)) {
-        actualLabelField = keys.find(k => ['name', 'label', 'attribute'].includes(k.toLowerCase())) || 
-                          keys.find(k => typeof firstItem[k] === 'string') || 
-                          'name';
-      }
-      
-      if (isUUID(actualDataField)) {
-        actualDataField = keys.find(k => ['value', 'count', 'amount'].includes(k.toLowerCase())) || 
-                         keys.find(k => typeof firstItem[k] === 'number') || 
-                         'value';
-      }
-      
-      console.log(`[Bar Chart] Detected fields from data - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
-    } else {
-      console.log(`[Bar Chart] Using configured fields - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
-    }
-    
     return (
       <BarChartComponent
         id={component.id}
         title={component.title || component.name}
         color={component.color}
-        data={chartData}
-        labelField={actualLabelField}
-        dataField={actualDataField}
+        data={finalChartData}
+        series={preparedSeries}
+        labelField={resolvedLabelField}
+        dataField={resolvedDataField}
         options={component.chart || {}}
         styles={style}
       />
@@ -504,42 +608,15 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
     
-    // Use configured field names from data_binding, with intelligent fallback
-    let actualLabelField = component.data_binding?.label_field || "name";
-    let actualDataField = component.data_binding?.data_field || "value";
-    
-    // If data_binding fields look like UUIDs (contain hyphens and are long), detect from data
-    const isUUID = (str: string) => str && str.length > 20 && str.includes('-');
-    
-    if ((isUUID(actualLabelField) || isUUID(actualDataField)) && chartData && chartData.length > 0) {
-      const firstItem = chartData[0];
-      const keys = Object.keys(firstItem);
-      
-      if (isUUID(actualLabelField)) {
-        actualLabelField = keys.find(k => ['name', 'label', 'attribute'].includes(k.toLowerCase())) || 
-                          keys.find(k => typeof firstItem[k] === 'string') || 
-                          'name';
-      }
-      
-      if (isUUID(actualDataField)) {
-        actualDataField = keys.find(k => ['value', 'count', 'amount'].includes(k.toLowerCase())) || 
-                         keys.find(k => typeof firstItem[k] === 'number') || 
-                         'value';
-      }
-      
-      console.log(`[Line Chart] Detected fields from data - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
-    } else {
-      console.log(`[Line Chart] Using configured fields - labelField: ${actualLabelField}, dataField: ${actualDataField}`);
-    }
-    
     return (
       <LineChartComponent
         id={component.id}
         title={component.title || component.name}
         color={component.color}
-        data={chartData}
-        labelField={actualLabelField}
-        dataField={actualDataField}
+        data={finalChartData}
+        series={preparedSeries}
+        labelField={resolvedLabelField}
+        dataField={resolvedDataField}
         options={component.chart || {}}
         styles={style}
       />
@@ -551,13 +628,15 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "pie-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
+    
     return (
       <PieChartComponent
         id={component.id}
         title={component.title || component.name}
-        data={chartData}
-        labelField={component.data_binding?.label_field}
-        dataField={component.data_binding?.data_field}
+        data={finalChartData}
+        series={preparedSeries}
+        labelField={resolvedLabelField}
+        dataField={resolvedDataField}
         options={component.chart || {}}
         styles={style}
       />
@@ -569,13 +648,15 @@ export const Renderer: React.FC<RendererProps> = ({ component, styles }) => {
   if (component.type === "radial-bar-chart") {
     if (loading) return <div id={component.id}>Loading data...</div>;
     if (error) return <div id={component.id}>{error}</div>;
+    
     return (
       <RadialBarChartComponent
         id={component.id}
         title={component.title || component.name}
-        data={chartData}
-        labelField={component.data_binding?.label_field}
-        dataField={component.data_binding?.data_field}
+        data={finalChartData}
+        series={preparedSeries}
+        labelField={resolvedLabelField}
+        dataField={resolvedDataField}
         options={component.chart || {}}
         styles={style}
       />

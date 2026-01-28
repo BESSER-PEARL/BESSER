@@ -28,6 +28,7 @@ from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
 # BESSER image-to-UML and BUML utilities
 from besser.utilities.image_to_buml import image_to_buml
+from besser.utilities.kg_to_buml import kg_to_buml
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import parse_buml_content, class_buml_to_json
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
@@ -73,6 +74,8 @@ from besser.utilities.web_modeling_editor.backend.services.feedback_service impo
 )
 from besser.utilities.web_modeling_editor.backend.services.deployment import (
     run_docker_compose,
+    github_oauth_router,
+    github_deploy_router,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     cleanup_temp_resources,
@@ -106,6 +109,10 @@ app.add_middleware(
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],  # Expose Content-Disposition header to frontend
 )
+
+# Include GitHub OAuth and deployment routers
+app.include_router(github_oauth_router, prefix="/besser_api")
+app.include_router(github_deploy_router, prefix="/besser_api")
 
 # Constants
 API_VERSION = "1.0.0"
@@ -1247,7 +1254,54 @@ async def get_json_model_from_image(
         raise HTTPException(
             status_code=500, detail=f"Failed to process the uploaded image: {str(e)}"
         )
+    
+@app.post("/besser_api/get-json-model-from-kg")
+async def get_json_model_from_kg(
+    kg_file: UploadFile = File(...),
+    api_key: str = Form(...)
+):
+    """
+    Accepts an .TTL, .RDF, or .JSON knowledge graphs and an OpenAI API key, uses BESSER's kgtouml feature to transform the kg into a BUML class diagram in JSON.
+    """
+    import os
+    import tempfile
 
+    try:
+        # Save uploaded kg to a temp folder
+        with tempfile.TemporaryDirectory() as temp_dir:
+            kg_path = os.path.join(temp_dir, kg_file.filename)
+            with open(kg_path, "wb") as f:
+                f.write(await kg_file.read())
+            # Create a folder for the kg as expected by mockup_to_buml
+            kg_folder = os.path.join(temp_dir, "kgs")
+            os.makedirs(kg_folder, exist_ok=True)
+            os.rename(kg_path, os.path.join(kg_folder, kg_file.filename))
+            # Use kg_to_buml to generate DomainModel from kg and API key
+            # Find the kg file path
+            kg_files = [f for f in os.listdir(kg_folder) if f.lower().endswith(('.ttl', '.json', '.rdf'))]
+            if not kg_files:
+                raise HTTPException(status_code=400, detail="No valid KG file found.")
+            kg_path = os.path.join(kg_folder, kg_files[0])
+            domain_model = kg_to_buml(kg_path=kg_path, openai_token=api_key)
+            diagram_json = class_buml_to_json(domain_model)
+
+            diagram_title = diagram_json.get("title", "Imported Class Diagram")
+            diagram_type = "ClassDiagram"
+            return {
+                "title": diagram_title,
+                "model": {**diagram_json, "type": diagram_type},
+                "diagramType": diagram_type,
+                "exportedAt": datetime.utcnow().isoformat(),
+                "version": "3.0.0",
+            }
+
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Error in get-json-model-from-kg: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to process the uploaded KG: {str(e)}"
+        )
 
 @app.post("/besser_api/validate-diagram")
 async def validate_diagram(input_data: DiagramInput):

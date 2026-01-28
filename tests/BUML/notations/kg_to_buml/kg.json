@@ -1,0 +1,86 @@
+{
+    "systemSpec": {
+        "systemName": "ExampleKnowledgeGraph",
+        "classes": [
+            {
+                "className": "Person",
+                "attributes": [
+                    {
+                        "name": "name",
+                        "type": "str",
+                        "visibility": "public"
+                    },
+                    {
+                        "name": "age",
+                        "type": "int",
+                        "visibility": "public"
+                    }
+                ],
+                "methods": [
+                    {
+                        "name": "knows",
+                        "returnType": "void",
+                        "visibility": "public",
+                        "parameters": [
+                            {
+                                "name": "person",
+                                "type": "Person"
+                            }
+                        ]
+                    }
+                ]
+            },
+            {
+                "className": "Organization",
+                "attributes": [
+                    {
+                        "name": "name",
+                        "type": "str",
+                        "visibility": "public"
+                    },
+                    {
+                        "name": "industry",
+                        "type": "str",
+                        "visibility": "public"
+                    }
+                ],
+                "methods": []
+            },
+            {
+                "className": "Place",
+                "attributes": [
+                    {
+                        "name": "name",
+                        "type": "str",
+                        "visibility": "public"
+                    },
+                    {
+                        "name": "countryCode",
+                        "type": "str",
+                        "visibility": "public"
+                    }
+                ],
+                "methods": []
+            }
+        ],
+        "relationships": [
+            {
+                "type": "Association",
+                "source": "Person",
+                "target": "Organization",
+                "sourceMultiplicity": "0..*",
+                "targetMultiplicity": "1",
+                "name": "worksAt"
+            },
+            {
+                "type": "Association",
+                "source": "Organization",
+                "target": "Place",
+                "sourceMultiplicity": "0..1",
+                "targetMultiplicity": "1",
+                "name": "location"
+            }
+        ]
+    },
+    "diagramType": "ClassDiagram"
+}

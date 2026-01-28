@@ -234,18 +234,23 @@ def class_buml_to_json(domain_model):
                         )
                     
                     # Add state machine reference if present
+                    state_machine_id = None
                     if hasattr(method, "_state_machine_id") and method._state_machine_id:
-                        method_element["stateMachineId"] = method._state_machine_id
+                        state_machine_id = method._state_machine_id
                     elif hasattr(method, "state_machine") and method.state_machine:
                         # If we have an actual state machine object, use its name as ID
-                        method_element["stateMachineId"] = method.state_machine.name
+                        state_machine_id = method.state_machine.name
+                    if state_machine_id:
+                        method_element["stateMachineId"] = state_machine_id
                     
-                    # Add quantum circuit reference if present
+                    quantum_circuit_id = None
                     if hasattr(method, "_quantum_circuit_id") and method._quantum_circuit_id:
-                        method_element["quantumCircuitId"] = method._quantum_circuit_id
+                        quantum_circuit_id = method._quantum_circuit_id
                     elif hasattr(method, "quantum_circuit") and method.quantum_circuit:
                         # If we have an actual quantum circuit object, use its name as ID
-                        method_element["quantumCircuitId"] = method.quantum_circuit.name
+                        quantum_circuit_id = method.quantum_circuit.name
+                    if quantum_circuit_id:
+                        method_element["quantumCircuitId"] = quantum_circuit_id
 
                     elements[method_id] = method_element
                     method_ids.append(method_id)
@@ -557,6 +562,20 @@ def class_buml_to_json(domain_model):
         }
 
     # Create the final structure
+    # Clean up implementation-related keys for attributes and empty values
+    for elem in elements.values():
+        if elem.get("type") == "ClassAttribute":
+            elem.pop("implementationType", None)
+            elem.pop("stateMachineId", None)
+            elem.pop("quantumCircuitId", None)
+        if elem.get("type") == "ClassMethod":
+            if not elem.get("implementationType"):
+                elem.pop("implementationType", None)
+            if not elem.get("stateMachineId"):
+                elem.pop("stateMachineId", None)
+            if not elem.get("quantumCircuitId"):
+                elem.pop("quantumCircuitId", None)
+
     result = {
         "version": "3.0.0",
         "type": "ClassDiagram",

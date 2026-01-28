@@ -202,12 +202,20 @@ class BUMLGenerationListener(PlantUMLListener):
         if ctx.c_right:
             mult_right = self.get_cardinality(ctx.c_right)
 
-        end_left: Property = Property(name=ctx.ID(0).getText(),
+        left_name = ctx.ID(0).getText()
+        right_name = ctx.ID(1).getText()
+        
+        if left_name == right_name:
+            # Avoid duplicate end names in self-associations
+            left_name = f"{left_name}_source"
+            right_name = f"{right_name}_target"
+
+        end_left: Property = Property(name=left_name,
                                     type=cl_left,
                                     multiplicity=mult_left,
                                     is_composite=composition[0],
                                     is_navigable=navigation[0])
-        end_right: Property = Property(name=ctx.ID(1).getText(),
+        end_right: Property = Property(name=right_name,
                                     type=cl_right,
                                     multiplicity=mult_right,
                                     is_composite=composition[1],

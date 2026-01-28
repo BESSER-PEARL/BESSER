@@ -8,6 +8,11 @@ import {
   Tooltip,
 } from "recharts";
 
+interface SeriesConfig {
+  name: string;
+  color?: string;
+}
+
 interface Props {
   id: string;
   title?: string;
@@ -15,9 +20,12 @@ interface Props {
   data: any[];
   labelField: string;
   dataField: string;
+  series?: SeriesConfig[];
   options?: Record<string, any>;
   styles?: CSSProperties;
 }
+
+const defaultSeriesColors = ["#4a90e2", "#10B981", "#F97316", "#F43F5E", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"];
 
 // Helper to get nested values using dot notation (e.g., "measures.value")
 const getNestedValue = (obj: any, path: string): any => {
@@ -52,12 +60,16 @@ export const RadialBarChartComponent: React.FC<Props> = ({
   data,
   labelField,
   dataField,
+  series,
   options,
   styles,
 }) => {
   // Transform data if using nested fields (dot notation)
   const isNestedField = (field: string) => field?.includes('.') || false;
   const chartData = React.useMemo(() => {
+    if (series && series.length > 0) {
+      return data;
+    }
     if (!isNestedField(labelField) && !isNestedField(dataField)) {
       return data; // No transformation needed
     }
@@ -65,11 +77,17 @@ export const RadialBarChartComponent: React.FC<Props> = ({
       name: isNestedField(labelField) ? getNestedValue(item, labelField) : item[labelField],
       value: isNestedField(dataField) ? getNestedValue(item, dataField) : item[dataField],
     }));
-  }, [data, labelField, dataField]);
+  }, [data, labelField, dataField, series]);
 
   // Use transformed field names if we did transformation
-  const actualLabelField = (isNestedField(labelField) || isNestedField(dataField)) ? 'name' : labelField;
-  const actualDataField = (isNestedField(labelField) || isNestedField(dataField)) ? 'value' : dataField;
+  const actualLabelField =
+    series && series.length > 0
+      ? "name"
+      : (isNestedField(labelField) || isNestedField(dataField)) ? 'name' : labelField;
+  const actualDataField =
+    series && series.length > 0
+      ? series[0]?.name || 'value'
+      : (isNestedField(labelField) || isNestedField(dataField)) ? 'value' : dataField;
 
   const containerStyle: CSSProperties = {
     width: "100%",
@@ -94,11 +112,19 @@ export const RadialBarChartComponent: React.FC<Props> = ({
           endAngle={options?.endAngle || 360}
         >
           {PolarAngleAxis({ dataKey: actualLabelField })}
-          <RadialBar
-            background
-            dataKey={actualDataField}
-            fill={resolveFill(color, options, styles)}
-          />
+          {(series && series.length > 0 ? series : [{ name: actualDataField, color }]).map((s, index) => (
+            <RadialBar
+              key={s.name || index}
+              background
+              dataKey={s.name || actualDataField}
+              name={s.name || actualDataField}
+              fill={
+                s.color ||
+                resolveFill(color, options, styles) ||
+                defaultSeriesColors[index % defaultSeriesColors.length]
+              }
+            />
+          ))}
           {showTooltip && <Tooltip />}
           {showLegend && <Legend verticalAlign={options?.legendPosition || "bottom"} />}
         </RadialBarChart>

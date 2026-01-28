@@ -1,0 +1,32 @@
+@prefix ex: <http://example.org/> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix dbo: <http://dbpedia.org/ontology/> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+# Entities
+ex:Alice a foaf:Person ;
+    foaf:name "Alice" ;
+    foaf:age "29"^^xsd:integer ;
+    foaf:knows ex:Bob ;
+    dbo:worksAt ex:CompanyX .
+
+ex:Bob a foaf:Person ;
+    foaf:name "Bob" ;
+    foaf:age "34"^^xsd:integer ;
+    dbo:worksAt ex:CompanyX ;
+    foaf:knows ex:Charlie .
+
+ex:Charlie a foaf:Person ;
+    foaf:name "Charlie" ;
+    foaf:age "41"^^xsd:integer .
+
+# Organization
+ex:CompanyX a dbo:Organization ;
+    foaf:name "Company X" ;
+    dbo:industry "Software" ;
+    dbo:location ex:Luxembourg .
+
+# Location
+ex:Luxembourg a dbo:Place ;
+    foaf:name "Luxembourg" ;
+    dbo:countryCode "LU" .

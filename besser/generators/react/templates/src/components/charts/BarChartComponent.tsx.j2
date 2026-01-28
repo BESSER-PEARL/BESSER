@@ -1,4 +1,4 @@
-import React, { CSSProperties } from "react";
+import React, { CSSProperties, useCallback, useState } from "react";
 import {
   Bar,
   BarChart,
@@ -10,6 +10,11 @@ import {
   YAxis,
 } from "recharts";
 
+interface SeriesConfig {
+  name: string;
+  color?: string;
+}
+
 interface Props {
   id: string;
   title?: string;
@@ -17,9 +22,12 @@ interface Props {
   data: any[];
   labelField: string;
   dataField: string;
+  series?: SeriesConfig[];
   options?: Record<string, any>;
   styles?: CSSProperties;
 }
+
+const defaultSeriesColors = ["#4a90e2", "#10B981", "#F97316", "#F43F5E", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"];
 
 // Helper to get nested values using dot notation (e.g., "measures.value")
 const getNestedValue = (obj: any, path: string): any => {
@@ -54,12 +62,18 @@ export const BarChartComponent: React.FC<Props> = ({
   data,
   labelField,
   dataField,
+  series,
   options,
   styles,
 }) => {
-  // Transform data if using nested fields (dot notation)
+  const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+
+  // Transform data if using nested fields (dot notation) and no multi-series
   const isNestedField = (field: string) => field?.includes('.') || false;
   const chartData = React.useMemo(() => {
+    if (series && series.length > 0) {
+      return data;
+    }
     if (!isNestedField(labelField) && !isNestedField(dataField)) {
       return data; // No transformation needed
     }
@@ -67,11 +81,17 @@ export const BarChartComponent: React.FC<Props> = ({
       name: isNestedField(labelField) ? getNestedValue(item, labelField) : item[labelField],
       value: isNestedField(dataField) ? getNestedValue(item, dataField) : item[dataField],
     }));
-  }, [data, labelField, dataField]);
+  }, [data, labelField, dataField, series]);
 
   // Use transformed field names if we did transformation
-  const actualLabelField = (isNestedField(labelField) || isNestedField(dataField)) ? 'name' : labelField;
-  const actualDataField = (isNestedField(labelField) || isNestedField(dataField)) ? 'value' : dataField;
+  const actualLabelField =
+    series && series.length > 0
+      ? "name"
+      : (isNestedField(labelField) || isNestedField(dataField)) ? 'name' : labelField;
+  const actualDataField =
+    series && series.length > 0
+      ? series[0]?.name || 'value'
+      : (isNestedField(labelField) || isNestedField(dataField)) ? 'value' : dataField;
 
   const containerStyle: CSSProperties = {
     width: "100%",
@@ -86,6 +106,44 @@ export const BarChartComponent: React.FC<Props> = ({
   const showTooltip = options?.showTooltip ?? true;
   const legendPosition = options?.legendPosition || "top";
   const resolvedColor = resolveColor(color, options, styles);
+
+  const handleLegendClick = useCallback((dataKey: string) => {
+    setHiddenSeries((prev) => {
+      const next = new Set(prev);
+      if (next.has(dataKey)) {
+        next.delete(dataKey);
+      } else {
+        next.add(dataKey);
+      }
+      return next;
+    });
+  }, []);
+
+  const renderLegend = (props: any) => {
+    const { payload } = props;
+    if (!payload) return null;
+    return (
+      <div style={{ display: "flex", justifyContent: "center", gap: "14px", flexWrap: "wrap", padding: "8px" }}>
+        {payload.map((entry: any, index: number) => (
+          <div
+            key={`legend-${index}`}
+            onClick={() => handleLegendClick(entry.dataKey)}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "6px",
+              cursor: "pointer",
+              opacity: hiddenSeries.has(entry.dataKey) ? 0.4 : 1,
+              textDecoration: hiddenSeries.has(entry.dataKey) ? "line-through" : "none",
+            }}
+          >
+            <span style={{ width: 12, height: 12, backgroundColor: entry.color, borderRadius: 2 }} />
+            <span style={{ fontSize: 13, color: "#374151" }}>{entry.value}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   return (
     <div id={id} style={containerStyle}>
@@ -110,13 +168,28 @@ export const BarChartComponent: React.FC<Props> = ({
             dataKey={orientation === "horizontal" ? actualLabelField : undefined}
           />
           {showTooltip && <Tooltip />}
-          {showLegend && <Legend verticalAlign={legendPosition} />}
-          <Bar
-            dataKey={actualDataField}
-            fill={resolvedColor}
-            stackId={options?.stacked ? "stack" : undefined}
-            isAnimationActive={options?.animate ?? true}
-          />
+          {showLegend && <Legend verticalAlign={legendPosition} content={renderLegend} />}
+          {series && series.length > 0 ? (
+            series.map((s, index) => (
+              <Bar
+                key={s.name || index}
+                dataKey={s.name}
+                name={s.name}
+                fill={s.color || defaultSeriesColors[index % defaultSeriesColors.length]}
+                stackId={options?.stacked ? "stack" : undefined}
+                isAnimationActive={options?.animate ?? true}
+                hide={hiddenSeries.has(s.name || "")}
+              />
+            ))
+          ) : (
+            <Bar
+              dataKey={actualDataField}
+              fill={resolvedColor}
+              stackId={options?.stacked ? "stack" : undefined}
+              isAnimationActive={options?.animate ?? true}
+              hide={hiddenSeries.has(actualDataField)}
+            />
+          )}
         </BarChart>
       </ResponsiveContainer>
     </div>

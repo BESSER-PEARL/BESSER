@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Enumeration, Property, Method, BinaryAssociation,
     Generalization, PrimitiveDataType, EnumerationLiteral, AssociationClass,
-    Metadata, Parameter
+    Metadata, Parameter, MethodImplementationType
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import (
     parse_attribute, parse_method, parse_multiplicity, process_ocl_constraints
@@ -137,6 +137,24 @@ def process_class_diagram(json_data):
                     
                     # Get the code attribute for the method
                     method_code = method.get("code", "")
+                    
+                    # Get implementation type and diagram references
+                    impl_type_str = method.get("implementationType", "none")
+                    state_machine_id = method.get("stateMachineId", "")
+                    quantum_circuit_id = method.get("quantumCircuitId", "")
+                    
+                    # Map string to MethodImplementationType enum
+                    impl_type_map = {
+                        "none": MethodImplementationType.NONE,
+                        "code": MethodImplementationType.CODE,
+                        "state_machine": MethodImplementationType.STATE_MACHINE,
+                        "quantum_circuit": MethodImplementationType.QUANTUM_CIRCUIT,
+                    }
+                    implementation_type = impl_type_map.get(impl_type_str, MethodImplementationType.NONE)
+                    
+                    # Auto-detect implementation type if not set but code exists
+                    if implementation_type == MethodImplementationType.NONE and method_code:
+                        implementation_type = MethodImplementationType.CODE
 
                     # Create method parameters
                     method_params = []
@@ -161,13 +179,21 @@ def process_class_diagram(json_data):
                             param_obj.default_value = param['default']
                         method_params.append(param_obj)
 
-                    # Create method with parameters, return type, and code
+                    # Create method with parameters, return type, code, and implementation type
                     method_obj = Method(
                         name=name,
                         visibility=visibility,
                         parameters=method_params,
-                        code=method_code
+                        code=method_code,
+                        implementation_type=implementation_type
                     )
+                    
+                    # Store diagram references as custom attributes for later resolution
+                    # These will be used by project-level processing to link to actual diagrams
+                    if state_machine_id:
+                        method_obj._state_machine_id = state_machine_id
+                    if quantum_circuit_id:
+                        method_obj._quantum_circuit_id = quantum_circuit_id
                     
                     # Handle return type
                     if return_type:

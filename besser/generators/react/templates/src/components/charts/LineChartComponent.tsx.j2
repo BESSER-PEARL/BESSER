@@ -1,4 +1,4 @@
-import React, { CSSProperties, useState, useCallback, useEffect } from "react";
+import React, { CSSProperties, useState, useCallback } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -40,9 +40,6 @@ interface Props {
 
 const defaultColors = ["#4a90e2", "#10B981", "#F97316", "#F43F5E", "#8B5CF6", "#EC4899", "#06B6D4", "#84CC16"];
 
-// API base URL - adjust based on your backend
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
-
 // Helper to get nested value from object using dot notation (e.g., "measures.value")
 // Handles arrays by getting first element's value
 const getNestedValue = (obj: any, path: string): any => {
@@ -68,9 +65,6 @@ const getNestedValue = (obj: any, path: string): any => {
   return value;
 };
 
-// Check if a field uses dot notation (related class attribute)
-const isNestedField = (field: string): boolean => field?.includes('.') || false;
-
 export const LineChartComponent: React.FC<Props> = ({
   id,
   title,
@@ -82,122 +76,90 @@ export const LineChartComponent: React.FC<Props> = ({
   options,
   styles,
 }) => {
-  // State for fetched data per series
-  const [seriesData, setSeriesData] = useState<Map<string, any[]>>(new Map());
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  
   // Track visible series for clickable legend
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
 
   // Normalize series from props or create from single dataField
-  const series: SeriesConfig[] = propSeries && propSeries.length > 0 
-    ? propSeries 
-    : (Array.isArray(dataField) 
-        ? dataField.map((field, i) => ({ name: field, color: defaultColors[i % defaultColors.length], dataField: field }))
-        : dataField 
-          ? [{ name: dataField, color: color || defaultColors[0], dataField }]
-          : []);
-
-  // Fetch data from backend for each series that has a data-source
-  useEffect(() => {
-    const fetchSeriesData = async () => {
-      const newSeriesData = new Map<string, any[]>();
-      let hasDataSources = false;
-
-      for (const s of series) {
-        const labelFieldName = s['label-field'] || s.labelField || 'name';
-        const dataFieldName = s['data-field'] || s.dataField || 'value';
-
-        // Check for fetchedData first (pre-fetched by Renderer)
-        if (s.fetchedData && s.fetchedData.length > 0) {
-          // Transform fetchedData the same way we transform fetched data
-          const chartData = Array.isArray(s.fetchedData) ? s.fetchedData.map((item: any) => {
-            const label = getNestedValue(item, labelFieldName);
-            const value = getNestedValue(item, dataFieldName);
-            return {
-              name: label,
-              value: typeof value === 'number' ? value : parseFloat(value) || 0
-            };
-          }) : [];
-          newSeriesData.set(s.name, chartData);
-          hasDataSources = true;
-          continue;
-        }
-
-        const endpoint = s.endpoint;
-        const dataSourceId = s['data-source'] || s.dataSource;
-
-        if (endpoint || dataSourceId) {
-          hasDataSources = true;
-          try {
-            // Use endpoint if available, otherwise build from dataSource
-            // Add ?detailed=true if using nested fields (e.g., measure.value)
-            const needsDetailed = isNestedField(labelFieldName) || isNestedField(dataFieldName);
-            const detailedParam = needsDetailed ? '?detailed=true' : '';
-            const fetchUrl = endpoint 
-              ? (endpoint.startsWith('/') ? `${API_BASE_URL}${endpoint}${detailedParam}` : endpoint + detailedParam)
-              : `${API_BASE_URL}/${dataSourceId}/${detailedParam}`;
-            
-            const response = await fetch(fetchUrl);
-            if (response.ok) {
-              let rawData = await response.json();
-              // Handle wrapped responses
-              if (!Array.isArray(rawData) && typeof rawData === 'object') {
-                const arrayKey = Object.keys(rawData).find(k => Array.isArray(rawData[k]));
-                if (arrayKey) rawData = rawData[arrayKey];
-              }
-              // Transform data to chart format using field names (supports dot notation for nested values)
-              const chartData = Array.isArray(rawData) ? rawData.map((item: any) => ({
-                name: getNestedValue(item, labelFieldName) || item.name || '',
-                value: parseFloat(getNestedValue(item, dataFieldName)) || item.value || 0,
-              })) : [];
-              newSeriesData.set(s.name, chartData);
-            } else {
-              // Use static data from series config as fallback
-              newSeriesData.set(s.name, s.data || []);
-            }
-          } catch (err) {
-            console.warn(`Failed to fetch data for series ${s.name}:`, err);
-            // Use static data from series config as fallback
-            newSeriesData.set(s.name, s.data || []);
-          }
-        } else {
-          // No data source - use static data from series config
-          newSeriesData.set(s.name, s.data || []);
-        }
-      }
-
-      if (hasDataSources || series.length > 0) {
-        setSeriesData(newSeriesData);
-      }
-    };
-
-    if (series.length > 0) {
-      setLoading(true);
-      fetchSeriesData().finally(() => setLoading(false));
+  const series: SeriesConfig[] = React.useMemo(() => {
+    if (propSeries && propSeries.length > 0) {
+      return propSeries;
     }
-  }, [series]);
+    if (Array.isArray(dataField)) {
+      return dataField.map((field, i) => ({
+        name: field,
+        color: defaultColors[i % defaultColors.length],
+        dataField: field,
+        labelField: labelField || 'name',
+      }));
+    }
+    if (dataField) {
+      return [{
+        name: dataField,
+        color: color || defaultColors[0],
+        dataField,
+        labelField: labelField || 'name',
+      }];
+    }
+    return [];
+  }, [propSeries, dataField, color, labelField]);
 
   // Merge all series data into a single dataset for recharts
   const mergedData = React.useMemo(() => {
-    if (propData && propData.length > 0) return propData;
+    if (propData && propData.length > 0) {
+      const firstRow = propData[0] || {};
+      const hasSeriesKeys = series.some((s) => firstRow[s.name] !== undefined);
+      if (!series.length || hasSeriesKeys) {
+        return propData.map((item) => ({
+          ...item,
+          name:
+            getNestedValue(item, labelField || 'name') ??
+            item?.name ??
+            item?.label,
+        }));
+      }
+    }
     
     const dataMap = new Map<string, any>();
     
     series.forEach((s) => {
-      const data = seriesData.get(s.name) || s.data || [];
+      const labelFieldName =
+        s['label-field'] ||
+        s.labelField ||
+        (Array.isArray(labelField) ? labelField[0] : labelField) ||
+        'name';
+      const dataFieldName =
+        s['data-field'] ||
+        s.dataField ||
+        s.name ||
+        (Array.isArray(dataField) ? dataField[0] : dataField) ||
+        'value';
+      const data = s.fetchedData ?? s.data ?? [];
       data.forEach((point: any) => {
-        const key = point.name || point.label || '';
+        const key =
+          getNestedValue(point, labelFieldName) ??
+          point?.[labelFieldName] ??
+          point?.name ??
+          point?.label ??
+          '';
         if (!dataMap.has(key)) {
           dataMap.set(key, { name: key });
         }
-        dataMap.get(key)[s.name] = point.value;
+        const rawValue =
+          getNestedValue(point, dataFieldName) ??
+          point?.[dataFieldName] ??
+          point?.value;
+        const numericValue =
+          typeof rawValue === 'number' ? rawValue : parseFloat(rawValue);
+        dataMap.get(key)[s.name] = Number.isFinite(numericValue) ? numericValue : 0;
       });
     });
     
-    return Array.from(dataMap.values());
-  }, [propData, series, seriesData]);
+    if (dataMap.size > 0) {
+      return Array.from(dataMap.values());
+    }
+
+    return propData || [];
+  }, [propData, series, labelField, dataField]);
 
   const containerStyle: CSSProperties = {
     width: "100%",
@@ -256,17 +218,6 @@ export const LineChartComponent: React.FC<Props> = ({
       </div>
     );
   };
-
-  if (loading) {
-    return (
-      <div id={id} style={containerStyle}>
-        {title && <h3 style={{ textAlign: "center", marginBottom: "10px" }}>{title}</h3>}
-        <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '360px' }}>
-          Loading...
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div id={id} style={containerStyle}>

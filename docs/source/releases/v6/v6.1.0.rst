@@ -12,6 +12,10 @@ New Features
 - Added ``MethodImplementationType`` enum to support different method behaviors: ``none``, ``code``, ``state_machine``, and ``quantum_circuit``.
 - Updated code generation to include method implementation type and behavioral references in generated code.
 
+**BESSER Dataset Integration**
+
+- Added support to **open BUML files directly from a URL**, enabling seamless access to models from the `BESSER Dataset <https://github.com/BESSER-PEARL/BESSER-Dataset>`_. 
+
 **Knowledge Graph Import**
 
 - Added **Import Class Diagram from Knowledge Graph (KG)** feature to the Web Modeling Editor.

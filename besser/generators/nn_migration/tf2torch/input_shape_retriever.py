@@ -4,9 +4,10 @@ This is specific to conv and dense layers.
 These layer attributes are needed when transforming tensorflow
 code to pytorch code.
 """
-import subprocess
-import re
-from ast import literal_eval
+import sys
+import tempfile
+import importlib.util
+from pathlib import Path
 import tensorflow as tf
 from keras import layers
 from besser.BUML.metamodel.nn import NN, Layer
@@ -33,18 +34,11 @@ def extract_nn_code(file_path: str, nn_type: str):
         call_code (list): The lines of code in the call method.
         loader_code (list): The lines of code defining the data loader.
     """
-    nn_name, loader_name = None, None
+    nn_name = None
     in_call_method = False
     call_code = []
     init_code = []
     in_init = True
-    loader_code = []
-    imports = "from besser.generators.nn_migration.tf2torch.input_shape_retriever import get_input_shape_all\n"
-    imports += "from besser.generators.nn_migration.tf2torch.input_shape_retriever import get_data\n"
-    if nn_type == "sequential":
-        loader_code.append(imports)
-    else:
-        init_code.append(imports)
 
     with open(file_path, 'r', encoding="utf-8") as file:
         for line in file:
@@ -54,14 +48,7 @@ def extract_nn_code(file_path: str, nn_type: str):
             if nn_type == "sequential":
                 if "Sequential" in line:
                     nn_name = line.split(" = ")[0]
-
-            if (not (in_init or in_call_method)) or nn_type == "sequential":
-                loader_code.append(line)
-                # Check for the first occurrence of `loader` and `train`
-                #if "loader" in line and "train" in line:
-                if "= load_and_preprocess_data" in line:
-                    loader_name = line.split(",")[0]
-                    break
+                    return nn_name, None, None
 
             if in_init:
                 init_code.append(line)
@@ -78,32 +65,8 @@ def extract_nn_code(file_path: str, nn_type: str):
 
             if in_call_method and line.strip():
                 call_code.append(line)
-    return nn_name, loader_name, init_code, call_code, loader_code
 
-
-def get_data(loader: callable, input_shape: tuple | None):
-    """
-    Gets the data that will be passed to the NN to infer the layers 
-    input shape.
-    If the data loader is not defined in the NN code,
-    the input_shape is used to generate random data.
-
-    Parameters:
-        loader (callable): The data loader.
-        input_shape (tuple | None): The input shape to generate random data.
-
-    Returns:
-        Input data.
-    """
-    if loader is not None:
-        for batch in loader:
-            input_data, _ = batch
-            break
-    elif input_shape is not None:
-        input_data = tf.random.uniform(input_shape)
-    else:
-        input_data = None
-    return input_data
+    return nn_name, init_code, call_code
 
 
 def get_modules_names(model: tf.keras.Model):
@@ -166,7 +129,7 @@ def get_input_shape_all(x: tf.keras.layers.Layer | None,
     layer comes from its preceeding layer, which is not always correct.
     It is used because it enables to cover all the layers including
     the ones defined in a sub neural network. Its output is further
-    corrected buy the input_shape_from_call function that gets 
+    corrected by the input_shape_from_call function that gets 
     the shapes from the call method of the NN dynamically.
     For the case of a sequential architecture, the output of this function
     alone is accurate as the layers have a sequnetial order.
@@ -196,6 +159,23 @@ def get_input_shape_all(x: tf.keras.layers.Layer | None,
     return input_shape_all
 
 
+
+
+def load_modified_nn(modified_code: str, class_name: str):
+    # Write modified code to temporary file
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as tmp:
+        tmp.write(modified_code)
+        tmp_path = Path(tmp.name)
+
+    # Load as a module
+    spec = importlib.util.spec_from_file_location("temp_module", tmp_path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["temp_module"] = mod
+    spec.loader.exec_module(mod)
+
+    # Get the class
+    return getattr(mod, class_name)
+
 def modify_nn_call(init_code: list, call_code: list):
     """
     Adds prints to the call method of the NN to get the input shapes.
@@ -216,113 +196,49 @@ def modify_nn_call(init_code: list, call_code: list):
             of layers in a dict dynamically.
 
     """
-    call_code = call_code[1:]
+    call_code = call_code[1:]  # skip 'def call...' line
     indent = call_code[0][:len(call_code[0]) - len(call_code[0].lstrip())]
+
     for line in call_code:
         if "self." in line:
-            _input = line.split("(")[1].split(")")[0].strip()
-            _output =  line.split("=")[0].strip()
-            name_module = line.split(".")[1].split("(")[0].strip()
-            in_shape_code = (f'{indent}self.dict_details["{name_module}"] = '
-                          f'["{_input}", "{_output}", {_input}.shape]\n')
-            init_code.append(in_shape_code)
+            # extract input/output names as strings
+            _input_name = line.split("(")[1].split(")")[0].strip()
+            layer_name = line.split(".")[1].split("(")[0].strip()
+
+            # append a line that stores names as strings + symbolic shape tuple
+            shape_line = (
+                f'{indent}self.dict_details["{layer_name}"] = '
+                f'tf.shape({_input_name})\n'
+            )
+            init_code.append(shape_line)
+
         init_code.append(line)
 
     init_code.append(f'{indent}return self.dict_details')
-    model_code = "".join(init_code)
-    return model_code
+    return "".join(init_code)
 
-
-def extract_and_modify_code(file_path: str, shape: tuple | None,
-                            input_nn_type: str):
+def extract_in_size_from_dict(layer_dict: dict):
     """
-    Extracts code from the beginning of the file up to and including
-    the line containing the first occurrence of `loader`, which is used
-    to infer the shape of the model input data.
-    The code is then modified to record the shape of layers in a dictionary
-    dynamically in the call method.
+    Extracts desired input size from KerasTensor shapes in ListWrapper.
 
     Parameters:
-        file_path (str): Path to the input file containing the nn model code.
-        shape (tuple | None): The input shape to generate random data.
-        input_nn_type (str): The input architecture type of the model.
-            It can be either 'sequential' or 'subclassing'.
+        lyr_input_shapes (dict): Dictionary where values are ListWrapper containing KerasTensors.
 
     Returns:
-        The modified code to extract the input shape of layers dynamically. 
+        dict: Dictionary with same keys but values are desired input size.
     """
-
-    nn_name, loader_name, init_code, call_code, loader_code = (
-        extract_nn_code(file_path, input_nn_type)
-    )
-
-    if loader_name is None and shape is None:
-        return None
-
-    loader_code = "".join(loader_code)
-    if loader_name:
-        loader_name = loader_name.lstrip()
-        function_code = ""
-    else:
-        function_code = "def main():\n"
-
-    if input_nn_type == "subclassing":
-        model_code = modify_nn_call(init_code, call_code)
-        function_code += f"""\
-    tf_model = {nn_name}()
-    input_data = get_data({loader_name}, {shape})
-    x = input_data
-
-    input_shape_all = get_input_shape_all(x, tf_model)
-
-    tf_model = {nn_name}()
-    input_shape_from_call = tf_model(input_data)
-
-    for mdl_name, mdl_details in input_shape_all.items():
-        if input_shape_from_call.get(mdl_details[-1], None):
-            if not isinstance(mdl_details[-2], dict):
-                mdl_details[1] = input_shape_from_call[mdl_details[-1]][-1][-1]
-
-    print(input_shape_all)
-main()
-    """
-        code = f"{''.join(model_code)}\n{loader_code}\n{function_code}"
-    else:
-        function_code += f"""\
-    input_data = get_data({loader_name}, {shape})
-    input_shape_all = get_input_shape_all(input_data, {nn_name})
-    print(input_shape_all)
-main()
-    """
-
-        code = f"{loader_code}\n{function_code}"
-    return code
-
-
-def extract_dict_from_output(output: str):
-    """
-    Extracts the Python dictionary from the output string.
-    
-    Parameters:
-        output (str): A string from which to extract the dictionary.
-
-    Returns:
-        A python dictionary or None if not found.
-    """
-    # Regular expression to match the first dictionary-like structure
-    # Match everything starting with `{` and ending with `}`, considering
-    # nested braces
-    match = re.search(r'\{.*\}', output.strip())
-
-    if match:
-        dict_str = match.group(0)
-        try:
-            # Safely evaluate the string to a Python dictionary
-            return literal_eval(dict_str)
-        except (ValueError, SyntaxError) as e:
-            print("Error parsing dictionary:", e)
-            return None
-    return None
+    result = {}
+    for layer_name, ktensor in layer_dict.items():
+        # Attempt to use inferred_value if present
+        inferred = getattr(ktensor, '_inferred_value', None)
+        if inferred is not None:
+            shape_list = inferred.tolist() if hasattr(inferred, 'tolist') else list(inferred)
+            result[layer_name] = shape_list[-1]  # last element
+        else:
+            # fallback to static shape
+            shape_list = ktensor.shape.as_list() if hasattr(ktensor, 'shape') else None
+            result[layer_name] = shape_list[-1] if shape_list else None
+    return result
 
 
 
@@ -347,27 +263,6 @@ def increment_counter(counter: int, dict_shapes: dict):
         counter+=1
     return counter
 
-
-def execute_code(code: str):
-    """
-    Executes the code and returns the dict containing
-    the missing input shape of layers.
-
-    Parameters:
-        code (str): The code to execute in str format.
-
-    Returns:
-        The dictionary containing the input shapes of layers.
-    """
-    file_path = "temp.py"
-    with open(file_path, "w", encoding="utf-8") as file:
-        file.write(code)
-    result = subprocess.run(["python", file_path], capture_output=True,
-                            text=True, check=True)
-
-    lyr_input_shapes = extract_dict_from_output(result.stdout)
-
-    return lyr_input_shapes
 
 
 def update_layers_attr(lyr_input_shapes: dict, counter: int,
@@ -395,7 +290,6 @@ def update_layers_attr(lyr_input_shapes: dict, counter: int,
         mdl_type_tf = layers_buml2tf[mdl_type]
     else:
         mdl_type_tf = mdl_type
-
     if mdl_type_tf == lyr_input_shapes[counter][0]:
         in_feat = lyr_input_shapes[counter][1]
         if mdl_type_tf == "Dense":
@@ -408,48 +302,70 @@ def update_layers_attr(lyr_input_shapes: dict, counter: int,
 
     return counter
 
+def load_nn_module(file_path: str, module_name: str):
+    """
+    Load a Python file as a module dynamically.
+    
+    Parameters:
+        file_path (str): Path to the Python file.
+        module_name (str): Name to assign to the module.
+        
+    Returns:
+        The loaded module object.
+    """
+    file_path = Path(file_path).resolve()
+    spec = importlib.util.spec_from_file_location(module_name, file_path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 def update_model(input_nn_type: str, buml_model: NN, file_path: str,
                  shape: tuple | None = None):
     """
-    Updates conv and dense layers with their input shape missing attributes.
-    
-    Parameters:
-        input_nn_type (str): The input architecture type of the model.
-            It can be either 'sequential' or 'subclassing'.
-        buml_model (NN): The buml NN model.
-        file_path (str): Path to the input file containing the nn model code.
-        shape (tuple | None): The input shape to generate random data.
-
-    Returns
-        None but updates the buml model.
-
+    Updates conv and dense layers with their missing input shapes.
+    Supports both sequential and subclassed models.
     """
+    
+    nn_name, init_code, call_code = extract_nn_code(file_path, input_nn_type)
+    
+    input_data = tf.keras.Input(shape=tuple(shape))
+    nn_module = load_nn_module(file_path, "user_module")
 
-    code = extract_and_modify_code(file_path, shape, input_nn_type)
-    if code is None:
-        return
-    lyr_input_shapes = execute_code(code)
+    # Subclassing: modify call() to populate dict_details
+    if input_nn_type == "subclassing":
+        modified_code = modify_nn_call(init_code, call_code)
+        print("fffff", modified_code)
+        NNClass = load_modified_nn(modified_code, nn_name)
+        lyr_input_shapes = NNClass()(input_data)  # call returns dict_details
+        input_shape_from_call = extract_in_size_from_dict(lyr_input_shapes)
+        
+        tf_model = NNClass()
+        lyr_input_shapes = get_input_shape_all(input_data, tf_model)
+
+        for mdl_name, mdl_details in lyr_input_shapes.items():
+            if input_shape_from_call.get(mdl_details[-1], None):
+                if not isinstance(mdl_details[-2], dict):
+                    mdl_details[1] = input_shape_from_call[mdl_details[-1]]
+
+    # Sequential: symbolic tracing via get_input_shape_all
+    else:
+        tf_model = getattr(nn_module, nn_name)  # here nn_name is the variable name of the Sequential
+        lyr_input_shapes = get_input_shape_all(input_data, tf_model)
+
     if lyr_input_shapes is None:
         return
 
+    # Update buml model layers
     cnt_lyr_shape = next(iter(lyr_input_shapes))
-    cnt_mdl = 0
 
     for mdl_obj in buml_model.modules:
         if isinstance(mdl_obj, NN):
             subnn_attr_dict = lyr_input_shapes[cnt_lyr_shape][1]
             cnt_ms_sub = next(iter(subnn_attr_dict))
-
-            cnt_lyr_sub = 0
             for subnn_mdl_obj in mdl_obj.modules:
-                cnt_ms_sub = update_layers_attr(
-                    subnn_attr_dict, cnt_ms_sub, subnn_mdl_obj)
-                cnt_lyr_sub += 1
+                cnt_ms_sub = update_layers_attr(subnn_attr_dict, cnt_ms_sub, subnn_mdl_obj)
             cnt_lyr_shape = increment_counter(cnt_lyr_shape, lyr_input_shapes)
 
         elif isinstance(mdl_obj, Layer):
-            cnt_lyr_shape = update_layers_attr(
-                lyr_input_shapes, cnt_lyr_shape, mdl_obj)
-
-        cnt_mdl += 1
+            cnt_lyr_shape = update_layers_attr(lyr_input_shapes, cnt_lyr_shape, mdl_obj)

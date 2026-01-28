@@ -8,7 +8,7 @@ It also extracts data and model configration attributes.
 import ast
 from abc import abstractmethod
 from besser.BUML.metamodel.nn import NN, Layer
-from besser.generators.nn_reverse_copy.transform_code import (
+from besser.generators.nn_migration.transform_code import (
     set_remaining_params
 )
 

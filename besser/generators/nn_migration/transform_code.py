@@ -85,7 +85,7 @@ def parse_tuple(value: str):
     -------
     The tuple
     """
-    return (1,) + tuple(map(int, value.strip("()").split(",")))
+    return tuple(map(int, value.strip("()").split(",")))
 
 def transform(args: argparse.Namespace, framework: str,
               ast_parser_class: 'ASTParser'):

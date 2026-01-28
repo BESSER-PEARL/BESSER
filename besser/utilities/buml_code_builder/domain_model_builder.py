@@ -5,7 +5,12 @@ This module generates Python code for BUML domain models and object models.
 """
 
 import os
-from besser.BUML.metamodel.structural.structural import DomainModel, AssociationClass, Metadata
+from besser.BUML.metamodel.structural.structural import (
+    DomainModel,
+    AssociationClass,
+    Metadata,
+    MethodImplementationType,
+)
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.utilities import sort_by_timestamp as sort
 from besser.utilities.buml_code_builder.common import PRIMITIVE_TYPE_MAPPING, safe_class_name
@@ -42,7 +47,7 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
         f.write("    Enumeration, EnumerationLiteral, Multiplicity,\n")
         f.write("    StringType, IntegerType, FloatType, BooleanType,\n")
         f.write("    TimeType, DateType, DateTimeType, TimeDeltaType,\n")
-        f.write("    AnyType, Constraint, AssociationClass, Metadata\n")
+        f.write("    AnyType, Constraint, AssociationClass, Metadata, MethodImplementationType\n")
         f.write(")\n")
 
         # Add object model imports if object model is provided
@@ -133,6 +138,12 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                     escaped_code = method.code.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
                     code_str = f', code="{escaped_code}"'
 
+                impl_str = ""
+                impl_type = getattr(method, "implementation_type", None)
+                if impl_type is not None:
+                    impl_name = impl_type.name if hasattr(impl_type, "name") else str(impl_type).upper()
+                    impl_str = f", implementation_type=MethodImplementationType.{impl_name}"
+
                 # Build parameters dictionary
                 params = {}
                 if sort(method.parameters):
@@ -145,10 +156,20 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
                 if method_type:
                     f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
-                           f"{visibility_str}, parameters={params_str}, type={method_type}{code_str})\n")
+                           f"{visibility_str}, parameters={params_str}, type={method_type}{code_str}{impl_str})\n")
                 else:
                     f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
-                           f"{visibility_str}, parameters={params_str}{code_str})\n")
+                           f"{visibility_str}, parameters={params_str}{code_str}{impl_str})\n")
+                if impl_type == MethodImplementationType.STATE_MACHINE:
+                    f.write("try:\n")
+                    f.write(f"    {cls_var_name}_m_{method_var_name}.state_machine = sm\n")
+                    f.write("except NameError:\n")
+                    f.write("    pass\n")
+                if impl_type == MethodImplementationType.QUANTUM_CIRCUIT:
+                    f.write("try:\n")
+                    f.write(f"    {cls_var_name}_m_{method_var_name}.quantum_circuit = qc\n")
+                    f.write("except NameError:\n")
+                    f.write("    pass\n")
 
             # Write assignments
             if sort(cls.attributes):
@@ -246,6 +267,12 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                         escaped_code = method.code.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
                         code_str = f', code="{escaped_code}"'
 
+                    impl_str = ""
+                    impl_type = getattr(method, "implementation_type", None)
+                    if impl_type is not None:
+                        impl_name = impl_type.name if hasattr(impl_type, "name") else str(impl_type).upper()
+                        impl_str = f", implementation_type=MethodImplementationType.{impl_name}"
+
                     # Build parameters dictionary
                     params = {}
                     if sort(method.parameters):
@@ -258,10 +285,20 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
                     if method_type:
                         f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
-                               f"{visibility_str}, parameters={params_str}, type={method_type}{code_str})\n")
+                               f"{visibility_str}, parameters={params_str}, type={method_type}{code_str}{impl_str})\n")
                     else:
                         f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
-                               f"{visibility_str}, parameters={params_str}{code_str})\n")
+                               f"{visibility_str}, parameters={params_str}{code_str}{impl_str})\n")
+                    if impl_type == MethodImplementationType.STATE_MACHINE:
+                        f.write("try:\n")
+                        f.write(f"    {ac_var_name}_m_{method_var_name}.state_machine = sm\n")
+                        f.write("except NameError:\n")
+                        f.write("    pass\n")
+                    if impl_type == MethodImplementationType.QUANTUM_CIRCUIT:
+                        f.write("try:\n")
+                        f.write(f"    {ac_var_name}_m_{method_var_name}.quantum_circuit = qc\n")
+                        f.write("except NameError:\n")
+                        f.write("    pass\n")
 
                 # Create attributes set string if attributes exist
                 attributes_str = ""

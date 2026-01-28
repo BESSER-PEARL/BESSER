@@ -1119,6 +1119,13 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
             except Exception as gui_error:
                 print(f"GUI diagram parsing failed: {str(gui_error)}")
 
+        # Check if we successfully parsed any diagram
+        if diagram_data is None or diagram_type is None:
+            raise ValueError(
+                "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
+                "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, or Project."
+            )
+        
         # Return the diagram in the format expected by the frontend
         return {
             "title": diagram_title,
@@ -1173,6 +1180,13 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
             print(f"Class diagram parsing failed: {str(class_error)}")
             raise HTTPException(status_code=500, detail=f"Class diagram parsing failed: {str(class_error)}")
 
+        # Check if we successfully parsed any diagram
+        if diagram_data is None or diagram_type is None:
+            raise ValueError(
+                "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
+                "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, or Project."
+            )
+        
         # Return the diagram in the format expected by the frontend
         return {
             "title": diagram_title,

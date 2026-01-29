@@ -1,0 +1,16 @@
+Version 2.6.1
+=============
+
+New Features and Improvements
+-----------------------------
+
+**BESSER Low-code Platform**
+
+* SQL & SQLAlchemy Generator: Enhanced the generators to support association classes
+
+Fixes
+-----
+
+**BESSER Low-code Platform**
+
+* Fixed issues: `282 <https://github.com/BESSER-PEARL/BESSER/issues/282>`_, `281 <https://github.com/BESSER-PEARL/BESSER/issues/281>`_

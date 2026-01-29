@@ -1,7 +1,9 @@
 import inspect
-from typing import Any, Callable
+import textwrap
+from typing import Any, Callable, List, Optional
 
 from besser.BUML.metamodel.structural import NamedElement, Model, Method, Parameter, Type
+from abc import ABC, abstractmethod
 
 
 class ConfigProperty:
@@ -36,6 +38,43 @@ class ConfigProperty:
         return f"ConfigProperty(section='{self.section}', name='{self.name}', value={repr(self.value)})"
 
 
+class Action(ABC):
+    """Base class for actions composing a Body.
+    
+    Actions represent discrete operations that can be performed in a state body,
+    enabling programmatic manipulation and model transformation.
+    """
+
+    @abstractmethod
+    def __repr__(self):
+        pass
+
+
+class CustomCodeAction(Action):
+    """Arbitrary code action from a callable or raw source string.
+    
+    Args:
+        source (str, optional): Raw Python source code
+        callable (Callable, optional): A callable whose source will be extracted
+        
+    Attributes:
+        source (str): The Python source code
+    """
+    
+    def __init__(self, source: str = None, callable: Callable = None):
+        if callable is not None:
+            src = inspect.getsource(callable)
+            self.code = textwrap.dedent(src)
+        else:
+            self.code = textwrap.dedent(source) if source else ""
+
+    def to_code(self) -> str:
+        return self.code
+
+    def __repr__(self):
+        return f"CustomCodeAction(source='{self.code[:50]}...')"
+
+
 class Body(Method):
     """The body of the state of a state machine.
 
@@ -46,45 +85,113 @@ class Body(Method):
     Args:
         name (str): The name of the body.
         callable (Callable): The function containing the body's code.
+        actions (Optional[List[Action]]): List of actions composing the body
 
     Attributes:
         name (str): Inherited from Method, represents the name of the body.
         visibility (str): Inherited from Method, represents the visibility of the body.
         type (Type): Inherited from Method, represents the type of the body.
         is_abstract (bool): Inherited from Method, indicates if the body is abstract.
-        parameters (set[Parameter]): Inherited from Method, the set of parameters for the body.
+        parameters (set[structural.Parameter]): Inherited from Method, the set of parameters for the body.
         owner (Type): Inherited from Method, the type that owns the property.
-        code (str): Inherited from Method, code of the body.
+        code (str): Inherited from Method, code of the body (contains source of CustomCodeAction if present, otherwise "").
+        actions (List[Action]): List of actions composing the body
     """
 
-    def __init__(self, name: str, callable: Callable):
+    def __init__(self, name: str, callable: Callable = None, actions: Optional[List[Action]] = None):
+        # If the caller passed actions explicitly, use them; otherwise fallback to wrapping the callable.
+        if actions is None:
+            actions = []
+            if callable is not None:
+                actions.append(CustomCodeAction(callable=callable))
+
+        self.actions: List[Action] = actions
+
+        # Set code to the CustomCodeAction source if exists, otherwise ""
+        code = self._extract_code()
+
         super().__init__(
             name=name,
             parameters={Parameter(name='session', type=Type('Session'))},
             type=None,
-            code=inspect.getsource(callable)
+            code=code
         )
 
+    def _extract_code(self) -> str:
+        """Extract code from CustomCodeAction if present, otherwise return empty string."""
+        for action in self.actions:
+            if isinstance(action, CustomCodeAction):
+                return action.to_code()
+        return ""
+
+    def add_action(self, action: Action) -> 'Body':
+        """Add an action to the body.
+
+        Args:
+            action (Action): The action to add
+
+        Returns:
+            Body: Returns self for method chaining
+        """
+        self.actions.append(action)
+        
+        # Update code: if new action is CustomCodeAction, set code to its code, otherwise set to ""
+        if isinstance(action, CustomCodeAction):
+            self.code = action.to_code()
+        else:
+            self.code = ""
+        
+        return self
+
+    def add_custom_code(self, source: str) -> 'Body':
+        """Add custom Python code as an action.
+
+        Args:
+            source (str): The Python source code
+
+        Returns:
+            Body: Returns self for method chaining
+        """
+        self.add_action(CustomCodeAction(source=source))
+        return self
+
     def __repr__(self):
-        return f"Body(name='{self.name}')"
+        if self.code:
+            return f"Body(name='{self.name}', code='{self.code[:50]}...')"
+        names = [repr(a) for a in self.actions]
+        return f"Body(name='{self.name}', actions={names})"
 
 
-class Event(Method):
+class Event(NamedElement):
     """The representation of an event (i.e., external or internal stimuli or input) that may cause the transition of state
     in a state machine.
 
     Args:
-        name (str): The name of the event.
-        callable (Callable): The function containing the event's code.
+       name (str): The name of the event.
 
     Attributes:
-        name (str): Inherited from Method, represents the name of the body.
-        visibility (str): Inherited from Method, represents the visibility of the body.
-        type (Type): Inherited from Method, represents the type of the body.
-        is_abstract (bool): Inherited from Method, indicates if the body is abstract.
-        parameters (set[Parameter]): Inherited from Method, the set of parameters for the body.
+       name (str): Inherited from NamedElement, represents the name of the event.
+    """
+    def __init__(self, name: str):
+        super().__init__(name)
+
+
+class Condition(Method):
+    """The representation of a condition (i.e., a boolean function) that may cause the transition of state
+    in a state machine.
+
+    Args:
+        name (str): The name of the condition.
+        callable (Callable): The function containing the condition's code.
+
+    Attributes:
+        name (str): Inherited from Method, represents the name of the condition.
+        visibility (str): Inherited from Method, represents the visibility of the condition.
+        type (Type): Inherited from Method, represents the type of the condition.
+        is_abstract (bool): Inherited from Method, indicates if the condition is abstract.
+        parameters (set[structural.Parameter]): Inherited from Method, the set of parameters for the condition.
         owner (Type): Inherited from Method, the type that owns the property.
-        code (str): Inherited from Method, code of the body.
+        code (str): Inherited from Method, code of the condition.
     """
 
     def __init__(self, name: str, callable: Callable):
@@ -96,27 +203,82 @@ class Event(Method):
             name=name,
             parameters={
                 Parameter(name='session', type=Type('Session')),
-                Parameter(name='event_params', type=Type('dict'))
+                Parameter(name='params', type=Type('dict'))
             },
             type=Type('bool'),
             code=code
         )
 
     def __repr__(self):
-        return f"Event(name='{self.name}')"
+        return f"Condition(name='{self.name}')"
+
+
+class TransitionBuilder:
+    """A transition builder.
+
+    This class is used to build transitions, allowing for a "fluent api" syntax where consecutive calls can be
+    made on the same object.
+
+    Args:
+        source (State): the source state of the transition
+        event (Event): the event linked to the transition (can be None)
+        conditions (list[Condition]): the conditions associated to the transition (can be None)
+
+    Attributes:
+        source (State): The source state of the transition
+        event (Event): The event linked to the transition (can be None)
+        condition (list[Condition]): The conditions associated to the transition (can be None)
+    """
+
+    def __init__(self, source: 'State', event: Event = None, conditions: list[Condition] = None):
+        self.source: 'State' = source
+        self.event: Event = event
+        if conditions is None:
+            conditions = []
+        self.conditions: list[Condition] = conditions
+
+    def with_condition(
+            self,
+            condition: Condition
+    ) -> 'TransitionBuilder':
+        self.conditions.append(condition)
+        return self
+
+    def go_to(self, dest: 'State') -> None:
+        """Set the destination state of the transition.
+
+        Completes the transition builder and effectively adds the source state.
+
+        Args:
+            dest (State): the destination state
+        """
+        if dest not in self.source.sm.states:
+            raise ValueError(f'State {dest.name} not found in state machine {self.source.sm.name}')
+
+        for transition in self.source.transitions:
+            if transition.is_auto():
+                raise ValueError(f'State {self.source.name} cannot contain an auto transition with other transitions')
+
+        self.source.transitions.append(Transition(
+            name=self.source._t_name(),
+            source=self.source,
+            dest=dest,
+            event=self.event,
+            conditions=self.conditions
+        ))
 
 
 class Transition(NamedElement):
     """A state machine transition from one state (source) to another (destination).
 
-    A transition is triggered when an event occurs.
+    A transition is triggered when an event and/or condition/s occurs.
 
     Args:
         name (str): Inherited from NamedElement, the transition name
         source (State): the source state of the transition (from where it is triggered)
         dest (State): the destination state of the transition (where the machine moves to)
         event (Callable[[Session, dict], bool]): the event that triggers the transition
-        event_params (dict): the parameters associated to the event
+        conditions (list[Condition]): the conditions that trigger the transition
 
     Attributes:
         name (str): Inherited from NamedElement, the transition name
@@ -124,7 +286,7 @@ class Transition(NamedElement):
         source (State): The source state of the transition (from where it is triggered)
         dest (State): The destination state of the transition (where the machine moves to)
         event (Event): The event that triggers the transition
-        event_params (dict): The parameters associated to the event
+        conditions (list[Condition]): The conditions that trigger the transition
     """
     def __init__(
             self,
@@ -132,16 +294,24 @@ class Transition(NamedElement):
             source: 'State',
             dest: 'State',
             event: Event,
-            event_params: dict = {}
+            conditions: list[Condition]
     ):
         super().__init__(name)
         self.source: 'State' = source
         self.dest: 'State' = dest
         self.event: Event = event
-        self.event_params: dict = event_params
+        self.conditions: list[Condition] = conditions
+
+    def is_auto(self) -> bool:
+        """Check if the transition is `auto` (i.e. no event nor condition linked to it).
+
+        Returns:
+            bool: true if the transition is auto, false otherwise
+        """
+        return not self.event and not self.conditions
 
     def __repr__(self):
-        return f"Transition(name='{self.name}', source='{self.source.name}', dest='{self.dest.name}')"
+        return f"Transition(name='{self.name}', source='{self.source.name}', dest='{self.dest.name}', event='{self.event.name}', conditions='{[condition.name for condition in self.conditions]}')"
 
 
 class State(NamedElement):
@@ -208,8 +378,11 @@ class State(NamedElement):
         """
         self.fallback_body = body
 
-    def when_event_go_to(self, event: Event, dest: 'State', event_params: dict) -> None:
-        self.transitions.append(Transition(name=self._t_name(), source=self, dest=dest, event=event, event_params=event_params))
+    def when_event(self, event: Event) -> TransitionBuilder:
+        return TransitionBuilder(source=self, event=event)
+
+    def when_condition(self, condition: Condition) -> TransitionBuilder:
+        return TransitionBuilder(source=self, conditions=[condition])
 
     def __repr__(self):
         return f"State(name='{self.name}', initial={self.initial})"

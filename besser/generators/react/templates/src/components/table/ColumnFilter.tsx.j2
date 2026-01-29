@@ -1,0 +1,307 @@
+import React, { useState, useEffect } from "react";
+import { createPortal } from "react-dom";
+
+interface ColumnFilterProps {
+  column: {
+    field: string;
+    label: string;
+    type?: string;
+    columnType?: string;
+  };
+  onFilterChange: (field: string, value: string) => void;
+  currentValue: string;
+}
+
+type FilterOperator = 
+  | "contains" | "equals" | "starts_with" | "ends_with" // String operators
+  | "eq" | "ne" | "gt" | "gte" | "lt" | "lte" // Numeric/Date operators
+  | "empty" | "not_empty"; // Special operators
+
+export const ColumnFilter: React.FC<ColumnFilterProps> = ({ column, onFilterChange, currentValue }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  
+  // Parse current filter value (format: "operator:value")
+  const parseFilterValue = (val: string): { operator: FilterOperator; value: string } => {
+    if (!val) return { operator: "contains", value: "" };
+    const parts = val.split(":");
+    if (parts.length === 1) return { operator: "contains", value: parts[0] };
+    return { operator: parts[0] as FilterOperator, value: parts.slice(1).join(":") };
+  };
+
+  const parsed = parseFilterValue(currentValue);
+  const [operator, setOperator] = useState<FilterOperator>(parsed.operator);
+  const [filterValue, setFilterValue] = useState(parsed.value);
+
+  useEffect(() => {
+    const parsed = parseFilterValue(currentValue);
+    setOperator(parsed.operator);
+    setFilterValue(parsed.value);
+  }, [currentValue]);
+
+  // Determine column data type
+  const getColumnDataType = (): "string" | "number" | "date" | "datetime" | "time" | "boolean" => {
+    const type = (column.type || column.columnType || "").toLowerCase();
+    
+    if (type.includes("int") || type.includes("float") || type.includes("decimal") || type.includes("numeric")) {
+      return "number";
+    }
+    if (type.includes("date") && type.includes("time")) {
+      return "datetime";
+    }
+    if (type.includes("date")) {
+      return "date";
+    }
+    if (type.includes("time")) {
+      return "time";
+    }
+    if (type.includes("bool")) {
+      return "boolean";
+    }
+    return "string";
+  };
+
+  const dataType = getColumnDataType();
+
+  // Get available operators based on data type
+  const getOperators = (): { value: FilterOperator; label: string }[] => {
+    if (dataType === "number" || dataType === "date" || dataType === "datetime" || dataType === "time") {
+      return [
+        { value: "eq", label: "= (equals)" },
+        { value: "ne", label: "≠ (not equals)" },
+        { value: "gt", label: "> (greater than)" },
+        { value: "gte", label: "≥ (greater or equal)" },
+        { value: "lt", label: "< (less than)" },
+        { value: "lte", label: "≤ (less or equal)" },
+        { value: "empty", label: "is empty" },
+        { value: "not_empty", label: "is not empty" },
+      ];
+    }
+    
+    if (dataType === "boolean") {
+      return [
+        { value: "eq", label: "= (equals)" },
+        { value: "ne", label: "≠ (not equals)" },
+      ];
+    }
+
+    // String operators
+    return [
+      { value: "contains", label: "contains" },
+      { value: "equals", label: "equals" },
+      { value: "starts_with", label: "starts with" },
+      { value: "ends_with", label: "ends with" },
+      { value: "empty", label: "is empty" },
+      { value: "not_empty", label: "is not empty" },
+    ];
+  };
+
+  const operators = getOperators();
+
+  const handleApply = () => {
+    if (operator === "empty" || operator === "not_empty") {
+      onFilterChange(column.field, operator);
+    } else {
+      const filterString = filterValue ? `${operator}:${filterValue}` : "";
+      onFilterChange(column.field, filterString);
+    }
+    setIsOpen(false);
+  };
+
+  const handleClear = () => {
+    setOperator(dataType === "string" ? "contains" : "eq");
+    setFilterValue("");
+    onFilterChange(column.field, "");
+    setIsOpen(false);
+  };
+
+  const needsValueInput = operator !== "empty" && operator !== "not_empty";
+
+  const getInputType = (): string => {
+    if (dataType === "number") return "number";
+    if (dataType === "date") return "date";
+    if (dataType === "datetime") return "datetime-local";
+    if (dataType === "time") return "time";
+    return "text";
+  };
+
+  return (
+    <div style={{ position: "relative", display: "inline-block" }}>
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        style={{
+          background: filterValue ? "#2563eb" : "transparent",
+          border: "none",
+          color: filterValue ? "#fff" : "#94a3b8",
+          cursor: "pointer",
+          padding: "4px",
+          borderRadius: "4px",
+          fontSize: "12px",
+          transition: "all 0.2s",
+          display: "inline-flex",
+          alignItems: "center",
+        }}
+        title="Filter column"
+      >
+        <svg 
+          width="14" 
+          height="14" 
+          viewBox="0 0 24 24" 
+          fill="none" 
+          stroke="currentColor" 
+          strokeWidth="2" 
+          strokeLinecap="round" 
+          strokeLinejoin="round"
+        >
+          <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+        </svg>
+      </button>
+
+      {isOpen && createPortal(
+        <>
+          <div
+            style={{
+              position: "fixed",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 999,
+            }}
+            onClick={() => setIsOpen(false)}
+          />
+          <div
+            style={{
+              position: "fixed",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              backgroundColor: "white",
+              border: "1px solid #e2e8f0",
+              borderRadius: "8px",
+              boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)",
+              padding: "16px",
+              minWidth: "280px",
+              zIndex: 1000,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ marginBottom: "12px", fontSize: "12px", fontWeight: 600, color: "#334155" }}>
+              Filter {column.label}
+              <span style={{ fontSize: "11px", fontWeight: 400, color: "#64748b", marginLeft: "4px" }}>
+                ({dataType})
+              </span>
+            </div>
+
+            <div style={{ marginBottom: "8px" }}>
+              <label style={{ fontSize: "11px", color: "#64748b", display: "block", marginBottom: "4px" }}>
+                Operator
+              </label>
+              <select
+                value={operator}
+                onChange={(e) => setOperator(e.target.value as FilterOperator)}
+                style={{
+                  width: "100%",
+                  padding: "6px 8px",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: "4px",
+                  fontSize: "13px",
+                  boxSizing: "border-box",
+                  backgroundColor: "white",
+                }}
+              >
+                {operators.map((op) => (
+                  <option key={op.value} value={op.value}>
+                    {op.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {needsValueInput && (
+              <div style={{ marginBottom: "8px" }}>
+                <label style={{ fontSize: "11px", color: "#64748b", display: "block", marginBottom: "4px" }}>
+                  Value
+                </label>
+                {dataType === "boolean" ? (
+                  <select
+                    value={filterValue}
+                    onChange={(e) => setFilterValue(e.target.value)}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: "4px",
+                      fontSize: "13px",
+                      boxSizing: "border-box",
+                      backgroundColor: "white",
+                    }}
+                    autoFocus
+                  >
+                    <option value="">Select...</option>
+                    <option value="true">True</option>
+                    <option value="false">False</option>
+                  </select>
+                ) : (
+                  <input
+                    type={getInputType()}
+                    value={filterValue}
+                    onChange={(e) => setFilterValue(e.target.value)}
+                    placeholder={`Enter ${dataType} value...`}
+                    style={{
+                      width: "100%",
+                      padding: "6px 8px",
+                      border: "1px solid #cbd5e1",
+                      borderRadius: "4px",
+                      fontSize: "13px",
+                      boxSizing: "border-box",
+                    }}
+                    autoFocus
+                  />
+                )}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: "8px", marginTop: "12px" }}>
+              <button
+                type="button"
+                onClick={handleClear}
+                style={{
+                  flex: 1,
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  background: "#f1f5f9",
+                  border: "1px solid #cbd5e1",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  color: "#475569",
+                  fontWeight: 500,
+                }}
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={handleApply}
+                style={{
+                  flex: 1,
+                  padding: "6px 12px",
+                  fontSize: "12px",
+                  background: "#2563eb",
+                  border: "none",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  color: "white",
+                  fontWeight: 500,
+                }}
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </>,
+        document.body
+      )}
+    </div>
+  );
+};

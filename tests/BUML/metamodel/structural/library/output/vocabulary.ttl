@@ -4,50 +4,51 @@
 @prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 
 # Class definition
-ex:Library rdf:type rdfs:Class .
-
-ex:Author rdf:type rdfs:Class .
-
-ex:Book rdf:type rdfs:Class .
-
+ex:Author rdf:type rdfs:Class ;
+          rdfs:label "Author" .
+ex:Book rdf:type rdfs:Class ;
+          rdfs:label "Book" .
+ex:Library rdf:type rdfs:Class ;
+          rdfs:label "Library" .
 
 # Property definition
-ex:address rdf:type rdf:Property ;
-        rdfs:domain ex:Library ;
-        rdfs:range xsd:string .
-
-ex:name rdf:type rdf:Property ;
-        rdfs:domain ex:Library ;
-        rdfs:range xsd:string .
-
-ex:name rdf:type rdf:Property ;
-        rdfs:domain ex:Author ;
-        rdfs:range xsd:string .
-
 ex:email rdf:type rdf:Property ;
         rdfs:domain ex:Author ;
-        rdfs:range xsd:string .
-
+        rdfs:range xsd:string ;
+        rdfs:label "email" .
+ex:name rdf:type rdf:Property ;
+        rdfs:domain ex:Author ;
+        rdfs:range xsd:string ;
+        rdfs:label "name" .
 ex:title rdf:type rdf:Property ;
         rdfs:domain ex:Book ;
-        rdfs:range xsd:string .
-
-ex:pages rdf:type rdf:Property ;
-        rdfs:domain ex:Book ;
-        rdfs:range xsd:integer .
-
+        rdfs:range xsd:string ;
+        rdfs:label "title" .
 ex:release rdf:type rdf:Property ;
         rdfs:domain ex:Book ;
-        rdfs:range xsd:dateTime .
-
+        rdfs:range xsd:date ;
+        rdfs:label "release" .
+ex:pages rdf:type rdf:Property ;
+        rdfs:domain ex:Book ;
+        rdfs:range xsd:integer ;
+        rdfs:label "pages" .
+ex:address rdf:type rdf:Property ;
+        rdfs:domain ex:Library ;
+        rdfs:range xsd:string ;
+        rdfs:label "address" .
+ex:name rdf:type rdf:Property ;
+        rdfs:domain ex:Library ;
+        rdfs:range xsd:string ;
+        rdfs:label "name" .
 
 # Relationship Definition
-ex:lib_book_assoc rdf:type rdf:Property ;
+ex:writtenBy rdf:type rdf:Property ;
     rdfs:domain ex:Book ;
-    rdfs:range ex:Library .
-     
-ex:book_author_assoc rdf:type rdf:Property ;
-    rdfs:domain ex:Author ;
-    rdfs:range ex:Book .
+    rdfs:range ex:Author ;
+    rdfs:label "writtenBy" .
+ex:locatedIn rdf:type rdf:Property ;
+    rdfs:domain ex:Book ;
+    rdfs:range ex:Library ;
+    rdfs:label "locatedIn" .
 
 # Enumeration definition

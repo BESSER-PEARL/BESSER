@@ -1,0 +1,34 @@
+Version 6.1.0
+==============
+
+This release introduces the ability to **link state machines or quantum circuits to methods** in the Web Modeling Editor, **GitHub project versioning** (experimental), and **Knowledge Graph import to Class Diagram**.
+
+New Features
+-------------
+
+**Method Implementation Types**
+
+- Methods can now reference state machines or quantum circuits as their implementation.
+- Added ``MethodImplementationType`` enum to support different method behaviors: ``none``, ``code``, ``state_machine``, and ``quantum_circuit``.
+- Updated code generation to include method implementation type and behavioral references in generated code.
+
+**BESSER Dataset Integration**
+
+- Added support to **open BUML files directly from a URL**, enabling seamless access to models from the `BESSER Dataset <https://github.com/BESSER-PEARL/BESSER-Dataset>`_. 
+
+**Knowledge Graph Import**
+
+- Added **Import Class Diagram from Knowledge Graph (KG)** feature to the Web Modeling Editor.
+- Supports importing TTL, RDF, and JSON-LD files and converting them to UML Class Diagrams using OpenAI's GPT.
+
+**GitHub Project Versioning (Experimental)**
+
+- Introduced experimental support for **GitHub-based project save and versioning**.
+- Enables users to save projects directly to GitHub repositories with version control.
+- Provides foundation for collaborative modeling workflows.
+
+Fixes
+------
+
+* Fixed issue: `#385 <https://github.com/BESSER-PEARL/BESSER/issues/385>`_
+

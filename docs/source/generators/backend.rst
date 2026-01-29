@@ -90,3 +90,206 @@ By providing this script and the Dockerfile, users can build and upload their Do
    
    If you use the generator to generate and load the Docker image in DockerHub, you must make sure you have a Docker engine installed on your computer. 
    For example `Docker desktop <https://www.docker.com/products/docker-desktop>`_.
+
+
+Generated API Endpoints
+-----------------------
+
+The Backend Generator creates a comprehensive REST API with the following endpoint categories for each entity in your B-UML model:
+
+CRUD Operations
+^^^^^^^^^^^^^^^
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 35 50
+
+   * - Method
+     - Endpoint
+     - Description
+   * - GET
+     - ``/{entity}/``
+     - Get all entities (supports ``detailed=true`` for relationships)
+   * - GET
+     - ``/{entity}/count/``
+     - Get total count of entities
+   * - GET
+     - ``/{entity}/paginated/``
+     - Paginated list with ``skip``, ``limit``, ``detailed`` params
+   * - GET
+     - ``/{entity}/search/``
+     - Search by attributes (auto-generated filters)
+   * - GET
+     - ``/{entity}/{id}/``
+     - Get single entity by ID
+   * - POST
+     - ``/{entity}/``
+     - Create single entity
+   * - POST
+     - ``/{entity}/bulk/``
+     - Bulk create multiple entities
+   * - PUT
+     - ``/{entity}/{id}/``
+     - Full update of entity
+   * - DELETE
+     - ``/{entity}/{id}/``
+     - Delete single entity
+   * - DELETE
+     - ``/{entity}/bulk/``
+     - Bulk delete by IDs
+
+Relationship Management (N:M)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For many-to-many relationships, additional endpoints are generated:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 35 50
+
+   * - Method
+     - Endpoint
+     - Description
+   * - GET
+     - ``/{entity}/{id}/{relationship}/``
+     - Get all related entities
+   * - POST
+     - ``/{entity}/{id}/{relationship}/{related_id}/``
+     - Add a relationship
+   * - DELETE
+     - ``/{entity}/{id}/{relationship}/{related_id}/``
+     - Remove a relationship
+
+
+Class Methods Endpoints
+^^^^^^^^^^^^^^^^^^^^^^^
+
+When your B-UML model includes **methods** defined on classes, the generator automatically creates API endpoints to execute them.
+The generator distinguishes between two types of methods based on the method signature:
+
+**Instance Methods** (methods with ``self``):
+
+These methods operate on a specific entity instance. The endpoint requires an entity ID.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 35 50
+
+   * - Method
+     - Endpoint
+     - Description
+   * - POST
+     - ``/{entity}/{id}/methods/{method_name}/``
+     - Execute method on a specific entity instance
+
+**Class Methods** (methods without ``self``):
+
+These methods operate at the class level, performing operations on the entire collection or class-level logic.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 35 50
+
+   * - Method
+     - Endpoint
+     - Description
+   * - POST
+     - ``/{entity}/methods/{method_name}/``
+     - Execute class-level method
+
+**Supported Parameter Types:**
+
+The following parameter types are supported for method parameters:
+
+- ``str`` - String values
+- ``int`` - Integer values
+- ``float`` - Floating-point values
+- ``bool`` - Boolean values
+- ``date`` - Date values
+- ``datetime`` - DateTime values
+- ``time`` - Time values
+
+**Request Format:**
+
+Parameters are passed as a JSON body:
+
+.. code-block:: json
+
+    {
+        "params": {
+            "param_name": "value",
+            "another_param": 42
+        }
+    }
+
+**Response Format:**
+
+The method execution returns a structured response:
+
+.. code-block:: json
+
+    {
+        "entity_id": 5,
+        "method": "method_name",
+        "status": "executed",
+        "result": "...",
+        "output": "captured print statements..."
+    }
+
+**Example - Instance Method:**
+
+If your B-UML model has a ``Book`` class with a method ``apply_discount(self, percent: float)``:
+
+.. code-block:: python
+
+    # B-UML method definition
+    def apply_discount(self, percent: float):
+        self.price = self.price * (1 - percent / 100)
+
+The generator creates:
+
+- Endpoint: ``POST /book/5/methods/apply_discount/``
+- Request body: ``{"params": {"percent": 10}}``
+
+**Example - Class Method:**
+
+If your B-UML model has a ``Book`` class with a method ``get_expensive_books(database, min_price: int)``:
+
+.. code-block:: python
+
+    # B-UML method definition (no self parameter)
+    def get_expensive_books(database, min_price: int):
+        return database.query(Book).filter(Book.price > min_price).all()
+
+The generator creates:
+
+- Endpoint: ``POST /book/methods/get_expensive_books/``
+- Request body: ``{"params": {"min_price": 50}}``
+
+.. note::
+
+   The ``database`` parameter is automatically injected by the API framework and should not be passed in the request body.
+   Any ``print()`` statements executed during method execution are captured and returned in the ``output`` field of the response.
+
+
+System Endpoints
+^^^^^^^^^^^^^^^^
+
+The generated API also includes system-level endpoints:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 15 25 60
+
+   * - Method
+     - Endpoint
+     - Description
+   * - GET
+     - ``/``
+     - API information (name, version, status)
+   * - GET
+     - ``/health``
+     - Health check endpoint for monitoring
+   * - GET
+     - ``/statistics``
+     - Database statistics (entity counts)

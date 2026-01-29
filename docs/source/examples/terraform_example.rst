@@ -95,7 +95,7 @@ Use the Terraform Generator to create the Terraform configuration files for depl
 
 Create a configuration file named ``config_aws.conf``:
 
-.. code-block:: conf
+.. code-block:: ini
 
     region = "us-east-1"
     access_key = "your_aws_access_key"
@@ -105,7 +105,7 @@ Create a configuration file named ``config_aws.conf``:
 
 Create a configuration file named ``config_google.conf``:
 
-.. code-block:: conf
+.. code-block:: ini
 
     project = "your_gcp_project_id"
 

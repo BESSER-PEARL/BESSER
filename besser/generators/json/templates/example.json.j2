@@ -1,0 +1,7 @@
+{
+  "id": "urn:ngsi-ld:{{ model_name }}:{{ model_name }}-001",
+  "type": "{{ model_name }}",
+  {% for prop, info in properties.items() %}
+  "{{ prop }}": {{ info.example }}{% if not loop.last %},{% endif %}
+  {% endfor %}
+}

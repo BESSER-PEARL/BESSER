@@ -43,17 +43,78 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
         self.__{{ attribute.name }} = {{ attribute.name }}
 {% endfor -%}
 
-    {% for end in class.association_ends() %}{% if end.is_navigable == True %}
+    {% for end in class.association_ends() if end.is_navigable %}
     @property
     def {{ end.name }}(self):
         return self.__{{ end.name }}
 
     @{{ end.name }}.setter
-    def {{ end.name }}(self, {{ end.name }}):
-        self.__{{ end.name }} = {{ end.name }}
-{% endif -%}{% endfor -%}
+    def {{ end.name }}(self, value):
+        # Bidirectional consistency
+        old_value = getattr(self, f"_{{class.name}}__{{ end.name }}", None)
+        self.__{{ end.name }} = value{% if end.multiplicity.max > 1 %} if value is not None else set(){% endif %}
+
+        {%- set opp = end.opposite_end() %}
+        {% if opp %}
+        # Remove self from old opposite end
+        if old_value is not None:
+            {%- if end.multiplicity.max > 1 %}
+            for item in old_value:
+                if hasattr(item, "{{ opp.name }}"):
+                    opp_val = getattr(item, "{{ opp.name }}", None)
+                    {% if opp.multiplicity.max > 1 %}
+                    if isinstance(opp_val, set):
+                        opp_val.discard(self)
+                    {% else %}
+                    if opp_val == self:
+                        setattr(item, "{{ opp.name }}", None)
+                    {% endif %}
+            {%- else %}
+            if hasattr(old_value, "{{ opp.name }}"):
+                opp_val = getattr(old_value, "{{ opp.name }}", None)
+                {% if opp.multiplicity.max > 1 -%}
+                if isinstance(opp_val, set):
+                    opp_val.discard(self)
+                {% else -%}
+                if opp_val == self:
+                    setattr(old_value, "{{ opp.name }}", None)
+                {% endif -%}
+            {%- endif %}
+        # Add self to new opposite end
+        if value is not None:
+            {%- if end.multiplicity.max > 1 %}
+            for item in value:
+                if hasattr(item, "{{ opp.name }}"):
+                    opp_val = getattr(item, "{{ opp.name }}", None)
+                    {% if opp.multiplicity.max > 1 %}
+                    if opp_val is None:
+                        setattr(item, "{{ opp.name }}", set([self]))
+                    elif isinstance(opp_val, set):
+                        opp_val.add(self)
+                    {% else %}
+                    setattr(item, "{{ opp.name }}", self)
+                    {% endif %}
+            {%- else %}
+            if hasattr(value, "{{ opp.name }}"):
+                opp_val = getattr(value, "{{ opp.name }}", None)
+                {%- if opp.multiplicity.max > 1 %}
+                if opp_val is None:
+                    setattr(value, "{{ opp.name }}", set([self]))
+                elif isinstance(opp_val, set):
+                    opp_val.add(self)
+                {%- else %}
+                setattr(value, "{{ opp.name }}", self)
+                {%- endif %}
+            {%- endif %}
+        {%- endif %}
+{% endfor -%}
 
     {%- for method in class.methods %}
+    {%- if method.code %}
+    {#- If method has code, use it directly (it contains the full function definition) #}
+{{ method.code | indent(4, first=true) }}
+    {%- else %}
+    {#- Otherwise generate method signature from metadata #}
     {%- if method.is_abstract %}
     @abstractmethod
     {%- endif %}
@@ -64,8 +125,9 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
         # TODO: Implement {{ method.name }} method
         pass
         {%- endif %}
+    {%- endif %}
 {% endfor -%}
 {%- else %}
     pass
 {%- endif %}
-{% endfor %}
+{%- endfor %}

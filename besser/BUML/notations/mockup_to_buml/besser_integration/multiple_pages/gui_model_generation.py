@@ -1,8 +1,8 @@
 import os
 import requests
 import retrying
-from besser.BUML.notations.mockup_to_structural.utilities.image_utils import *
-from besser.BUML.notations.mockup_to_structural.utilities.file_utils import *
+from besser.BUML.notations.mockup_to_structural.utilities import *
+from besser.BUML.notations.mockup_to_structural.utilities import *
 from besser.BUML.notations.mockup_to_buml.config import *
 
 
@@ -451,13 +451,6 @@ def direct_prompting_whole_app(api_key, metamodel_image_path, gui_models_paths, 
     # Call gpt4o_call to generate the Python code using the direct prompt method
     python_code = gpt4o_call_whole_app(api_key, base64_metamodel, direct_prompt, gui_models_paths, first_gui_code_path, second_gui_code_path, third_gui_code_path, forth_gui_code_path, single_gui_code_path, metamodel_text_path, structural_model_path)
 
-    # Write the Python code to a file
-    if python_code:
-        # Write the Python code to a file
-        with open("output_file.py", "w", encoding="utf-8") as file:
-            file.write(python_code)
-    else:
-        print("Failed to generate Python code.")
     return python_code
 
 def run_pipeline_gui_model_generation(api_key: str, navigation_image_path: str, pages_order_file_path: str, output_folder: str):
@@ -486,7 +479,6 @@ def run_pipeline_gui_model_generation(api_key: str, navigation_image_path: str, 
         output_file_name = os.path.join(gui_output_dir, "generated_gui_model.py") # Specify the desired output file name
         with open(output_file_name, "w", encoding="utf-8") as file:
             file.write(python_code)
-        print(f"Generated Python code saved to {output_file_name}")
     else:
         print("Failed to generate Python code.")
 
@@ -498,7 +490,6 @@ def run_pipeline_gui_model_generation(api_key: str, navigation_image_path: str, 
         output_file_name = os.path.join(gui_output_dir, "generated_gui_model.py") # Specify the desired output file name
         with open(output_file_name, "w", encoding="utf-8") as file:
             file.write(improved_code)
-        print(f"Generated revise code saved to {output_file_name}")
     else:
         print("Failed to generate revise code.")
 
@@ -509,7 +500,6 @@ def run_pipeline_gui_model_generation(api_key: str, navigation_image_path: str, 
         output_file_name = os.path.join(gui_output_dir, "generated_gui_model.py") # Specify the desired output file name
         with open(output_file_name, "w", encoding="utf-8") as file:
             file.write(refactored_code)
-        print(f"Generated refactor code saved to {output_file_name}")
     else:
         print("Failed to generate revise code.")
 
@@ -520,6 +510,6 @@ def run_pipeline_gui_model_generation(api_key: str, navigation_image_path: str, 
         output_file_name = os.path.join(gui_output_dir, "generated_gui_model.py") # Specify the desired output file name
         with open(output_file_name, "w", encoding="utf-8") as file:
             file.write(completed_code)
-        print(f"Generated complete code saved to {output_file_name}")
+        print(f"Generated Python code saved to {output_file_name}")
     else:
         print("Failed to generate revise code.")

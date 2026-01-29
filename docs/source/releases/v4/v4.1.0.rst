@@ -1,0 +1,13 @@
+Version 4.1.0
+=============
+
+New Features and Improvements
+-----------------------------
+
+* Extended the JSON Schema generator to create schemas compatible with the `Smart Data Models <https://smartdatamodels.org/>`_ initiative. This generator is also available via the `BESSER Web Modeling Editor <https://editor.besser-pearl.org/>`_.
+* Added support for multiple inheritance in the SQLAlchemy generator.
+
+Documentation
+-------------
+
+* :doc:`JSON Schema generator documentation <../../generators/json_schema>` has been updated to include instructions for generating schemas compliant with the Smart Data Models initiative.

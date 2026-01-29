@@ -1,7 +1,6 @@
-version: '3.8'
-
 services:
   besser-wme-backend:
+    image: artefacts.list.lu/besser/web_modeling_editor/backend:latest
     build:
       context: .
       dockerfile: Dockerfile
@@ -9,44 +8,50 @@ services:
       - "9000:9000"
     volumes:
       - ./:/app
-      - /var/run/docker.sock:/var/run/docker.sock  # Mount Docker socket for Docker communication
+      - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /app/besser
+    env_file:
+      - ./.env
     environment:
       - PYTHONPATH=/app
+      - GITHUB_REDIRECT_URI=${GITHUB_REDIRECT_URI:-http://localhost:9000/besser_api/github/auth/callback}
     command: python -m besser.utilities.web_modeling_editor.backend.backend
     networks:
       - besser_network
 
-  besser_redis:
-    image: redis/redis-stack-server:latest
-    container_name: besser_redis
-    volumes:
-      - apollon_redis_data:/data
-    networks:
-      - besser_network
-
   besser-wme-frontend:
+    image: artefacts.list.lu/besser/web_modeling_editor/frontend:latest
     build:
-      context: ./besser/utilities/web_modeling_editor/BESSER_WME_standalone
-      dockerfile: Dockerfile.redis
+      context: ./besser/utilities/web_modeling_editor/frontend
+      dockerfile: Dockerfile
     container_name: besser-wme-frontend
-    environment:
-      - APOLLON_REDIS_URL=redis://besser_redis:6379
-      - APOLLON_REDIS_DIAGRAM_TTL=${APOLLON_REDIS_DIAGRAM_TTL}
-      - APOLLON_REDIS_MIGRATE_FROM_FILE=true
-      - DEPLOYMENT_URL=${DEPLOYMENT_URL}
-      - BACKEND_URL=${BACKEND_URL}
-    volumes:
-      - ./diagrams:/app/diagrams
+    env_file:
+      - ./besser/utilities/web_modeling_editor/frontend/packages/webapp/webpack/.env
     restart: always
     networks:
       - besser_network
     ports:
       - "8080:8080"
 
-volumes:
-  apollon_redis_data:
-    driver: local
+  # besser-wme-modeling-agent:
+  #   image: artefacts.list.lu/besser/web_modeling_editor/modeling_agent:latest
+  #   build:
+  #     context: ./besser/utilities/web_modeling_editor/frontend/ModelingAgent
+  #     dockerfile: Dockerfile
+  #   container_name: besser-wme-modeling-agent
+  #   env_file:
+  #     - ./.env
+  #   environment:
+  #     - PYTHONUNBUFFERED=1
+  #   ports:
+  #     - "8765:8765"
+  #   restart: unless-stopped
+  #   networks:
+  #     - besser_network
+  #   depends_on:
+  #     - besser_redis
+
+volumes: {}
 
 networks:
   besser_network:

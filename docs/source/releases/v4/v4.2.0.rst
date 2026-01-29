@@ -1,0 +1,21 @@
+Version 4.2.0
+=============
+
+New Features and Improvements
+-----------------------------
+
+**Web Modeling Editor**:
+
+* Introduced association popup component for enhanced object linking functionality, enabling users to connect objects to related classes in both standard and icon object diagrams.
+* Added an icon attribute to class metadata, allowing classes to store an icon that is displayed for instantiated objects in object diagrams.
+* Improved UI consistency and maintainability with reformatted HTML elements, better input attributes, button layouts, and section structure.
+* Enhanced palette and preview support for the new diagram types in the create pane interface.
+
+**BESSER Low-code Platform**:
+
+* Added new FastAPI endpoint '/besser_api/get-json-model-from-image' that accepts an image and OpenAI API key to convert UML images to JSON models using the image_to_buml functionality.
+* Enhanced Smart Data Models JSON schema generator with improvements for better compatibility and validation rules.
+* Extended metadata handling in code builder, BUML-to-JSON converter, and JSON-to-BUML processor to include icon field support.
+* Updated image_to_buml prompt to clarify handling of association labels for better PlantUML compatibility.
+
+

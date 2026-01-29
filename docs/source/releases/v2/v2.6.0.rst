@@ -1,0 +1,28 @@
+Version 2.6.0
+=============
+
+New Features and Improvements
+-----------------------------
+
+**BESSER Low-code Platform**
+
+* NN Metamodel: Enhanced default configurations for neural network layers and improved flexibility in setting module attributes.
+* PyTorch and TensorFlow Code Generators: Streamlined type hinting and shape handling, and updated default parameter settings for improved compatibility in PyTorch code generation.
+* Django Generator: Added support for generating a Django application that includes both database models and predefined UI components, such as forms, templates, and views.
+* UI Mock-ups to B-UML: Introduced functionality for extracting B-UML models directly from mockups (both hand-drawn and digital), encompassing both structural and GUI representations.
+
+**Web Modeling Editor**
+
+* Added support for Association Class
+
+Fixes
+-----
+
+**BESSER Low-code Platform**
+
+* Fixed issues: `272 <https://github.com/BESSER-PEARL/BESSER/issues/272>`_, `275 <https://github.com/BESSER-PEARL/BESSER/issues/275>`_
+
+Documentation
+-------------
+
+* Add documentation for NN metamodel, Pytorch, and TensorFlow code generators (API section)

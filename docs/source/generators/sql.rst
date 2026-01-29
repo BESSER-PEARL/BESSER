@@ -16,7 +16,7 @@ Let's generate the SQL code for the :doc:`../examples/library_example`. You shou
 
 The ``model`` parameter specifies the input B-UML structural model, while the ``sql_dialects`` parameter specifies the target SQL 
 dialect for the generated statements.
-In this example, we use ``sqlite``, but you can also specify ``postgres``, ``mysql``, ``mssql``, or ``mariadb``.
+In this example, we use ``sqlite``, but you can also specify ``postgres``, ``mysql``, ``mssql``, ``mariadb`` or ``oracle``.
 
 Output
 ------

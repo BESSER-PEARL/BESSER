@@ -1,8 +1,8 @@
 import os
 import requests
 import retrying
-from besser.BUML.notations.mockup_to_structural.utilities.image_utils import *
-from besser.BUML.notations.mockup_to_structural.utilities.file_utils import *
+from besser.BUML.notations.mockup_to_structural.utilities import *
+from besser.BUML.notations.mockup_to_structural.utilities import *
 from besser.BUML.notations.mockup_to_buml.config import *
 
 
@@ -293,13 +293,6 @@ def direct_prompting(api_key, metamodel_image_path, mockup_image_path, first_exa
     python_code = gpt4o_call(api_key, mockup_image_path, base64_metamodel, base64_mockup, direct_prompt, first_example_code_path,
     second_example_code_path, metamodel_text_path, structural_model_path)
 
-    # Write the Python code to a file
-    if python_code:
-        # Write the Python code to a file
-        with open("output_file.py", "w", encoding="utf-8") as file:
-            file.write(python_code)
-    else:
-        print("Failed to generate Python code.")
 
     return python_code
 
@@ -334,7 +327,6 @@ def run_pipeline_gui_generation(api_key: str, mockup_image_path: str, output_fol
         )
         with open(output_file_name, "w", encoding="utf-8") as file:
             file.write(python_code)
-        print(f"Generated Python code saved to {output_file_name}")
     else:
         print("Failed to generate Python code.")
 
@@ -347,6 +339,6 @@ def run_pipeline_gui_generation(api_key: str, mockup_image_path: str, output_fol
         output_file_name = os.path.join(gui_output_dir, "generated_gui_model.py")
         with open(output_file_name, "w", encoding="utf-8") as file:
             file.write(improved_code)
-        print(f"Generated revised code saved to {output_file_name}")
+        print(f"Generated Python code saved to {output_file_name}")
     else:
         print("Failed to generate revised code.")

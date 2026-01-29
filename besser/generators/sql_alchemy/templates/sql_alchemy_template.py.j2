@@ -1,13 +1,17 @@
+{% import "helpers.py.j2" as helper -%}
 import enum
 from typing import List, Optional
 from sqlalchemy import (
     create_engine, Column, ForeignKey, Table, Text, Boolean, String, Date, 
     Time, DateTime, Float, Integer, Enum
 )
+{%- if classes | selectattr("is_abstract") | list | length > 0 %}
+from sqlalchemy.ext.declarative import AbstractConcreteBase
+{%- endif %}
 from sqlalchemy.orm import (
     column_property, DeclarativeBase, Mapped, mapped_column, relationship
 )
-from datetime import datetime, time, date
+from datetime import datetime as dt_datetime, time as dt_time, date as dt_date
 
 class Base(DeclarativeBase):
     pass
@@ -23,13 +27,18 @@ class {{ enum.name }}(enum.Enum):
 # Tables definition for many-to-many relationships
 
 {%- for association in associations if association.ends|length == 2 %}
-{%- set ns = namespace(many_to_many = True) %}
+{%- set ns = namespace(many_to_many = True, has_association_class = False) %}
 {%- for end in association.ends %}
 {%- if end.multiplicity.max < 2 %} 
 {%- set ns.many_to_many = False %} 
 {%- endif %}
 {%- endfor %}
-{%- if ns.many_to_many == True %}
+{%- for asso_class in asso_classes %}
+{%- if asso_class.association.name == association.name %}
+{%- set ns.has_association_class = True %}
+{%- endif %}
+{%- endfor %}
+{%- if ns.many_to_many == True and not ns.has_association_class %}
 {{ association.name.lower() }} = Table(
     "{{ association.name.lower() }}",
     Base.metadata,
@@ -37,7 +46,7 @@ class {{ enum.name }}(enum.Enum):
     Column("{{ end.name }}", ForeignKey("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True),
     {%- endfor %}
 )
-    {%- endif %}
+{%- endif %}
 {%- endfor %}
 
 # Tables definition
@@ -45,74 +54,153 @@ class {{ enum.name }}(enum.Enum):
 {%- for class in classes %}
 class {{ class.name }}(
     {%- if class.parents() -%}
-        {% for parent in class.parents() -%}
+    {% for parent in class.parents() -%}
             {{parent.name}}{{ ", " if not loop.last else "):" }}
-        {% endfor -%}
+    {% endfor -%}
+    {% else -%}
+    {% if class.name in concrete_parents -%}
+    AbstractConcreteBase, Base):
     {% else -%}
         Base):
-    {%- endif %}
+    {% endif -%}
+    {% endif -%}
+    {%- if class.name in concrete_parents -%}
+    strict_attrs = True
+    {%- else -%}
     __tablename__ = "{{class.name.lower()}}"
+    {%- endif -%}
     {%- for parent in sort(class.parents()) %}
+    {%- if parent.name not in concrete_parents %}
     id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
+    {%- endif %}
     {%- endfor %}
-    {%- if (class.parents()|length == 0) and ((not ids.get(class.name)))%}
+    {%- if (class.parents() | rejectattr("name", "in", concrete_parents) | list | length == 0) 
+        and ((not ids.get(class.name))) %}
     id: Mapped[int] = mapped_column(primary_key=True)
     {%- endif %}
-    {%- for attribute in sort(class.attributes) %}
-    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
-    {%- if attribute.is_id or (attribute.name == ids.get(class.name)) %}, primary_key=True{% endif %})
+    {#- Class attributes #}
+        {{- helper.render_attributes(class, enumerations, types, ids, sort)}}
+    
+    {#- Foreign keys #}
+    {%- set ns = namespace(has_association_class = false, has_relationships = false) %}
+    {%- set ns.class_name = class.name %}
+    {%- for asso_class in asso_classes %}
+        {%- for end in asso_class.association.ends %}
+            {%- if end.type.name == ns.class_name %}
+                {%- set ns.has_association_class = true %}
+            {%- endif %}
+        {%- endfor %}
     {%- endfor %}
-    {%- if class.specializations()|length > 0 %}
+    
+    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+        {%- set ns.assoc_has_class = false %}
+        {%- for asso_class in asso_classes %}
+            {%- if asso_class.association.name == end.owner.name %}
+                {%- set ns.assoc_has_class = true %}
+            {%- endif %}
+        {%- endfor %}
+        {%- if not ns.assoc_has_class %}
+            {%- set ns.has_relationships = true %}
+            {%- set ns.end_own = end %}
+            {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+            {%- endfor %}
+            {#- Foreign Key #}
+            {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}
+    {{end.name}}_id: Mapped[int] = mapped_column(ForeignKey("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
+            {%- if end.multiplicity.min == 0 %}, nullable=True{%- endif %}
+            {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
+        {%- endif %}
+    {%- endfor %}
+
+    {#- Polymorphic configuration #}
+    {%- if (class.specializations()|length > 0
+       and class.name not in concrete_parents) %}
     type_spec: Mapped[str] = mapped_column(String(50))
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
         "polymorphic_on": "type_spec",
     }
-    {%- endif %}
-    {%- for parent in sort(class.parents()) %}
+    {%- elif (class.parents() | rejectattr("name", "in", concrete_parents) | list | length > 0) %}
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
     }
+    {%- elif class.parents() | selectattr("name", "in", concrete_parents) | list | length > 0 %}
+    __mapper_args__ = {
+        "polymorphic_identity": "{{ class.name.lower() }}",
+        "concrete": True,
+    }
+    {%- endif %}
+{% endfor %}
+
+{#- Association Classes #}
+{%- for asso_class in asso_classes %}
+class {{ asso_class.name }}(Base):
+    __tablename__ = "{{asso_class.name.lower()}}"
+    {%- for end in asso_class.association.ends %}
+    {%- set ns = namespace(other_end_max = 0) %}
+    {%- for other_end in asso_class.association.ends if other_end != end %}
+        {%- set ns.other_end_max = other_end.multiplicity.max %}
+    {%- endfor %}
+    {{ end.name }}_id: Mapped[str] = mapped_column(ForeignKey("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True
+    {%- if end.multiplicity.max == 1 and ns.other_end_max == 1 %}, unique=True{% endif %})
+    {%- endfor %}
+    {%- for attribute in sort(asso_class.attributes) %}
+    {{ attribute.name }}: Mapped[{{ helper.mapped_type(attribute.type.name) }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {%- if attribute.is_id or (attribute.name == ids.get(asso_class.name)) %}, primary_key=True{% endif %})
     {%- endfor %}
 {% endfor %}
 
+{#- Relationships #}
 {%- for class in classes %}
-    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
-        {%- if loop.index == 1 %}
-
-#--- Foreign keys and relationships of the {{ class.name.lower() }} table
-        {%- endif %}
-        {%- set ns = namespace(end_own=end) %}
-        {%- for a_end in end.owner.ends if a_end != end %}
-            {%- set ns.end_own = a_end %}
+    {%- set ns = namespace(has_association_class = false, has_relationships = false) %}
+    {%- set ns.class_name = class.name %}
+    {%- for asso_class in asso_classes %}
+        {%- for end in asso_class.association.ends %}
+            {%- if end.type.name == ns.class_name %}
+                {%- set ns.has_association_class = true %}
+            {%- endif %}
         {%- endfor %}
-        {%- if end.multiplicity.max > 1 %}
-        {#- relationship for any-to-many #}
-{{class.name}}.{{end.name}}: Mapped[List["{{end.type.name}}"]] = relationship("{{end.type.name}}"
-            {%- if ns.end_own.multiplicity.max > 1 -%}
-                , secondary={{ end.owner.name.lower() }}
-            {%- endif %}, back_populates="{{ns.end_own.name}}")
-        {%- endif %}
-        {#- Foreign Key #}
-        {%- if class.name == fkeys.get(end.owner.name) %}
-{{class.name}}.{{end.name}}_id: Mapped["{{end.type.name}}"] = mapped_column(ForeignKey("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
-        {%- if end.multiplicity.min > 0 %}, nullable=False{% endif %}){% endif %}
-        {%- if end.owner.name in fkeys and end.multiplicity.max <= 1 %}
-        {#- relationship for any-to-one #}
-{{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{ns.end_own.name}}")
+    {%- endfor %}
+    
+    {%- for end in class.association_ends() if end.owner.ends|length == 2 %}
+        {%- set ns.assoc_has_class = false %}
+        {%- for asso_class in asso_classes %}
+            {%- if asso_class.association.name == end.owner.name %}
+                {%- set ns.assoc_has_class = true %}
+            {%- endif %}
+        {%- endfor %}
+        {%- if not ns.assoc_has_class %}
+            {%- set ns.has_relationships = true %}
+            {%- if loop.index == 1 %}
+
+#--- Relationships of the {{ class.name.lower() }} table
+            {%- endif %}
+{{ helper.render_relationship(class, end, ns, ids, fkeys) }}
         {%- endif %}
     {%- endfor %}
 {%- endfor %}
 
+{#- Association Class Relationships #}
+{%- for asso_class in asso_classes %}
+#--- Relationships for association class {{ asso_class.name }}
+    {%- for end in asso_class.association.ends %}
+{{ asso_class.name }}.{{ end.name }}: Mapped["{{ end.type.name }}"] = relationship("{{ end.type.name }}", back_populates="{{ asso_class.name.lower() }}s")
+{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped[List["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}")
+    {%- endfor %}
+{%- endfor %}
+
 # Database connection
-{% if dbms == "sqlite" %}
+{%- if dbms == "sqlite" %}
 DATABASE_URL = "sqlite:///{{model_name}}.db"  # SQLite connection
-{% elif dbms == "postgresql" %}
+{%- elif dbms == "postgresql" %}
 DATABASE_URL = "postgresql+psycopg2://username:password@localhost:5432/db_name"  # PostgreSQL connection
-{% elif dbms == "mysql" or "mariadb" %}
+{%- elif dbms == "mysql" or dbms == "mariadb" %}
 DATABASE_URL = "mysql+pymysql://username:password@localhost:3306/db_name"  # MySQL or MariaDB connection
-{% elif dbms == "mssql" %}
+{%- elif dbms == "mssql" %}
 DATABASE_URL = "mssql+pyodbc://username:password@localhost:1433/db_name?driver=SQL+Server" # MSSQL connection
+{%- elif dbms == "oracle" %}
+DATABASE_URL = "oracle+oracledb://username:password@localhost:1521/?service_name=your_service"
 {% else %}
     {# Fallback if the DBMS is invalid or not supported. This is just a safety measure. #}
     raise ValueError("Invalid DBMS. Valid options are sqlite, postgresql, and mysql.")

@@ -1,0 +1,12 @@
+Version 4.1.1
+=============
+
+Improvements and Fixes
+----------------------
+
+This release includes fixes and enhancements to the JSON Schema generator used for `Smart Data Models <https://smartdatamodels.org/>`_ initiative.
+
+* Resolved issues where relationships were not correctly represented in the generated schema.
+* Corrected the serialization and typing of `datetime`, `time`, and `date` fields to align with expected formats.
+* Relationships with a minimum cardinality of 1 or more are now properly included in the `required` array of the schema.
+* Generated examples now clearly specify the data type for each property.

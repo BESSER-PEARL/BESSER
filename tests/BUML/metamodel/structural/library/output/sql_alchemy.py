@@ -35,29 +35,28 @@ class Book(Base):
     title: Mapped[str] = mapped_column(String(100))
     pages: Mapped[int] = mapped_column(Integer)
     release: Mapped[date] = mapped_column(Date)
+    locatedIn_id: Mapped[int] = mapped_column(ForeignKey("library.id"), nullable=False)
 
 class Library(Base):
     __tablename__ = "library"
     id: Mapped[int] = mapped_column(primary_key=True)
-    address: Mapped[str] = mapped_column(String(100))
     name: Mapped[str] = mapped_column(String(100))
+    address: Mapped[str] = mapped_column(String(100))
 
 
-#--- Foreign keys and relationships of the author table
+#--- Relationships of the author table
 Author.publishes: Mapped[List["Book"]] = relationship("Book", secondary=book_author_assoc, back_populates="writtenBy")
 
-#--- Foreign keys and relationships of the book table
+#--- Relationships of the book table
 Book.writtenBy: Mapped[List["Author"]] = relationship("Author", secondary=book_author_assoc, back_populates="publishes")
-Book.locatedIn: Mapped["Library"] = mapped_column(ForeignKey("library.id"), nullable=False)
+Book.locatedIn: Mapped["Library"] = relationship("Library", back_populates="has", foreign_keys=[Book.locatedIn_id])
 
-#--- Foreign keys and relationships of the library table
-Library.has: Mapped[List["Book"]] = relationship("Book", back_populates="locatedIn")
+#--- Relationships of the library table
+Library.has: Mapped[List["Book"]] = relationship("Book", back_populates="locatedIn", foreign_keys=[Book.locatedIn_id])
 
 # Database connection
-
-DATABASE_URL = "sqlite:///LibraryModel.db"  # SQLite connection
-
+DATABASE_URL = "sqlite:///Library_model.db"  # SQLite connection
 engine = create_engine(DATABASE_URL, echo=True)
 
 # Create tables in the database
-Base.metadata.create_all(engine)
+Base.metadata.create_all(engine, checkfirst=True)

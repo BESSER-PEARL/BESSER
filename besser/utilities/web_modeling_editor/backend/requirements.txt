@@ -3,3 +3,5 @@ uvicorn
 pydantic
 python-multipart
 PyYAML
+deep_translator
+bocl == 0.3.1

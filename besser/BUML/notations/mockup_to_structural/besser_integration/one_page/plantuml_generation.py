@@ -1,7 +1,7 @@
 import retrying
 import requests
-from besser.BUML.notations.mockup_to_structural.utilities.image_utils import encode_image
-from besser.BUML.notations.mockup_to_structural.utilities.file_utils import read_file_contents
+from besser.BUML.notations.mockup_to_structural.utilities import encode_image
+from besser.BUML.notations.mockup_to_structural.utilities import read_file_contents
 from besser.BUML.notations.mockup_to_structural.config import *
 
 
@@ -171,12 +171,6 @@ def direct_prompting_image_to_plantuml(api_key, mockup_image_path, first_gui_mod
     plantuml_code = gpt4o_call_plantuml(api_key, direct_prompt, mockup_image_path,
                                         first_gui_model_path, plantuml_code_example_path)
 
-    if plantuml_code:
-        # Write the code to a file
-        with open("output_file.py", "w", encoding="utf-8") as file:
-            file.write(plantuml_code)
-    else:
-        print("Failed to generate PlantUml code.")
 
     return plantuml_code
 
@@ -198,7 +192,6 @@ def run_pipeline_plantuml_generation(api_key: str, mockup_image_path: str, outpu
         os.makedirs(os.path.dirname(output_file_name), exist_ok=True)
         with open(output_file_name, "w", encoding="utf-8") as file:
             file.write(plantuml_code)
-        print(f"Generated PlantUML code saved to {output_file_name}")
     else:
         print("Failed to generate PlantUML code.")
 
@@ -211,6 +204,5 @@ def run_pipeline_plantuml_generation(api_key: str, mockup_image_path: str, outpu
         os.makedirs(os.path.dirname(output_file_name), exist_ok=True)
         with open(output_file_name, "w", encoding="utf-8") as file:
             file.write(improved_plantuml_code)
-        print(f"Generated Revised code saved to {output_file_name}")
     else:
         print("Failed to generate revised code.")

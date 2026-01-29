@@ -1,14 +1,13 @@
 import os
-from besser.BUML.notations.mockup_to_structural.besser_integration.one_page.plantuml_generation \
+from besser.BUML.notations.mockup_to_structural.besser_integration.one_page \
    import run_pipeline_plantuml_generation
-from besser.BUML.notations.mockup_to_structural.besser_integration.refactor_plantuml \
+from besser.BUML.notations.mockup_to_structural.besser_integration \
    import refactor_plantuml_code
-from besser.BUML.notations.mockup_to_structural.besser_integration.buml_conversion \
-   import convert_to_buml
-from besser.BUML.notations.mockup_to_buml.besser_integration.one_page.gui_generation \
+from besser.BUML.notations.mockup_to_buml.besser_integration.one_page \
    import run_pipeline_gui_generation
-from besser.BUML.notations.mockup_to_buml.besser_integration.refactor_gui_model \
+from besser.BUML.notations.mockup_to_buml.besser_integration \
    import refactor_gui_code
+from besser.BUML.notations.structuralPlantUML import plantuml_to_buml
 
 def mockup_to_buml_one_page(api_key: str, mockup_image_path: str, output_folder: str):
     """
@@ -16,6 +15,9 @@ def mockup_to_buml_one_page(api_key: str, mockup_image_path: str, output_folder:
     generating PlantUML, converting to Structural model, and generating GUI model.
     """
 
+    output_dir = os.path.join(output_folder, "plantuml")
+    code_file = os.path.join(output_dir, "generated_plantuml.puml")
+    structural_model_path = os.path.join(output_folder, "buml", "model.py")
     # Path to the folder containing the mockup image
     one_mockup_folder_path = mockup_image_path
 
@@ -42,7 +44,7 @@ def mockup_to_buml_one_page(api_key: str, mockup_image_path: str, output_folder:
 
     # Step 3: Convert PlantUML code to structural model
     print("Step 3: Converting PlantUML code to structural moodel...")
-    convert_to_buml(output_folder)
+    plantuml_to_buml(plantUML_model_path=code_file, buml_file_path=structural_model_path)
 
     # Step 4: Generate the GUI model
     print("Step 4: Generating the GUI model...")

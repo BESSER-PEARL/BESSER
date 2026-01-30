@@ -8,7 +8,51 @@
 {% raw %}{% extends '{% endraw %}{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.html' %}
 
 {% raw %}{% block content %}{% endraw %}
+{#- Add layout to the screen if it exists #}
+{%- if screen.layout%}
+<div
+    class="
+    {%- if screen.layout.type %}
+        {{screen.layout.type.name | lower}}
+    {%- endif %}
+    {%- if screen.layout.orientation == "vertical"%}
+        flex-col
+    {%- endif %}
+    {%- if screen.layout.wrap %}
+        flex-wrap
+    {%- else %}
+        flex-nowrap
+    {%- endif %}
+    {%- if screen.layout.alignment %}
+       {%- set alignment = screen.layout.alignment|string %}
+       {%- if alignment == "JustificationType.Center" %}
+        items-center justify-center
+       {%- elif alignment == "JustificationType.Left" %}
+        items-start justify-start
+       {%- elif alignment == "JustificationType.Right" %}
+        items-end justify-end
+       {%- elif alignment == "JustificationType.SpaceBetween" %}
+        justify-between
+       {%- elif alignment == "JustificationType.SpaceAround" %}
+        justify-around
+       {%- endif %}
+    {%- endif %}
+    "
+    style="
+    {%- if screen.layout.padding %}
+        padding: {{screen.layout.padding}};
+    {%- endif %}
+    {%- if screen.layout.margin %}
+        margin: {{screen.layout.margin}};
+    {%- endif %}
+    {%- if screen.layout.gap %}
+        gap: {{screen.layout.gap}};
+    {%- endif %}
+    "
+>
+{%- else %}
 <div class="container mx-auto mt-10 bg-white p-6 rounded-lg shadow-lg border">
+{%- endif %}
 
     <!-- Back to Home Button -->
     <div class="mb-6">
@@ -18,11 +62,76 @@
     </div>
     <h1 class="text-4xl font-extrabold mb-8 text-gray-800">List of {{data_source_name_upper}}s</h1>
 
+{#- for add button #}
+{%- for component in screen.view_elements %}
+    {%- if component is is_Button%}
+            {%- set action_type_name = component.actionType%}
+            {%- if action_type_name|string == "ButtonActionType.Add" %}
+                {%- if component.styling%}
+    <button id="add{{data_source_name_upper}}Btn"
+        class="font-bold transition"
+        style="
+            {%- if component.styling.position%}
+            {%- set component_styling_position= component.styling.position.type%}
+               {%- if component.styling.position.type.name %}
+            position: {{ component.styling.position.type.name | lower }};
+               {%- endif %}
+               {%- if component.styling.position.left %}
+            left: {{ component.styling.position.left }};
+               {%- endif %}
+               {%- if component.styling.position.alignment %}
+            text-align: {{component.styling.position.alignment}};
+               {%- endif%}
+            {%- endif%}
+            {%- if component.styling.color%}
+               {%- if component.styling.color.background_color%}
+            background-color: {{component.styling.color.background_color}};
+               {%- endif %}
+               {%- if component.styling.color.text_color%}
+            color: {{component.styling.color.text_color}};
+               {%- endif %}
+               {%- if component.styling.color.border_color%}
+            border: {{component.styling.color.border_color}};
+               {%- endif %}
+            {%- endif %}
+            {%- if component.styling.size%}
+              {%- set unit = component.styling.size.unit_size.value if component.styling.size.unit_size%}
+               {%- if component.styling.size.width%}
+            width: {{component.styling.size.width}}{{unit}};
+               {%- endif %}
+               {%- if component.styling.size.height%}
+            height: {{component.styling.size.height}}{{unit}};
+               {%- endif %}
+               {%- if component.styling.size.padding%}
+            padding: {{component.styling.size.padding}}{{unit}};
+               {%- endif %}
+               {%- if component.styling.size.font_size%}
+            font-size: {{component.styling.size.font_size}}{{unit}};
+                {%- endif %}
+                {%- if component.styling.size.margin %}
+            margin: {{ component.styling.size.margin }}{{unit}};
+               {%- endif %}
+            {%- endif %}
+        "
+        {%- if component.styling.color%}
+        onmouseover="this.style.backgroundColor='{{component.styling.color.border_color}}'"
+        onmouseout="this.style.backgroundColor='{{component.styling.color.background_color}}'"
+        {%- endif %}
+        title="Add {{data_source_name_upper}}"
+        aria-label="Add {{data_source_name_upper}}"
+>
+    Add {{data_source_name_upper}}
+</button>
+                {%- else %}
     <button id="add{{data_source_name_upper}}Btn" class="font-bold py-2 px-4 rounded-lg bg-[#0C4B33] text-white hover:bg-[#0A3A28] transition mb-6">
         Add {{data_source_name_upper}}
     </button>
+                {%- endif %}
+            {%- endif %}
+        {%-endif %}
+{%- endfor%}
 
-    <div id="add{{data_source_name_upper}}Modal" class="hidden fixed inset-0 flex justify-center items-center bg-gray-900 bg-opacity-50">
+    <div id="add{{data_source_name_upper}}Modal" class="hidden fixed inset-0 flex justify-center items-center bg-gray-900 bg-opacity-50 z-50">
         <div class="bg-white rounded-lg overflow-hidden shadow-xl w-full max-w-lg border p-6">
                 <h2 class="text-xl font-bold mb-4 text-gray-800">Add {{data_source_name_upper}}</h2>
                 <form id="{{data_source_name_lower}}Form" action="{% raw %}{% url '{% endraw %}create_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}' %}" method="POST">
@@ -128,7 +237,42 @@
         </div>
     </div>
 
-    <table class="min-w-full shadow-md rounded-lg overflow-hidden border bg-white">
+{%- for component in screen.view_elements %}
+    {%- if component is is_List %}
+        <table
+        {%- if component.styling%}
+            class="font-bold transition"
+            style="
+               {%- if component.styling.position %}
+                    {%- if component.styling.position.type.name %}
+                    position: {{ component.styling.position.type.name | lower }};
+                    {% endif %}
+                    {%- if component.styling.position.alignment %}text-align: {{ component.styling.position.alignment }};{% endif %}
+                    {%- if component.styling.position.top %}top: {{ component.styling.position.top }};{% endif %}
+                    {%- if component.styling.position.left %}left: {{ component.styling.position.left }};{% endif %}
+                    {%- if component.styling.position.right %}right: {{ component.styling.position.right }};{% endif %}
+                    {%- if component.styling.position.bottom %}bottom: {{ component.styling.position.bottom }};{% endif %}
+                    {%- if component.styling.position.z_index %}z-index: {{ component.styling.position.z_index }};{% endif %}
+                {%- endif %}
+                {%- if component.styling.color %}
+                    {%- if component.styling.color.background_color %}background-color: {{ component.styling.color.background_color }};{% endif %}
+                    {%- if component.styling.color.text_color %}color: {{ component.styling.color.text_color }};{% endif %}
+                    {%- if component.styling.color.border_color %}border: 1px solid {{ component.styling.color.border_color }};{% endif %}
+                {%- endif %}
+                {%- if component.styling.size %}
+                    {%- set unit = component.styling.size.unit_size.value if component.styling.size.unit_size %}
+                    width: 100%;
+                    height: auto;
+                    {%- if component.styling.size.padding %}padding: {{ component.styling.size.padding }}{{ unit }};{% endif %}
+                    {%- if component.styling.size.font_size %}font-size: {{ component.styling.size.font_size }}{{ unit }};{% endif %}
+                    {%- if component.styling.size.margin %}margin: {{ component.styling.size.margin }}{{ unit }};{% endif %}
+                {%- endif %}
+            "
+        {%- else %}
+            class="font-bold py-2 px-4 rounded-lg bg-[#0C4B33] text-white hover:bg-[#0A3A28] transition"
+        {%- endif %}
+        >
+
         <thead class="bg-[#0C4B33] text-white">
             <tr>
     {%- for component in screen.view_elements %}
@@ -144,6 +288,7 @@
             {%- endfor %}
         {%- endif %}
     {%- endfor %}
+
                 <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Actions</th>
             </tr>
         </thead>
@@ -164,22 +309,171 @@
         {%- endif %}
     {%- endfor %}
                 <td class="flex gap-5 py-3 px-4">
-                    <a href="{% raw %}{% url '{% endraw %}edit_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}' {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.id %}" class="font-bold py-2 px-4 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition">
+                {%- for component in sort_by_timestamp(screen.view_elements) %}
+                    {%- if component is is_Button%}
+                        {%- set action_type_name = component.actionType%}
+                            {%- if action_type_name|string == "ButtonActionType.Edit" %}
+                    <a href="{% raw %}{% url '{% endraw %}edit_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}' {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.id %}"
+                                {%- if not component.styling %}
+                    class="font-bold py-2 px-4 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition"
+                                {%- else %}
+                                   {%- if component.styling%}
+                    class="font-bold transition rounded-lg"
+                        style="
+                        {%- if component.styling.position%}
+                        {%- set component_styling_position= component.styling.position.type%}
+                           {%- if component.styling.position.type.name %}
+                        position: {{ component.styling.position.type.name | lower }};
+                           {%- endif %}
+                           {%- if component.styling.position.top %}
+                        top: {{ component.styling.position.top }};
+                           {%- endif %}
+                           {%- if component.styling.position.left %}
+                        left: {{ component.styling.position.left }};
+                           {%- endif %}
+                          {%- if component.styling.position.bottom %}
+                        bottom: {{component.styling.position.bottom}};
+                          {%- endif %}
+                          {%- if component.styling.position.right %}
+                        right: {{component.styling.position.right}};
+                          {%- endif %}
+                          {%- if component.styling.position.z_index %}
+                        z-index: {{component.styling.position.z_index}};
+                          {%- endif%}
+                          {%- if component.styling.position.alignment %}
+                        text-align: {{component.styling.position.alignment}};
+                          {%- endif%}
+                       {%- endif%}
+                      {%- if component.styling.color%}
+                          {%- if component.styling.color.background_color%}
+                        background-color: {{component.styling.color.background_color}};
+                          {%- endif %}
+                          {%- if component.styling.color.text_color%}
+                        color: {{component.styling.color.text_color}};
+                          {%- endif %}
+                          {%- if component.styling.color.border_color%}
+                        border: {{component.styling.color.border_color}};
+                          {%- endif %}
+                       {%- endif %}
+                       {%- if component.styling.size%}
+                         {%- set unit = component.styling.size.unit_size.value if component.styling.size.unit_size%}
+                          {%- if component.styling.size.width%}
+                        width: {{component.styling.size.width}}{{unit}};
+                          {%- endif %}
+                          {%- if component.styling.size.height%}
+                        height: {{component.styling.size.height}}{{unit}};
+                          {%- endif %}
+                          {%- if component.styling.size.padding%}
+                        padding: {{component.styling.size.padding}}{{unit}};
+                          {%- endif %}
+                          {%- if component.styling.size.font_size%}
+                        font-size: {{component.styling.size.font_size}}{{unit}};
+                           {%- endif %}
+                           {%- if component.styling.size.margin %}
+                        margin: {{ component.styling.size.margin }}{{unit}};
+                          {%- endif %}
+                       {%- endif %}
+                       "
+                       {%- if component.styling.color%}
+                       onmouseover="this.style.backgroundColor='{{component.styling.color.border_color}}'"
+                       onmouseout="this.style.backgroundColor='{{component.styling.color.background_color}}'"
+                       {%- endif %}
+                                   {%- endif %}
+                                {%- endif %}
+                    >
                         Edit
                     </a>
-                    <a href="{% raw %}{% url '{% endraw %}delete_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}' {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.id %}" class="font-bold py-2 px-4 rounded-lg bg-red-500 text-white hover:bg-red-600 transition">
+                            {%- else %}
+                                {%- if action_type_name|string == "ButtonActionType.Delete" %}
+                    <a href="{% raw %}{% url '{% endraw %}delete_{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}' {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}.id %}"
+                    {%- if not component.styling %}
+                    class="font-bold py-2 px-4 rounded-lg bg-red-500 text-white hover:bg-red-600 transition"
+                    {%- else %}
+                    class="font-bold transition rounded-lg"
+                        style="
+                        {%- if component.styling.position%}
+                        {%- set component_styling_position= component.styling.position.type%}
+                           {%- if component.styling.position.type.name %}
+                        position: {{ component.styling.position.type.name | lower }};
+                           {%- endif %}
+                           {%- if component.styling.position.top %}
+                        top: {{ component.styling.position.top }};
+                           {%- endif %}
+                           {%- if component.styling.position.left %}
+                        left: {{ component.styling.position.left }};
+                           {%- endif %}
+                          {%- if component.styling.position.bottom %}
+                        bottom: {{component.styling.position.bottom}};
+                          {%- endif %}
+                          {%- if component.styling.position.right %}
+                        right: {{component.styling.position.right}};
+                          {%- endif %}
+                          {%- if component.styling.position.z_index %}
+                        z-index: {{component.styling.position.z_index}};
+                          {%- endif%}
+                          {%- if component.styling.position.alignment %}
+                        text-align: {{component.styling.position.alignment}};
+                          {%- endif%}
+                       {%- endif%}
+                      {%- if component.styling.color%}
+                          {%- if component.styling.color.background_color%}
+                        background-color: {{component.styling.color.background_color}};
+                          {%- endif %}
+                          {%- if component.styling.color.text_color%}
+                        color: {{component.styling.color.text_color}};
+                          {%- endif %}
+                          {%- if component.styling.color.border_color%}
+                        border: {{component.styling.color.border_color}};
+                          {%- endif %}
+                       {%- endif %}
+                       {%- if component.styling.size%}
+                         {%- set unit = component.styling.size.unit_size.value if component.styling.size.unit_size%}
+                          {%- if component.styling.size.width%}
+                        width: {{component.styling.size.width}}{{unit}};
+                          {%- endif %}
+                          {%- if component.styling.size.height%}
+                        height: {{component.styling.size.height}}{{unit}};
+                          {%- endif %}
+                          {%- if component.styling.size.padding%}
+                        padding: {{component.styling.size.padding}}{{unit}};
+                          {%- endif %}
+                          {%- if component.styling.size.font_size%}
+                        font-size: {{component.styling.size.font_size}}{{unit}};
+                           {%- endif %}
+                           {%- if component.styling.size.margin %}
+                        margin: {{ component.styling.size.margin }}{{unit}};
+                          {%- endif %}
+                       {%- endif %}
+                       "
+                       {%- if component.styling.color%}
+                       onmouseover="this.style.backgroundColor='{{component.styling.color.border_color}}'"
+                       onmouseout="this.style.backgroundColor='{{component.styling.color.background_color}}'"
+                       {%- endif %}
+                    {%- endif %}
+
+                    >
                         Delete
                     </a>
+                               {%- endif %}
+                            {%- endif %}
+                {%- endif %}
+            {%- endfor %}
                 </td>
             </tr>
             {% raw %}{% endfor %}{% endraw %}
         </tbody>
     </table>
-</div>
+
+    {%-endif %}
+{%- endfor%}
+
+
+
 {% raw %}{% endblock %}{% endraw %}
             {%-  endif %}
         {%-  endfor %}
     {%-  endif %}
 {%-  endfor %}
+
 
 

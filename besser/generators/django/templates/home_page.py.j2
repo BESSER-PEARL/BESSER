@@ -10,7 +10,8 @@
         {%- for component in screen.view_elements %}
 
             {%- if component is is_Button %}
-                {%- if component.buttonType.value == 'Raised Button' and component.actionType.value == 'Navigate'%}
+            {%- set btn_comp = component%}
+                {%- if component.actionType.value == 'Navigate'%}
                 {%- set button_label = component.label %}
                 {%- for module in app.modules%}
                     {%- for screen in module.screens %}
@@ -20,10 +21,79 @@
                                     {%- if component is is_List%}
                                         {%- for source in component.list_sources%}
                                             {%- if source is is_ModelElement%}
-                                               {%- set source_name= source.dataSourceClass%} 
-
+                                               {%- set source_name= source.dataSourceClass%}
+                                               {%- if btn_comp.styling%}
+        <a href="{% raw %}{% url '{% endraw %}{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list' %}">
+        <button
+        class="font-bold transition"
+        style="
+            {%- if btn_comp.styling.position%}
+            {%- set btn_comp_styling_position= btn_comp.styling.position.type%}
+               {%- if btn_comp.styling.position.type.name %}
+            position: {{ btn_comp.styling.position.type.name | lower }};
+               {%- endif %}
+               {%- if btn_comp.styling.position.top %}
+            top: {{ btn_comp.styling.position.top }};
+               {%- endif %}
+               {%- if btn_comp.styling.position.left %}
+            left: {{ btn_comp.styling.position.left }};
+               {%- endif %}
+               {%- if btn_comp.styling.position.bottom %}
+            bottom: {{btn_comp.styling.position.bottom}};
+               {%- endif %}
+               {%- if btn_comp.styling.position.right %}
+            right: {{btn_comp.styling.position.right}};
+               {%- endif %}
+               {%- if btn_comp.styling.position.z_index %}
+            z-index: {{btn_comp.styling.position.z_index}};
+               {%- endif%}
+               {%- if btn_comp.styling.position.alignment %}
+            text-align: {{btn_comp.styling.position.alignment}};
+               {%- endif%}
+            {%- endif%}
+            {%- if btn_comp.styling.color%}
+               {%- if btn_comp.styling.color.background_color%}
+            background-color: {{btn_comp.styling.color.background_color}};
+               {%- endif %}
+               {%- if btn_comp.styling.color.text_color%}
+            color: {{btn_comp.styling.color.text_color}};
+               {%- endif %}
+               {%- if btn_comp.styling.color.border_color%}
+            border: {{btn_comp.styling.color.border_color}};
+               {%- endif %}
+            {%- endif %}
+            {%- if btn_comp.styling.size%}
+              {%- set unit = btn_comp.styling.size.unit_size.value if btn_comp.styling.size.unit_size%}
+               {%- if btn_comp.styling.size.width%}
+            width: {{btn_comp.styling.size.width}}{{unit}};
+               {%- endif %}
+               {%- if btn_comp.styling.size.height%}
+            height: {{btn_comp.styling.size.height}}{{unit}};
+               {%- endif %}
+               {%- if btn_comp.styling.size.padding%}
+            padding: {{btn_comp.styling.size.padding}}{{unit}};
+               {%- endif %}
+               {%- if btn_comp.styling.size.font_size%}
+            font-size: {{btn_comp.styling.size.font_size}}{{unit}};
+                {%- endif %}
+                {%- if btn_comp.styling.size.margin %}
+            margin: {{ btn_comp.styling.size.margin }}{{unit}};
+               {%- endif %}
+            {%- endif %}
+        "
+        {%- if btn_comp.styling.color%}
+        onmouseover="this.style.backgroundColor='{{btn_comp.styling.color.border_color}}'"
+        onmouseout="this.style.backgroundColor='{{btn_comp.styling.color.background_color}}'"
+        {%- endif %}
+        title="View {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} List"
+        aria-label="View {{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}} List"
+        >
+            {{ button_label }}
+        </button>
+                                               {%- else %}
     <a href="{% raw %}{% url '{% endraw %}{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list' %}">
         <button>{{ button_label }}</button>
+                                                {%- endif %}
     </a>
                                              {%- endif %}
                                         {%- endfor %}
@@ -46,13 +116,13 @@
                        {%- set source_name= source.dataSourceClass%}
     <a href="{% raw %}{% url '{% endraw %}{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}_list' %}">
         <button>{{source.dataSourceClass.name[0].lower() + source.dataSourceClass.name[1:]}}</button>
-    </a> 
+    </a>
                     {%- endif %}
                 {%- endfor%}
             {%- endif %}
         {%-endfor%}
     {%- endfor %}
-{%- endfor %}           
+{%- endfor %}
 {%- endif %}
 </body>
 </html>

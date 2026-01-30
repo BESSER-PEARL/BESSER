@@ -197,6 +197,10 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         tag = str(component.get("tagName", "")).lower()
         comp_name = str(component.get("name", "")).lower()
 
+        # Drop head-only tags from body content
+        if tag in {"meta", "title", "link", "script", "style", "base"}:
+            return None
+
         # Skip wrapper, textnode, and comment nodes
         if comp_type == "wrapper":
             return parse_component_list(component.get("components"))

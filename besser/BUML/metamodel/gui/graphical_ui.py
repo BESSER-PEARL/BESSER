@@ -786,7 +786,7 @@ class Button(ViewComponent):
     @targetScreen.setter
     def targetScreen(self, targetScreen: Screen):
         if self.actionType == ButtonActionType.Navigate:
-            if not isinstance(targetScreen, Screen):
+            if targetScreen is not None and not isinstance(targetScreen, Screen):
                 print("Error: For 'Navigate' actionType, targetScreen must be a Screen object.")
         self.__targetScreen = targetScreen
 

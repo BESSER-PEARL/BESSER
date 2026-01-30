@@ -94,7 +94,7 @@ export const TableComponent: React.FC<Props> = ({
           ? `/${id}/`
           : "";
     if (!endpoint) return;
-    const backendBase = process.env.REACT_APP_API_URL || "http://localhost:8000";
+    const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
     
     // Check if table has lookup columns - if so, request detailed data with joins
     const hasLookupColumns = options?.columns?.some(
@@ -330,7 +330,7 @@ export const TableComponent: React.FC<Props> = ({
         return false;
       });
     });
-  }, [normalizedRows, columnFilters]);
+  }, [normalizedRows, columnFilters, columns]);
 
   const handleFilterChange = (field: string, value: string) => {
     setColumnFilters((prev) => {
@@ -466,7 +466,7 @@ export const TableComponent: React.FC<Props> = ({
       // Fetch lookup options for lookup columns
       const fetchLookupOptions = async () => {
         const options: Record<string, any[]> = {};
-        const backendBase = process.env.REACT_APP_API_URL || "http://localhost:8000";
+        const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
         
         for (const col of columns) {
           if (col.columnType === 'lookup' && col.entity) {
@@ -669,7 +669,7 @@ export const TableComponent: React.FC<Props> = ({
                   
                   setValidationError("");
                   const endpoint = getEndpoint();
-                  const backendBase = process.env.REACT_APP_API_URL || "http://localhost:8000";
+                  const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
                   
                   // Process form values based on column types
                   const processedValues: Record<string, any> = {};
@@ -1207,7 +1207,7 @@ export const TableComponent: React.FC<Props> = ({
                             const endpoint = getEndpoint();
                             const rowId = getRowId(row);
                             const url = endpoint.replace(/\/$/, "");
-                            const backendBase = process.env.REACT_APP_API_URL || "http://localhost:8000";
+                            const backendBase = import.meta.env.VITE_API_URL || "http://localhost:8000";
                             const fullUrl = url.startsWith("/") ? `${backendBase}${url}/${rowId}/` : `${url}/${rowId}/`;
                             try {
                               await axios.delete(fullUrl);

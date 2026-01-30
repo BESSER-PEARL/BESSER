@@ -16,6 +16,8 @@ def json_to_buml_project(project):
     Generates a B-UML Project instance from a Pydantic Project object.
     """
     name = project.name
+    if name and "-" in name:
+        name = name.replace("-", "_")
     description = project.description or ""
 
     # List of diagram names to check

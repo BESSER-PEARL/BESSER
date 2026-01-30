@@ -21,7 +21,7 @@ export const AgentComponent: React.FC<Props> = ({
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Get agent URL from environment or use default
-  const agentUrl = process.env.REACT_APP_AGENT_URL || "ws://localhost:8765";
+  const agentUrl = import.meta.env.VITE_AGENT_URL || "ws://localhost:8765";
 
   useEffect(() => {
     setIsConnecting(true);

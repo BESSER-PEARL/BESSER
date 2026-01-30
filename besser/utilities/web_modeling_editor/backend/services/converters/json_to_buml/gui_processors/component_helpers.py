@@ -20,28 +20,39 @@ def has_menu_structure(component: Dict[str, Any]) -> bool:
     components = component.get("components", []) or []
     if not components:
         return False
-    
-    # Check if it contains list structure (ul/ol with li) or direct links
-    has_list = False
+
     has_links = False
-    
-    for child in components:
-        child_tag = str(child.get("tagName", "")).lower()
-        child_type = str(child.get("type", "")).lower()
-        
-        if child_tag in {"ul", "ol"}:
-            has_list = True
-        if child_tag == "a" or child_type in {"link", "link-button"}:
+
+    def is_menu_node(node: Dict[str, Any]) -> bool:
+        nonlocal has_links
+        if not isinstance(node, dict):
+            return False
+
+        tag = str(node.get("tagName", "")).lower()
+        comp_type = str(node.get("type", "")).lower()
+        children = node.get("components", []) or []
+
+        # Direct link
+        if tag == "a" or comp_type in {"link", "link-button"}:
             has_links = True
-        
-        # Check nested items
-        if child_tag == "li":
-            li_children = child.get("components", []) or []
-            for li_child in li_children:
-                if str(li_child.get("tagName", "")).lower() == "a":
-                    has_links = True
-    
-    return has_list or has_links
+            return True
+
+        # List structures
+        if tag in {"ul", "ol", "li"}:
+            if not children:
+                return tag in {"ul", "ol"}
+            return all(is_menu_node(child) for child in children)
+
+        # Containers with children are menu-like only if all descendants are menu nodes
+        if children:
+            if tag in TEXT_TAGS or comp_type == "text":
+                return False
+            return all(is_menu_node(child) for child in children)
+
+        return False
+
+    all_menu = all(is_menu_node(child) for child in components)
+    return has_links and all_menu
 
 
 def extract_menu_items(component: Dict[str, Any]) -> List[Dict[str, Optional[str]]]:

@@ -26,7 +26,6 @@ Fixes
 - **Web app generator**: Navigation parsing now preserves mixed content (logo, links, footer) instead
   of collapsing into a stripped menu.
 - Validation toasts now stay within the viewport instead of overflowing to the right.
-- Render deployment now avoids backend URL mismatches by using unique service names in generated blueprints.
 - Fixes #390: Render deploy frontend no longer bakes an incorrect backend URL when service names are auto-suffixed.
 - Fixes #389: Replace the runtime renderer with per-page generation to make the webapp output maintainable.
 

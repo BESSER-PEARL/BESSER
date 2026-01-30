@@ -1,0 +1,76 @@
+{# buttons_macros.jinja #}
+{% macro render_buttons(buttons, ns_x_cursor, ns, current_y, page_width, screen_alignment, gap_value) %}
+  {%- for component in buttons %}
+    {%- set btn_comp = component %}
+    {%- set btn_loop = loop.index0 %}
+    {%- set button_label = component.label %}
+    {%- set btn_id = "navigation_button_" ~ (btn_label|replace(" ", "_")|lower) ~ loop.index %}
+
+    {# --- Estimate text width when no styling width is provided --- #}
+    {%- set char_width = 8 %}
+    {%- set estimated_label_width = (button_label|length * char_width) + 20 %}
+
+    {# --- Size fallbacks --- #}
+    {%- set btn_width = (btn_comp.styling.size.width|int)
+                        if btn_comp.styling and btn_comp.styling.size and btn_comp.styling.size.width
+                        else estimated_label_width %}
+    {%- set btn_height = (btn_comp.styling.size.height|int)
+                         if btn_comp.styling and btn_comp.styling.size and btn_comp.styling.size.height
+                         else 40 %}
+    {%- set btn_padding = (btn_comp.styling.size.padding|int)
+                          if btn_comp.styling and btn_comp.styling.size and btn_comp.styling.size.padding
+                          else 0 %}
+    {%- set btn_margin = (btn_comp.styling.size.margin|replace('px','')|int)
+                         if btn_comp.styling and btn_comp.styling.size and btn_comp.styling.size.margin
+                         else 0 %}
+
+    {# update max height correctly with namespace #}
+    {%- if btn_height > ns.max_btn_height %}
+        {%- set ns.max_btn_height = btn_height + btn_margin %}
+    {%- endif %}
+
+    {# --- Position calculation --- #}
+    {%- if btn_comp.styling and btn_comp.styling.position
+          and btn_comp.styling.position.left and btn_comp.styling.position.top %}
+        {%- set x_position = btn_comp.styling.position.left | replace('px','') | int %}
+        {%- set y_position = btn_comp.styling.position.top  | replace('px','') | int %}
+    {%- elif screen_alignment == "left" %}
+        {%- set x_position = ns_x_cursor.x_cursor %}
+        {%- set y_position = current_y + btn_margin %}
+        {%- set ns_x_cursor.x_cursor = ns_x_cursor.x_cursor + btn_width + gap_value + btn_margin %}
+    {%- elif screen_alignment == "center" %}
+        {%- if loop.first %}
+            {%- set total_buttons_width = (buttons
+                | map(attribute="label")
+                | map("length")
+                | map("int")
+                | sum * char_width) + (buttons|length * 20) + (((buttons|length)-1) * gap_value) %}
+            {%- set ns_x_cursor.x_cursor = (page_width - total_buttons_width) // 2 %}
+        {%- endif %}
+        {%- set x_position = ns_x_cursor.x_cursor %}
+        {%- set y_position = current_y + btn_margin %}
+        {%- set ns_x_cursor.x_cursor = ns_x_cursor.x_cursor + btn_width + gap_value + btn_margin %}
+    {%- else %}
+        {%- set x_position = ns_x_cursor.x_cursor %}
+        {%- set y_position = current_y + btn_margin %}
+        {%- set ns_x_cursor.x_cursor = ns_x_cursor.x_cursor + btn_width + gap_value + btn_margin %}
+    {%- endif %}
+
+    {# --- Draw SVG rect + text --- #}
+    <rect id="{{ btn_id }}" x="{{ x_position }}" y="{{ y_position }}"
+          width="{{ btn_width }}" height="{{ btn_height }}"
+          rx="5" ry="5"
+          fill="{{ btn_comp.styling.color.background_color if btn_comp.styling and btn_comp.styling.color and btn_comp.styling.color.background_color else '#007BFF' }}"
+          stroke="{{ btn_comp.styling.color.border_color if btn_comp.styling and btn_comp.styling.color and btn_comp.styling.color.border_color else '#FFFFFF' }}"/>
+
+    <text id="text_{{ btn_id }}" x="{{ x_position + btn_width/2 }}"
+          y="{{ y_position + btn_height/2 }}"
+          text-anchor="middle"
+          alignment-baseline="middle"
+          font-family="Arial, sans-serif"
+          font-size="{{ btn_comp.styling.size.font_size if btn_comp.styling and btn_comp.styling.size and btn_comp.styling.size.font_size else 14 }}"
+          fill="{{ btn_comp.styling.color.text_color if btn_comp.styling and btn_comp.styling.color and btn_comp.styling.color.text_color else '#FFFFFF' }}">
+      {{ button_label }}
+    </text>
+  {%- endfor %}
+{% endmacro %}

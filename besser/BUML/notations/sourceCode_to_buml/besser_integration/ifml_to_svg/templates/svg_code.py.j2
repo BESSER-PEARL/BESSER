@@ -1,0 +1,357 @@
+{% import "buttons_macros.py.j2" as create_btns %}
+{%- if screen %}
+    {%- if screen.screen_size == "Small" %}
+      {% set width, height = 360, 640 %}
+    {%- elif screen.screen_size == "Medium" %}
+      {% set width, height = 768, 1024 %}
+    {%- elif screen.screen_size == "Large" %}
+      {% set width, height = 1366, 768 %}
+    {%- elif screen.screen_size == "xLarge" %}
+      {% set width, height = 1920, 1080 %}
+    {%- endif %}
+
+    {# --- Safe layout defaults --- #}
+    {%- set gap_value = (screen.layout.gap | replace("px", "") | int)
+                        if screen.layout and screen.layout.gap else 10 %}
+    {%- set screen_alignment = screen.layout.alignment.value
+                        if screen.layout and screen.layout.alignment else "left" %}
+    {%- set page_width = width %}
+
+
+
+{%- set navigate_buttons = screen.view_elements
+     | selectattr("__class__.__name__", "equalto", "Button")
+     |selectattr("actionType.value", "equalto", "Navigate")
+     | list%}
+
+{%- set num_navigate_buttons = screen.view_elements
+     | selectattr("__class__.__name__", "equalto", "Button")
+     |selectattr("actionType.value", "equalto", "Navigate")
+     | list
+     |length%}
+
+{%- set Adding_buttons = screen.view_elements
+     | selectattr("__class__.__name__", "equalto", "Button")
+     | selectattr("actionType.value", "equalto", "Add")
+     | list %}
+
+{%- set num_Adding_buttons = screen.view_elements
+     | selectattr("__class__.__name__", "equalto", "Button")
+     | selectattr("actionType.value", "equalto", "Add")
+     | list
+     | length %}
+ {%- set list_elements = screen.view_elements
+     | selectattr("__class__.__name__", "equalto", "DataList")
+     | list%}
+ {%- set edit_button_elements = screen.view_elements
+     | selectattr("__class__.__name__", "equalto", "Button")
+     | selectattr("actionType.value", "equalto", "Edit")
+     | list%}
+
+ {%- set delete_button_elements = screen.view_elements
+     | selectattr("__class__.__name__", "equalto", "Button")
+     | selectattr("actionType.value", "equalto", "Delete")
+     | list%}
+
+{%- set x_cursor = gap_value %}  {# running X position with initial gap #}
+
+
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="{{ width }}" height="{{ height }}"
+     viewBox="0 0 {{ width }} {{ height }}">
+  <defs>
+    <filter id="shadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.25"/>
+    </filter>
+  </defs>
+
+  <!-- background -->
+  <rect id="background" width="100%" height="100%" fill="{{ background_color or 'white' }}" />
+
+
+  <!-- Screen Title -->
+  {%- if screen_alignment == "center" -%}
+    <text id="screen_title_{{screen.name}}" x="50%" y="60" text-anchor="middle"
+  {%- else -%}
+    <text id="screen_title_{{screen.name}}" x="20" y="60" text-anchor="start"
+  {%- endif %}
+        style="font-family: Arial, sans-serif;
+               font-size: 28px;
+               font-weight: bold;
+               fill: #333;">
+    {{screen.name}}
+  </text>
+
+
+
+{%- set current_y = 100 %}   {# start Y position after the title #}
+
+{# initialize namespace to track max height #}
+{%- set ns = namespace(max_btn_height=0) %}
+
+
+  <!-- UI elements -->
+{# -- Adding Button -- #}
+{%- set ns_x_cursor = namespace(x_cursor=10) %}  {# start cursor at 10px #}
+
+{# Example usage for navigate_buttons #}
+{{ create_btns.render_buttons(navigate_buttons, ns_x_cursor, ns, current_y, page_width, screen_alignment, gap_value) }}
+
+{# after buttons, move down according to tallest button + gap #}
+{%- set current_y = current_y + ns.max_btn_height + gap_value %}
+
+{# -- Adding Button -- #}
+{%- for component in Adding_buttons %}
+    {%- set btn_comp = component %}
+    {%- set btn_loop = loop.index0 %}
+    {%- set button_label = component.label %}
+    {%- set btn_id = "button_" ~ (btn_label|replace(" ", "_")|lower) ~ loop.index %}
+
+    {# --- Estimate text width when no styling width is provided --- #}
+    {%- set char_width = 8 %}   {# average pixel width per character at 14px font #}
+    {%- set estimated_label_width = (button_label|length * char_width) + 20 %} {# add padding buffer #}
+
+
+    {# --- Size fallbacks --- #}
+   {%- set btn_width = estimated_label_width
+    if (not btn_comp.styling.size.width or btn_comp.styling.size.width == "auto" or btn_comp.styling.size.width == "")
+    else (btn_comp.styling.size.width | replace('px','') | int)
+    %}
+    {%- set btn_height = (btn_comp.styling.size.height|int)
+                         if btn_comp.styling and btn_comp.styling.size and btn_comp.styling.size.height
+                         else 40 %}
+    {%- set btn_padding = (btn_comp.styling.size.padding|int)
+                          if btn_comp.styling and btn_comp.styling.size and btn_comp.styling.size.padding
+                          else 0 %}
+    {%- set btn_margin = (btn_comp.styling.size.margin|replace('px','')|int)
+                         if btn_comp.styling and btn_comp.styling.size and btn_comp.styling.size.margin
+                         else 0 %}
+
+    {# update max height correctly with namespace #}
+    {%- if btn_height > ns.max_btn_height %}
+        {%- set ns.max_btn_height = btn_height + btn_margin %}
+    {%- endif %}
+
+    {# --- Position calculation --- #}
+    {%- if btn_comp.styling and btn_comp.styling.position
+          and btn_comp.styling.position.left and btn_comp.styling.position.top %}
+        {%- set x_position = btn_comp.styling.position.left | replace('px','') | int %}
+        {%- set y_position = btn_comp.styling.position.top  | replace('px','') | int %}
+    {%- elif screen_alignment == "left" %}
+        {%- set x_position = ns_x_cursor.x_cursor %}
+        {%- set y_position = current_y + btn_margin %}
+        {%- set ns_x_cursor.x_cursor = ns_x_cursor.x_cursor + btn_width + gap_value + btn_margin %}   {# move cursor forward #}{{x_cursor}}///
+    {%- elif screen_alignment == "center" %}
+        {# compute total dynamic width #}
+        {%- if loop.first %}
+            {%- set total_buttons_width = (Adding_buttons
+                | map(attribute="label")
+                | map("length")
+                | map("int")
+                | sum * char_width) + (num_Adding_buttons * 20) + ((num_Adding_buttons-1) * gap_value) %}
+            {%- set ns_x_cursor.x_cursor = (page_width - total_buttons_width) // 2 %}
+        {%- endif %}
+        {%- set x_position = ns_x_cursor.x_cursor %}
+        {%- set y_position = current_y + btn_margin %}
+        {%- set ns_x_cursor.x_cursor = ns_x_cursor.x_cursor + btn_width + gap_value + btn_margin %}
+    {%- else %}
+        {%- set x_position = ns_x_cursor.x_cursor %}
+        {%- set y_position = current_y + btn_margin %}
+        {%- set ns_x_cursor.x_cursor = ns_x_cursor.x_cursor + btn_width + gap_value + btn_margin %}
+    {%- endif %}
+
+
+   {# generate SVG rectangle for button #}
+    <rect id="{{ btn_id }}" x="{{ x_position }}" y="{{ y_position }}"
+          width="{{ btn_width }}" height="{{ btn_height }}"
+          rx="5" ry="5"
+          fill="{{ btn_comp.styling.color.background_color if btn_comp.styling and btn_comp.styling.color and btn_comp.styling.color.background_color else '#007BFF' }}"
+          stroke="{{ btn_comp.styling.color.border_color if btn_comp.styling and btn_comp.styling.color and btn_comp.styling.color.border_color else '#FFFFFF' }}"/>
+
+    {# generate SVG text for button label (centered inside rect) #}
+    <text id="text_{{ btn_id }}" x="{{ x_position + btn_width/2 }}"
+          y="{{ y_position + btn_height/2 }}"
+          text-anchor="middle"
+          alignment-baseline="middle"
+          font-family="Arial, sans-serif"
+          font-size="{{ btn_comp.styling.size.font_size if btn_comp.styling and btn_comp.styling.size and btn_comp.styling.size.font_size else 14 }}"
+          fill="{{ btn_comp.styling.color.text_color if btn_comp.styling and btn_comp.styling.color and btn_comp.styling.color.text_color else '#FFFFFF' }}">
+      {{ button_label }}
+    </text>
+
+{%- endfor %}
+
+
+{# after buttons, move down according to tallest button + gap #}
+{%- set current_y = current_y + ns.max_btn_height + gap_value %}
+
+{# -- List / Table -- #}
+{%- for ls in list_elements%}
+  {%- set list_margin = (ls.styling.size.margin | replace('px','') | int)
+                         if ls.styling and ls.styling.size and ls.styling.size.margin else 0 %}
+  {%- set list_padding = (ls.styling.size.padding | replace('px','') | int)
+                          if ls.styling and ls.styling.size and ls.styling.size.padding else 0 %}
+
+  {# --- Resolve rect positions and sizes first (use specified OR fallback) --- #}
+  {%- set rect_y = (ls.styling.position.top if ls.styling and ls.styling.position and ls.styling.position.top else current_y)
+                    | replace('px','') | int %}
+  {%- set rect_y = rect_y + list_margin %}   {# add vertical margin #}
+
+
+
+  {# resolve width #}
+  {%- if ls.styling and ls.styling.size and ls.styling.size.width and ls.styling.size.width != '100%' %}
+    {%- set rect_w = ls.styling.size.width | replace('px','') | int %}
+  {%- else %}
+    {%- set rect_w = 740 %}
+  {%- endif %}
+
+  {# resolve height #}
+  {%- if ls.styling and ls.styling.size and ls.styling.size.height and ls.styling.size.height != 'auto' %}
+    {%- set rect_h = ls.styling.size.height | replace('px','') | int %}
+  {%- else %}
+    {%- set rect_h = 400 %}
+  {%- endif %}
+
+
+  {# add padding to the overall box #}
+  {%- set rect_w = rect_w + (list_padding * 2) %}
+  {%- set rect_h = rect_h + (list_padding * 2) %}
+
+
+  {# alignment logic for X position #}
+  {%- if screen_alignment == "center" %}
+    {%- set rect_x = (page_width - rect_w) // 2 %}
+  {%- elif screen_alignment == "left" %}
+    {%- set rect_x = (ls.styling.position.left if ls.styling and ls.styling.position and ls.styling.position.left else '20')
+                      | replace('px','') | int %}
+  {%- else %}
+    {%- set rect_x = 20 %}
+  {%- endif %}
+  {%- set rect_x = rect_x + list_margin %}   {# add horizontal margin #}
+
+  {# --- Derive child positions (start inside padding box) --- #}
+  {%- set col_x_start = rect_x + list_padding %}
+  {%- set header_y = rect_y + list_padding + 20 %}
+
+  <!-- {{ls.name}} -->
+  <rect
+    id="{{ ls.name | lower }}_table"
+    x="{{ rect_x }}"
+    y="{{ rect_y }}"
+    width="{{ rect_w }}"
+    height="{{ rect_h }}"
+    fill="{{ ls.styling.color.background_color if ls.styling and ls.styling.color and ls.styling.color.background_color else 'white' }}"
+    stroke="{{ ls.styling.color.border_color if ls.styling and ls.styling.color and ls.styling.color.border_color else '#ccc' }}"
+    stroke-width="1"
+    rx="10"/>
+
+  {# --- Column headers --- #}
+  {%- for source in ls.list_sources %}
+    {%- if source.__class__.__name__ == "DataSourceElement" %}
+      {%- set fieldsList = source.fields|list %}
+      {%- set num_fields = fieldsList | length %}
+      {%- set reserved_width = 160 %}  {# space for edit/delete column #}
+      {# respect padding for content area #}
+      {%- set col_width = (rect_w - reserved_width - (list_padding * 2)) // num_fields %}
+
+      {%- for field in fieldsList %}
+        <text id="{{ ls.name | lower }}_header_{{ field.name | lower }}"
+              x="{{ rect_x + list_padding + (loop.index0 * col_width) }}" y="{{ header_y }}"
+              font-family="Helvetica, sans-serif"
+              font-size="{{ ls.styling.size.font_size if ls.styling and ls.styling.size and ls.styling.size.font_size else '17' }}"
+              fill="{{ ls.styling.color.text_color if ls.styling and ls.styling.color and ls.styling.color.text_color else '#000' }}"
+              font-weight="600">
+          {{ field.name | capitalize }}
+        </text>
+      {%- endfor %}
+
+    {# Static column header for actions (Edit/Delete) #}
+    <text id="{{ ls.name | lower }}_header_actions"
+          x="{{ rect_x + rect_w - reserved_width - list_padding }}" y="{{ header_y }}"
+          font-family="Helvetica, sans-serif"
+          font-size="{{ ls.styling.size.font_size if ls.styling and ls.styling.size and ls.styling.size.font_size else '17' }}"
+          fill="{{ ls.styling.color.text_color if ls.styling and ls.styling.color and ls.styling.color.text_color else '#000' }}"
+          font-weight="600">
+      Actions
+    </text>
+
+    {%- endif %}
+  {%- endfor %}
+
+{# --- Sample Rows --- #}
+{%- for i in range(1) %}
+  {%- set row_y = header_y + (i + 1) * 40 %}
+  {%- set col_x = rect_x + list_padding %}   {# start from padding, not raw rect_x #}
+
+  {# --- Dynamic field values --- #}
+  {%- for source in ls.list_sources %}
+    {%- if source.__class__.__name__ == "DataSourceElement" %}
+      {%- set fieldsList = source.fields|list %}
+      {%- set num_fields = fieldsList | length %}
+      {%- set reserved_width = 160 %}
+      {%- set col_width = (rect_w - reserved_width - (list_padding * 2)) // num_fields %}
+
+      {%- for field in fieldsList %}
+        <text id="{{ ls.name | lower }}_row{{ i+1 }}_{{ field.name | lower }}"
+              x="{{ col_x + loop.index0 * col_width }}" y="{{ row_y }}"
+              font-family="Helvetica, sans-serif"
+              font-size="{{ ls.styling.size.font_size if ls.styling and ls.styling.size and ls.styling.size.font_size else '15' }}"
+               fill="{{ ls.styling.color.text_color if ls.styling and ls.styling.color and ls.styling.color.text_color else '#000' }}">
+          {{ field.name }}_{{ i+1 }}
+        </text>
+      {%- endfor %}
+    {%- endif %}
+  {%- endfor %}
+  {%- set reserved_width = 160 %}
+  {# --- Edit button in reserved last column --- #}
+  {%- for edit_button in edit_button_elements %}
+    <g id="group_edit_{{loop.index}}" role="button" tabindex="0" aria-label="Edit row {{ i+1 }}">
+      <rect id="edit_btn_{{loop.index}}" x="{{ rect_x + rect_w - reserved_width - list_padding + 20 }}" y="{{ row_y-15 }}"
+          {%- set edit_btn_width =
+          60 if (not edit_button.styling.size.width or edit_button.styling.size.width == "auto" or edit_button.styling.size.width == "")
+          else (edit_button.styling.size.width | replace('px','') | int)
+          %}
+            width="{{ edit_btn_width }}"
+            height="{{ edit_button.styling.size.height if edit_button.styling and edit_button.styling.size and edit_button.styling.size.height else '30' }}"
+            fill="{{ edit_button.styling.color.background_color if edit_button.styling and edit_button.styling.color and edit_button.styling.color.background_color else '#F59E0B' }}"
+            rx="5" filter="url(#shadow)"
+            stroke="{{ edit_button.styling.color.border_color if edit_button.styling and edit_button.styling.color and edit_button.styling.color.border_color else '#FFFFFF' }}"/>
+      <text id="text_edit_btn_{{ loop.index }}" x="{{ rect_x + rect_w - reserved_width - list_padding + 35 }}" y="{{ row_y+5 }}"
+            font-family="Helvetica, sans-serif"
+            font-size="{{ edit_button.styling.size.font_size if edit_button.styling and edit_button.styling.size and edit_button.styling.size.font_size else '13' }}"
+            fill="{{ edit_button.styling.color.text_color if edit_button.styling and edit_button.styling.color and edit_button.styling.color.text_color else '#FFFFFF' }}"
+            font-weight="500">{{ edit_button.label }}</text>
+    </g>
+  {%- endfor %}
+
+  {# --- Delete button in reserved last column --- #}
+  {%- for delete_button in delete_button_elements %}
+    <g id="group_delete_{{loop.index}}" role="button" tabindex="0" aria-label="Delete row {{ i+1 }}">
+      <rect id="delete_btn_{{loop.index}}" x="{{ rect_x + rect_w - list_padding - 70 }}" y="{{ row_y-15 }}"
+          {%- set delete_btn_width =
+          60 if (not delete_button.styling.size.width or delete_button.styling.size.width == "auto" or delete_button.styling.size.width =="")
+          else (delete_button.styling.size.width | replace('px','') | int)
+          %}
+            width="{{ delete_btn_width }}"
+            height="{{ delete_button.styling.size.height if delete_button.styling and delete_button.styling.size and delete_button.styling.size.height else '30' }}"
+            fill="{{ delete_button.styling.color.background_color if delete_button.styling and delete_button.styling.color and delete_button.styling.color.background_color else '#DC2626' }}"
+            rx="5" filter="url(#shadow)"
+            stroke="{{ delete_button.styling.color.border_color if delete_button.styling and delete_button.styling.color and delete_button.styling.color.border_color else '#FFFFFF' }}"/>
+      <text id="text_delete_btn_{{ loop.index }}" x="{{ rect_x + rect_w - list_padding - 55 }}" y="{{ row_y+5 }}"
+            font-family="Helvetica, sans-serif"
+            font-size="{{ delete_button.styling.size.font_size if delete_button.styling and delete_button.styling.size and delete_button.styling.size.font_size else '13' }}"
+            fill="{{ delete_button.styling.color.text_color if delete_button.styling and delete_button.styling.color and delete_button.styling.color.text_color else '#FFFFFF' }}"
+            font-weight="500">{{ delete_button.label }}</text>
+    </g>
+  {%- endfor %}
+{%- endfor %}
+
+
+  {# after placing the table, bump current_y down #}
+  {%- set current_y = rect_y + rect_h + gap_value %}
+{%- endfor %}
+
+</svg>
+
+{%- endif %}

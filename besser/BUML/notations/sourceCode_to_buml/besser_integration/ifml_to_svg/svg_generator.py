@@ -1,7 +1,7 @@
 import os
 from jinja2 import Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
-from besser.BUML.metamodel.gui.graphical_ui_extend import *
+from besser.BUML.metamodel.gui.graphical_ui import *
 
 
 class SVGCodeGenerator(GeneratorInterface):

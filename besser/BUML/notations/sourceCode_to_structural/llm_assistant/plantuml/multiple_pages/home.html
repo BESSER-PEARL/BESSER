@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Home Page</title>
+</head>
+<body>
+    <h1>Book Library Manager</h1> 
+
+    <a href="{% url 'author_list' %}">
+        <button>Author List</button>
+    </a> 
+
+    <a href="{% url 'book_list' %}">
+        <button>Book List</button>
+    </a> 
+
+    <a href="{% url 'library_list' %}">
+        <button>Library List</button>
+    </a>
+</body>
+</html>

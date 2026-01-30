@@ -1,0 +1,76 @@
+
+                    
+                    
+{% extends 'library.html' %}
+
+{% block content %}
+<div class="container mx-auto mt-10 bg-white p-6 rounded-lg shadow-lg border">
+    
+    <!-- Back to Home Button -->
+    <div class="mb-6">
+        <a href="{% url 'home' %}" class="font-bold py-2 px-4 rounded-lg bg-gray-300 hover:bg-gray-400 transition">
+            Back to Home Page
+        </a>
+    </div>
+    <h1 class="text-4xl font-extrabold mb-8 text-gray-800">List of Librarys</h1>
+
+    <button id="addLibraryBtn" class="font-bold py-2 px-4 rounded-lg bg-[#0C4B33] text-white hover:bg-[#0A3A28] transition mb-6">
+        Add Library
+    </button>
+
+    <div id="addLibraryModal" class="hidden fixed inset-0 flex justify-center items-center bg-gray-900 bg-opacity-50">
+        <div class="bg-white rounded-lg overflow-hidden shadow-xl w-full max-w-lg border p-6">
+                <h2 class="text-xl font-bold mb-4 text-gray-800">Add Library</h2>
+                <form id="libraryForm" action="{% url 'create_library' %}" method="POST">
+                    {% csrf_token %}
+
+                    <div class="form-group">      
+                        <label for="{{ form.name.id_for_label }}" class="block font-semibold mb-2 text-gray-700">Name</label>
+                        {{ form.name }}
+                    </div>
+
+                    <div class="form-group">      
+                        <label for="{{ form.address.id_for_label }}" class="block font-semibold mb-2 text-gray-700">Address</label>
+                        {{ form.address }}
+                    </div>
+
+                    <div class="flex justify-between mt-6">
+                        <button type="button" class="cancelButton font-bold py-2 px-4 rounded-lg bg-gray-400 text-white hover:bg-gray-500 transition">
+                            Cancel
+                        </button>
+                        <button type="submit" class="font-bold py-2 px-4 rounded-lg bg-[#0C4B33] text-white hover:bg-[#0A3A28] transition">
+                            Save
+                        </button>
+                    </div>
+                </form>
+        </div>
+    </div>
+
+    <table class="min-w-full shadow-md rounded-lg overflow-hidden border bg-white">
+        <thead class="bg-[#0C4B33] text-white">
+            <tr>
+                <th class="w-1/3 text-left py-3 px-4 uppercase font-semibold text-sm">Name</th>
+                <th class="w-1/3 text-left py-3 px-4 uppercase font-semibold text-sm">Address</th>
+                <th class="text-left py-3 px-4 uppercase font-semibold text-sm">Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for library in librarys %}
+            <tr class="border-b hover:bg-gray-100 transition">
+                <td class="w-1/3 text-left py-3 px-4">{{ library.name }}</td>
+                <td class="w-1/3 text-left py-3 px-4">{{ library.address }}</td>
+                <td class="flex gap-5 py-3 px-4">
+                    <a href="{% url 'edit_library' library.id %}" class="font-bold py-2 px-4 rounded-lg bg-blue-500 text-white hover:bg-blue-600 transition">
+                        Edit
+                    </a>
+                    <a href="{% url 'delete_library' library.id %}" class="font-bold py-2 px-4 rounded-lg bg-red-500 text-white hover:bg-red-600 transition">
+                        Delete
+                    </a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endblock %}
+

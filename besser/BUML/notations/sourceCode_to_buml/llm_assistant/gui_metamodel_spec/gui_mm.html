@@ -1,0 +1,276 @@
+Class ButtonActionType(Enum):
+Represents a button action type, including the following types:
+- Add
+- ShowList
+- OpenForm
+- SubmitForm
+- Cancel
+- Save
+- Delete
+- Confirm
+- Navigate
+- Search
+- Filter
+- Sort
+- Send
+- Share
+- Settings
+- Back
+- Next
+- View
+- Select
+- Login
+- Logout
+- Help
+- About
+- Exit
+- Edit
+
+Class ButtonType(Enum):
+Represents a button type, including the following types:
+- RaisedButton
+- TextButton
+- OutlinedButton
+- IconButton
+- FloatingActionButton
+- DropdownButton
+- ToggleButtons
+- iOS-styleButton
+- CustomizableButton
+
+class InputFieldType(Enum):
+Represents different field types:
+- Text
+- Number
+- Email
+- Password
+- Date
+- Time
+- File
+- Color
+- Range
+- URL
+- Tel
+- Search
+
+
+class CollectionSourceType(Enum):
+Represents the different collection source type:
+- List
+- Table
+- Tree
+- Grid
+- Array
+- Stack
+
+
+class UnitSize(Enum):
+Represents unit types for size measurements:
+- PIXELS = "px"   # Pixels: Fixed size, measured in pixels
+- PERCENT = "%"   # Percentage: Relative size based on the parent container
+- EM = "em"       # Element-relative: Relative to the element’s font size
+- REM = "rem"     # Root-relative: Relative to the root font size
+- VH = "vh"       # Viewport Height: % of the browser window’s height
+- VW = "vw"       # Viewport Width: % of the browser window’s width
+- AUTO = "auto"   # auto: Let the browser decide based on content
+
+
+class LayoutType(Enum):
+Represents different layout types:
+- Grid = "grid"          # Grid-based layout
+- Flex = "flex"          # Flexible layout
+- Stack = "stack"        # Stack elements vertically
+- Row = "row"            # Elements in a horizontal row
+- Column = "column"      # Elements in a vertical column
+- Absolute = "absolute"  # Free positioning
+
+
+class PositionType(Enum):
+Represents the types of positioning for a UI element.
+- Static
+- Relative
+- Absolute
+- Fixed
+- Sticky
+- Inline
+
+
+class JustificationType(Enum):
+Represents justification options
+- Left = "left"
+- Right = "right"
+- Center = "center"
+- SpaceBetween = "space-between"
+- SpaceAround = "space-around"
+
+Class Position:
+Represents the positioning properties of a UI element, providing the following attributes and associations:
+- type (PositionType): Specifies the positioning type (e.g., STATIC, ABSOLUTE, RELATIVE).
+- top (str, optional): Distance from the top edge (e.g., '10px', '10%', None).
+- left (str, optional): Distance from the left edge (e.g., '10px', '10%', None).
+- right (str, optional): Distance from the right edge (e.g., '10px', '10%', None).
+- bottom (str, optional): Distance from the bottom edge (e.g., '10px', '10%', None).
+- alignment (str, optional): Defines how the element aligns within its container (e.g., "CENTER", "LEFT").
+- z_index (int, optional): Controls the stacking order; elements with higher values appear above lower ones. (default value is "0")
+
+
+Class Size:
+Represents the size-related properties of a UI element, providing the following attributes and associations:
+- width (str): The width of the element (e.g., "100px", "80%", "auto").
+- height (str): The height of the element (e.g., "50px", "auto").
+- padding (str, optional): Space inside the element between its content and border (e.g., "10px"). (default value is "0")
+- margin (str, optional): Space outside the element, creating separation from other elements (e.g., "5px"). (default value is "0")
+- font_size (str, optional): Font size for text elements (e.g., "16px", "1.2em").
+- icon_size (str, optional): Size of icons within the element (e.g., "24px").
+- unit_size (UnitSize): Defines the unit of measurement used (e.g., px, %, em). (default value is UnitSize.PIXELS)
+
+
+Class Color:
+Represents the color properties of a ViewElement, providing the following attributes and associations:
+- background_color (str): The background color of the element (e.g., "#FFFFFF", "blue").
+- text_color (str): The color of the text within the element (e.g., "#000000", "red").
+- border_color (str): The color of the element's border (e.g., "#CCCCCC", "gray").
+
+
+Class Layout:
+Represents the structural arrangement of UI elements within a container, providing the following attributes and associations:
+- layoutType (LayoutType): The type of layout used (e.g., Flex, Grid), defaulting to Flex.
+- orientation (str): Determines the layout direction ("horizontal" or "vertical", default: "vertical").
+- padding (str): Specifies the space inside the container (e.g., "10px", "1em", default: "10px").
+- margin (str): Defines the space outside the container (e.g., "10px", "1em", default: "10px").
+- gap (str): Controls the spacing between child elements (e.g., "5px", "0.5em", default: "5px").
+- alignment (JustificationType): Specifies how elements are justified/aligned within the container (default: CENTER).
+- wrap (bool): Determines whether elements wrap within a flex/grid layout (default: True).
+
+
+Class DataSource(NamedElement):
+Represents a data source, providing the following attributes and associations:
+- name (str): The name of the data source.
+
+Class DataSourceElement(DataSource):
+Represents a data source associated with a model element, providing the following attributes and associations:
+- name (str): The name of the model element data source.
+- dataSourceClass (Class): The class representing the data source.
+- fields (set[Property]): The fields representing the attributes of the model element.
+
+Class File(DataSource):
+Represents a data source that is a file, providing the following attributes and associations:
+- name (str): The name of the file data source.
+- type (FileSourceType): The type of the file data source (allowed values: FileSystem', 'LocalStorage', 'DatabaseFileSystem').
+
+Class Collection(DataSource):
+Represents a data source that is a collection, providing the following attributes and associations:
+- name (str): The name of the collection data source.
+- type (CollectionSourceType): The type of the collection data source.
+
+
+class Position:
+Represents the positioning properties of a UI element, providing the following attributes and associations:
+- position (PositionType): The positioning type (e.g., STATIC, ABSOLUTE, RELATIVE).
+- top (str, optional): Distance from the top (e.g., '10px', '10%', None).
+- left (str, optional): Distance from the left (e.g., '10px', '10%', None).
+- right (str, optional): Distance from the right (e.g., '10px', '10%', None).
+- bottom (str, optional): Distance from the bottom (e.g., '10px', '10%', None).
+- alignment (str, optional): Defines how the element aligns within its container (e.g., "CENTER", "LEFT").
+- z_index (int, optional): Determines the stacking order; higher values appear above lower ones.
+
+class Styling:
+Represents the general styling properties of a UI element, including the following attributes and associations:
+- size (Size | None): The size settings of the UI element.
+- position (Position | None): The position settings of the UI element.
+- color (Color | None): The color settings of the UI element.
+
+
+Class ViewElement (NamedElement):
+Represents a view element, providing the following attributes and associations:
+- name (str): The name of the view element.
+- description (str): A brief description of the view element.
+- visibility (str): The visibility scope of the view element (default: "public").
+- styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
+
+
+
+Class ViewComponent (ViewElement)
+Represents a view component, providing the following attributes and associations:
+- name (str): The name of the view component.
+- description (str): A brief description of the view component.
+- visibility (str): The visibility scope of the component (default: "public").
+- styling (Styling, optional): The styling configuration, which includes size, position, and color settings (default: None).
+
+
+Class ViewContainer(ViewElement):
+Represents a view container, providing the following attributes and associations:
+- name (str): The name of the view container.
+- description (str): The description of the view container.
+- layout (Layout | None): The layout settings for organizing the view elements (optional).
+
+Class Screen(ViewContainer):
+Represents a screen, providing the following attributes and associations:
+- name (str): The name of the screen.
+- view_elements (set[ViewElement]): The set of view elements on the screen.
+- x_dpi (str): The X DPI (dots per inch) of the screen.
+- y_dpi (str): The Y DPI (dots per inch) of the screen.
+- screen_size (str): The size of the screen (allowed options: 'Small','Medium', 'Large', 'xLarge').
+- is_main_page (bool): Indicates whether the screen is the main page or not.
+- layout (Layout | None, optional): The layout settings (Defaults to None).
+
+
+Class Module(NamedElement):
+Represents a module, providing the following attributes and associations:
+- name (str): The name of the module.
+- screens (set[Screen]): The set of screens contained in the module.
+
+Class DataList(ViewComponent):
+Represents a list component that encapsulates properties unique to lists, such as list sources, providing the following attributes and associations:
+- name (str): The name of the list.
+- list_sources (set[DataSource]): The set of data sources associated with the list.
+- styling (Styling, optional): The styling configuration, which includes size, position, and color settings (default: None).
+
+Class Button(ViewComponent):
+Represents a button component and encapsulates specific properties of a button, such as its name and label, providing the following attributes and associations:
+- name (str): The name of the button.
+- description (str): The description of the button.
+- label (str): The label of the button.
+- buttonType (ButtonType): The type of the button.
+- actionType (ButtonActionType): The action type of the button.
+- targetScreen (Screen, optional): The target Screen associated with the button when the actionType is "Navigate".
+- styling (Styling, optional): The styling configuration, which includes size, position, and color settings (default: None).
+
+Class Image(ViewComponent):
+Represents an image component and encapsulates the specific properties of an image, such as its name, providing the following attributes and associations:
+- name (str): The name of the image.
+
+Class InputField(ViewComponent):
+Represents an input field component and encapsulates specific properties of an input field, such as its type and validation rules, providing the following attributes and associations:
+- name (str): The name of the input field.
+- description (str): The description of the input field.
+- type (str): The type of the input field. Type is in these types: ['Text','Number', 'Email', 'Password', 'Date', 'Time', 'File', 'Color', 'Range', 'URL', 'Tel', 'Search']
+- validationRules (str): The validation rules for the input field.
+- styling (Styling, optional): The styling configuration, which includes size, position, and color settings (default: None).
+
+Class Form(ViewComponent):
+Represents a form component and encapsulates the specific properties of a form, such as its name, providing the following attributes and associations:
+- name (str): The name of the form.
+- description (str): The description of the form.
+- inputFields (set[InputField]): The set of input fields contained in the form.
+- styling (Styling, optional): The styling configuration, which includes size, position, and color settings (default: None).
+
+Class MenuItem:
+Represents an item of a menu, providing the following attributes and associations:
+- label (str): The label of the menu item.
+
+Class Menu(ViewComponent):
+Represents a menu component and encapsulates the specific properties of a menu, such as its name, providing the following attributes and associations:
+- name (str): The name of the menu.
+- description (str): The description of the menu.
+- menuItems (set[MenuItem]): The set of menu items contained in the menu.
+- styling (Styling, optional): The styling configuration, which includes size, position, and color settings (default: None).
+
+The GUIModel metaclass is a subclass of the NamedElement class and serves as a blueprint for creating GUIModel objects. It encapsulates the properties and behavior of an application, providing the following attributes and associations:
+- name (str): The name of the application.
+- package (str): The package of the application.
+- versionCode (str): The version code of the application.
+- versionName (str): The version name of the application.
+- modules (set[Module]): The set of modules contained in the application.
+- description (str): The description of the application.
+- screenCompatibility (bool): Indicates whether the application has screen compatibility.

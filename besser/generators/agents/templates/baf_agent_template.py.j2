@@ -443,7 +443,7 @@ def {{ body_name }}(session: Session):
         context=context_prompts.get('{{ suffix }}'),
         context_name='agent_configuration_{{ suffix }}'
     )
-    {% if content in configuration and adaptContentToUserProfile in configuration.content%}
+    {% if 'adaptContentToUserProfile' in configuration %}
     reply_llm.add_user_context(
         session=session,
         context=profile_prompts.get('{{ suffix }}'),
@@ -469,7 +469,7 @@ def {{ body_name }}(session: Session):
         context=context_prompts.get('{{ suffix }}'),
         context_name='agent_configuration'
     )
-    {% if content in configuration and adaptContentToUserProfile in configuration.content%}
+    {% if 'adaptContentToUserProfile' in configuration %}
     reply_llm.add_user_context(
         session=session,
         context=profile_prompts.get('{{ suffix }}''),

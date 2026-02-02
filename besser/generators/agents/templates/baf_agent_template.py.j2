@@ -94,8 +94,7 @@ agent_configurations['{{ profile_slug }}'] = json.loads(r'''{{ entry.get("config
 user_profiles['{{ profile_slug }}'] = json.loads(r'''{{ entry.get("user_profile", {}) | tojson(indent=2) }}''')
 context_prompts['{{ profile_slug }}'] = build_agent_configuration_prompt(agent_configurations['{{ profile_slug }}'])
 {% set personalization_config = entry.get("configuration", {}) %}
-{% set personalization_content = personalization_config.get("content", {}) %}
-{% if personalization_content.get("adaptContentToUserProfile") and personalization_content.get("userProfileName") == profile_name %}
+{% if personalization_config.get("adaptContentToUserProfile") and personalization_config.get("userProfileName") == profile_name %}
 profile_prompts['{{ profile_slug }}'] = build_user_profile_prompt(user_profiles['{{ profile_slug }}'])
 {% endif %}
 {% endfor %}
@@ -443,7 +442,7 @@ def {{ body_name }}(session: Session):
         context=context_prompts.get('{{ suffix }}'),
         context_name='agent_configuration_{{ suffix }}'
     )
-    {% if 'adaptContentToUserProfile' in configuration %}
+    {% if configuration.adaptContentToUserProfile %}
     reply_llm.add_user_context(
         session=session,
         context=profile_prompts.get('{{ suffix }}'),
@@ -458,7 +457,7 @@ def {{ body_name }}(session: Session):
     session.reply('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% endif %}
     {% if speech_enabled %}
-    platform.reply_speech('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% endif %}
     {% endfor %}
 {% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
@@ -469,23 +468,23 @@ def {{ body_name }}(session: Session):
         context=context_prompts.get('{{ suffix }}'),
         context_name='agent_configuration'
     )
-    {% if 'adaptContentToUserProfile' in configuration %}
+    {% if configuration.adaptContentToUserProfile %}
     reply_llm.add_user_context(
         session=session,
-        context=profile_prompts.get('{{ suffix }}''),
+        context=profile_prompts.get('{{ suffix }}'),
         context_name='user_profile'
     )
     {% endif %}
     {% endif %}
     {% set llm_action = state.body.actions[0] %}
     {% if llm_action.prompt %}
-    message = reply_llm.predict(session.event.message, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    message = reply_llm.predict(message=session.event.message, session=session, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
-    message = reply_llm.predict(session.event.message)
+    message = reply_llm.predict(message=session.event.message, session=session)
     {% endif %}
     session.reply(message)
     {% if speech_enabled %}
-    platform.reply_speech(message)
+    platform.reply_speech(session, message)
     {% endif %}
 {% elif state.body.actions and is_class(state.body.actions[0], 'RAGReply') %}
 def {{ body_name }}(session: Session):
@@ -495,7 +494,7 @@ def {{ body_name }}(session: Session):
         context=context_prompts.get('{{ suffix }}'),
         context_name='agent_configuration'
     )
-    {% if content in config and adaptContentToUserProfile in config.content %}
+    {% if configuration.adaptContentToUserProfile %}
     reply_llm.add_user_context(
         session=session,
         context=profile_prompts.get('{{ suffix }}'),
@@ -526,20 +525,20 @@ def {{ fallback_name }}(session: Session):
     {% for action in state.fallback_body.actions %}
     session.reply('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}')
     {% if speech_enabled %}
-    platform.reply_speech('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}')
+    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}')
     {% endif %}
     {% endfor %}
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}
 def {{ fallback_name }}(session: Session):
     {% set llm_action = state.fallback_body.actions[0] %}
     {% if llm_action.prompt %}
-    message = reply_llm.predict(session.event.message, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    message = reply_llm.predict(message=session.event.message, session=session, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
     {% else %}
-    message = reply_llm.predict(session.event.message)
+    message = reply_llm.predict(message=session.event.message, session=session)
     {% endif %}
     session.reply(message)
     {% if speech_enabled %}
-    platform.reply_speech(message)
+    platform.reply_speech(session, message)
     {% endif %}
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'RAGReply') %}
 def {{ fallback_name }}(session: Session):

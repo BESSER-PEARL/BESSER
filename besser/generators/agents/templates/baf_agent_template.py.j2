@@ -104,18 +104,33 @@ personalized_messages = json.loads(r'''{{ personalized_messages | tojson(indent=
 # load the personalization rules from the generator context into a Python variable called `rules`
 rules = json.loads(r'''{{ config['personalizationrules'] | tojson(indent=2) }}''')
 {% endif %}
-{% set has_speech_output = config and config.outputModalities and ('speech' in (config.outputModalities | map('lower'))) %}
+{% set speech_flags = namespace(
+    input=config and config.inputModalities and ('speech' in (config.inputModalities | map('lower'))),
+    output=config and config.outputModalities and ('speech' in (config.outputModalities | map('lower')))
+) %}
 
-{# If base config lacks speech, check personalization mappings for speech output #}
-{% if not has_speech_output and personalization_mapping is defined and personalization_mapping %}
+{% if not speech_flags.input and personalization_mapping is defined and personalization_mapping %}
+    {% for entry in personalization_mapping %}
+        {% set entry_config = entry.get('configuration', {}) %}
+        {% set entry_inputs = entry_config.get('inputModalities') %}
+        {% if entry_inputs and ('speech' in (entry_inputs | map('lower'))) %}
+            {% set speech_flags.input = true %}
+        {% endif %}
+    {% endfor %}
+{% endif %}
+
+{% if not speech_flags.output and personalization_mapping is defined and personalization_mapping %}
     {% for entry in personalization_mapping %}
         {% set entry_config = entry.get('configuration', {}) %}
         {% set entry_outputs = entry_config.get('outputModalities') %}
         {% if entry_outputs and ('speech' in (entry_outputs | map('lower'))) %}
-            {% set has_speech_output = true %}
+            {% set speech_flags.output = true %}
         {% endif %}
     {% endfor %}
 {% endif %}
+
+{% set has_speech_input = speech_flags.input %}
+{% set has_speech_output = speech_flags.output %}
 
 {% set platform_name = config['agentPlatform'] if config and 'agentPlatform' in config else None %}
 {% if platform_name == 'websocket' %}
@@ -176,10 +191,10 @@ reply_llm = LLMReplicate(
 
     {% endif %}
 {% endif %}
-{% if config and 'inputModalities' in config and 'speech' in config['inputModalities'] %}
+{% if has_speech_input %}
 stt = OpenAISpeech2Text(agent=agent, model_name="whisper-1")
 {% endif %}
-{% if config and 'outputModalities' in config and 'speech' in config['outputModalities'] %}
+{% if has_speech_output %}
 tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
 {% endif %}
 

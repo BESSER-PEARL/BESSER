@@ -560,29 +560,57 @@ def replace_content_profile_batch(messages: list[str], config: dict) -> list[str
         "the rewritten reply text and do not use any kind of formatting."
     )
 
-    personalized_messages: list[str] = []
-    for original_text in messages:
-        if not isinstance(original_text, str) or not original_text.strip():
-            personalized_messages.append(original_text)
-            continue
+    personalized_messages: list[str] = list(messages)
+    valid_entries: list[tuple[int, str]] = []
+    for idx, original_text in enumerate(messages):
+        if isinstance(original_text, str) and original_text.strip():
+            valid_entries.append((idx, original_text))
+        else:
+            personalized_messages[idx] = original_text
 
-        user_prompt = (
-            f"User profile (JSON):\n{profile_context}\n\n"
-            f"Original agent reply:\n{original_text}\n\n"
-            "Return only the rewritten reply and do not use any kind of formatting."
-        )
+    if not valid_entries:
+        return personalized_messages
 
-        try:
-            rewritten = call_openai_chat(system_prompt, user_prompt, model=model_name)
+    numbered_replies = "\n".join(
+        f"{i + 1}. {text}" for i, (_, text) in enumerate(valid_entries)
+    )
+    user_prompt = (
+        f"User profile (JSON):\n{profile_context}\n\n"
+        "Original agent replies (numbered):\n"
+        f"{numbered_replies}\n\n"
+        "Rewrite each reply so it aligns with the profile only when necessary.\n"
+        "Return the rewritten replies as a numbered list matching the inputs and do not use any formatting."
+    )
+
+    try:
+        response_text = call_openai_chat(system_prompt, user_prompt, model=model_name)
+        results = [
+            line.split(". ", 1)[1] if ". " in line else line
+            for line in response_text.splitlines()
+            if line.strip()
+        ]
+
+        if len(results) != len(valid_entries):
+            print(
+                "Content profile adaptation returned unexpected count; falling back to originals."
+            )
+            results = [text for _, text in valid_entries]
+
+        for (msg_idx, original_text), rewritten in zip(valid_entries, results):
             final_text = rewritten if rewritten else original_text
             if isinstance(final_text, str):
                 final_text = final_text.replace("'", "\\'")
-            personalized_messages.append(final_text)
-        except Exception as exc:
-            print("Content profile adaptation failed:", exc)
-            traceback.print_exc()
-            fallback_text = original_text.replace("'", "\\'") if isinstance(original_text, str) else original_text
-            personalized_messages.append(fallback_text)
+            personalized_messages[msg_idx] = final_text
+    except Exception as exc:
+        print("Content profile adaptation failed:", exc)
+        traceback.print_exc()
+        for msg_idx, original_text in valid_entries:
+            fallback_text = (
+                original_text.replace("'", "\\'")
+                if isinstance(original_text, str)
+                else original_text
+            )
+            personalized_messages[msg_idx] = fallback_text
 
     return personalized_messages
 

@@ -440,7 +440,7 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
 {% if agent_model and agent_model.states %}
 {% set ns = namespace(custom_events=[], bodies=[]) %}
 {% set suffix_part = '_' ~ suffix if suffix else '' %}
-{% set speech_enabled = has_speech_output or (configuration and configuration.outputModalities and ('speech' in (configuration.outputModalities | map('lower')))) %}
+{% set speech_enabled = configuration and configuration.outputModalities and ('speech' in (configuration.outputModalities | map('lower'))) %}
 {% for state in agent_model.states %}
 {% set state_name = state.name ~ suffix_part %}
 # {{ state.name }}{% if suffix %} ({{ suffix }}){% endif %}

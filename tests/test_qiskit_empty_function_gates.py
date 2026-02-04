@@ -105,8 +105,11 @@ def test_function_gate_with_operations_generates_definition():
             "Function definition should contain nested X gate"
         
         # Verify the function is called in operations
-        assert "_function_gate_MyCustomGate_" in content and "(1)" in content, \
-            "Function should be called with correct number of qubits"
+        # Pattern: qc.append(_function_gate_MyCustomGate_<id>(1), ...)
+        import re
+        func_call_pattern = r'qc\.append\(_function_gate_MyCustomGate_\d+\(1\)'
+        assert re.search(func_call_pattern, content), \
+            "Function should be called with correct number of qubits in qc.append()"
 
 
 def test_multiple_empty_function_gates():

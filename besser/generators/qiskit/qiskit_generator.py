@@ -101,7 +101,16 @@ class QiskitGenerator(GeneratorInterface):
     def _function_gate_has_operations(self, gate: FunctionGate) -> bool:
         """
         Check if a FunctionGate has actual nested operations.
-        Returns True if the gate has operations, False otherwise.
+        
+        Args:
+            gate: The FunctionGate to check
+            
+        Returns:
+            True if the gate has nested operations, False otherwise.
+            
+        A FunctionGate has operations if either:
+        - gate.definition.circuit.operations is non-empty, or
+        - gate.gates list is non-empty
         """
         if gate.definition and gate.definition.circuit and gate.definition.circuit.operations:
             return True

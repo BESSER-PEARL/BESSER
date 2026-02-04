@@ -1371,7 +1371,7 @@ class BinaryAssociation(Association):
         """set[Property]: Set the ends of the association.
         
         Raises:
-            ValueError: if the associaiton ends are not exactly two, or if both ends are tagged as agregation, or 
+            ValueError: if the association ends are not exactly two, or if both ends are tagged as aggregation, or 
             if both ends are tagged as composition.
             TypeError: if any element in ends is not a Property instance.
         """

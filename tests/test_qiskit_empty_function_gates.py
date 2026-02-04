@@ -136,9 +136,10 @@ def test_multiple_empty_function_gates():
             content = f.read()
         
         # Verify NO function definitions were generated
-        assert "_function_gate_f_" not in content, \
+        # Function definitions start with "def _function_gate_{name}_{id}"
+        assert "def _function_gate_f" not in content, \
             "Empty FunctionGate 'f' should not generate function definition"
-        assert "_function_gate_f1_" not in content, \
+        assert "def _function_gate_f1" not in content, \
             "Empty FunctionGate 'f1' should not generate function definition"
         
         # Verify placeholders are used

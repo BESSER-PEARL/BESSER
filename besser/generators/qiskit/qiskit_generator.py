@@ -98,6 +98,17 @@ class QiskitGenerator(GeneratorInterface):
         
         return needed
     
+    def _function_gate_has_operations(self, gate: FunctionGate) -> bool:
+        """
+        Check if a FunctionGate has actual nested operations.
+        Returns True if the gate has operations, False otherwise.
+        """
+        if gate.definition and gate.definition.circuit and gate.definition.circuit.operations:
+            return True
+        if gate.gates and len(gate.gates) > 0:
+            return True
+        return False
+    
     def _uses_placeholder(self, op) -> bool:
         """Check if an operation will use the placeholder function."""
         if isinstance(op, ModularArithmeticGate):
@@ -108,12 +119,7 @@ class QiskitGenerator(GeneratorInterface):
             return True
         if isinstance(op, FunctionGate):
             # Empty FunctionGates (no nested operations) need placeholder
-            has_operations = False
-            if op.definition and op.definition.circuit and op.definition.circuit.operations:
-                has_operations = True
-            elif op.gates and len(op.gates) > 0:
-                has_operations = True
-            if not has_operations:
+            if not self._function_gate_has_operations(op):
                 return True
         if isinstance(op, ArithmeticGate):
             op_type = op.operation_type
@@ -143,15 +149,8 @@ class QiskitGenerator(GeneratorInterface):
         # This handles cases where gates with same name have different implementations
         for op in self.model.operations:
             if isinstance(op, FunctionGate):
-                # Check if this FunctionGate has actual nested operations
-                has_operations = False
-                if op.definition and op.definition.circuit and op.definition.circuit.operations:
-                    has_operations = True
-                elif op.gates and len(op.gates) > 0:
-                    has_operations = True
-                
                 # Only include FunctionGates that have actual nested operations
-                if has_operations:
+                if self._function_gate_has_operations(op):
                     # Use id() to ensure unique gates are captured
                     gate_key = f"{op.name}_{id(op)}"
                     if gate_key not in function_gates:
@@ -350,14 +349,7 @@ class QiskitGenerator(GeneratorInterface):
         
         # Handle FunctionGate by creating a custom gate from nested circuit
         elif isinstance(gate, FunctionGate):
-            # Check if this FunctionGate has actual nested operations
-            has_operations = False
-            if gate.definition and gate.definition.circuit and gate.definition.circuit.operations:
-                has_operations = True
-            elif gate.gates and len(gate.gates) > 0:
-                has_operations = True
-            
-            if has_operations:
+            if self._function_gate_has_operations(gate):
                 # For function gates with operations, generate the function call
                 num_qubits = len(gate.target_qubits)
                 gate_name = gate.name.replace(' ', '_').replace('-', '_')

@@ -465,16 +465,24 @@ def {{ body_name }}(session: Session):
     )
     {% endif %}
     {% endif %}
+    {% if speech_enabled %}
+    speech_messages = []
+    {% endif %}
     {% for action in state.body.actions %}
     {% if personalized_messages is defined and personalized_messages and not suffix %}
-    session.reply(choose_variant_for_message('{{ action.message }}', session))
+    reply_text = choose_variant_for_message('{{ action.message }}', session)
     {% else %}
-    session.reply('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    reply_text = '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}'
     {% endif %}
+    session.reply(reply_text)
     {% if speech_enabled %}
-    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    speech_messages.append(reply_text)
     {% endif %}
     {% endfor %}
+    {% if speech_enabled %}
+    if speech_messages:
+        platform.reply_speech(session, ' '.join(speech_messages))
+    {% endif %}
 {% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
 def {{ body_name }}(session: Session):
     {% if inject_profile_context and has_reply_llm %}
@@ -537,12 +545,20 @@ def {{ body_name }}(session: Session):
 {% if fallback_name not in ns.bodies %}
 {% if state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'AgentReply') %}
 def {{ fallback_name }}(session: Session):
-    {% for action in state.fallback_body.actions %}
-    session.reply('{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}')
     {% if speech_enabled %}
-    platform.reply_speech(session, '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}')
+    speech_messages = []
+    {% endif %}
+    {% for action in state.fallback_body.actions %}
+    reply_text = '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}'
+    session.reply(reply_text)
+    {% if speech_enabled %}
+    speech_messages.append(reply_text)
     {% endif %}
     {% endfor %}
+    {% if speech_enabled %}
+    if speech_messages:
+        platform.reply_speech(session, ' '.join(speech_messages))
+    {% endif %}
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}
 def {{ fallback_name }}(session: Session):
     {% set llm_action = state.fallback_body.actions[0] %}

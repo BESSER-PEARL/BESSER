@@ -29,9 +29,10 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
 
     def __init__(self, class_name:str):
         self.class_name = class_name
+        self.root_function = True
 
     def generate(self, node: FunctionDefinition):
-        lines = node.accept(self, RESTGenerationContext())
+        lines = node.accept(self, None)
         return "\n".join(lines)
 
     def visit_AssignTarget(self, node: AssignTarget, context: RESTGenerationContext) -> list[str]:
@@ -53,7 +54,12 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
         params = []
         for param in node.parameters:
             params.extend(param.accept(self, context))
-        lines.append(f"def {node.name}({', '.join(params)}) -> {node.return_type.accept(self, context)[0]} :")
+
+        if self.root_function:
+            lines.append(f"async def {node.name}(self, {', '.join(params)}) -> {node.return_type.accept(self, context)[0]} :")
+            self.root_function = False
+        else:
+            lines.append(f"async def {node.name}({', '.join(params)}) -> {node.return_type.accept(self, context)[0]} :")
 
         body = node.body.accept(self, context)
         lines.extend(indent(body))
@@ -145,7 +151,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
                     else:
                         mapping.append(f"{end.name} = inst_to_update.{end.name}")
 
-                out.append(f"update_{class_name.lower()}(inst_to_update.id, {class_name}Create({", ".join(mapping)}), database)")
+                out.append(f"await update_{class_name.lower()}(inst_to_update.id, {class_name}Create({", ".join(mapping)}), database)")
                 return out
             return []
         else:
@@ -181,7 +187,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
 
     def visit_Return(self, node: Return, context: RESTGenerationContext) -> list[str]:
         expr = node.expr.accept(self, context)[0]
-        return [f"result = {expr}"]
+        return [f"return {expr}"]
 
     def visit_Expression(self, node: Expression, context: RESTGenerationContext) -> list[str]:
         pass
@@ -245,7 +251,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
             expr = arg.accept(self, context)[0]
             param_mapping_str.append(f"{param.name} = {expr}")
 
-        return [f"create_{node.clazz.clazz.name.lower()}({node.clazz.clazz.name}Create({', '.join(param_mapping_str)}), database)"]
+        return [f"(await create_{node.clazz.clazz.name.lower()}({node.clazz.clazz.name}Create({', '.join(param_mapping_str)}), database))"]
 
     def visit_MethodCall(self, node: MethodCall, context: RESTGenerationContext) -> list[str]:
         param_dict_str = []
@@ -255,7 +261,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
 
         receiver = node.receiver.accept(self, context)[0]
 
-        return [f"execute_{self.class_name.lower()}_{node.method.name}({receiver}.id, {{ {', '.join(param_dict_str)} }}, database)"]
+        return [f"(await execute_{self.class_name.lower()}_{node.method.name}({receiver}.id, {{ {', '.join(param_dict_str)} }}, database))"]
 
     def visit_StandardLibCall(self, node: StandardLibCall, context: RESTGenerationContext) -> list[str]:
         args = []
@@ -268,7 +274,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
         args = []
         for arg in node.arguments:
             args.append(arg.accept(self, context)[0])
-        return [f"{node.function.name}({', '.join(args)})"]
+        return [f"(await {node.function.name}({', '.join(args)}))"]
 
     def visit_This(self, node: This, context: RESTGenerationContext) -> list[str]:
         return ['_' + self.class_name.lower() + '_object']

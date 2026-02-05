@@ -992,9 +992,9 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 {% endfor %}
 
 {% set method_code = "" %}
-{% if method.code_lang == 'BAL' %}
-{% set method_code = bal_to_python(parse_bal(model, class, method.code)) %}
-{% elif method.code_lang == 'Python' %}
+{% if method.implementation_type.name == "BAL" %}
+{% set method_code = bal_to_rest(parse_bal(model, class, method.code), class.name) %}
+{% elif method.implementation_type.name == "CODE" %}
 {% set method_code = method.code %}
 {% endif %}
 
@@ -1112,7 +1112,10 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
         {% set method_body = '\n'.join(method_lines[1:]) %}
         {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
 
-{{ method_body_replaced | indent(4, first=True) }}
+        async def wrapper(_{{ class.name | lower }}_object):
+{{ method_body_replaced | indent(4, first=True) | indent(4, first=True) }}
+
+        result = wrapper(_{{ class.name | lower }}_object)
         # Commit DB
         database.commit()
         database.refresh(_{{ class.name | lower }}_object)
@@ -1120,9 +1123,6 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
         # Restore stdout
         sys.stdout = sys.__stdout__
         output = captured_output.getvalue()
-        
-        # Determine result (last statement or None)
-        result = None
         
         return {
             "{{ class.name | lower }}_id": {{ class.name | lower }}_id,

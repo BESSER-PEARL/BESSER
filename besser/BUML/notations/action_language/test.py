@@ -1,5 +1,5 @@
 from besser.BUML.metamodel.structural import Class, Property, StringType, FloatType, BinaryAssociation, Multiplicity, \
-    DomainModel, Enumeration, EnumerationLiteral, Method, Parameter
+    DomainModel, Enumeration, EnumerationLiteral, Method, Parameter, MethodImplementationType
 from besser.generators.backend import BackendGenerator
 
 text = '''
@@ -41,7 +41,7 @@ Book_isbn: Property = Property(name="isbn", type=StringType)
 Book_price: Property = Property(name="price", type=FloatType)
 Book_BookType: Property = Property(name="book_type", type=BookType)
 Book.attributes={Book_name, Book_isbn, Book_price, Book_BookType}
-set_book_type = Method("set_book_type", parameters=[Parameter("book_type",BookType)], type=None, code=text, code_lang="BAL")
+set_book_type = Method("set_book_type", parameters=[Parameter("book_type",BookType)], type=None, code=text, implementation_type=MethodImplementationType.BAL)
 Book.methods={set_book_type}
 
 # Library class attributes and methods

@@ -308,6 +308,7 @@ class MethodImplementationType(Enum):
     Attributes:
         NONE: No implementation (abstract method or signature only).
         CODE: Implementation provided as Python code string.
+        BAL: Implementation provided as BESSER Action Language code string.
         STATE_MACHINE: Implementation defined by a state machine.
         QUANTUM_CIRCUIT: Implementation defined by a quantum circuit.
     """

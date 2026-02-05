@@ -681,7 +681,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
                 {% endif %}
             {% endfor %}
             {% endfor %}
-            
+
             {# Collect all constructor arguments for bulk create #}
             {% set ns_bulk_args = namespace(args=[]) %}
             {% for parent in all_parents %}

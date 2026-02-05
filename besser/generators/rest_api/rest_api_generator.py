@@ -4,7 +4,7 @@ from besser.BUML.metamodel.structural import DomainModel
 from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators import GeneratorInterface
 from besser.generators.structural_utils import get_foreign_keys
-from besser.generators.action_language.PythonGenerator import bal_to_python
+from besser.generators.action_language.RESTGenerator import bal_to_rest
 from besser.generators.structural_utils import get_foreign_keys
 from besser.generators.pydantic_classes import PydanticGenerator
 
@@ -87,7 +87,7 @@ class RESTAPIGenerator(GeneratorInterface):
             env = Environment(loader=FileSystemLoader(templates_path),
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
             env.filters['clean_method_name'] = clean_method_name
-            env.globals.update(parse_bal=parse_bal, bal_to_python=bal_to_python)
+            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest)
             template = env.get_template('backend_fast_api_template.py.j2')
             with open(file_path, mode="w", encoding="utf-8") as f:
                 generated_code = template.render(
@@ -111,7 +111,7 @@ class RESTAPIGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
             env = Environment(loader=FileSystemLoader(templates_path),
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
-            env.globals.update(parse_bal=parse_bal, bal_to_python=bal_to_python)
+            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest)
             template = env.get_template('fast_api_template.py.j2')
             with open(file_path, mode="w", encoding="utf-8") as f:
                 generated_code = template.render(

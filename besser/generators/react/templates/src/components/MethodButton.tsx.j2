@@ -345,6 +345,64 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
             </span>
           </div>
         );
+      case "date":
+        return (
+          <input
+            type="date"
+            value={value}
+            onChange={(e) => handleParamChange(param.name, e.target.value)}
+            required={param.required}
+            style={{ 
+              width: "100%", 
+              padding: "8px 12px",
+              borderRadius: "6px",
+              border: "1px solid #cbd5f5",
+              fontSize: "15px",
+              color: "#1e293b",
+              background: "#f8fafc",
+              boxSizing: "border-box",
+            }}
+          />
+        );
+      case "datetime":
+      case "datetime-local":
+        return (
+          <input
+            type="datetime-local"
+            value={value}
+            onChange={(e) => handleParamChange(param.name, e.target.value)}
+            required={param.required}
+            style={{ 
+              width: "100%", 
+              padding: "8px 12px",
+              borderRadius: "6px",
+              border: "1px solid #cbd5f5",
+              fontSize: "15px",
+              color: "#1e293b",
+              background: "#f8fafc",
+              boxSizing: "border-box",
+            }}
+          />
+        );
+      case "time":
+        return (
+          <input
+            type="time"
+            value={value}
+            onChange={(e) => handleParamChange(param.name, e.target.value)}
+            required={param.required}
+            style={{ 
+              width: "100%", 
+              padding: "8px 12px",
+              borderRadius: "6px",
+              border: "1px solid #cbd5f5",
+              fontSize: "15px",
+              color: "#1e293b",
+              background: "#f8fafc",
+              boxSizing: "border-box",
+            }}
+          />
+        );
       case "string":
       case "str":
       case "text":

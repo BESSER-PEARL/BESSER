@@ -48,6 +48,7 @@ Contents
    generators
    utilities
    examples
+   troubleshooting
    api
    releases
    contributing/index

@@ -1,0 +1,9 @@
+Version 6.2.3
+==============
+
+Fixes
+-----
+
+- Fix #413: **Graphical UI editor** — "Instance Source" dropdown in button's Run Method action now properly displays all available table sources. Fixed component type detection to work with both manually placed and auto-generated tables.
+- Fix #425: **Web app generator** — Method button modal now renders date, datetime, and time parameters with the correct HTML input types instead of plain text fields.
+- Fix #22: **BUML metamodel** — Add type checks in structural.py to ensure model integrity and prevent invalid configurations.

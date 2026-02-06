@@ -45,6 +45,7 @@ Contents
    installation
    web_editor
    buml_language
+   besser_action_language
    generators
    utilities
    examples

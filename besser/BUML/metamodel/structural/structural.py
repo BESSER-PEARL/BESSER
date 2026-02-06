@@ -1320,7 +1320,13 @@ class Association(NamedElement):
         
         Raises:
             ValueError: if an association has less than two ends.
+            TypeError: if any element in ends is not a Property instance.
         """
+        # Type checking: ensure all elements are Property instances
+        for end in ends:
+            if not isinstance(end, Property):
+                raise TypeError(f"Expected Property instance, but got {type(end).__name__} instance: {end}")
+        
         if len(ends) <= 1:
              raise ValueError("An association must have more than one end")
         names = [e.name for e in ends]
@@ -1365,9 +1371,15 @@ class BinaryAssociation(Association):
         """set[Property]: Set the ends of the association.
         
         Raises:
-            ValueError: if the associaiton ends are not exactly two, or if both ends are tagged as agregation, or 
+            ValueError: if the association ends are not exactly two, or if both ends are tagged as aggregation, or 
             if both ends are tagged as composition.
+            TypeError: if any element in ends is not a Property instance.
         """
+        # Type checking: ensure all elements are Property instances (before any attribute access)
+        for end in ends:
+            if not isinstance(end, Property):
+                raise TypeError(f"Expected Property instance, but got {type(end).__name__} instance: {end}")
+        
         if len(ends) != 2:
             raise ValueError("A binary association must have exactly two ends")
         if list(ends)[0].is_composite is True and list(ends)[1].is_composite is True:
@@ -1769,7 +1781,13 @@ class DomainModel(Model):
         
         Raises:
             ValueError: if there are two types with the same name.
+            TypeError: if any element in types is not a Type instance.
         """
+        # Type checking: ensure all elements are Type instances
+        for type_ in types:
+            if not isinstance(type_, Type):
+                raise TypeError(f"Expected Type instance, but got {type(type_).__name__} instance: {type_}")
+        
         primitive_names = {'int', 'str', 'bool', 'float', 'datetime', 'date', 'time', 'timedelta', 'any'}
         has_primitives = any(t.name in primitive_names for t in types)
     
@@ -1811,8 +1829,14 @@ class DomainModel(Model):
         
         Raises:
             ValueError: if there are two associations with the same name.
+            TypeError: if any element in associations is not an Association instance.
         """
         if associations is not None:
+            # Type checking: ensure all elements are Association instances
+            for association in associations:
+                if not isinstance(association, Association):
+                    raise TypeError(f"Expected Association instance, but got {type(association).__name__} instance: {association}")
+            
             names_seen = set()
             duplicates = set()
 
@@ -1841,8 +1865,18 @@ class DomainModel(Model):
 
     @generalizations.setter
     def generalizations(self, generalizations: set[Generalization]):
-        """set[Generalization]: Set the set of generalizations in the domain model."""
+        """
+        set[Generalization]: Set the set of generalizations in the domain model.
+        
+        Raises:
+            TypeError: if any element in generalizations is not a Generalization instance.
+        """
         if generalizations is not None:
+            # Type checking: ensure all elements are Generalization instances
+            for generalization in generalizations:
+                if not isinstance(generalization, Generalization):
+                    raise TypeError(f"Expected Generalization instance, but got {type(generalization).__name__} instance: {generalization}")
+            
             self.__generalizations = generalizations
         else:
             self.__generalizations = set()
@@ -1869,8 +1903,14 @@ class DomainModel(Model):
         
         Raises:
             ValueError: if there are two packages with the same name.
+            TypeError: if any element in packages is not a Package instance.
         """
         if packages is not None:
+            # Type checking: ensure all elements are Package instances
+            for package in packages:
+                if not isinstance(package, Package):
+                    raise TypeError(f"Expected Package instance, but got {type(package).__name__} instance: {package}")
+            
             names_seen = set()
             duplicates = set()
 
@@ -1900,8 +1940,14 @@ class DomainModel(Model):
         
         Raises:
             ValueError: if there are two constraints with the same name.
+            TypeError: if any element in constraints is not a Constraint instance.
         """
         if constraints is not None:
+            # Type checking: ensure all elements are Constraint instances
+            for constraint in constraints:
+                if not isinstance(constraint, Constraint):
+                    raise TypeError(f"Expected Constraint instance, but got {type(constraint).__name__} instance: {constraint}")
+            
             names = [constraint.name for constraint in constraints]
             if len(names) != len(set(names)):
                 raise ValueError("The model cannot have two constraints with the same name")

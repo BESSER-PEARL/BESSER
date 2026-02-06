@@ -40,8 +40,8 @@ def functions_for_sequence_type(sequence_type: SequenceType):
         'exists':       FunctionType([elem_to_bool],    BoolType()),
         'one':          FunctionType([elem_to_bool],    BoolType()),
         'is_unique':    FunctionType([elem_to_any],     BoolType()),
-        'map':          FunctionType([elem_to_any],     BoolType()),
-        'reduce':       FunctionType([reduce, elem],    AnyType())
+        'map':          FunctionType([elem_to_any],     SequenceType(AnyType())),
+        'reduce':       FunctionType([reduce, elem],    elem)
     }
     return sequence_functions
 

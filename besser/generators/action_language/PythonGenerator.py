@@ -315,7 +315,7 @@ class BALPythonGenerator(BALVisitor[PythonGenerationContext, list[str]]):
     def visit_RangeLiteral(self, node: RangeLiteral, context: PythonGenerationContext) -> list[str]:
         first = node.first.accept(self, context)
         last = node.last.accept(self, context)
-        return [f"list(range({first}, {last}))"]
+        return [f"list(range({first}, 1+{last}))"]
 
     def visit_Iterator(self, node: Iterator, context: PythonGenerationContext) -> list[str]:
         pass

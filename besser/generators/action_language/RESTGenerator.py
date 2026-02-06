@@ -268,7 +268,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
         for arg in node.arguments:
             args.append(arg.accept(self, context)[0])
         receiver = node.receiver.accept(self, context)[0]
-        return [f"{node.function}({receiver}, {', '.join(args)})"]
+        return [f"BAL_{node.function}({receiver}, {', '.join(args)})"]
 
     def visit_ProcedureCall(self, node: ProcedureCall, context: RESTGenerationContext) -> list[str]:
         args = []
@@ -383,7 +383,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
     def visit_RangeLiteral(self, node: RangeLiteral, context: RESTGenerationContext) -> list[str]:
         first = node.first.accept(self, context)
         last = node.last.accept(self, context)
-        return [f"list(range({first}, {last}))"]
+        return [f"list(range({first}, 1+{last}))"]
 
     def visit_Iterator(self, node: Iterator, context: RESTGenerationContext) -> list[str]:
         pass

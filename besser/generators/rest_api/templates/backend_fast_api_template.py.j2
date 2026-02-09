@@ -206,6 +206,66 @@ def get_statistics(database: Session = Depends(get_db)):
     stats["total_entities"] = sum(stats.values())
     return stats
 
+
+############################################
+#
+#   BESSER Action Language standard lib
+#
+############################################
+
+
+async def BAL_size(sequence:list) -> int:
+    return len(sequence)
+
+async def BAL_is_empty(sequence:list) -> bool:
+    return len(sequence) == 0
+
+async def BAL_add(sequence:list, elem) -> None:
+    sequence.append(elem)
+
+async def BAL_remove(sequence:list, elem) -> None:
+    sequence.remove(elem)
+
+async def BAL_contains(sequence:list, elem) -> bool:
+    return elem in sequence
+
+async def BAL_filter(sequence:list, predicate) -> list:
+    return [elem for elem in sequence if predicate(elem)]
+
+async def BAL_forall(sequence:list, predicate) -> bool:
+    for elem in sequence:
+        if not predicate(elem):
+            return False
+    return True
+
+async def BAL_exists(sequence:list, predicate) -> bool:
+    for elem in sequence:
+        if predicate(elem):
+            return True
+    return False
+
+async def BAL_one(sequence:list, predicate) -> bool:
+    found = False
+    for elem in sequence:
+        if predicate(elem):
+            if found:
+                return False
+            found = True
+    return found
+
+async def BAL_is_unique(sequence:list, mapping) -> bool:
+    mapped = [mapping(elem) for elem in sequence]
+    return len(set(mapped)) == len(mapped)
+
+async def BAL_map(sequence:list, mapping) -> list:
+    return [mapping(elem) for elem in sequence]
+
+async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
+    for elem in sequence:
+        aggregator = reduce_fn(aggregator, elem)
+    return aggregator
+
+
 {% for class in classes %}
 ############################################
 #
@@ -681,7 +741,7 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
                 {% endif %}
             {% endfor %}
             {% endfor %}
-            
+
             {# Collect all constructor arguments for bulk create #}
             {% set ns_bulk_args = namespace(args=[]) %}
             {% for parent in all_parents %}
@@ -991,8 +1051,16 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 {% do method_params.append((param.name, param_type, param.default_value)) %}
 {% endfor %}
 
+{% set method_code = "" %}
+{% if method.implementation_type.name == "BAL" %}
+{% set method_code = bal_to_rest(parse_bal(model, class, method.code), class.name) %}
+{% elif method.implementation_type.name == "CODE" %}
+{% set method_code = method.code %}
+{% endif %}
+
 {# Detect if method is class-level by checking if it does NOT have 'self' as first param #}
-{% set is_class_method = '(self' not in method.code and '(self,' not in method.code %}
+{% set is_class_method = '(self' not in method_code and '(self,' not in method_code %}
+
 
 {% if "POST" in http_methods %}
 {% if is_class_method %}
@@ -1100,11 +1168,14 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
         import sys
         captured_output = io.StringIO()
         sys.stdout = captured_output
-        {% set method_lines = method.code.split('\n') %}
+        {% set method_lines = method_code.split('\n') %}
         {% set method_body = '\n'.join(method_lines[1:]) %}
         {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
 
-{{ method_body_replaced | indent(4, first=True) }}
+        async def wrapper(_{{ class.name | lower }}_object):
+{{ method_body_replaced | indent(4, first=True) | indent(4, first=True) }}
+
+        result = wrapper(_{{ class.name | lower }}_object)
         # Commit DB
         database.commit()
         database.refresh(_{{ class.name | lower }}_object)
@@ -1112,9 +1183,6 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
         # Restore stdout
         sys.stdout = sys.__stdout__
         output = captured_output.getvalue()
-        
-        # Determine result (last statement or None)
-        result = None
         
         return {
             "{{ class.name | lower }}_id": {{ class.name | lower }}_id,

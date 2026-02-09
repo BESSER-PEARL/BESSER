@@ -304,15 +304,17 @@ data_types = {StringType, IntegerType, FloatType, BooleanType,
 
 class MethodImplementationType(Enum):
     """Enumeration representing the type of implementation for a method.
-    
+
     Attributes:
         NONE: No implementation (abstract method or signature only).
         CODE: Implementation provided as Python code string.
+        BAL: Implementation provided as BESSER Action Language code string.
         STATE_MACHINE: Implementation defined by a state machine.
         QUANTUM_CIRCUIT: Implementation defined by a quantum circuit.
     """
     NONE = "none"
     CODE = "code"
+    BAL = "besser_action_language"
     STATE_MACHINE = "state_machine"
     QUANTUM_CIRCUIT = "quantum_circuit"
 
@@ -723,6 +725,7 @@ class Method(TypedElement):
     A method can have different types of implementations:
     - NONE: Abstract method or signature only (UML description)
     - CODE: Python code implementation
+    - BAL: BESSER Action Language implementation
     - STATE_MACHINE: Behavior defined by a state machine
     - QUANTUM_CIRCUIT: Behavior defined by a quantum circuit
 
@@ -730,7 +733,7 @@ class Method(TypedElement):
         name (str): The name of the method.
         visibility (str): Determines the kind of visibility of the method (public as default).
         is_abstract (bool): Indicates if the method is abstract (False as default).
-        parameters (set[Parameter]): The set of parameters for the method (set() as default).
+        parameters (list[Parameter]): The list of parameters for the method (list() as default).
         type (Type): The type of the method (None as default).
         owner (Type): The type that owns the method (None as default).
         code (str): code of the method ("" as default).
@@ -745,7 +748,7 @@ class Method(TypedElement):
         name (str): Inherited from TypedElement, represents the name of the method.
         visibility (str): Inherited from TypedElement, represents the visibility of the method (public as default).
         is_abstract (bool): Indicates if the method is abstract. (False as default)
-        parameters (set[Parameter]): The set of parameters for the method (set() as default).
+        parameters (list[Parameter]): The set of parameters for the method (set() as default).
         type (Type): Inherited from TypedElement, represents the type of the method (None as default).
         owner (Type): The type that owns the property (None as default).
         code (str): code of the method ("" as default).
@@ -758,13 +761,13 @@ class Method(TypedElement):
     """
 
     def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False,
-                 parameters: set[Parameter] = None, type: Type = None, owner: Type = None,
+                 parameters: list[Parameter] = None, type: Type = None, owner: Type = None,
                  code: str = "", implementation_type: MethodImplementationType = None,
                  state_machine: "StateMachine" = None, quantum_circuit: "QuantumCircuit" = None,
                  timestamp: int = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.is_abstract: bool = is_abstract
-        self.parameters: set[Parameter] = parameters if parameters is not None else set()
+        self.parameters: list[Parameter] = parameters if parameters is not None else list()
         self.owner: Type = owner
         self.code: str = code
         self.state_machine: "StateMachine" = state_machine
@@ -792,14 +795,14 @@ class Method(TypedElement):
         self.__is_abstract = is_abstract
 
     @property
-    def parameters(self) -> set[Parameter]:
-        """set[Parameter]: Get the set of parameters of the method."""
+    def parameters(self) -> list[Parameter]:
+        """list[Parameter]: Get the set of parameters of the method."""
         return self.__parameters
 
     @parameters.setter
-    def parameters(self, parameters: set[Parameter]):
+    def parameters(self, parameters: list[Parameter]):
         """
-        set[Parameter]: Set the parameters of the method.
+        list[Parameter]: Set the parameters of the method.
         
         Raises:
             ValueError: if two parameters have the same name.
@@ -819,7 +822,7 @@ class Method(TypedElement):
 
             self.__parameters = parameters
         else:
-            self.__parameters = set()
+            self.__parameters = list()
 
     def add_parameter(self, parameter: Parameter):
         """
@@ -831,7 +834,7 @@ class Method(TypedElement):
         if self.parameters is not None:
             if parameter.name in [parameter.name for parameter in self.parameters]:
                 raise ValueError(f"A method cannot have two parameters with the same name: '{parameter.name}'")
-        self.parameters.add(parameter)
+        self.parameters.append(parameter)
 
     @property
     def owner(self) -> Type:

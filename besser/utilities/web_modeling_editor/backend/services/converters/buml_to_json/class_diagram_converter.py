@@ -222,16 +222,30 @@ def class_buml_to_json(domain_model):
 
                     # Add implementation type and diagram references
                     if hasattr(method, "implementation_type") and method.implementation_type:
-                        # Map enum to string for JSON
                         impl_type_map = {
                             MethodImplementationType.NONE: "none",
                             MethodImplementationType.CODE: "code",
+                            MethodImplementationType.BAL: "bal",
                             MethodImplementationType.STATE_MACHINE: "state_machine",
                             MethodImplementationType.QUANTUM_CIRCUIT: "quantum_circuit",
                         }
-                        method_element["implementationType"] = impl_type_map.get(
-                            method.implementation_type, "none"
-                        )
+                        impl_type_str_map = {
+                            "none": "none",
+                            "code": "code",
+                            "bal": "bal",
+                            "state_machine": "state_machine",
+                            "quantum_circuit": "quantum_circuit",
+                        }
+                        impl_type = method.implementation_type
+                        if isinstance(impl_type, str):
+                            normalized_impl_type = impl_type.strip()
+                            if normalized_impl_type.startswith("MethodImplementationType."):
+                                normalized_impl_type = normalized_impl_type.split(".", maxsplit=1)[1]
+                            method_element["implementationType"] = impl_type_str_map.get(
+                                normalized_impl_type.lower(), "none"
+                            )
+                        else:
+                            method_element["implementationType"] = impl_type_map.get(impl_type, "none")
 
                     # Add state machine reference if present
                     state_machine_id = None

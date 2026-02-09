@@ -62,7 +62,7 @@ def get_typename(t: Type) -> str:
         return f"{get_typename(t.type)}?"
     if isinstance(t, FunctionType):
         param_typenames = list(map(lambda param_type: get_typename(param_type), t.params_type))
-        return f"({", ".join(param_typenames)}) -> {get_typename(t.return_type)}"
+        return f"({', '.join(param_typenames)}) -> {get_typename(t.return_type)}"
     if isinstance(t, TypeUnion):
         return f"({get_typename(t.a)}|{get_typename(t.b)})"
     if isinstance(t, Nothing):

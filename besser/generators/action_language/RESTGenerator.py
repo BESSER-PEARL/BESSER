@@ -151,7 +151,10 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
                     else:
                         mapping.append(f"{end.name} = inst_to_update.{end.name}")
 
-                out.append(f"await update_{class_name.lower()}(inst_to_update.id, {class_name}Create({", ".join(mapping)}), database)")
+                out.append(
+                    f"await update_{class_name.lower()}(inst_to_update.id, "
+                    f"{class_name}Create({', '.join(mapping)}), database)"
+                )
                 return out
             return []
         else:

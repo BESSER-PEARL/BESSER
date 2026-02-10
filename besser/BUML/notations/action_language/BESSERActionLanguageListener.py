@@ -206,15 +206,6 @@ class BESSERActionLanguageListener(ParseTreeListener):
         pass
 
 
-    # Enter a parse tree produced by BESSERActionLanguageParser#classifier_type.
-    def enterClassifier_type(self, ctx:BESSERActionLanguageParser.Classifier_typeContext):
-        pass
-
-    # Exit a parse tree produced by BESSERActionLanguageParser#classifier_type.
-    def exitClassifier_type(self, ctx:BESSERActionLanguageParser.Classifier_typeContext):
-        pass
-
-
     # Enter a parse tree produced by BESSERActionLanguageParser#real_type.
     def enterReal_type(self, ctx:BESSERActionLanguageParser.Real_typeContext):
         pass
@@ -257,6 +248,15 @@ class BESSERActionLanguageListener(ParseTreeListener):
 
     # Exit a parse tree produced by BESSERActionLanguageParser#nothing.
     def exitNothing(self, ctx:BESSERActionLanguageParser.NothingContext):
+        pass
+
+
+    # Enter a parse tree produced by BESSERActionLanguageParser#classifier_type.
+    def enterClassifier_type(self, ctx:BESSERActionLanguageParser.Classifier_typeContext):
+        pass
+
+    # Exit a parse tree produced by BESSERActionLanguageParser#classifier_type.
+    def exitClassifier_type(self, ctx:BESSERActionLanguageParser.Classifier_typeContext):
         pass
 
 

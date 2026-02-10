@@ -119,11 +119,6 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         return self.visitChildren(ctx)
 
 
-    # Visit a parse tree produced by BESSERActionLanguageParser#classifier_type.
-    def visitClassifier_type(self, ctx:BESSERActionLanguageParser.Classifier_typeContext):
-        return self.visitChildren(ctx)
-
-
     # Visit a parse tree produced by BESSERActionLanguageParser#real_type.
     def visitReal_type(self, ctx:BESSERActionLanguageParser.Real_typeContext):
         return self.visitChildren(ctx)
@@ -146,6 +141,11 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BESSERActionLanguageParser#nothing.
     def visitNothing(self, ctx:BESSERActionLanguageParser.NothingContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BESSERActionLanguageParser#classifier_type.
+    def visitClassifier_type(self, ctx:BESSERActionLanguageParser.Classifier_typeContext):
         return self.visitChildren(ctx)
 
 

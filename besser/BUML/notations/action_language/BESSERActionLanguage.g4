@@ -38,12 +38,12 @@ type:   single_type |
 ;
 single_type:
         any_type |
-        classifier_type |
         real_type |
         string_type |
         int_type |
         bool_type |
-        nothing
+        nothing |
+        classifier_type
 ;
 sequence_type: the_type=single_type '[]';
 optional_type: the_type=type '?';
@@ -54,12 +54,12 @@ function_type: '['
                )?
                ']' '->' return_type=type;
 any_type: 'any';
-classifier_type: name=ID;
 real_type: 'float' ;
-string_type: 'string';
+string_type: 'str';
 int_type: 'int';
 bool_type: 'bool';
 nothing: 'nothing';
+classifier_type: name=ID;
 
 
 

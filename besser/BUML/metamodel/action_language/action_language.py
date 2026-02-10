@@ -87,6 +87,8 @@ class Type(ABC):
         b = other.supertype()
         if a == b:
             return True
+        if a == Nothing():
+            return True
         if b == AnyType():
             return True
         if isinstance(a, TypeUnion):

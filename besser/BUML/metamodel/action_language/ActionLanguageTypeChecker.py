@@ -549,7 +549,7 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
         return RealType()
 
     def visit_NullLiteral(self, node: NullLiteral, context: TypeCheckingContext) -> Type:
-        return NoType()
+        return Nothing()
 
     def visit_EnumLiteral(self, node: EnumLiteral, context: TypeCheckingContext) -> Type:
         enum_type = node.enumeration

@@ -132,9 +132,9 @@ def serializedATN():
         1,0,0,0,293,296,1,0,0,0,294,292,1,0,0,0,295,272,1,0,0,0,295,287,
         1,0,0,0,295,296,1,0,0,0,296,297,1,0,0,0,297,298,5,21,0,0,298,299,
         5,5,0,0,299,300,3,32,16,0,300,41,1,0,0,0,301,302,5,22,0,0,302,43,
-        1,0,0,0,303,304,5,52,0,0,304,45,1,0,0,0,305,306,5,23,0,0,306,47,
-        1,0,0,0,307,308,5,24,0,0,308,49,1,0,0,0,309,310,5,25,0,0,310,51,
-        1,0,0,0,311,312,5,26,0,0,312,53,1,0,0,0,313,314,5,27,0,0,314,55,
+        1,0,0,0,303,304,5,23,0,0,304,45,1,0,0,0,305,306,5,24,0,0,306,47,
+        1,0,0,0,307,308,5,25,0,0,308,49,1,0,0,0,309,310,5,26,0,0,310,51,
+        1,0,0,0,311,312,5,27,0,0,312,53,1,0,0,0,313,314,5,52,0,0,314,55,
         1,0,0,0,315,316,3,58,29,0,316,57,1,0,0,0,317,318,6,29,-1,0,318,319,
         3,60,30,0,319,328,1,0,0,0,320,321,10,2,0,0,321,322,5,19,0,0,322,
         323,3,56,28,0,323,324,5,6,0,0,324,325,3,56,28,0,325,327,1,0,0,0,
@@ -153,7 +153,7 @@ def serializedATN():
         370,10,2,0,0,370,371,7,1,0,0,371,373,3,70,35,0,372,369,1,0,0,0,373,
         376,1,0,0,0,374,372,1,0,0,0,374,375,1,0,0,0,375,69,1,0,0,0,376,374,
         1,0,0,0,377,378,6,35,-1,0,378,379,3,72,36,0,379,385,1,0,0,0,380,
-        381,10,2,0,0,381,382,5,36,0,0,382,384,3,44,22,0,383,380,1,0,0,0,
+        381,10,2,0,0,381,382,5,36,0,0,382,384,3,54,27,0,383,380,1,0,0,0,
         384,387,1,0,0,0,385,383,1,0,0,0,385,386,1,0,0,0,386,71,1,0,0,0,387,
         385,1,0,0,0,388,389,3,74,37,0,389,73,1,0,0,0,390,391,6,37,-1,0,391,
         392,3,76,38,0,392,398,1,0,0,0,393,394,10,2,0,0,394,395,7,2,0,0,395,
@@ -166,7 +166,7 @@ def serializedATN():
         417,419,3,80,40,0,418,415,1,0,0,0,419,422,1,0,0,0,420,418,1,0,0,
         0,420,421,1,0,0,0,421,79,1,0,0,0,422,420,1,0,0,0,423,424,6,40,-1,
         0,424,435,3,82,41,0,425,426,5,38,0,0,426,435,3,56,28,0,427,428,5,
-        42,0,0,428,435,3,56,28,0,429,430,5,2,0,0,430,431,3,44,22,0,431,432,
+        42,0,0,428,435,3,56,28,0,429,430,5,2,0,0,430,431,3,54,27,0,431,432,
         5,4,0,0,432,433,3,56,28,0,433,435,1,0,0,0,434,423,1,0,0,0,434,425,
         1,0,0,0,434,427,1,0,0,0,434,429,1,0,0,0,435,441,1,0,0,0,436,437,
         10,1,0,0,437,438,5,43,0,0,438,440,3,56,28,0,439,436,1,0,0,0,440,
@@ -196,7 +196,7 @@ def serializedATN():
         517,520,1,0,0,0,518,516,1,0,0,0,518,519,1,0,0,0,519,522,1,0,0,0,
         520,518,1,0,0,0,521,513,1,0,0,0,521,522,1,0,0,0,522,523,1,0,0,0,
         523,524,5,4,0,0,524,93,1,0,0,0,525,526,5,45,0,0,526,95,1,0,0,0,527,
-        528,5,46,0,0,528,529,3,44,22,0,529,538,5,2,0,0,530,535,3,56,28,0,
+        528,5,46,0,0,528,529,3,54,27,0,529,538,5,2,0,0,530,535,3,56,28,0,
         531,532,5,3,0,0,532,534,3,56,28,0,533,531,1,0,0,0,534,537,1,0,0,
         0,535,533,1,0,0,0,535,536,1,0,0,0,536,539,1,0,0,0,537,535,1,0,0,
         0,538,530,1,0,0,0,538,539,1,0,0,0,539,540,1,0,0,0,540,541,5,4,0,
@@ -208,12 +208,12 @@ def serializedATN():
         1,0,0,0,553,552,1,0,0,0,554,101,1,0,0,0,555,556,5,53,0,0,556,103,
         1,0,0,0,557,558,5,57,0,0,558,105,1,0,0,0,559,560,7,4,0,0,560,107,
         1,0,0,0,561,562,5,54,0,0,562,109,1,0,0,0,563,564,5,49,0,0,564,111,
-        1,0,0,0,565,566,3,44,22,0,566,567,5,50,0,0,567,568,5,52,0,0,568,
+        1,0,0,0,565,566,3,54,27,0,566,567,5,50,0,0,567,568,5,52,0,0,568,
         113,1,0,0,0,569,570,3,36,18,0,570,579,5,13,0,0,571,576,3,56,28,0,
         572,573,5,3,0,0,573,575,3,56,28,0,574,572,1,0,0,0,575,578,1,0,0,
         0,576,574,1,0,0,0,576,577,1,0,0,0,577,580,1,0,0,0,578,576,1,0,0,
         0,579,571,1,0,0,0,579,580,1,0,0,0,580,581,1,0,0,0,581,582,5,14,0,
-        0,582,115,1,0,0,0,583,584,3,50,25,0,584,585,5,18,0,0,585,586,5,13,
+        0,582,115,1,0,0,0,583,584,3,48,24,0,584,585,5,18,0,0,585,586,5,13,
         0,0,586,587,3,56,28,0,587,588,5,51,0,0,588,589,3,56,28,0,589,590,
         5,14,0,0,590,117,1,0,0,0,591,592,5,52,0,0,592,119,1,0,0,0,44,128,
         135,143,146,151,174,178,200,212,218,230,236,254,263,277,284,292,
@@ -234,12 +234,11 @@ class BESSERActionLanguageParser ( Parser ):
     literalNames = [ "<INVALID>", "'def'", "'('", "','", "')'", "'->'", 
                      "':'", "'='", "';'", "'while'", "'do'", "'for'", "'in'", 
                      "'{'", "'}'", "'if'", "'else'", "'return'", "'[]'", 
-                     "'?'", "'['", "']'", "'any'", "'float'", "'string'", 
-                     "'int'", "'bool'", "'nothing'", "'||'", "'&&'", "'=='", 
-                     "'!='", "'<'", "'<='", "'>'", "'>='", "'instanceof'", 
-                     "'+'", "'-'", "'*'", "'/'", "'%'", "'!'", "'??'", "'.'", 
-                     "'this'", "'new'", "'true'", "'false'", "'null'", "'::'", 
-                     "'..'" ]
+                     "'?'", "'['", "']'", "'any'", "'float'", "'str'", "'int'", 
+                     "'bool'", "'nothing'", "'||'", "'&&'", "'=='", "'!='", 
+                     "'<'", "'<='", "'>'", "'>='", "'instanceof'", "'+'", 
+                     "'-'", "'*'", "'/'", "'%'", "'!'", "'??'", "'.'", "'this'", 
+                     "'new'", "'true'", "'false'", "'null'", "'::'", "'..'" ]
 
     symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
                       "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
@@ -278,12 +277,12 @@ class BESSERActionLanguageParser ( Parser ):
     RULE_optional_type = 19
     RULE_function_type = 20
     RULE_any_type = 21
-    RULE_classifier_type = 22
-    RULE_real_type = 23
-    RULE_string_type = 24
-    RULE_int_type = 25
-    RULE_bool_type = 26
-    RULE_nothing = 27
+    RULE_real_type = 22
+    RULE_string_type = 23
+    RULE_int_type = 24
+    RULE_bool_type = 25
+    RULE_nothing = 26
+    RULE_classifier_type = 27
     RULE_expression = 28
     RULE_ternary = 29
     RULE_boolean = 30
@@ -322,15 +321,15 @@ class BESSERActionLanguageParser ( Parser ):
                    "iterator", "conditional_branch", "block", "condition", 
                    "assign_target", "explicit_declaration", "assignment", 
                    "return", "type", "single_type", "sequence_type", "optional_type", 
-                   "function_type", "any_type", "classifier_type", "real_type", 
-                   "string_type", "int_type", "bool_type", "nothing", "expression", 
-                   "ternary", "boolean", "or", "and", "equality", "comparison", 
-                   "instanceof", "arithmetic", "plus_minus", "mult_div", 
-                   "remain", "primary", "selection_expression", "field_access", 
-                   "array_access", "function_call", "atomic", "procedure_call", 
-                   "this", "new", "literal", "single_literal", "int_literal", 
-                   "string_literal", "bool_literal", "real_literal", "null_literal", 
-                   "enum_literal", "sequence_literal", "range_literal", 
+                   "function_type", "any_type", "real_type", "string_type", 
+                   "int_type", "bool_type", "nothing", "classifier_type", 
+                   "expression", "ternary", "boolean", "or", "and", "equality", 
+                   "comparison", "instanceof", "arithmetic", "plus_minus", 
+                   "mult_div", "remain", "primary", "selection_expression", 
+                   "field_access", "array_access", "function_call", "atomic", 
+                   "procedure_call", "this", "new", "literal", "single_literal", 
+                   "int_literal", "string_literal", "bool_literal", "real_literal", 
+                   "null_literal", "enum_literal", "sequence_literal", "range_literal", 
                    "symbol" ]
 
     EOF = Token.EOF
@@ -1671,10 +1670,6 @@ class BESSERActionLanguageParser ( Parser ):
             return self.getTypedRuleContext(BESSERActionLanguageParser.Any_typeContext,0)
 
 
-        def classifier_type(self):
-            return self.getTypedRuleContext(BESSERActionLanguageParser.Classifier_typeContext,0)
-
-
         def real_type(self):
             return self.getTypedRuleContext(BESSERActionLanguageParser.Real_typeContext,0)
 
@@ -1693,6 +1688,10 @@ class BESSERActionLanguageParser ( Parser ):
 
         def nothing(self):
             return self.getTypedRuleContext(BESSERActionLanguageParser.NothingContext,0)
+
+
+        def classifier_type(self):
+            return self.getTypedRuleContext(BESSERActionLanguageParser.Classifier_typeContext,0)
 
 
         def getRuleIndex(self):
@@ -1728,35 +1727,35 @@ class BESSERActionLanguageParser ( Parser ):
                 self.state = 256
                 self.any_type()
                 pass
-            elif token in [52]:
+            elif token in [23]:
                 self.enterOuterAlt(localctx, 2)
                 self.state = 257
-                self.classifier_type()
-                pass
-            elif token in [23]:
-                self.enterOuterAlt(localctx, 3)
-                self.state = 258
                 self.real_type()
                 pass
             elif token in [24]:
-                self.enterOuterAlt(localctx, 4)
-                self.state = 259
+                self.enterOuterAlt(localctx, 3)
+                self.state = 258
                 self.string_type()
                 pass
             elif token in [25]:
-                self.enterOuterAlt(localctx, 5)
-                self.state = 260
+                self.enterOuterAlt(localctx, 4)
+                self.state = 259
                 self.int_type()
                 pass
             elif token in [26]:
-                self.enterOuterAlt(localctx, 6)
-                self.state = 261
+                self.enterOuterAlt(localctx, 5)
+                self.state = 260
                 self.bool_type()
                 pass
             elif token in [27]:
+                self.enterOuterAlt(localctx, 6)
+                self.state = 261
+                self.nothing()
+                pass
+            elif token in [52]:
                 self.enterOuterAlt(localctx, 7)
                 self.state = 262
-                self.nothing()
+                self.classifier_type()
                 pass
             else:
                 raise NoViableAltException(self)
@@ -2041,54 +2040,6 @@ class BESSERActionLanguageParser ( Parser ):
         return localctx
 
 
-    class Classifier_typeContext(ParserRuleContext):
-        __slots__ = 'parser'
-
-        def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
-            super().__init__(parent, invokingState)
-            self.parser = parser
-            self.name = None # Token
-
-        def ID(self):
-            return self.getToken(BESSERActionLanguageParser.ID, 0)
-
-        def getRuleIndex(self):
-            return BESSERActionLanguageParser.RULE_classifier_type
-
-        def enterRule(self, listener:ParseTreeListener):
-            if hasattr( listener, "enterClassifier_type" ):
-                listener.enterClassifier_type(self)
-
-        def exitRule(self, listener:ParseTreeListener):
-            if hasattr( listener, "exitClassifier_type" ):
-                listener.exitClassifier_type(self)
-
-        def accept(self, visitor:ParseTreeVisitor):
-            if hasattr( visitor, "visitClassifier_type" ):
-                return visitor.visitClassifier_type(self)
-            else:
-                return visitor.visitChildren(self)
-
-
-
-
-    def classifier_type(self):
-
-        localctx = BESSERActionLanguageParser.Classifier_typeContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 44, self.RULE_classifier_type)
-        try:
-            self.enterOuterAlt(localctx, 1)
-            self.state = 303
-            localctx.name = self.match(BESSERActionLanguageParser.ID)
-        except RecognitionException as re:
-            localctx.exception = re
-            self._errHandler.reportError(self, re)
-            self._errHandler.recover(self, re)
-        finally:
-            self.exitRule()
-        return localctx
-
-
     class Real_typeContext(ParserRuleContext):
         __slots__ = 'parser'
 
@@ -2120,10 +2071,10 @@ class BESSERActionLanguageParser ( Parser ):
     def real_type(self):
 
         localctx = BESSERActionLanguageParser.Real_typeContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 46, self.RULE_real_type)
+        self.enterRule(localctx, 44, self.RULE_real_type)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 305
+            self.state = 303
             self.match(BESSERActionLanguageParser.T__22)
         except RecognitionException as re:
             localctx.exception = re
@@ -2165,10 +2116,10 @@ class BESSERActionLanguageParser ( Parser ):
     def string_type(self):
 
         localctx = BESSERActionLanguageParser.String_typeContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 48, self.RULE_string_type)
+        self.enterRule(localctx, 46, self.RULE_string_type)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 307
+            self.state = 305
             self.match(BESSERActionLanguageParser.T__23)
         except RecognitionException as re:
             localctx.exception = re
@@ -2210,10 +2161,10 @@ class BESSERActionLanguageParser ( Parser ):
     def int_type(self):
 
         localctx = BESSERActionLanguageParser.Int_typeContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 50, self.RULE_int_type)
+        self.enterRule(localctx, 48, self.RULE_int_type)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 309
+            self.state = 307
             self.match(BESSERActionLanguageParser.T__24)
         except RecognitionException as re:
             localctx.exception = re
@@ -2255,10 +2206,10 @@ class BESSERActionLanguageParser ( Parser ):
     def bool_type(self):
 
         localctx = BESSERActionLanguageParser.Bool_typeContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 52, self.RULE_bool_type)
+        self.enterRule(localctx, 50, self.RULE_bool_type)
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 311
+            self.state = 309
             self.match(BESSERActionLanguageParser.T__25)
         except RecognitionException as re:
             localctx.exception = re
@@ -2300,11 +2251,59 @@ class BESSERActionLanguageParser ( Parser ):
     def nothing(self):
 
         localctx = BESSERActionLanguageParser.NothingContext(self, self._ctx, self.state)
-        self.enterRule(localctx, 54, self.RULE_nothing)
+        self.enterRule(localctx, 52, self.RULE_nothing)
+        try:
+            self.enterOuterAlt(localctx, 1)
+            self.state = 311
+            self.match(BESSERActionLanguageParser.T__26)
+        except RecognitionException as re:
+            localctx.exception = re
+            self._errHandler.reportError(self, re)
+            self._errHandler.recover(self, re)
+        finally:
+            self.exitRule()
+        return localctx
+
+
+    class Classifier_typeContext(ParserRuleContext):
+        __slots__ = 'parser'
+
+        def __init__(self, parser, parent:ParserRuleContext=None, invokingState:int=-1):
+            super().__init__(parent, invokingState)
+            self.parser = parser
+            self.name = None # Token
+
+        def ID(self):
+            return self.getToken(BESSERActionLanguageParser.ID, 0)
+
+        def getRuleIndex(self):
+            return BESSERActionLanguageParser.RULE_classifier_type
+
+        def enterRule(self, listener:ParseTreeListener):
+            if hasattr( listener, "enterClassifier_type" ):
+                listener.enterClassifier_type(self)
+
+        def exitRule(self, listener:ParseTreeListener):
+            if hasattr( listener, "exitClassifier_type" ):
+                listener.exitClassifier_type(self)
+
+        def accept(self, visitor:ParseTreeVisitor):
+            if hasattr( visitor, "visitClassifier_type" ):
+                return visitor.visitClassifier_type(self)
+            else:
+                return visitor.visitChildren(self)
+
+
+
+
+    def classifier_type(self):
+
+        localctx = BESSERActionLanguageParser.Classifier_typeContext(self, self._ctx, self.state)
+        self.enterRule(localctx, 54, self.RULE_classifier_type)
         try:
             self.enterOuterAlt(localctx, 1)
             self.state = 313
-            self.match(BESSERActionLanguageParser.T__26)
+            localctx.name = self.match(BESSERActionLanguageParser.ID)
         except RecognitionException as re:
             localctx.exception = re
             self._errHandler.reportError(self, re)

@@ -189,6 +189,8 @@ class BESSERActionLanguageVisitor(ParseTreeVisitor):
         params_types = []
         for param in ctx.params_type:
             params_types.append(self.visit(param))
+        for param in ctx.params_type_opt:
+            params_types.append(self.visit(param))
         return FunctionType(params_types, self.visit(ctx.return_type))
 
 

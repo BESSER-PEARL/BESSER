@@ -29,6 +29,7 @@ from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 # BESSER image-to-UML and BUML utilities
 from besser.utilities.image_to_buml import image_to_buml
 from besser.utilities.kg_to_buml import kg_to_buml
+from besser.utilities.owl_to_buml import owl_to_buml
 from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.class_diagram_converter import parse_buml_content, class_buml_to_json
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
@@ -1301,6 +1302,75 @@ async def get_json_model_from_kg(
         print(f"Error in get-json-model-from-kg: {str(e)}")
         raise HTTPException(
             status_code=500, detail=f"Failed to process the uploaded KG: {str(e)}"
+        )
+
+@app.post("/besser_api/get-json-model-from-owl")
+async def get_json_model_from_owl(
+    owl_file: UploadFile = File(...),
+    diagram_name: str = Form(default="OWL_Imported_Model")
+):
+    """
+    Accepts an OWL ontology file (.owl, .rdf, .ttl, .n3) and converts it to a BUML class diagram in JSON.
+    
+    Supported formats:
+    - RDF/XML (.owl, .rdf)
+    - Turtle (.ttl)
+    - N3 (.n3)
+    - N-Triples (.nt)
+    
+    Parameters:
+    - owl_file: The OWL ontology file
+    - diagram_name: Optional name for the generated model (default: "OWL_Imported_Model")
+    
+    Returns:
+    - JSON representation of the BUML class diagram
+    """
+    import os
+    import tempfile
+    
+    try:
+        # Validate file extension
+        allowed_extensions = ('.owl', '.rdf', '.ttl', '.n3', '.nt')
+        if not owl_file.filename.lower().endswith(allowed_extensions):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid file format. Allowed formats: {', '.join(allowed_extensions)}"
+            )
+        
+        # Save uploaded OWL file to a temp folder
+        with tempfile.TemporaryDirectory() as temp_dir:
+            owl_path = os.path.join(temp_dir, owl_file.filename)
+            
+            # Write the uploaded file
+            with open(owl_path, "wb") as f:
+                f.write(await owl_file.read())
+            
+            # Use owl_to_buml to generate DomainModel
+            domain_model = owl_to_buml(owl_path=owl_path, model_name=diagram_name)
+            
+            # Convert to JSON format
+            diagram_json = class_buml_to_json(domain_model)
+            
+            diagram_title = diagram_json.get("title", diagram_name)
+            diagram_type = "ClassDiagram"
+            
+            return {
+                "title": diagram_title,
+                "model": {**diagram_json, "type": diagram_type},
+                "diagramType": diagram_type,
+                "exportedAt": datetime.utcnow().isoformat(),
+                "version": "3.0.0",
+            }
+    
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        print(f"Error in get-json-model-from-owl: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Failed to process the OWL ontology: {str(e)}"
         )
 
 @app.post("/besser_api/validate-diagram")

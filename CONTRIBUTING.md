@@ -53,7 +53,9 @@ to help us handle your report effectively:
    (`python -m venv`, `conda`, etc.).
 4. **Install project dependencies and configure the environment:**
    ```bash
-   python setup_environment.py
+   python -m venv venv
+   venv/Script/activate
+   pip install -r requirements.txt
    ```
    The script installs core dependencies and ensures the `PYTHONPATH` points to
    the local repository. Re-run it whenever you open a new shell or IDE session.

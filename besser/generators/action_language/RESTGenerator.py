@@ -7,12 +7,15 @@ from besser.BUML.metamodel.action_language.action_language import Condition, Blo
     Assignment, BoolType, EnumType, IntType, StringType, RealType, Type, FunctionType, SequenceType, ObjectType, \
     Multiplicity, AnyType, OptionalType, FunctionDefinition, Parameter, AssignTarget, Nothing
 from besser.BUML.metamodel.action_language.visitors import BALVisitor
-from besser.BUML.metamodel.structural import IntegerType, FloatType, BooleanType, TimeType, DateType, DateTimeType, \
-    TimeDeltaType, data_types
-from besser.BUML.notations.action_language.ActionLanguageTypeChecker import BALTypeChecker, TypeCheckingContext
+from besser.BUML.metamodel.action_language.ActionLanguageTypeChecker import BALTypeChecker, TypeCheckingContext, \
+    check_bal
 
 
 def bal_to_rest(method: FunctionDefinition, class_name:str) -> str:
+    warning, errors = check_bal(method)
+    if errors:
+        msgs = [error.message() for error in errors]
+        raise Exception("\n".join(msgs))
     generator = BALRESTGenerator(class_name)
     return generator.generate(method)
 
@@ -56,7 +59,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
             params.extend(param.accept(self, context))
 
         if self.root_function:
-            lines.append(f"async def {node.name}(self, {', '.join(params)}) -> {node.return_type.accept(self, context)[0]} :")
+            lines.append(f"async def {node.name}({', '.join(params)}) -> {node.return_type.accept(self, context)[0]} :")
             self.root_function = False
         else:
             lines.append(f"async def {node.name}({', '.join(params)}) -> {node.return_type.accept(self, context)[0]} :")
@@ -284,10 +287,14 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
 
     def visit_FieldAccess(self, node: FieldAccess, context: RESTGenerationContext) -> list[str]:
         receiver = node.receiver.accept(self, context)[0]
-        if node.field.type in data_types:
-            return f"{receiver}.{node.field.name}"
+        if node.field.type.name in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta', 'any']:
+            return [f"{receiver}.{node.field.name}"]
+        elif node.field.multiplicity.max > 1:
+            assoc = node.field.owner
+            other_end = [end for end in assoc.ends if end is not node.field][0]
+            return [f"(await get_{node.field.name.lower()}_of_{other_end.type.name.lower()}({receiver}.id, database))['{node.field.name}']"]
         else:
-            return f"(await get_{self.class_name.lower()}({receiver}.{node.field.name}.id, database))"
+            return [f"(await get_{node.field.type.name.lower()}({receiver}.{node.field.name}.id, database))"]
 
     def visit_ArrayAccess(self, node: ArrayAccess, context: RESTGenerationContext) -> list[str]:
         receiver = node.receiver.accept(self, context)[0]

@@ -537,22 +537,30 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                             method_obj = next((m for m in method_class.methods if m.name == method_name), None)
                             if method_obj:
                                 element.method_btn = method_obj
-                                # Update is_instance_method by checking the method's code for 'self'
-                                # The frontend already set is_instance_method, but if the method has code,
-                                # we can verify by checking if 'self' appears in the code
+                                # Update is_instance_method by checking method code and instance source.
+                                # For BAL, instance access can be expressed with `this` instead of `self`.
+                                if not element.is_instance_method and element.instance_source:
+                                    element.is_instance_method = True
+
+                                # The frontend/parser may already set is_instance_method.
+                                # If method code is available, additionally detect self/this patterns.
                                 if hasattr(method_obj, 'code') and method_obj.code:
-                                    # Check if the code uses 'self.' or 'self,' or 'self)' or starts with 'self'
                                     code_lower = method_obj.code.lower()
-                                    has_self = ('self.' in code_lower or 
-                                               'self,' in code_lower or 
-                                               'self)' in code_lower or
-                                               'self:' in code_lower or
-                                               code_lower.strip().startswith('self'))
-                                    # Only update if we found evidence of self usage
-                                    if has_self:
+                                    has_instance_ref = (
+                                        'self.' in code_lower or
+                                        'self,' in code_lower or
+                                        'self)' in code_lower or
+                                        'self:' in code_lower or
+                                        code_lower.strip().startswith('self') or
+                                        'this.' in code_lower or
+                                        'this,' in code_lower or
+                                        'this)' in code_lower or
+                                        'this:' in code_lower or
+                                        code_lower.strip().startswith('this')
+                                    )
+                                    if has_instance_ref:
                                         element.is_instance_method = True
-                                # If no code or no self found, keep the value set by the frontend parser
-                                # (which was read from the instance-method attribute)
+                                # Otherwise keep parser-derived value.
                 
                 # Resolve entity_class for CRUD operations
                 if hasattr(element, '_entity_class_id'):

@@ -41,7 +41,7 @@ from besser.BUML.metamodel.gui.events_actions import (
     Transition,
     Update,
 )
-from besser.BUML.metamodel.structural import DomainModel, Enumeration
+from besser.BUML.metamodel.structural import Class, DomainModel, Enumeration
 from besser.utilities import sort_by_timestamp
 
 
@@ -293,8 +293,33 @@ class GuiSerializationMixin:
                         for param in method_btn.parameters:
                             # Skip 'self' and 'session' parameters
                             if param.name.lower() not in ('self', 'session'):
-                                param_type = param.type.name if param.type else 'any'
-                                input_params[param.name] = param_type
+                                param_type = getattr(param, "type", None)
+                                param_type_name = getattr(param_type, "name", "any")
+                                default_value = getattr(param, "default_value", None)
+
+                                param_data: Dict[str, Any] = {
+                                    "type": param_type_name,
+                                    "required": default_value is None,
+                                }
+
+                                if default_value is not None:
+                                    if isinstance(default_value, (str, int, float, bool)):
+                                        param_data["default"] = default_value
+                                    else:
+                                        param_data["default"] = str(default_value)
+
+                                if isinstance(param_type, Class):
+                                    target_attrs = sort_by_timestamp(list(param_type.all_attributes()))
+                                    lookup_field = self._select_lookup_field(target_attrs)
+                                    param_data["input_kind"] = "lookup"
+                                    param_data["entity"] = param_type_name
+                                    if lookup_field:
+                                        param_data["lookup_field"] = lookup_field
+                                elif isinstance(param_type, Enumeration):
+                                    param_data["input_kind"] = "enum"
+                                    param_data["options"] = sorted([literal.name for literal in param_type.literals])
+
+                                input_params[param.name] = param_data
                         
                         if input_params:
                             attributes['input-parameters'] = input_params
@@ -1030,6 +1055,14 @@ class GuiSerializationMixin:
     @staticmethod
     def _to_pretty_json(payload: Dict[str, Any]) -> str:
         return json.dumps(payload, indent=2, sort_keys=True, ensure_ascii=False)
+
+    @staticmethod
+    def _select_lookup_field(attributes: List[Any]) -> str:
+        if not attributes:
+            return ""
+        non_id_attrs = [attr for attr in attributes if not getattr(attr, "is_id", False)]
+        selected = non_id_attrs[0] if non_id_attrs else attributes[0]
+        return getattr(selected, "name", "")
 
     @staticmethod
     def _sorted_by_name(items: Iterable[Any]) -> List[Any]:

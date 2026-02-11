@@ -483,10 +483,51 @@ class PageBuilderMixin:
             is_instance_method = attributes.get("is-instance-method")
             instance_source = attributes.get("instance-source")
             input_params = attributes.get("input-parameters") or {}
-            parameters = [
-                {"name": name, "type": str(param_type), "required": True}
-                for name, param_type in input_params.items()
-            ]
+            parameters: List[Dict[str, Any]] = []
+            if isinstance(input_params, dict):
+                for name, param_meta in input_params.items():
+                    if isinstance(param_meta, dict):
+                        parameter: Dict[str, Any] = {
+                            "name": name,
+                            "type": str(param_meta.get("type", "any")),
+                            "required": bool(param_meta.get("required", True)),
+                        }
+                        if "default" in param_meta:
+                            parameter["default"] = param_meta.get("default")
+                        if param_meta.get("input_kind"):
+                            parameter["inputKind"] = str(param_meta.get("input_kind"))
+                        if param_meta.get("entity"):
+                            parameter["entity"] = str(param_meta.get("entity"))
+                        if param_meta.get("lookup_field"):
+                            parameter["lookupField"] = str(param_meta.get("lookup_field"))
+                        if isinstance(param_meta.get("options"), list):
+                            parameter["options"] = param_meta.get("options")
+                        parameters.append(parameter)
+                    else:
+                        parameters.append({"name": name, "type": str(param_meta), "required": True})
+            elif isinstance(input_params, list):
+                for item in input_params:
+                    if not isinstance(item, dict):
+                        continue
+                    name = item.get("name")
+                    if not name:
+                        continue
+                    parameter: Dict[str, Any] = {
+                        "name": name,
+                        "type": str(item.get("type", "any")),
+                        "required": bool(item.get("required", True)),
+                    }
+                    if "default" in item:
+                        parameter["default"] = item.get("default")
+                    if item.get("inputKind"):
+                        parameter["inputKind"] = str(item.get("inputKind"))
+                    if item.get("entity"):
+                        parameter["entity"] = str(item.get("entity"))
+                    if item.get("lookupField"):
+                        parameter["lookupField"] = str(item.get("lookupField"))
+                    if isinstance(item.get("options"), list):
+                        parameter["options"] = item.get("options")
+                    parameters.append(parameter)
             label = attributes.get("button-label") or node.get("label") or node.get("name") or "Execute"
 
             props = self._build_component_props(

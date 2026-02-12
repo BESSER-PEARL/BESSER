@@ -3,6 +3,7 @@ Class diagram processing for converting JSON to BUML format.
 """
 
 import json
+import re
 from fastapi import HTTPException
 
 from besser.BUML.metamodel.structural import (
@@ -13,6 +14,37 @@ from besser.BUML.metamodel.structural import (
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import (
     parse_attribute, parse_method, parse_multiplicity, process_ocl_constraints
 )
+
+
+def parse_method_signature_from_code(method_code, domain_model):
+    """Extract method signature from code text when diagram name/signature is malformed."""
+    if not isinstance(method_code, str) or not method_code.strip():
+        return None
+
+    signature_match = re.search(
+        r"def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:->\s*([^:{\n]+))?\s*[:{]",
+        method_code,
+    )
+    if not signature_match:
+        return None
+
+    method_name, params_text, return_type = signature_match.groups()
+    signature = f"{method_name.strip()}({(params_text or '').strip()})"
+    if return_type:
+        signature_with_return = f"{signature}: {return_type.strip()}"
+    else:
+        signature_with_return = signature
+
+    try:
+        _, parsed_name, parsed_parameters, parsed_return_type = parse_method(signature_with_return, domain_model)
+    except ValueError:
+        # Some BAL snippets use return markers that are not BUML type names (e.g., "nothing").
+        _, parsed_name, parsed_parameters, parsed_return_type = parse_method(signature, domain_model)
+
+    parsed_parameters = [
+        param for param in parsed_parameters if param.get("name") not in {"self", "cls", "this"}
+    ]
+    return parsed_name, parsed_parameters, parsed_return_type
 
 
 def process_class_diagram(json_data):
@@ -137,9 +169,26 @@ def process_class_diagram(json_data):
                     
                     # Get the code attribute for the method
                     method_code = method.get("code", "")
+
+                    method_name_is_malformed = (
+                        isinstance(name, str)
+                        and name.count("(") != name.count(")")
+                    )
+                    if method_name_is_malformed or (not parameters and method_code):
+                        parsed_from_code = parse_method_signature_from_code(method_code, domain_model)
+                        if parsed_from_code:
+                            parsed_name, parsed_parameters, parsed_return_type = parsed_from_code
+                            if method_name_is_malformed and parsed_name:
+                                name = parsed_name
+                            if not parameters and parsed_parameters:
+                                parameters = parsed_parameters
+                            if not return_type and parsed_return_type:
+                                return_type = parsed_return_type
                     
                     # Get implementation type and diagram references
                     impl_type_str = method.get("implementationType", "none")
+                    if isinstance(impl_type_str, str):
+                        impl_type_str = impl_type_str.strip().lower()
                     state_machine_id = method.get("stateMachineId", "")
                     quantum_circuit_id = method.get("quantumCircuitId", "")
                     
@@ -147,6 +196,7 @@ def process_class_diagram(json_data):
                     impl_type_map = {
                         "none": MethodImplementationType.NONE,
                         "code": MethodImplementationType.CODE,
+                        "bal": MethodImplementationType.BAL,
                         "state_machine": MethodImplementationType.STATE_MACHINE,
                         "quantum_circuit": MethodImplementationType.QUANTUM_CIRCUIT,
                     }

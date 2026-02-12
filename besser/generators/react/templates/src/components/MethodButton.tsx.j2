@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { useTableContext } from "../contexts/TableContext";
 
@@ -7,6 +7,10 @@ export interface MethodParameter {
   type: string;
   required?: boolean;
   default?: any;
+  inputKind?: "primitive" | "enum" | "lookup";
+  entity?: string;
+  lookupField?: string;
+  options?: string[];
 }
 
 export interface MethodButtonProps {
@@ -84,6 +88,9 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
   const [showModal, setShowModal] = useState(false);
   const [showSuccessToast, setShowSuccessToast] = useState(false);
   const [showErrorToast, setShowErrorToast] = useState(false);
+  const [showResultModal, setShowResultModal] = useState(false);
+  const [resultMessage, setResultMessage] = useState("");
+  const [lookupOptions, setLookupOptions] = useState<Record<string, any[]>>({});
   const [paramValues, setParamValues] = useState<Record<string, any>>(() => {
     // Initialize with default values
     const defaults: Record<string, any> = {};
@@ -97,6 +104,101 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
 
   // Access table context to get selected row
   const tableContext = useTableContext();
+
+  const formatMethodResult = (data: any): string => {
+    if (data === null || data === undefined) {
+      return "";
+    }
+
+    if (typeof data === "object" && "result" in data) {
+      const value = (data as any).result;
+      if (value === null || value === undefined || value === "") {
+        return "";
+      }
+      return typeof value === "string" ? value : JSON.stringify(value, null, 2);
+    }
+
+    if (typeof data === "string") {
+      return data;
+    }
+
+    return JSON.stringify(data, null, 2);
+  };
+
+  const primitiveTypes = new Set([
+    "number", "int", "integer", "float", "double", "decimal",
+    "boolean", "bool", "date", "datetime", "datetime-local",
+    "time", "string", "str", "text", "any"
+  ]);
+
+  const isEnumParameter = (param: MethodParameter): boolean => {
+    return param.inputKind === "enum" || (Array.isArray(param.options) && param.options.length > 0);
+  };
+
+  const isLookupParameter = (param: MethodParameter): boolean => {
+    if (param.inputKind === "lookup" || !!param.entity) {
+      return true;
+    }
+    const normalizedType = (param.type || "").toLowerCase();
+    return !primitiveTypes.has(normalizedType) && !isEnumParameter(param);
+  };
+
+  const coerceLookupValue = (rawValue: string): string | number => {
+    if (/^-?\d+$/.test(rawValue)) {
+      return parseInt(rawValue, 10);
+    }
+    return rawValue;
+  };
+
+  const getOptionLabel = (option: any, lookupField?: string): string => {
+    if (lookupField && option?.[lookupField] !== undefined && option?.[lookupField] !== null) {
+      return String(option[lookupField]);
+    }
+    return String(option?.name ?? option?.title ?? option?.label ?? option?.id ?? "Unknown");
+  };
+
+  useEffect(() => {
+    if (!showModal) {
+      return;
+    }
+
+    const fetchLookupOptions = async () => {
+      const optionsByParam: Record<string, any[]> = {};
+
+      for (const param of parameters) {
+        if (!isLookupParameter(param)) {
+          continue;
+        }
+
+        const entityName = (param.entity || param.type || "").trim();
+        if (!entityName) {
+          optionsByParam[param.name] = [];
+          continue;
+        }
+
+        const endpoint = entityName.toLowerCase();
+        try {
+          const response = await axios.get(`${backendUrl}/${endpoint}/`);
+          if (Array.isArray(response.data)) {
+            optionsByParam[param.name] = response.data;
+          } else if (response.data && typeof response.data === "object") {
+            optionsByParam[param.name] = Array.isArray(response.data.results)
+              ? response.data.results
+              : [response.data];
+          } else {
+            optionsByParam[param.name] = [];
+          }
+        } catch (err) {
+          console.error(`[MethodButton] Error fetching ${entityName} options:`, err);
+          optionsByParam[param.name] = [];
+        }
+      }
+
+      setLookupOptions(optionsByParam);
+    };
+
+    fetchLookupOptions();
+  }, [showModal, parameters, backendUrl]);
 
   const handleExecute = async () => {
     setLoading(true);
@@ -172,6 +274,11 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
 
       console.log(`[MethodButton] Method executed successfully:`, response.data);
       setResult(response.data);
+      const formattedResult = formatMethodResult(response.data);
+      if (formattedResult) {
+        setResultMessage(formattedResult);
+        setShowResultModal(true);
+      }
       
       // Refresh the source table if this is an instance method
       if (isInstanceMethod && instanceSourceTableId) {
@@ -265,6 +372,8 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
     // Reset error and result state when opening modal or executing
     setError(null);
     setResult(null);
+    setShowResultModal(false);
+    setResultMessage("");
     
     // If method has parameters, show modal for input
     if (parameters.length > 0) {
@@ -284,6 +393,74 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
 
   const renderParameterInput = (param: MethodParameter) => {
     const value = paramValues[param.name] ?? param.default ?? "";
+
+    if (isLookupParameter(param)) {
+      const options = lookupOptions[param.name] || [];
+      return (
+        <div>
+          <select
+            value={value === null || value === undefined ? "" : String(value)}
+            onChange={(e) => handleParamChange(param.name, e.target.value === "" ? "" : coerceLookupValue(e.target.value))}
+            required={param.required}
+            style={{
+              width: "100%",
+              padding: "8px 12px",
+              borderRadius: "6px",
+              border: "1px solid #cbd5f5",
+              fontSize: "15px",
+              color: "#1e293b",
+              background: "#f8fafc",
+              boxSizing: "border-box",
+            }}
+          >
+            <option value="">-- Select {param.name} --</option>
+            {options.map((option: any) => {
+              const optionId = option?.id ?? option?.ID ?? option?.Id;
+              if (optionId === undefined || optionId === null) {
+                return null;
+              }
+              return (
+                <option key={String(optionId)} value={String(optionId)}>
+                  {getOptionLabel(option, param.lookupField)}
+                </option>
+              );
+            })}
+          </select>
+          {options.length === 0 && (
+            <div style={{ marginTop: "6px", fontSize: "12px", color: "#64748b" }}>
+              No options available
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (isEnumParameter(param)) {
+      return (
+        <select
+          value={value}
+          onChange={(e) => handleParamChange(param.name, e.target.value)}
+          required={param.required}
+          style={{
+            width: "100%",
+            padding: "8px 12px",
+            borderRadius: "6px",
+            border: "1px solid #cbd5f5",
+            fontSize: "15px",
+            color: "#1e293b",
+            background: "#f8fafc",
+            boxSizing: "border-box",
+          }}
+        >
+          <option value="">-- Select {param.name} --</option>
+          {(param.options || []).map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+      );
+    }
 
     switch (param.type.toLowerCase()) {
       case "number":
@@ -344,6 +521,64 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
               {value ? "True" : "False"}
             </span>
           </div>
+        );
+      case "date":
+        return (
+          <input
+            type="date"
+            value={value}
+            onChange={(e) => handleParamChange(param.name, e.target.value)}
+            required={param.required}
+            style={{ 
+              width: "100%", 
+              padding: "8px 12px",
+              borderRadius: "6px",
+              border: "1px solid #cbd5f5",
+              fontSize: "15px",
+              color: "#1e293b",
+              background: "#f8fafc",
+              boxSizing: "border-box",
+            }}
+          />
+        );
+      case "datetime":
+      case "datetime-local":
+        return (
+          <input
+            type="datetime-local"
+            value={value}
+            onChange={(e) => handleParamChange(param.name, e.target.value)}
+            required={param.required}
+            style={{ 
+              width: "100%", 
+              padding: "8px 12px",
+              borderRadius: "6px",
+              border: "1px solid #cbd5f5",
+              fontSize: "15px",
+              color: "#1e293b",
+              background: "#f8fafc",
+              boxSizing: "border-box",
+            }}
+          />
+        );
+      case "time":
+        return (
+          <input
+            type="time"
+            value={value}
+            onChange={(e) => handleParamChange(param.name, e.target.value)}
+            required={param.required}
+            style={{ 
+              width: "100%", 
+              padding: "8px 12px",
+              borderRadius: "6px",
+              border: "1px solid #cbd5f5",
+              fontSize: "15px",
+              color: "#1e293b",
+              background: "#f8fafc",
+              boxSizing: "border-box",
+            }}
+          />
         );
       case "string":
       case "str":
@@ -431,6 +666,73 @@ export const MethodButton: React.FC<MethodButtonProps> = ({
         }}>
           <strong style={{ display: "block", marginBottom: "4px" }}>Error:</strong>
           {error}
+        </div>
+      )}
+
+      {/* Result popup */}
+      {showResultModal && (
+        <div style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: "rgba(0, 0, 0, 0.45)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          zIndex: 2200,
+        }}>
+          <div style={{
+            backgroundColor: "white",
+            padding: "20px",
+            borderRadius: "10px",
+            minWidth: "320px",
+            maxWidth: "700px",
+            width: "90%",
+            boxShadow: "0 20px 25px -5px rgba(0, 0, 0, 0.2)",
+          }}>
+            <h4 style={{
+              margin: 0,
+              marginBottom: "12px",
+              color: "#1e293b",
+              fontSize: "18px",
+            }}>
+              Method Result
+            </h4>
+            <pre style={{
+              margin: 0,
+              padding: "12px",
+              borderRadius: "8px",
+              backgroundColor: "#f8fafc",
+              color: "#0f172a",
+              maxHeight: "320px",
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+              border: "1px solid #e2e8f0",
+              fontSize: "14px",
+            }}>
+              {resultMessage}
+            </pre>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: "14px" }}>
+              <button
+                type="button"
+                onClick={() => setShowResultModal(false)}
+                style={{
+                  padding: "8px 16px",
+                  borderRadius: "6px",
+                  border: "1px solid #cbd5e1",
+                  backgroundColor: "#f8fafc",
+                  color: "#334155",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

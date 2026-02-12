@@ -47,10 +47,6 @@ Repository Layout
     Pytest suites covering the metamodel, generators, utilities, and sample
     applications. Tests often double as executable examples.
 
-``setup_environment.py``
-    A helper script that creates a virtual environment, installs dependencies,
-    and sets the ``PYTHONPATH`` so the ``besser`` package resolves correctly in
-    editors.
 
 ``docker-compose.yml`` and ``Dockerfile``
     Container definitions that reproduce the full stack locally, useful for
@@ -67,7 +63,10 @@ Getting Started
 
 1. Fork the repository and clone your fork locally.
 2. Create and activate a Python 3.10+ virtual environment.
-3. Run ``python setup_environment.py`` to install dependencies and configure
+3. Run ``
+     python -m venv venv
+     venv\Scripts\activate
+     pip install -r requirements.txt`` to install dependencies and configure
    ``PYTHONPATH``.
 4. Install the documentation extras with ``pip install -r docs/requirements.txt``
    if you plan to edit the docs.

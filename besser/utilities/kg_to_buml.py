@@ -26,7 +26,7 @@ def parse_json_safely(json_text: str):
         return json.loads(json_text)
     except json.JSONDecodeError:
         return None
-    
+
 def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
     """
     Convert class specifications from GPT-generated JSON to Apollon/BUML format.
@@ -87,30 +87,30 @@ def convert_spec_json_to_buml(system_spec, title="KG Imported Diagram"):
         for method in cls.get("methods", []):
             method_id = make_id("method", method_counter)
             method_counter += 1
-        
+
             visibility = method.get("visibility", "public")
             visibility_symbol = (
                 "+" if visibility == "public" else
                 "-" if visibility == "private" else
                 "#"
             )
-        
+
             params = method.get("parameters", [])
             param_str = ", ".join([f"{p['name']}: {p['type']}" for p in params])
-        
+
             return_type = method.get("returnType", "")
             if return_type.lower() == "void":
                 return_type = ""   # 🔧 fix here
-        
+
             name_str = f"{visibility_symbol} {method['name']}({param_str}): {return_type}"
-        
+
             method_element = {
                 "id": method_id,
                 "type": "ClassMethod",
                 "owner": class_id,
                 "name": name_str
             }
-        
+
             class_element["methods"].append(method_id)
             elements[method_id] = method_element
 
@@ -172,7 +172,7 @@ def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"
     Transform a Knowledge Graph (KG) into a PlantUML class diagram.
 
     **Supported inputs:**
-    
+
     - Turtle files (.ttl)
     - RDF KGs (.rdf files)
     - Neo4j graphs (JSON) exported using the Cypher command below::
@@ -275,16 +275,16 @@ def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"
             raise RuntimeError(f"OpenAI API call failed: {response.status} {response.text}")
 
         response_data = json.loads(response.text)
-        
+
         if ('error' in response_data):
             raise RuntimeError(f"OpenAI API call failed: {response.status} {response.text}")
-        
+
         # Extracting the message
         messages = [choice['message'] for choice in response_data.get('choices', {})]
         message = messages[0]["content"]
 
     except Exception as e:
-        raise RuntimeError(f"Failed to process the KG to PlantUML conversion: {e}") from e    
+        raise RuntimeError(f"Failed to process the KG to PlantUML conversion: {e}") from e
 
     plant_uml_chunk = clean_plantuml_response(message)
     return plant_uml_chunk
@@ -294,7 +294,7 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
     Convert a Knowledge Graph (KG) into a B-UML class diagram.
 
     **Supported inputs**
-    
+
     - Turtle files (.ttl)
     - RDF KGs (.rdf files)
     - Neo4j graphs (JSON) exported using the Cypher command below::
@@ -304,7 +304,7 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
         RETURN data AS json
 
     The function reads the KG (TTL/RDF or Neo4j JSON export), extracts classes,
-    attributes, methods, and associations, and uses an LLM to generate a DomainModel object 
+    attributes, methods, and associations, and uses an LLM to generate a DomainModel object
     defined in `besser.BUML.metamodel.structural`.
 
     Parameters
@@ -330,7 +330,7 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
             kg = kg_file.read()  # plain text
     except Exception as e:
         raise RuntimeError(f"Failed to read KG file at {kg_path}: {e}") from e
-    
+
     available_types = [d_type.name for d_type in data_types]
 
     prompt = f""" 
@@ -392,7 +392,7 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
 
     IMPORTANT: Return ONLY the JSON, no explanations.
     """
-    
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": "Bearer " + openai_token
@@ -428,7 +428,7 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
         raw_content = (response_json.get("choices", [{}])[0]
                        .get("message", {})
                        .get("content", ""))
-        
+
         if not raw_content:
             raise ValueError("Empty response from OpenAI.")
 
@@ -438,7 +438,7 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
 
         if not system_spec:
             raise ValueError("Failed to parse JSON from OpenAI response.")
-        
+
         buml_json = convert_spec_json_to_buml(system_spec)
 
         if not buml_json:
@@ -450,4 +450,3 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
 
     except Exception as e:
         raise RuntimeError(f"Failed to process the KG to B-UML conversion: {e}") from e
-    

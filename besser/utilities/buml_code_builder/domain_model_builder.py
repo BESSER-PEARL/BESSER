@@ -16,6 +16,40 @@ from besser.utilities import sort_by_timestamp as sort
 from besser.utilities.buml_code_builder.common import PRIMITIVE_TYPE_MAPPING, safe_class_name
 
 
+_IMPLEMENTATION_TYPE_VALUE_TO_NAME = {
+    MethodImplementationType.NONE.value: MethodImplementationType.NONE.name,
+    MethodImplementationType.CODE.value: MethodImplementationType.CODE.name,
+    MethodImplementationType.BAL.value: MethodImplementationType.BAL.name,
+    MethodImplementationType.STATE_MACHINE.value: MethodImplementationType.STATE_MACHINE.name,
+    MethodImplementationType.QUANTUM_CIRCUIT.value: MethodImplementationType.QUANTUM_CIRCUIT.name,
+}
+
+
+def _get_impl_type_name(impl_type) -> str | None:
+    """Normalize enum and string values to valid MethodImplementationType enum names."""
+    if impl_type is None:
+        return None
+
+    if isinstance(impl_type, MethodImplementationType):
+        return impl_type.name
+
+    impl_text = str(impl_type).strip()
+    if impl_text.startswith("MethodImplementationType."):
+        impl_text = impl_text.split(".", maxsplit=1)[1]
+
+    upper_name = impl_text.upper()
+    if upper_name in MethodImplementationType.__members__:
+        return upper_name
+
+    return _IMPLEMENTATION_TYPE_VALUE_TO_NAME.get(impl_text.lower())
+
+
+def _format_method_code_literal(code: str) -> str:
+    """Return a multiline-safe Python string literal for method code."""
+    escaped_code = code.replace('"""', '\\"\\"\\"')
+    return f'"""{escaped_code}"""'
+
+
 def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: ObjectModel = None):
     """
     Generates Python code for a B-UML model and writes it to a specified file.
@@ -131,17 +165,12 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                 visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
                 
-                # Handle code attribute - escape special characters
-                code_str = ""
-                if hasattr(method, 'code') and method.code:
-                    # Escape backslashes first, then quotes, then newlines
-                    escaped_code = method.code.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-                    code_str = f', code="{escaped_code}"'
+                method_code = method.code if hasattr(method, "code") and method.code else ""
 
                 impl_str = ""
                 impl_type = getattr(method, "implementation_type", None)
-                if impl_type is not None:
-                    impl_name = impl_type.name if hasattr(impl_type, "name") else str(impl_type).upper()
+                impl_name = _get_impl_type_name(impl_type)
+                if impl_name:
                     impl_str = f", implementation_type=MethodImplementationType.{impl_name}"
 
                 # Build parameters dictionary
@@ -156,10 +185,13 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
                 if method_type:
                     f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
-                           f"{visibility_str}, parameters={params_str}, type={method_type}{code_str}{impl_str})\n")
+                           f"{visibility_str}, parameters={params_str}, type={method_type}{impl_str})\n")
                 else:
                     f.write(f"{cls_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
-                           f"{visibility_str}, parameters={params_str}{code_str}{impl_str})\n")
+                           f"{visibility_str}, parameters={params_str}{impl_str})\n")
+                if method_code:
+                    code_literal = _format_method_code_literal(method_code)
+                    f.write(f"{cls_var_name}_m_{method_var_name}.code = {code_literal}\n")
                 if impl_type == MethodImplementationType.STATE_MACHINE:
                     f.write("try:\n")
                     f.write(f"    {cls_var_name}_m_{method_var_name}.state_machine = sm\n")
@@ -260,17 +292,12 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                     method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                     visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
                     
-                    # Handle code attribute - escape special characters
-                    code_str = ""
-                    if hasattr(method, 'code') and method.code:
-                        # Escape backslashes first, then quotes, then newlines
-                        escaped_code = method.code.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-                        code_str = f', code="{escaped_code}"'
+                    method_code = method.code if hasattr(method, "code") and method.code else ""
 
                     impl_str = ""
                     impl_type = getattr(method, "implementation_type", None)
-                    if impl_type is not None:
-                        impl_name = impl_type.name if hasattr(impl_type, "name") else str(impl_type).upper()
+                    impl_name = _get_impl_type_name(impl_type)
+                    if impl_name:
                         impl_str = f", implementation_type=MethodImplementationType.{impl_name}"
 
                     # Build parameters dictionary
@@ -285,10 +312,13 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
 
                     if method_type:
                         f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
-                               f"{visibility_str}, parameters={params_str}, type={method_type}{code_str}{impl_str})\n")
+                               f"{visibility_str}, parameters={params_str}, type={method_type}{impl_str})\n")
                     else:
                         f.write(f"{ac_var_name}_m_{method_var_name}: Method = Method(name=\"{method.name}\""
-                               f"{visibility_str}, parameters={params_str}{code_str}{impl_str})\n")
+                               f"{visibility_str}, parameters={params_str}{impl_str})\n")
+                    if method_code:
+                        code_literal = _format_method_code_literal(method_code)
+                        f.write(f"{ac_var_name}_m_{method_var_name}.code = {code_literal}\n")
                     if impl_type == MethodImplementationType.STATE_MACHINE:
                         f.write("try:\n")
                         f.write(f"    {ac_var_name}_m_{method_var_name}.state_machine = sm\n")

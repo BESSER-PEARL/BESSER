@@ -42,11 +42,13 @@ This ensures compatibility with IDEs (like VSCode) that may not automatically se
 
 .. code-block:: console
 
-    $ python setup_environment.py
+    $ python -m venv venv
+    $ venv\Scripts\activate
+    $ pip install -r requirements.txt
 
 .. note::
   
-  Each time you start your IDE, run the `setup_environment.py` script to ensure the environment is properly configured.
+  Each time you start your IDE, activate the virtual environment to ensure the environment is properly configured.
 
 **Step 3: Run an example**
 

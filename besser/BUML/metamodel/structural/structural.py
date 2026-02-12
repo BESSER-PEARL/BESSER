@@ -304,15 +304,17 @@ data_types = {StringType, IntegerType, FloatType, BooleanType,
 
 class MethodImplementationType(Enum):
     """Enumeration representing the type of implementation for a method.
-    
+
     Attributes:
         NONE: No implementation (abstract method or signature only).
         CODE: Implementation provided as Python code string.
+        BAL: Implementation provided as BESSER Action Language code string.
         STATE_MACHINE: Implementation defined by a state machine.
         QUANTUM_CIRCUIT: Implementation defined by a quantum circuit.
     """
     NONE = "none"
     CODE = "code"
+    BAL = "besser_action_language"
     STATE_MACHINE = "state_machine"
     QUANTUM_CIRCUIT = "quantum_circuit"
 
@@ -723,6 +725,7 @@ class Method(TypedElement):
     A method can have different types of implementations:
     - NONE: Abstract method or signature only (UML description)
     - CODE: Python code implementation
+    - BAL: BESSER Action Language implementation
     - STATE_MACHINE: Behavior defined by a state machine
     - QUANTUM_CIRCUIT: Behavior defined by a quantum circuit
 
@@ -730,7 +733,7 @@ class Method(TypedElement):
         name (str): The name of the method.
         visibility (str): Determines the kind of visibility of the method (public as default).
         is_abstract (bool): Indicates if the method is abstract (False as default).
-        parameters (set[Parameter]): The set of parameters for the method (set() as default).
+        parameters (list[Parameter]): The list of parameters for the method (list() as default).
         type (Type): The type of the method (None as default).
         owner (Type): The type that owns the method (None as default).
         code (str): code of the method ("" as default).
@@ -745,7 +748,7 @@ class Method(TypedElement):
         name (str): Inherited from TypedElement, represents the name of the method.
         visibility (str): Inherited from TypedElement, represents the visibility of the method (public as default).
         is_abstract (bool): Indicates if the method is abstract. (False as default)
-        parameters (set[Parameter]): The set of parameters for the method (set() as default).
+        parameters (list[Parameter]): The set of parameters for the method (set() as default).
         type (Type): Inherited from TypedElement, represents the type of the method (None as default).
         owner (Type): The type that owns the property (None as default).
         code (str): code of the method ("" as default).
@@ -758,13 +761,13 @@ class Method(TypedElement):
     """
 
     def __init__(self, name: str, visibility: str = "public", is_abstract: bool = False,
-                 parameters: set[Parameter] = None, type: Type = None, owner: Type = None,
+                 parameters: list[Parameter] = None, type: Type = None, owner: Type = None,
                  code: str = "", implementation_type: MethodImplementationType = None,
                  state_machine: "StateMachine" = None, quantum_circuit: "QuantumCircuit" = None,
                  timestamp: int = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.is_abstract: bool = is_abstract
-        self.parameters: set[Parameter] = parameters if parameters is not None else set()
+        self.parameters: list[Parameter] = parameters if parameters is not None else list()
         self.owner: Type = owner
         self.code: str = code
         self.state_machine: "StateMachine" = state_machine
@@ -792,14 +795,14 @@ class Method(TypedElement):
         self.__is_abstract = is_abstract
 
     @property
-    def parameters(self) -> set[Parameter]:
-        """set[Parameter]: Get the set of parameters of the method."""
+    def parameters(self) -> list[Parameter]:
+        """list[Parameter]: Get the set of parameters of the method."""
         return self.__parameters
 
     @parameters.setter
-    def parameters(self, parameters: set[Parameter]):
+    def parameters(self, parameters: list[Parameter]):
         """
-        set[Parameter]: Set the parameters of the method.
+        list[Parameter]: Set the parameters of the method.
         
         Raises:
             ValueError: if two parameters have the same name.
@@ -819,7 +822,7 @@ class Method(TypedElement):
 
             self.__parameters = parameters
         else:
-            self.__parameters = set()
+            self.__parameters = list()
 
     def add_parameter(self, parameter: Parameter):
         """
@@ -831,7 +834,7 @@ class Method(TypedElement):
         if self.parameters is not None:
             if parameter.name in [parameter.name for parameter in self.parameters]:
                 raise ValueError(f"A method cannot have two parameters with the same name: '{parameter.name}'")
-        self.parameters.add(parameter)
+        self.parameters.append(parameter)
 
     @property
     def owner(self) -> Type:
@@ -1320,7 +1323,13 @@ class Association(NamedElement):
         
         Raises:
             ValueError: if an association has less than two ends.
+            TypeError: if any element in ends is not a Property instance.
         """
+        # Type checking: ensure all elements are Property instances
+        for end in ends:
+            if not isinstance(end, Property):
+                raise TypeError(f"Expected Property instance, but got {type(end).__name__} instance: {end}")
+        
         if len(ends) <= 1:
              raise ValueError("An association must have more than one end")
         names = [e.name for e in ends]
@@ -1365,9 +1374,15 @@ class BinaryAssociation(Association):
         """set[Property]: Set the ends of the association.
         
         Raises:
-            ValueError: if the associaiton ends are not exactly two, or if both ends are tagged as agregation, or 
+            ValueError: if the association ends are not exactly two, or if both ends are tagged as aggregation, or 
             if both ends are tagged as composition.
+            TypeError: if any element in ends is not a Property instance.
         """
+        # Type checking: ensure all elements are Property instances (before any attribute access)
+        for end in ends:
+            if not isinstance(end, Property):
+                raise TypeError(f"Expected Property instance, but got {type(end).__name__} instance: {end}")
+        
         if len(ends) != 2:
             raise ValueError("A binary association must have exactly two ends")
         if list(ends)[0].is_composite is True and list(ends)[1].is_composite is True:
@@ -1769,7 +1784,13 @@ class DomainModel(Model):
         
         Raises:
             ValueError: if there are two types with the same name.
+            TypeError: if any element in types is not a Type instance.
         """
+        # Type checking: ensure all elements are Type instances
+        for type_ in types:
+            if not isinstance(type_, Type):
+                raise TypeError(f"Expected Type instance, but got {type(type_).__name__} instance: {type_}")
+        
         primitive_names = {'int', 'str', 'bool', 'float', 'datetime', 'date', 'time', 'timedelta', 'any'}
         has_primitives = any(t.name in primitive_names for t in types)
     
@@ -1811,8 +1832,14 @@ class DomainModel(Model):
         
         Raises:
             ValueError: if there are two associations with the same name.
+            TypeError: if any element in associations is not an Association instance.
         """
         if associations is not None:
+            # Type checking: ensure all elements are Association instances
+            for association in associations:
+                if not isinstance(association, Association):
+                    raise TypeError(f"Expected Association instance, but got {type(association).__name__} instance: {association}")
+            
             names_seen = set()
             duplicates = set()
 
@@ -1841,8 +1868,18 @@ class DomainModel(Model):
 
     @generalizations.setter
     def generalizations(self, generalizations: set[Generalization]):
-        """set[Generalization]: Set the set of generalizations in the domain model."""
+        """
+        set[Generalization]: Set the set of generalizations in the domain model.
+        
+        Raises:
+            TypeError: if any element in generalizations is not a Generalization instance.
+        """
         if generalizations is not None:
+            # Type checking: ensure all elements are Generalization instances
+            for generalization in generalizations:
+                if not isinstance(generalization, Generalization):
+                    raise TypeError(f"Expected Generalization instance, but got {type(generalization).__name__} instance: {generalization}")
+            
             self.__generalizations = generalizations
         else:
             self.__generalizations = set()
@@ -1869,8 +1906,14 @@ class DomainModel(Model):
         
         Raises:
             ValueError: if there are two packages with the same name.
+            TypeError: if any element in packages is not a Package instance.
         """
         if packages is not None:
+            # Type checking: ensure all elements are Package instances
+            for package in packages:
+                if not isinstance(package, Package):
+                    raise TypeError(f"Expected Package instance, but got {type(package).__name__} instance: {package}")
+            
             names_seen = set()
             duplicates = set()
 
@@ -1900,8 +1943,14 @@ class DomainModel(Model):
         
         Raises:
             ValueError: if there are two constraints with the same name.
+            TypeError: if any element in constraints is not a Constraint instance.
         """
         if constraints is not None:
+            # Type checking: ensure all elements are Constraint instances
+            for constraint in constraints:
+                if not isinstance(constraint, Constraint):
+                    raise TypeError(f"Expected Constraint instance, but got {type(constraint).__name__} instance: {constraint}")
+            
             names = [constraint.name for constraint in constraints]
             if len(names) != len(set(names)):
                 raise ValueError("The model cannot have two constraints with the same name")

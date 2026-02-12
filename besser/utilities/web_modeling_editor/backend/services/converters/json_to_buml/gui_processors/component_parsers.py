@@ -148,7 +148,13 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
     # Parse instance_method flag
     if is_instance_str:
         is_instance_method = is_instance_str.lower() in ('true', '1', 'yes')
-        
+
+    # Infer instance method from run-method + instance-source even when the explicit flag is missing.
+    # This is common for BAL methods where instance semantics are represented with `this` instead of `self`.
+    is_run_method = str(action_button_type or "").lower() == "run-method"
+    if not is_instance_method and is_run_method and instance_source:
+        is_instance_method = True
+
     print(f"DEBUG PARSER: is_instance_method parsed = {is_instance_method}")
 
     # Also check attributes object as fallback
@@ -186,6 +192,11 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
             is_instance_str = attributes.get("instance-method") or attributes.get("data-instance-method")
             if is_instance_str:
                 is_instance_method = is_instance_str.lower() in ('true', '1', 'yes')
+
+        # Re-apply inference after attribute-level fallbacks.
+        is_run_method = str(action_button_type or "").lower() == "run-method"
+        if not is_instance_method and is_run_method and instance_source:
+            is_instance_method = True
         
         # Generate default label based on action
         if not label:

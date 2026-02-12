@@ -8,11 +8,15 @@ New Features
 
 - Added full **BESSER Action Language (BAL)** grammar support
 - Implemented a new **BAL editor** with syntax highlighting and error checking in the graphical UI.
+- Added BAL User documentation (Language overview and standard library description)
 
 **Web App Generator Enhancements**
 
-- Added support for BAL functions
+- Added support for BAL Methods
 - Added modal for return of functions in the web app generator, allowing users to easily view and utilize function outputs.
+
+**Backend Generator Enhancements**
+- Added support for BAL Methods
 
 Fixes
 -----

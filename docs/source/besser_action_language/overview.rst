@@ -244,7 +244,7 @@ BAL is a strongly typed language with a type system revolving around a set of pr
 Primitive and Sequence Types
 ^^^^^^^^^^^^^^^^^^^^^^^^
 Primitive types and sequences are directly embedded in the base language.
-Primitive types include: int, float, string, bool, nothing and any.
+Primitive types include: int, float, str, bool, nothing and any.
 These types can directly instantiated in the form of literals (e.g. ``1``, ``1.0``, ``"text"``, ``true``, ``null``)
 
 .. note::
@@ -306,7 +306,7 @@ For instance :
     f: [int, int?] -> nothing = func    // Matching types
     g: [int] -> nothing = func          // Matching types
     h: [int, int] -> nothing = func     // Matching types
-    i: [int, string] -> nothing = func  // Typechecking error
+    i: [int, str] -> nothing = func  // Typechecking error
 
 Furthermore, BAL also manage function subtyping checking parameters type contravariance and returns type covariance.
 

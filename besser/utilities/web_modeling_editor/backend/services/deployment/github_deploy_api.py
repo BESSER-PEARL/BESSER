@@ -143,10 +143,11 @@ async def deploy_webapp_to_github(
             buml_model
         )
         
-        # Check for agent diagram
+        # Check for agent diagram — only process if the model contains actual elements
         agent_model = None
         agent_diagram_data = diagrams.get("AgentDiagram", {})
-        if agent_diagram_data and agent_diagram_data.get("model"):
+        agent_model_data = agent_diagram_data.get("model", {}) if agent_diagram_data else {}
+        if agent_model_data and agent_model_data.get("elements"):
             agent_model = process_agent_diagram(agent_diagram_data)
         
         # Generate web app

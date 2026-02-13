@@ -9,9 +9,9 @@ from besser.BUML.notations.sourceCode_to_structural.config import \
 
 
 
-# Function to facilitate self-improvement of a PlantUML code representing GUI elements using the GPT-4o model
+# Function to facilitate self-improvement of a PlantUML code representing GUI elements using the GPT model
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4_self_improvement_plantUml(api_key, plantuml_code_content):
+def gpt_self_improvement_plantUml(api_key, plantuml_code_content):
 
 
     headers = {
@@ -51,12 +51,14 @@ def gpt4_self_improvement_plantUml(api_key, plantuml_code_content):
         },
     ]
 
+
+
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096   # replaces max_tokens
     }
+
 
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
 
@@ -71,18 +73,18 @@ def gpt4_self_improvement_plantUml(api_key, plantuml_code_content):
         return None
 
 
-# Function to call GPT-4o with the direct prompt method
+# Function to call GPT with the direct prompt method
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4o_call_palntUML(api_key, prompt, source_code_files_path, additional_text_file_path, first_code_file_example_path, second_code_file_example_path, third_code_file_example_path, fourth_code_file_example_path, plantuml_multiple_pages_code_example_path):
+def gpt_call_plantuml(api_key, prompt, source_code_files_path, additional_text_file_path, first_code_file_example_path, second_code_file_example_path, third_code_file_example_path, fourth_code_file_example_path, plantuml_multiple_pages_code_example_path):
 
 
     # the code to handle a folder path containing source code files
-    source_code_files_contnet = []
+    source_code_files_content = []
     for root, dirs, files in os.walk(source_code_files_path):
         for file in files:
             source_code_path = os.path.join(root, file)
             source_code_file_content = read_file_contents(source_code_path)
-            source_code_files_contnet.append(source_code_file_content)
+            source_code_files_content.append(source_code_file_content)
 
     # Read files
     first_code_file_example_content = read_file_contents(first_code_file_example_path)
@@ -116,7 +118,7 @@ def gpt4o_call_palntUML(api_key, prompt, source_code_files_path, additional_text
        }
    ]
     # Add code content for each source code file
-    for source_code_file_contnet in source_code_files_contnet:
+    for source_code_file_contnet in source_code_files_content:
         code_content = {
             "type": "text",
             "text": source_code_file_contnet
@@ -174,12 +176,15 @@ def gpt4o_call_palntUML(api_key, prompt, source_code_files_path, additional_text
         }
     )
 
+
+
+
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096   # replaces max_tokens
     }
+
 
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
 
@@ -196,7 +201,7 @@ def gpt4o_call_palntUML(api_key, prompt, source_code_files_path, additional_text
         return None
 
 
-# Function to send a direct prompt to GPT-4o for generating PlantUML code
+# Function to send a direct prompt to GPT for generating PlantUML code
 def direct_prompting_image_to_plantuml(api_key, source_code_files_path, additional_text_file_path):
 
 
@@ -226,8 +231,8 @@ def direct_prompting_image_to_plantuml(api_key, source_code_files_path, addition
 
 
 
-    # Call gpt4o_call to generate the PlantUML code using the direct prompt method
-    PlantUML_code = gpt4o_call_palntUML(api_key, direct_prompt, source_code_files_path, additional_text_file_path, first_code_file_example_path, second_code_file_example_path, third_code_file_example_path, fourth_code_file_example_path, plantuml_multiple_pages_code_example_path)
+    # Call gpt_call_plantuml to generate the PlantUML code using the direct prompt method
+    PlantUML_code = gpt_call_plantuml(api_key, direct_prompt, source_code_files_path, additional_text_file_path, first_code_file_example_path, second_code_file_example_path, third_code_file_example_path, fourth_code_file_example_path, plantuml_multiple_pages_code_example_path)
 
 
     return PlantUML_code
@@ -259,7 +264,7 @@ def run_pipeline_plantuml_generation(api_key: str, source_code_files_path: str,
 
 
     # Generate the revised PlantUML code using the self-improvement method"
-    improved_plantuml_code = gpt4_self_improvement_plantUml(api_key, plantuml_code)
+    improved_plantuml_code = gpt_self_improvement_plantUml(api_key, plantuml_code)
 
 
     # Save the generated code to a file

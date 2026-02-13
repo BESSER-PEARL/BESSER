@@ -6,7 +6,7 @@ from besser.BUML.notations.sourceCode_to_structural.config import first_code_fil
 
 
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4_self_improvement_plantuml_code(api_key, plantuml_code_content):
+def gpt_self_improvement_plantuml_code(api_key, plantuml_code_content):
 
 
     headers = {
@@ -53,10 +53,9 @@ def gpt4_self_improvement_plantuml_code(api_key, plantuml_code_content):
     ]
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
@@ -72,14 +71,14 @@ def gpt4_self_improvement_plantuml_code(api_key, plantuml_code_content):
 
 
 
-# Function to call GPT-4o with the direct prompt method
+# Function to call GPT with the direct prompt method
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4o_call_plantuml(api_key, prompt, source_code_content, first_code_file_example_path, plantuml_code_example_path):
+def gpt_call_plantuml(api_key, prompt, source_code_content, first_code_file_example_path, plantuml_code_example_path):
 
 
     # Read the content of example
-    first_code_file_example_path = read_file_contents(first_code_file_example_path)
-    plantuml_code_example = read_file_contents(plantuml_code_example_path)
+    first_code_file_example_content = read_file_contents(first_code_file_example_path)
+    plantuml_code_example_content = read_file_contents(plantuml_code_example_path)
 
 
     headers = {
@@ -118,11 +117,11 @@ def gpt4o_call_plantuml(api_key, prompt, source_code_content, first_code_file_ex
                 },
                 {
                     "type": "text",
-                    "text": f"You can view the UI code for the web page example: \n{first_code_file_example_path}"
+                    "text": f"You can view the UI code for the web page example: \n{first_code_file_example_content}"
                 },
                 {
                     "type": "text",
-                    "text": f"You can view the PlantUML code for the web page: [expected output]\n{plantuml_code_example}"
+                    "text": f"You can view the PlantUML code for the web page: [expected output]\n{plantuml_code_example_content}"
                 }
             ]
         }
@@ -130,10 +129,9 @@ def gpt4o_call_plantuml(api_key, prompt, source_code_content, first_code_file_ex
 
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096   # replaces max_tokens
     }
 
     response = requests.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
@@ -178,7 +176,7 @@ def direct_prompting_source_code_to_plantuml(api_key, source_code_content, first
     direct_prompt += "Using the provided code file and example PlantUML code, generate a single PlantUML file that encapsulates the entire application model, including classes, attributes, and relationships.\n"
 
 
-    plantuml_code = gpt4o_call_plantuml(api_key, direct_prompt, source_code_content, first_code_file_example_path, plantuml_code_example_path)
+    plantuml_code = gpt_call_plantuml(api_key, direct_prompt, source_code_content, first_code_file_example_path, plantuml_code_example_path)
 
 
     return plantuml_code
@@ -207,7 +205,7 @@ def run_pipeline_plantuml_generation(api_key: str, source_code_content: str, out
 
 
     # Generate the revised code using the self-improvement method
-    improved_plantuml_code = gpt4_self_improvement_plantuml_code(api_key, plantuml_code)
+    improved_plantuml_code = gpt_self_improvement_plantuml_code(api_key, plantuml_code)
 
     # Save the revised code to a file
     if improved_plantuml_code:
@@ -218,4 +216,3 @@ def run_pipeline_plantuml_generation(api_key: str, source_code_content: str, out
         #print(f"Generated PlantUML code saved to {output_file_name}")
     else:
         print("Failed to generate revised code.")
-

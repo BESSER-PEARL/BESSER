@@ -6,7 +6,7 @@ from besser.BUML.notations.sourceCode_to_buml.config import *
 
 # Function to fix string properties in a Python code representing GUI elements using an LLM model
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4_fix_string_properties(api_key, python_code, structural_model_path):
+def gpt_fix_string_properties(api_key, python_code, structural_model_path):
 
     structural_model_contents = read_file_contents(structural_model_path)
 
@@ -62,10 +62,9 @@ def gpt4_fix_string_properties(api_key, python_code, structural_model_path):
 
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
 
@@ -89,7 +88,7 @@ def gpt4_fix_string_properties(api_key, python_code, structural_model_path):
 
 # Function to facilitate self-improvement styling part of a Python code representing GUI elements using an LLM model
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4_self_improvement_styling_part(api_key, code_file_path, base64_metamodel, metamodel_text_path, python_code, styling_file_path):
+def gpt_self_improvement_styling_part(api_key, code_file_path, base64_metamodel, metamodel_text_path, python_code, styling_file_path):
 
     # Encode the image
     base64_metamodel = encode_image(metamodel_image_path)
@@ -172,10 +171,9 @@ def gpt4_self_improvement_styling_part(api_key, code_file_path, base64_metamodel
         )
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     response = requests.post(
@@ -197,7 +195,7 @@ def gpt4_self_improvement_styling_part(api_key, code_file_path, base64_metamodel
 
 # Function to enhance the Python GUI code with styling features (layout, color, size)
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4_styling_prompting(api_key, code_file_path, base64_metamodel,
+def gpt_styling_prompting(api_key, code_file_path, base64_metamodel,
                            metamodel_text_path, python_code, styling_file_path):
 
     # Encode the image
@@ -267,10 +265,9 @@ def gpt4_styling_prompting(api_key, code_file_path, base64_metamodel,
 
     # Define the API request payload
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     # Send the request to OpenAI API
@@ -295,7 +292,7 @@ def gpt4_styling_prompting(api_key, code_file_path, base64_metamodel,
 
 # Function to facilitate self-improvement of a Python code representing GUI elements using an LLM model
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4_self_improvement(api_key, code_file_path, base64_metamodel,
+def gpt_self_improvement(api_key, code_file_path, base64_metamodel,
                           metamodel_text_path, python_code,
                           structural_model_path):
 
@@ -393,10 +390,9 @@ def gpt4_self_improvement(api_key, code_file_path, base64_metamodel,
         )
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     response = requests.post(
@@ -418,7 +414,7 @@ def gpt4_self_improvement(api_key, code_file_path, base64_metamodel,
 
 # Function to call LLM with the direct prompt method
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4o_call(api_key, code_file_path, base64_metamodel, direct_prompt,
+def gpt_call(api_key, code_file_path, base64_metamodel, direct_prompt,
                first_example_source_code_path, second_example_source_code_path,
                first_example_gui_code_path, second_example_gui_code_path,
                metamodel_text_path, structural_model_path):
@@ -548,10 +544,9 @@ def gpt4o_call(api_key, code_file_path, base64_metamodel, direct_prompt,
         )
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     response = requests.post(
@@ -606,8 +601,8 @@ def direct_prompting(api_key, metamodel_image_path, code_file_path, first_exampl
     base64_metamodel = encode_image(metamodel_image_path)
 
 
-    # Call gpt4o_call to generate the Python code using the direct prompt method
-    python_code = gpt4o_call(api_key, code_file_path, base64_metamodel, direct_prompt,
+    # Call gpt_call to generate the Python code using the direct prompt method
+    python_code = gpt_call(api_key, code_file_path, base64_metamodel, direct_prompt,
                              first_example_source_code_path, second_example_source_code_path,
                              first_example_gui_code_path, second_example_gui_code_path,
                              metamodel_text_path, structural_model_path)
@@ -652,7 +647,7 @@ def run_pipeline_gui_generation(api_key, code_file_path, output_folder: str, sty
         print("Failed to generate Python code.")
 
     # Generate the revised Python code using the self-improvement method
-    improved_code = gpt4_self_improvement(api_key, code_file_path, metamodel_image_path,
+    improved_code = gpt_self_improvement(api_key, code_file_path, metamodel_image_path,
                                           metamodel_text_path, python_code, structural_model_path)
 
     # Save the generated revised code to a file
@@ -662,9 +657,9 @@ def run_pipeline_gui_generation(api_key, code_file_path, output_folder: str, sty
             file.write(improved_code)
         #print(f"Generated revised code saved to {output_file_name}")
     else:
-        print("Failed to generate revised code.")
+        print("Failed to generate revised codeeeee.")
 
-    final_code = gpt4_fix_string_properties (api_key, improved_code, structural_model_path)
+    final_code = gpt_fix_string_properties (api_key, improved_code, structural_model_path)
 
     # Save the generated code to a file
     if final_code:
@@ -677,7 +672,7 @@ def run_pipeline_gui_generation(api_key, code_file_path, output_folder: str, sty
 
 
     if styling_file_path:
-        styling_code = gpt4_styling_prompting(api_key, code_file_path, metamodel_image_path,
+        styling_code = gpt_styling_prompting(api_key, code_file_path, metamodel_image_path,
                                               metamodel_text_path, final_code, styling_file_path)
 
         if styling_code:
@@ -691,7 +686,7 @@ def run_pipeline_gui_generation(api_key, code_file_path, output_folder: str, sty
 
     if styling_file_path:
         # Generate the revised Python code using the self-improvement method
-        improved_styling_code = gpt4_self_improvement_styling_part(api_key, code_file_path, metamodel_image_path,
+        improved_styling_code = gpt_self_improvement_styling_part(api_key, code_file_path, metamodel_image_path,
                                                                    metamodel_text_path, styling_code, styling_file_path)
 
         # Save the generated revised code to a file

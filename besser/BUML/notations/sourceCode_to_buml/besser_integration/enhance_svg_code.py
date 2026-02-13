@@ -4,12 +4,12 @@ import retrying
 from besser.BUML.notations.sourceCode_to_buml.utilities import get_file_name
 
 
-# Function to enhance the generated SVG based on Norman’s Desirability Principle using GPT-4o
+# Function to enhance the generated SVG based on Norman’s Desirability Principle using GPT
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def enhance_svg_desirability(api_key, svg_code):
     """
     Enhances the given SVG code by improving its visual appeal based on Norman’s Desirability principle.
-    Uses GPT-4o to refine the design for aesthetics, inspiration, and user emotional impact.
+    Uses GPT to refine the design for aesthetics, inspiration, and user emotional impact.
 
     Args:
         api_key (str): OpenAI API key.
@@ -57,10 +57,9 @@ def enhance_svg_desirability(api_key, svg_code):
     ]
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     try:
@@ -79,12 +78,12 @@ def enhance_svg_desirability(api_key, svg_code):
         return None
 
 
-# Function to enhance the generated SVG based on Norman’s Findability Principle using GPT-4o
+# Function to enhance the generated SVG based on Norman’s Findability Principle using GPT
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def enhance_svg_findability(api_key, svg_code):
     """
     Enhances the given SVG code by improving findability, ensuring that users can quickly locate essential elements.
-    Uses GPT-4o to refine UI elements based on Norman’s Findability principle.
+    Uses GPT to refine UI elements based on Norman’s Findability principle.
 
     Args:
         api_key (str): OpenAI API key.
@@ -136,10 +135,9 @@ def enhance_svg_findability(api_key, svg_code):
     ]
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     try:
@@ -159,12 +157,12 @@ def enhance_svg_findability(api_key, svg_code):
         return None
 
 
-# Function to enhance the generrated SVG based on Norman’s usability Principle using GPT-4o
+# Function to enhance the generrated SVG based on Norman’s usability Principle using GPT
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def enhance_svg_usability(api_key, svg_code):
     """
     Enhances the given SVG code by improving its usability, ensuring simplicity, intuitive navigation, and efficiency.
-    Uses GPT-4o to refine UI elements based on Norman’s Usability principle.
+    Uses GPT to refine UI elements based on Norman’s Usability principle.
 
     Args:
         api_key (str): OpenAI API key.
@@ -218,10 +216,9 @@ def enhance_svg_usability(api_key, svg_code):
 
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     try:
@@ -242,12 +239,12 @@ def enhance_svg_usability(api_key, svg_code):
 
 
 
-# Function to enhance SVG usefulness based on Norman’s Usefulness Principle using GPT-4o
+# Function to enhance SVG usefulness based on Norman’s Usefulness Principle using GPT
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
 def enhance_svg_usefulness(api_key, svg_code):
     """
     Enhances the given SVG code by improving its usefulness, ensuring clarity, relevance, and task efficiency.
-    Uses GPT-4o to refine UI elements based on Norman’s Usefulness principle.
+    Uses GPT to refine UI elements based on Norman’s Usefulness principle.
 
     Args:
         api_key (str): OpenAI API key.
@@ -300,10 +297,9 @@ def enhance_svg_usefulness(api_key, svg_code):
 
     # Prepare the API request payload
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     try:

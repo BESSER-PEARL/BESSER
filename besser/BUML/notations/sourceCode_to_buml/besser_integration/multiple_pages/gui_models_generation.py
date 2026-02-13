@@ -39,7 +39,7 @@ def run_pipeline_gui_models_generation(api_key: str, source_code_folder_path: st
 
 
         # Generate the revised Python code using the self-improvement method"
-        improved_code = gpt4_self_improvement(api_key, source_code_path, metamodel_image_path,
+        improved_code = gpt_self_improvement(api_key, source_code_path, metamodel_image_path,
                                               metamodel_text_path, python_code, structural_model_path)
 
 
@@ -53,7 +53,7 @@ def run_pipeline_gui_models_generation(api_key: str, source_code_folder_path: st
         else:
             print("Failed to generate revise code.")
 
-        final_code = gpt4_fix_string_properties (api_key, improved_code, structural_model_path)
+        final_code = gpt_fix_string_properties (api_key, improved_code, structural_model_path)
 
         # Save the generated code to a file
         if final_code:
@@ -67,7 +67,7 @@ def run_pipeline_gui_models_generation(api_key: str, source_code_folder_path: st
 
 
         if styling_file_path:
-            styling_code = gpt4_styling_prompting(api_key, source_code_path,
+            styling_code = gpt_styling_prompting(api_key, source_code_path,
                                                   metamodel_image_path, metamodel_text_path,
                                                   final_code, styling_file_path)
 
@@ -80,7 +80,7 @@ def run_pipeline_gui_models_generation(api_key: str, source_code_folder_path: st
             else:
                 print("Failed to generate revise code.")
 
-            improved_styling_code = gpt4_self_improvement_styling_part(api_key, source_code_path,
+            improved_styling_code = gpt_self_improvement_styling_part(api_key, source_code_path,
                                                                        metamodel_image_path,
                                                                        metamodel_text_path,
                                                                        styling_code, styling_file_path)

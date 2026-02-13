@@ -14,7 +14,7 @@ from besser.BUML.notations.sourceCode_to_buml.config import (
 
 
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4_fix_string_property_references(api_key, python_code, structural_model_path):
+def gpt_fix_string_property_references(api_key, python_code, structural_model_path):
     # Encode the images
 
     structural_model_contents = read_file_contents(structural_model_path)
@@ -23,22 +23,6 @@ def gpt4_fix_string_property_references(api_key, python_code, structural_model_p
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
     }
-
-    #revise_prompt = "Please consider the Python code provided below.\n"
-    #revise_prompt += "Ensure using the actual Property objects (already defined in the structural model), not strings.\n"
-    #revise_prompt += "After revising the Python code, please reply with the updated version.\n"y
-
-
-    #revise_prompt = """
-    #Please consider the Python code provided below. Your task is to revise the code with the following goals:
-
-    #1. Ensure that all references to screen objects are **only used after they have been defined**.
-    #2. Never use forward-references to screens that have not yet been declared.
-    #3. Make sure that **Property** objects defined in the structural model are reused directly instead of redefining them or using strings.
-    #4. If an element refers to another (like a `Button` linking to a screen), ensure that referenced screen is already declared **before** it's used.
-
-    #Please return the revised Python code with the above corrections applied.
-    #"""
 
     revise_prompt = """
     You are given a Python code snippet that defines a structural and GUI model for an application. Please revise the code with the following objectives:
@@ -94,10 +78,9 @@ def gpt4_fix_string_property_references(api_key, python_code, structural_model_p
         )
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     response = requests.post(
@@ -108,9 +91,6 @@ def gpt4_fix_string_property_references(api_key, python_code, structural_model_p
 
     response_json = response.json()
 
-    # Print the response JSON
-    #print("Response JSON:")
-    #print(json.dumps(response_json, indent=4))  # Print with indentation for better readability
 
     try:
         completed_code = response_json['choices'][0]['message']['content']
@@ -123,13 +103,13 @@ def gpt4_fix_string_property_references(api_key, python_code, structural_model_p
 
 
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4_add_navigation_between_screens(api_key, python_code, navigation_image_path, pages_order_file_path):
+def gpt_add_navigation_between_screens(api_key, python_code, navigation_image_path, pages_order_file_path):
     # Encode the images
     if navigation_image_path:
         base64_navigation = encode_image(navigation_image_path)
 
     if pages_order_file_path:
-        pages_order_file_path = read_file_contents(pages_order_file_path)
+        pages_order_file_content = read_file_contents(pages_order_file_path)
 
     headers = {
         "Content-Type": "application/json",
@@ -190,17 +170,16 @@ def gpt4_add_navigation_between_screens(api_key, python_code, navigation_image_p
                 "content": [
                     {
                         "type": "text",
-                        "text": "To view the order of pages, refer to the following file: [expected output]\n{pages_order_file_path}"
+                        "text": f"To view the order of pages, refer to the following file: [expected output]\n{pages_order_file_content}"
                     }
                 ]
             }
         )
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
 
@@ -212,9 +191,6 @@ def gpt4_add_navigation_between_screens(api_key, python_code, navigation_image_p
 
     response_json = response.json()
 
-    # Print the response JSON
-    #print("Response JSON:")
-    #print(json.dumps(response_json, indent=4))  # Print with indentation for better readability
 
     try:
         completed_code = response_json['choices'][0]['message']['content']
@@ -225,7 +201,7 @@ def gpt4_add_navigation_between_screens(api_key, python_code, navigation_image_p
 
 
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4_refactor(api_key, python_code):
+def gpt_refactor(api_key, python_code):
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}"
@@ -260,10 +236,9 @@ def gpt4_refactor(api_key, python_code):
 
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     response = requests.post(
@@ -275,9 +250,6 @@ def gpt4_refactor(api_key, python_code):
 
     response_json = response.json()
 
-    # Print the response JSON
-    #print("Response JSON:")
-    #print(json.dumps(response_json, indent=4))  # Print with indentation for better readability
 
     try:
         refactored_code = response_json['choices'][0]['message']['content']
@@ -286,9 +258,9 @@ def gpt4_refactor(api_key, python_code):
         print(f"Error occurred: {e}")
         return None
 
-# Function to facilitate self-improvement of a Python code representing GUI elements using the GPT-4o model
+# Function to facilitate self-improvement of a Python code representing GUI elements using the GPT model
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4_self_improvement_whole_app(api_key, base64_metamodel, gui_models_paths, metamodel_text_path, python_code, structural_model_path):
+def gpt_self_improvement_whole_app(api_key, base64_metamodel, gui_models_paths, metamodel_text_path, python_code, structural_model_path):
 
     # Encode the images
     base64_metamodel = encode_image(metamodel_image_path)
@@ -400,10 +372,9 @@ def gpt4_self_improvement_whole_app(api_key, base64_metamodel, gui_models_paths,
 
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     response = requests.post("" \
@@ -415,10 +386,6 @@ def gpt4_self_improvement_whole_app(api_key, base64_metamodel, gui_models_paths,
 
     response_json = response.json()
 
-    # Print the response JSON
-    #print("Response JSON:")
-    #print(json.dumps(response_json, indent=4))  # Print with indentation for better readability
-
     try:
         improved_code = response_json['choices'][0]['message']['content']
         return improved_code
@@ -426,9 +393,9 @@ def gpt4_self_improvement_whole_app(api_key, base64_metamodel, gui_models_paths,
         return None
 
 
-# Function to call GPT-4o with the direct prompt method
+# Function to call GPT with the direct prompt method
 @retrying.retry(stop_max_attempt_number=3, wait_fixed=2000)
-def gpt4o_call_whole_app(api_key, base64_metamodel, prompt, gui_models_paths, first_gui_code_path, second_gui_code_path, third_gui_code_path, fourth_gui_code_path, single_gui_code_path, metamodel_text_path, structural_model_path):
+def gpt_call_whole_app(api_key, base64_metamodel, prompt, gui_models_paths, first_gui_code_path, second_gui_code_path, third_gui_code_path, fourth_gui_code_path, single_gui_code_path, metamodel_text_path, structural_model_path):
 
     # Encode the images
     base64_metamodel = encode_image(metamodel_image_path)
@@ -558,10 +525,9 @@ def gpt4o_call_whole_app(api_key, base64_metamodel, prompt, gui_models_paths, fi
 
 
     payload = {
-        "model": "gpt-4o",
+        "model": "gpt-5.2",
         "messages": messages,
-        "max_tokens": 4096,
-        "temperature": 0.0
+        "max_completion_tokens": 4096
     }
 
     response = requests.post(
@@ -573,9 +539,6 @@ def gpt4o_call_whole_app(api_key, base64_metamodel, prompt, gui_models_paths, fi
     response_json = response.json()
 
 
-    # Print the response JSON
-    #print("Response JSON:")
-    #print(json.dumps(response_json, indent=4))  # Print with indentation for better readability
 
     try:
         python_code = response_json['choices'][0]['message']['content']
@@ -616,8 +579,8 @@ def direct_prompting_whole_app(api_key, metamodel_image_path, gui_models_paths, 
     # Encode the images
     base64_metamodel = encode_image(metamodel_image_path)
 
-    # Call gpt4o_call to generate the Python code using the direct prompt method
-    python_code = gpt4o_call_whole_app(api_key, base64_metamodel, direct_prompt, gui_models_paths, first_gui_code_path, second_gui_code_path, third_gui_code_path, fourth_gui_code_path, single_gui_code_path, metamodel_text_path, structural_model_path)
+    # Call gpt_call_whole_app to generate the Python code using the direct prompt method
+    python_code = gpt_call_whole_app(api_key, base64_metamodel, direct_prompt, gui_models_paths, first_gui_code_path, second_gui_code_path, third_gui_code_path, fourth_gui_code_path, single_gui_code_path, metamodel_text_path, structural_model_path)
 
 
     return python_code
@@ -648,58 +611,22 @@ def run_pipeline_gui_model_generation(api_key: str, navigation_image_path: str, 
                                              single_gui_code_path, metamodel_text_path,
                                              structural_model_path)
 
-    # Save the generated code to a file
-    #if python_code:
-        # Specify the desired output file name
-        #output_file_name = os.path.join(gui_output_dir, "generated_gui_model_1.py")
-        #with open(output_file_name, "w", encoding="utf-8") as file:
-            #file.write(python_code)
-        #print(f"Generated Python code saved to {output_file_name}")
-    #else:
-        #print("Failed to generate Python code.")
 
 
     # Generate the revised Python code using the self-improvement method"
-    improved_code = gpt4_self_improvement_whole_app(api_key, metamodel_image_path, gui_models_paths,
+    improved_code = gpt_self_improvement_whole_app(api_key, metamodel_image_path, gui_models_paths,
                                                     metamodel_text_path, python_code, structural_model_path)
 
-    # Save the generated code to a file
-    #if improved_code:
-        # Specify the desired output file name
-        #output_file_name = os.path.join(gui_output_dir, "generated_gui_model_2.py")
-        #with open(output_file_name, "w", encoding="utf-8") as file:
-            #file.write(improved_code)
-        #print(f"Generated revise code saved to {output_file_name}")
-    #else:
-        #print("Failed to generate revise code.")
+
+    refactored_code = gpt_refactor(api_key, improved_code)
 
 
-    refactored_code = gpt4_refactor(api_key, improved_code)
-    # Save the generated code to a file
-    #if refactored_code:
-        # Specify the desired output file name
-        #output_file_name = os.path.join(gui_output_dir, "generated_gui_model_3.py")
-        #with open(output_file_name, "w", encoding="utf-8") as file:
-            #file.write(refactored_code)
-        #print(f"Generated refactor code saved to {output_file_name}")
-    #else:
-        #print("Failed to generate revise code.")
 
-
-    completed_code = gpt4_add_navigation_between_screens(api_key, refactored_code,
+    completed_code = gpt_add_navigation_between_screens(api_key, refactored_code,
                                                          navigation_image_path,
                                                          pages_order_file_path)
-    # Save the generated code to a file
-    #if completed_code:
-        # Specify the desired output file name
-        #output_file_name = os.path.join(gui_output_dir, "generated_gui_model_4.py")
-        #with open(output_file_name, "w", encoding="utf-8") as file:
-            #file.write(completed_code)
-        #print(f"Generated complete code saved to {output_file_name}")
-    #else:
-        #print("Failed to generate revise code.")
 
-    final_code = gpt4_fix_string_property_references (api_key, completed_code, structural_model_path)
+    final_code = gpt_fix_string_property_references (api_key, completed_code, structural_model_path)
     # Save the generated code to a file
     if final_code:
         output_file_name = os.path.join(gui_output_dir, "generated_gui_model.py")

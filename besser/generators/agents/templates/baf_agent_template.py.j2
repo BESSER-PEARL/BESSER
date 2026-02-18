@@ -98,6 +98,7 @@ context_prompts['{{ profile_slug }}'] = build_agent_configuration_prompt(agent_c
 profile_prompts['{{ profile_slug }}'] = build_user_profile_prompt(user_profiles['{{ profile_slug }}'])
 {% endif %}
 {% endfor %}
+agent.set_agent_configurations(agent_configurations)
 {% endif %}
 {% if personalized_messages is defined and personalized_messages %}
 personalized_messages = json.loads(r'''{{ personalized_messages | tojson(indent=2) }}''')

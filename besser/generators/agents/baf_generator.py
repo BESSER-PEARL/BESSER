@@ -10,7 +10,7 @@ from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.structural import Method
 from besser.generators import GeneratorInterface
 
-from besser.generators.agents.agent_personalization import personalize_agent, configure_agent
+from besser.generators.agents.agent_personalization import configure_agent
 
 # BESSER utilities
 from besser.utilities.buml_code_builder import (

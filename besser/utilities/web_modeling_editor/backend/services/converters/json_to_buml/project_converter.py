@@ -24,6 +24,7 @@ def json_to_buml_project(project):
     description = project.description or ""
 
     # List of diagram names to check
+    
     diagram_names = [
         "ClassDiagram",
         "ObjectDiagram",
@@ -32,6 +33,7 @@ def json_to_buml_project(project):
         "GUINoCodeDiagram",
         "QuantumCircuitDiagram",
         "UserDiagram",
+        "NNDiagram",
     ]
     diagrams = {}
 
@@ -75,6 +77,7 @@ def json_to_buml_project(project):
                     elements = diag.model.get("elements")
                 else:
                     elements = getattr(diag.model, "elements", None)
+
             if diag and elements:
                 diagrams[d_name] = diag
             else:
@@ -143,8 +146,7 @@ def json_to_buml_project(project):
             gui_model = process_gui_diagram(gui_json, class_json, domain_model)
             model_list.append(gui_model)
         else:
-            # GUI diagram exists but no ClassDiagram - skip GUI processing
-            print("Warning: GUINoCodeDiagram found but ClassDiagram is missing. Skipping GUI processing.")
+            pass  # GUI diagram exists but no ClassDiagram - skip GUI processing
 
     # Process QuantumCircuitDiagram if it exists
     quantum_model_py = diagrams.get("QuantumCircuitDiagram")
@@ -152,6 +154,13 @@ def json_to_buml_project(project):
         from .quantum_diagram_processor import process_quantum_diagram
         quantum_model = process_quantum_diagram(quantum_model_py.model_dump())
         model_list.append(quantum_model)
+
+    # Process NNDiagram if it exists
+    nn_model_py = diagrams.get("NNDiagram")
+    if nn_model_py:
+        from .nn_diagram_processor import process_nn_diagram
+        nn_model = process_nn_diagram(nn_model_py.model_dump())
+        model_list.append(nn_model)
 
     metadata = Metadata(description=description)
 

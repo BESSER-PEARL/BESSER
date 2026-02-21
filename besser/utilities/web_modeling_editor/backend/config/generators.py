@@ -14,6 +14,8 @@ from besser.generators.json import JSONSchemaGenerator, JSONObjectGenerator
 from besser.generators.agents.baf_generator import BAFGenerator
 from besser.generators.web_app import WebAppGenerator
 from besser.generators.qiskit import QiskitGenerator
+from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
+from besser.generators.nn.tf.tf_code_generator import TFGenerator
 
 
 class GeneratorInfo(NamedTuple):
@@ -122,6 +124,22 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="quantum",
         requires_class_diagram=False
     ),
+
+    # Neural Network generators (NN diagram based)
+    "pytorch": GeneratorInfo(
+        generator_class=PytorchGenerator,
+        output_type="file",
+        file_extension=".py",
+        category="neural_network",
+        requires_class_diagram=False
+    ),
+    "tensorflow": GeneratorInfo(
+        generator_class=TFGenerator,
+        output_type="file",
+        file_extension=".py",
+        category="neural_network",
+        requires_class_diagram=False
+    ),
 }
 
 
@@ -135,7 +153,7 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
     info = get_generator_info(generator_type)
     if not info:
         return f"{base_name}.txt"
-    
+
     if generator_type == "python":
         return "classes.py"
     elif generator_type == "pydantic":
@@ -150,6 +168,10 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "object_model.json"
     elif generator_type == "qiskit":
         return "qiskit_circuit.py"
+    elif generator_type == "pytorch":
+        return "pytorch_nn_subclassing.py"
+    elif generator_type == "tensorflow":
+        return "tf_nn_subclassing.py"
     else:
         return f"{generator_type}_output{info.file_extension}"
 

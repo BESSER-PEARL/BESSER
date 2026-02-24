@@ -9,6 +9,9 @@ from . import (
 )
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
+from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+    domain_model as user_reference_domain_model,
+)
 
 
 def json_to_buml_project(project):
@@ -21,7 +24,15 @@ def json_to_buml_project(project):
     description = project.description or ""
 
     # List of diagram names to check
-    diagram_names = ["ClassDiagram", "ObjectDiagram", "StateMachineDiagram", "AgentDiagram", "GUINoCodeDiagram", "QuantumCircuitDiagram"]
+    diagram_names = [
+        "ClassDiagram",
+        "ObjectDiagram",
+        "StateMachineDiagram",
+        "AgentDiagram",
+        "GUINoCodeDiagram",
+        "QuantumCircuitDiagram",
+        "UserDiagram",
+    ]
     diagrams = {}
 
     # Filter out empty diagrams (those without elements)
@@ -51,7 +62,7 @@ def json_to_buml_project(project):
                     cols = diag.model.get("cols")
                 else:
                     cols = getattr(diag.model, "cols", None)
-                if diag and cols is not None: # Empty list is valid
+                if diag and cols is not None:  # Empty list is valid
                     diagrams[d_name] = diag
                 else:
                     diagrams[d_name] = None
@@ -85,6 +96,16 @@ def json_to_buml_project(project):
         object_model = process_object_diagram(object_model_py.model_dump(), domain_model)
         model_list.append(object_model)
 
+    # User diagrams behave like object diagrams for conversion purposes
+    user_model_py = diagrams.get("UserDiagram")
+    if user_model_py:
+        # Use the dedicated user reference domain so user diagrams resolve classes even
+        # when the project does not include the corresponding class diagram.
+        user_model = process_object_diagram(
+            user_model_py.model_dump(), user_reference_domain_model
+        )
+        model_list.append(user_model)
+
     # Process AgentDiagram if it exists
     agent_model_py = diagrams.get("AgentDiagram")
     if agent_model_py:
@@ -115,13 +136,15 @@ def json_to_buml_project(project):
             else:
                 class_json = class_diagram_json
             
-            print(f"[GUI Processing] GUI diagram has pages: {bool(gui_json.get('pages') if isinstance(gui_json, dict) else False)}")
+            print(
+                "[GUI Processing] GUI diagram has pages: "
+                f"{bool(gui_json.get('pages') if isinstance(gui_json, dict) else False)}"
+            )
             gui_model = process_gui_diagram(gui_json, class_json, domain_model)
             model_list.append(gui_model)
         else:
             # GUI diagram exists but no ClassDiagram - skip GUI processing
             print("Warning: GUINoCodeDiagram found but ClassDiagram is missing. Skipping GUI processing.")
-
 
     # Process QuantumCircuitDiagram if it exists
     quantum_model_py = diagrams.get("QuantumCircuitDiagram")

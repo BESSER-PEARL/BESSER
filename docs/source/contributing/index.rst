@@ -12,8 +12,11 @@ repeatable steps when extending BESSER (from the B-UML language to the code gene
    :maxdepth: 1
 
    areas
+   ../contributor_guide
+   ../ai_assistant_guide
    create_generator
-   create_subdsl
+   create_dsl
+   diagram_dsl_workflow
 
 Our Team
 --------

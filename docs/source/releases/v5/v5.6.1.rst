@@ -1,0 +1,42 @@
+Version 5.6.1
+=============
+
+New Features
+------------
+
+* Added feedback in the Community menu, allowing users to easily submit feedback alongside Contributing Guide and Report a Problem links
+
+Improvements
+------------
+
+**SQLAlchemy Generator - Joined Table Inheritance Fix**
+
+* Fixed inheritance condition detection for abstract parent classes in joined table inheritance
+* Child classes now correctly generate foreign key columns to abstract parent tables
+
+Example of fixed inheritance:
+
+.. code-block:: python
+
+    class Louable(Base):
+        __tablename__ = "louable"
+        id: Mapped[int] = mapped_column(primary_key=True)
+        nom: Mapped[str] = mapped_column(String(100))
+        type_spec: Mapped[str] = mapped_column(String(50))
+        __mapper_args__ = {
+            "polymorphic_identity": "louable",
+            "polymorphic_on": "type_spec",
+        }
+
+    class Prestations(Louable):
+        __tablename__ = "prestations"
+        id: Mapped[int] = mapped_column(ForeignKey("louable.id"), primary_key=True)
+        description: Mapped[str] = mapped_column(String(100))
+        residence_2_id: Mapped[int] = mapped_column(ForeignKey("residence.id"))
+
+
+Bug Fixes
+---------
+
+* Fixed ``NoForeignKeysError`` when generating SQLAlchemy models with abstract parent classes in joined table inheritance
+* Template condition in ``sql_alchemy_template.py.j2`` now correctly handles abstract classes

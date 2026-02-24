@@ -1,10 +1,9 @@
-from datetime import datetime, date
-from typing import List, Optional, Union, Set
+from datetime import datetime, date, time
+from typing import Any, List, Optional, Union, Set
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
-{% set ns = namespace(abstract_found=false, id_found = false, same_name_found = false )-%}
-{% set processed_associations = [] %}
+{% set ns = namespace(abstract_found=false, id_found = false, same_name_found = false, has_field = false )-%}
 {% for class in domain.get_classes() -%}
     {% if class.is_abstract -%}
         {% set ns.abstract_found = true -%}
@@ -30,18 +29,32 @@ class {{ enum.name }}(Enum):
 ############################################
 # Classes are defined here
 ############################################
-{% for class in domain.get_classes() %}
+{% for class in sorted_classes %}
 class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}({% for parent in class.parents() %}{{parent.name}}{% if backend %}Create{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}){% elif class.is_abstract %}(ABC, BaseModel){% else %}(BaseModel){% endif %}:
-    {% set ns.id_found = false %}
+    {% set ns.id_found = false -%}
+    {% set ns.has_field = false %}
+    {%- set inherited_attr_names = [] -%}
+    {%- if class.parents() -%}
+        {%- for attr in class.inherited_attributes() -%}
+            {%- do inherited_attr_names.append(attr.name) -%}
+        {%- endfor -%}
+    {%- endif %}
     {% for attribute in class.attributes %}
-    {{ attribute.name }}: {{ attribute.type.name }}{% if attribute.is_id %}  # the id{% endif %}
+        {%- if attribute.is_id or attribute.name == 'id' %}
+            {%- set ns.id_found = true %}
+        {%- endif %}
+        {%- if attribute.name not in inherited_attr_names %}
+    {{ attribute.name }}: {{ 'Any' if attribute.type.name == 'any' else attribute.type.name }}{% if attribute.is_id %}  # the id{% endif %}
+    {% set ns.has_field = true %}
 
+        {% endif %}
     {% endfor %}
-    {% if not ns.id_found and not ns.same_name_found and not backend %}
+    {%- if not ns.id_found and not backend and not class.parents() %}
     id: int  # id created
+    {% set ns.has_field = true %}
     {% endif %}
     {%- for association in class.associations %}
-        {%- if association.ends|length == 2 and association.name not in processed_associations %}
+        {%- if association.ends|length == 2 %}
             {%- set ns.end1 = none %}
             {%- set ns.end2 = none %}
             {%- for end in association.ends %}
@@ -56,28 +69,94 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                     {%- if nested_creations %}
                         {%- if backend %}
     {{ ns.end2.name }}: Optional[List[Union["{{ ns.end2.type.name }}Create", int]]] = None  # N:M Relationship
+    {% set ns.has_field = true %}
                         {% endif %}
                         {%- if not backend %}
     {{ ns.end2.name }}: Set["{{ ns.end2.type.name }}"]  # N:M Relationship
+    {% set ns.has_field = true %}
                         {%- endif %}
                     {%- else %}
-    {{ ns.end2.name }}: List[int]
+    {{ ns.end2.name }}: List[int]  # N:M Relationship
+    {% set ns.has_field = true %}
+                    {% endif %}
+                {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+                    {%- if backend %}
+                        {%- set has_fk = (fkeys.get(association.name, [''])[0] == class.name) -%}
+                        {%- if has_fk %}
+                            {%- if ns.end2.multiplicity.min > 0 %}
+    {{ ns.end2.name }}: int  # N:1 Relationship (mandatory)
+    {% set ns.has_field = true %}
+                            {% else %}
+    {{ ns.end2.name }}: Optional[int] = None  # N:1 Relationship (optional)
+    {% set ns.has_field = true %}
+                            {% endif %}
+                        {%- endif %}
+                    {% else %}
+    {{ ns.end2.name }}: "{{ ns.end2.type.name }}"  # N:1 Relationship
+    {% set ns.has_field = true %}
+                    {% endif %}
+                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
+                    {%- if backend %}
+    {{ ns.end2.name }}: Optional[List[int]] = None  # 1:N Relationship
+    {% set ns.has_field = true %}
+                    {% else %}
+    {{ ns.end2.name }}: List["{{ ns.end2.type.name }}"]  # 1:N Relationship
+    {% set ns.has_field = true %}
+                    {% endif %}
+                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+                    {%- if backend %}
+                        {%- set has_fk = (fkeys.get(association.name, [''])[0] == class.name) -%}
+                        {%- if has_fk %}
+                            {%- if ns.end2.multiplicity.min > 0 %}
+    {{ ns.end2.name }}: int  # 1:1 Relationship (mandatory)
+    {% set ns.has_field = true %}
+                            {% else %}
+    {{ ns.end2.name }}: Optional[int] = None  # 1:1 Relationship (optional)
+    {% set ns.has_field = true %}
+                            {% endif %}
+                        {%- else %}
+                            {%- if ns.end2.multiplicity.min > 0 %}
+    {{ ns.end2.name }}: int  # 1:1 Relationship (mandatory)
+    {% set ns.has_field = true %}
+                            {% else %}
+    {{ ns.end2.name }}: Optional[int] = None  # 1:1 Relationship (optional)
+    {% set ns.has_field = true %}
+                            {% endif %}
+                        {%- endif %}
+                    {% else %}
+    {{ ns.end2.name }}: "{{ ns.end2.type.name }}"  # 1:1 Relationship
+    {% set ns.has_field = true %}
                     {% endif %}
                 {%- endif %}
-                {% if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
-    {{ ns.end2.name }}: int  # N:1 Relationship
-                {% endif %}
-                {%- if ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 and not backend %}
-    {{ ns.end2.name }}: "{{ ns.end2.type.name }}"  # 1:1 Relationship
-                {% endif %}
-            {%- endif %}
-            {%- if not backend %}
-                {%- do processed_associations.append(association.name) %}
             {%- endif %}
         {%- endif %}
     {%- endfor %}
-    {%- if not class.attributes and not class.associations %}
+    {%- if not ns.has_field %}
     pass
     {% endif %}
+    {# OCL Constraint Validators #}
+    {%- if constraints_map and class.name in constraints_map %}
+    {%- for constraint in constraints_map[class.name] %}
 
+    @field_validator('{{ constraint.property }}')
+    @classmethod
+    def validate_{{ constraint.property }}_{{ loop.index }}(cls, v):
+        """OCL Constraint: {{ constraint.constraint_name }}"""
+        {% if constraint.python_expression is defined %}
+        if not ({{ constraint.python_expression }}):
+            raise ValueError('{{ constraint.message }}')
+        {% else %}
+        if not (v {{ constraint.python_operator }} {{ constraint.value_repr }}):
+            raise ValueError('{{ constraint.property }} must be {{ constraint.python_operator }} {{ constraint.value_repr }}')
+        {% endif %}
+        return v
+    {%- endfor %}
+    {%- endif %}
+
+{% set ascii_name = class.name | ascii_identifier %}
+{% if ascii_name and ascii_name != class.name and ascii_name not in class_names %}
+{{ ascii_name }}{% if backend %}Create{% endif %} = {{ class.name }}{% if backend %}Create{% endif %}
+{% endif %}
+
+{# Spacing #}
 {% endfor %}

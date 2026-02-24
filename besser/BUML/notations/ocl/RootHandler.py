@@ -17,11 +17,14 @@ class Root_Handler:
         self.om = om
         self.factory = Factory(None)
         self.all = []
+        self.iterators_context = {}
         self.context = None
         self.invariant = False
         self.pre = False
         self.post = False
         self.if_else_roots = []
+        self.context_queue = []
+
         self.context_name = ""
     def set_context(self,context):
         self.factory.context= context
@@ -85,7 +88,7 @@ class Root_Handler:
         return self.factory.create_property_Call_Expression(prop, "NP")
 
     def handle_property(self, prop):
-        self.add_to_root(self.factory.create_property_Call_Expression(prop, "NP"))
+        self.add_to_root(self.factory.create_property_Call_Expression(prop, "NP",iterators_context = self.iterators_context))
 
     def get_context_name(self):
         return self.context_name
@@ -228,6 +231,16 @@ class Root_Handler:
             collectionOperator = "reject"
 
         # print("Collection Operator: " + collectionOperator)
+        if "|" in oclExp:
+
+            multiple_iterators = oclExp.split("|")[0].split("(")[1]
+            iterators = multiple_iterators.split(",")
+            for iterator in iterators:
+                iterator_parts = iterator.split(":")
+
+                iterator_variable = iterator_parts[0]
+                iterator_class = self.getClass(iterator_parts[1])
+                self.iterators_context[iterator_variable]=iterator_class
         self.handleColl(oclExp, collectionOperator)
 
     def handle_single_variable(self, variable_name, sign):

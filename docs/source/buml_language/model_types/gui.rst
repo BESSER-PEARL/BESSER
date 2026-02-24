@@ -48,4 +48,4 @@ Supported Notations
 You can create and manipulate GUI models using:
 
 * :doc:`Coding in Python Using the B-UML python library <../model_building/buml_core>`
-* :doc:`Web Modeling Editor <../../web_modeling_editor/use_the_wme>`
+* :doc:`Web Modeling Editor <../../web_editor>`

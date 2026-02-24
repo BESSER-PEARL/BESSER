@@ -14,3 +14,4 @@ B-UML Language
    BUML/metamodel/api_feature
    BUML/notations/plantUML/api_plantuml
    BUML/notations/image2buml/image
+   BUML/notations/kg2buml/kg

@@ -1,24 +1,31 @@
 B-UML Code Builder
-=====================
+==================
 
-The B-UML code builder component provides functionality to generate Python code from B-UML domain models. This generated code
-can be used to recreate the model programmatically.
+The B-UML code builder provides functions to generate Python code from B-UML models.
+This output can be used to recreate models programmatically or as a starting point
+for custom generators.
 
-Code Generation
-------------------
+Available entry points
+----------------------
 
-To generate Python code from a B-UML domain model, you can use the ``domain_model_to_code()`` function as follows:
+* ``domain_model_to_code`` - structural (class diagram) models
+* ``agent_model_to_code`` - agent models
+* ``gui_model_to_code`` - GUI models
+* ``project_to_code`` - full projects that bundle multiple diagrams
+
+Domain model generation
+-----------------------
+
+To generate Python code from a B-UML domain model, use ``domain_model_to_code()``:
 
 .. code-block:: python
 
     from besser.BUML.metamodel.structural import DomainModel
     from besser.utilities import buml_code_builder
 
-    # Assuming you have a domain model instance
     model: DomainModel = DomainModel(name="MyModel")
     # ... model definition ...
 
-    # Generate Python code
     buml_code_builder.domain_model_to_code(model=model, file_path="output/generated_model.py")
 
 The generated code will include:
@@ -28,15 +35,20 @@ The generated code will include:
 * All relationships (associations and generalizations)
 * A complete domain model instance that can be used to recreate the model
 
-The generated file structure follows this pattern:
+Agent / GUI / Project generation
+--------------------------------
 
-1. Required imports
-2. Enumeration definitions
-3. Class definitions
-4. Class members (attributes and methods)
-5. Relationship definitions
-6. Domain model instantiation
+Use the specialized helpers in the same way:
+
+.. code-block:: python
+
+    from besser.utilities import buml_code_builder
+
+    buml_code_builder.agent_model_to_code(agent_model, file_path="output/agent.py")
+    buml_code_builder.gui_model_to_code(gui_model, file_path="output/gui.py")
+    buml_code_builder.project_to_code(project_model, file_path="output/project.py")
 
 .. note::
-    
-    For a detailed description of the code builder please refer to the :doc:`API documentation <../api/api_utilities>`.
+
+    For a detailed description of the code builder APIs, see
+    :doc:`API documentation <../api/utilities/api_buml_code_builder>`.

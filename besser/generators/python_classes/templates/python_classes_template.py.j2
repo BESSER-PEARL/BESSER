@@ -110,6 +110,11 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
 {% endfor -%}
 
     {%- for method in class.methods %}
+    {%- if method.code %}
+    {#- If method has code, use it directly (it contains the full function definition) #}
+{{ method.code | indent(4, first=true) }}
+    {%- else %}
+    {#- Otherwise generate method signature from metadata #}
     {%- if method.is_abstract %}
     @abstractmethod
     {%- endif %}
@@ -120,6 +125,7 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
         # TODO: Implement {{ method.name }} method
         pass
         {%- endif %}
+    {%- endif %}
 {% endfor -%}
 {%- else %}
     pass

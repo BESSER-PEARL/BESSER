@@ -1,0 +1,36 @@
+Version 6.2.0
+==============
+
+This release refreshes the web app generator frontend stack, fixes React
+generation issues, and improves deployment defaults.
+
+New Features
+-------------
+
+**Frontend generator architecture refresh**
+
+- The web app generator now creates a page component per screen instead of
+  relying on a runtime renderer, making the frontend easier to read, customize,
+  and maintain.
+
+**Vite migration for generated frontends**
+
+- The React template now uses Vite for development and production builds.
+- Generated apps build to the ``build`` folder for compatibility with existing
+  deployment workflows.
+
+
+Fixes
+------
+
+- **Web app generator**: Navigation parsing now preserves mixed content (logo, links, footer) instead
+  of collapsing into a stripped menu.
+- Validation toasts now stay within the viewport instead of overflowing to the right.
+- Fixes #390: Render deploy frontend no longer bakes an incorrect backend URL when service names are auto-suffixed.
+- Fixes #389: Replace the runtime renderer with per-page generation to make the webapp output maintainable.
+
+Breaking Changes
+----------------
+
+- Frontend environment variables now use ``VITE_API_URL`` and
+  ``VITE_AGENT_URL``. Update any existing deployment or local ``.env`` files.

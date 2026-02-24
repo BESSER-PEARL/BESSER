@@ -9,6 +9,7 @@ from .json_to_buml import (
     process_object_diagram,
     json_to_buml_project,
     process_gui_diagram,
+    process_quantum_diagram,
 )
 from .buml_to_json import (
     class_buml_to_json,
@@ -30,6 +31,7 @@ __all__ = [
     "process_object_diagram",
     "json_to_buml_project",
     "process_gui_diagram",
+    "process_quantum_diagram",
     "class_buml_to_json",
     "parse_buml_content",
     "state_machine_to_json",

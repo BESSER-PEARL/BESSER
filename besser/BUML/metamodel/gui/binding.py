@@ -26,6 +26,9 @@ class DataBinding(Element):
         label_field (Property, optional): The field in the domain concept to use as a label. Defaults to None.
         data_field (Property, optional): The specific field in the domain concept to bind data from. Defaults to None.
         data_filter (Constraint, optional): Filter constraint for the data. Defaults to None.
+        label_field_path (str, optional): Dot notation path for nested label field (e.g., "measure.name"). Defaults to None.
+        data_field_path (str, optional): Dot notation path for nested data field (e.g., "measure.value"). Defaults to None.
+        filter_expression (str, optional): Raw filter expression string. Defaults to None.
 
     Attributes:
         name (str): Name of the data binding.
@@ -34,10 +37,14 @@ class DataBinding(Element):
         label_field (Property): The field in the domain concept to use as a label.
         data_field (Property): The specific field in the domain concept to bind data from.
         data_filter (Constraint): Filter constraint for the data.
+        label_field_path (str): Dot notation path for nested label field.
+        data_field_path (str): Dot notation path for nested data field.
+        filter_expression (str): Raw filter expression string.
     """
     def __init__(self, domain_concept: Class, name: str = None, visualization_attrs: set[Property] = None,
                  label_field: Property = None, data_field: Property = None,
-                 data_filter: Constraint = None):
+                 data_filter: Constraint = None, label_field_path: str = None, data_field_path: str = None,
+                 filter_expression: str = None):
         super().__init__()
         self.name = name or f"{domain_concept.name if domain_concept else 'Unknown'}DataBinding"
         self.domain_concept = domain_concept
@@ -45,6 +52,9 @@ class DataBinding(Element):
         self.label_field = label_field
         self.data_field = data_field
         self.data_filter = data_filter
+        self.label_field_path = label_field_path  # For nested fields like "measure.name"
+        self.data_field_path = data_field_path    # For nested fields like "measure.value"
+        self.filter_expression = filter_expression  # Raw filter string from UI
 
     @property
     def name(self) -> str:

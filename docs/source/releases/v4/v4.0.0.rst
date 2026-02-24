@@ -18,7 +18,9 @@ New Features and Improvements
 
 **Documentation**:
 
-* Updated the Web Modeling Editor documentation, including new sections for :doc:`Project Management <../../web_modeling_editor/project>` and :doc:`Diagram Types <../../web_modeling_editor/diagram_types>`.
+* Updated the Web Modeling Editor documentation, including new sections for
+  `Project Management <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/user-guide/project.html>`_
+  and `Diagram Types <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/user-guide/diagram_types.html>`_.
 
 Fixes
 -----

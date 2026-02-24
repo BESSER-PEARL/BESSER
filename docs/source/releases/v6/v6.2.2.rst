@@ -1,0 +1,21 @@
+Version 6.2.2
+==============
+
+Fixes
+-----
+
+- Fix #397: **REST API generator** — Include attributes and associations from all ancestor
+  classes when building create and bulk-create constructors, so chains like
+  A <- B <- C pass base-class fields and inherited relationships correctly.
+- Fix #418: **Pydantic/OCL generator** — Fix validator generation and OCL parsing output so
+  constraints compile and execute correctly.
+- Fix #416: **Pydantic generator** — Fix any datatype mapping to typing.Any so generated
+  models import and use Any instead of the invalid any.
+- Fix #408: **Documentation** — Update supported Python version guidance to match current tooling.
+- Fix #409: **Quantum editor** — Improve error messages surfaced to the user.
+- Fix #404: **Web app generator** — Resolve modal usability issues in generated applications.
+- Fix #411: **State diagram editor** — Show the correct toolbar elements for state diagrams.
+- Fix #414: **WME analytics** — Ensure premade analytics components update color dynamically.
+- Fix #405: **Graphical UI editor** — Auto-show settings for selected elements in the sidebar.
+- Fix #421: **Web editor UI** — Add hover labels to buttons in the editor sidebar.
+- Fix #393: **WebApp** — Table add modal hides non-selected attributes when columns are filtered.

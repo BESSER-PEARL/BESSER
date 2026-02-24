@@ -286,6 +286,7 @@ class Color:
         fill_color (str): The fill color (#CCCCCC as default).
         opacity (str): The opacity of the element (0.0 to 1.0, or percentage).
         color_palette (str): The color palette used for charts.
+        primary_color (str): The primary/main color for charts and series.
 
     Attributes:
         background_color (str): The background color.
@@ -298,13 +299,15 @@ class Color:
         fill_color (str): The fill color.
         opacity (str): The opacity of the element.
         color_palette (str): The color palette used for charts.
+        primary_color (str): The primary/main color for charts and series.
     """
 
     def __init__(self, background_color: str = None, text_color: str = None,
                 border_color: str = None, line_color: str = None,
                 grid_color: str = None, axis_color: str = None,
                 bar_color: str = None, label_color: str = None,
-                fill_color: str = None, opacity: str = None, color_palette: str = "default"):
+                fill_color: str = None, opacity: str = None, color_palette: str = "default",
+                primary_color: str = None):
         self.background_color: str = background_color
         self.text_color: str = text_color
         self.border_color: str = border_color
@@ -316,6 +319,7 @@ class Color:
         self.fill_color: str = fill_color
         self.opacity: str = opacity
         self.color_palette: str = color_palette
+        self.primary_color: str = primary_color
 
     @property
     def background_color(self) -> str:
@@ -427,12 +431,22 @@ class Color:
         """Property: Set the color palette of the radial bar chart."""
         self._color_palette = value
 
+    @property
+    def primary_color(self) -> str:
+        """str: Get the primary/main color for charts and series."""
+        return self.__primary_color
+
+    @primary_color.setter
+    def primary_color(self, primary_color: str):
+        """str: Set the primary/main color for charts and series."""
+        self.__primary_color = primary_color
+
     def __repr__(self):
         return (
             f"Color(background={self.background_color}, text={self.text_color}, "
             f"line={self.line_color}, grid={self.grid_color}, axis={self.axis_color}, "
             f"bar={self.bar_color}, label={self.label_color}, fill={self.fill_color}, "
-            f"opacity={self.opacity}, color_palette={self.color_palette})"
+            f"opacity={self.opacity}, color_palette={self.color_palette}, primary={self.primary_color})"
         )
 
 # Styling

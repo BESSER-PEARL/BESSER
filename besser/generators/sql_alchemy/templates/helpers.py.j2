@@ -1,7 +1,17 @@
+{# ---------- Type Mapping for Mapped[] annotations ---------- #}
+{# Map datetime types to their aliased versions to avoid name conflicts with column names #}
+{%- macro mapped_type(type_name) -%}
+    {%- if type_name == 'time' -%}dt_time
+    {%- elif type_name == 'date' -%}dt_date
+    {%- elif type_name == 'datetime' -%}dt_datetime
+    {%- else -%}{{ type_name }}
+    {%- endif -%}
+{%- endmacro %}
+
 {# ---------- Attribute Renderer ---------- #}
 {%- macro render_attributes(class, enumerations, types, ids, sort) %}
     {%- for attribute in sort(class.attributes) %}
-    {{ attribute.name }}: Mapped[{{ attribute.type.name }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {{ attribute.name }}: Mapped[{{ mapped_type(attribute.type.name) }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
     {%- if attribute.is_id or (attribute.name == ids.get(class.name)) %}, primary_key=True{% endif %})
     {%- endfor %}
 {%- endmacro %}

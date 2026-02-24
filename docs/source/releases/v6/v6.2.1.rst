@@ -1,0 +1,29 @@
+Version 6.2.1
+==============
+
+This patch aligns the generated frontend Dockerfile with the Node.js version
+used by the refreshed web app generator stack.
+
+Documentation
+-------------
+
+- Clarify the WME vs BESSER contribution workflow, including the cross-repo
+  checklist for new diagram types and DSLs.
+- Refresh contributor guidance, web editor references, and utilities
+  documentation to match the current repository layout.
+
+Fixes
+-----
+
+- **Web app generator**: Update the generated frontend Dockerfile to use Node.js
+  20 so Docker builds match the current frontend toolchain.
+- **Web app generator**: Pass Vite API/agent URLs via Docker build args and
+  runtime env vars, defaulting the API URL to `http://localhost:8000` for local
+  browser access, and set `DATABASE_URL` for the backend container.
+- **WME utilities**: Add a debug CLI for generating a web app directly from a
+  WME JSON export.
+- **REST/Pydantic generators**: Align backend requirements with SQLAlchemy/Pydantic
+  v2, ensure SQLite databases default under `/data`, and fix bulk-create to include
+  inherited foreign keys.
+- **Pydantic generator**: Add ASCII aliases for class names with accents (e.g.,
+  `IndisponibiliteCreate`) to avoid invalid identifiers in generated code.

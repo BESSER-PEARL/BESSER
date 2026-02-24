@@ -1,7 +1,11 @@
 import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse_bal
 from besser.generators import GeneratorInterface
+from besser.generators.structural_utils import get_foreign_keys
+from besser.generators.action_language.RESTGenerator import bal_to_rest
+from besser.generators.structural_utils import get_foreign_keys
 from besser.generators.pydantic_classes import PydanticGenerator
 
 class RESTAPIGenerator(GeneratorInterface):
@@ -29,6 +33,10 @@ class RESTAPIGenerator(GeneratorInterface):
         if not http_methods:
             http_methods = allowed_methods
         else:
+            invalid_methods = [method for method in http_methods if method not in allowed_methods]
+            if invalid_methods:
+                import logging
+                logging.warning(f"Invalid HTTP methods ignored: {invalid_methods}. Allowed methods are: {allowed_methods}")
             http_methods = [method for method in http_methods if method in allowed_methods]
         self.http_methods = http_methods
         self.backend = backend
@@ -40,12 +48,12 @@ class RESTAPIGenerator(GeneratorInterface):
         Generates requirements.txt file with necessary dependencies
         """
         requirements = [
-            "fastapi>=0.68.0",
+            "fastapi>=0.103.0",
             "uvicorn>=0.15.0",
-            "pydantic>=1.8.0",
-            "typing-extensions>=4.0.0",
-            "sqlalchemy>=1.4.0",
-            "python-multipart>=0.0.5"
+            "pydantic>=2.0.0",
+            "typing-extensions>=4.6.0",
+            "sqlalchemy>=2.0.0",
+            "python-multipart>=0.0.6"
         ]
         
         file_path = self.build_generation_path(file_name="requirements.txt")
@@ -65,16 +73,32 @@ class RESTAPIGenerator(GeneratorInterface):
         # Generate requirements.txt first
         self.generate_requirements()
 
+        # Custom Jinja filter to extract clean method name (remove parameters if included)
+        def clean_method_name(name):
+            """Extract just the method name without parameters."""
+            if '(' in str(name):
+                return str(name).split('(')[0].strip()
+            return str(name).strip()
+
         if self.backend:
             file_path = self.build_generation_path(file_name="main_api.py")
             templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")
             env = Environment(loader=FileSystemLoader(templates_path),
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
+            env.filters['clean_method_name'] = clean_method_name
+            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest)
             template = env.get_template('backend_fast_api_template.py.j2')
-            with open(file_path, mode="w") as f:
-                generated_code = template.render(name=self.model.name, classes=self.model.classes_sorted_by_inheritance(),
-                                             http_methods=self.http_methods, nested_creations=self.nested_creations, port=self.port)
+            with open(file_path, mode="w", encoding="utf-8") as f:
+                generated_code = template.render(
+                    name=self.model.name,
+                    model=self.model,
+                    classes=self.model.classes_sorted_by_inheritance(),
+                    http_methods=self.http_methods,
+                    nested_creations=self.nested_creations,
+                    port=self.port,
+                    fkeys=get_foreign_keys(self.model)
+                )
                 f.write(generated_code)
             print("Code generated in the location: " + file_path)
 
@@ -87,9 +111,13 @@ class RESTAPIGenerator(GeneratorInterface):
             os.path.abspath(__file__)), "templates")
             env = Environment(loader=FileSystemLoader(templates_path),
                           trim_blocks=True, lstrip_blocks=True, extensions=['jinja2.ext.do'])
+            env.globals.update(parse_bal=parse_bal, bal_to_rest=bal_to_rest)
             template = env.get_template('fast_api_template.py.j2')
-            with open(file_path, mode="w") as f:
-                generated_code = template.render(classes=self.model.classes_sorted_by_inheritance(),
-                                             http_methods=self.http_methods)
+            with open(file_path, mode="w", encoding="utf-8") as f:
+                generated_code = template.render(
+                    classes=self.model.classes_sorted_by_inheritance(),
+                    http_methods=self.http_methods,
+                    model=self.model
+                )
                 f.write(generated_code)
             print("Code generated in the location: " + file_path)

@@ -3,15 +3,48 @@ Class diagram processing for converting JSON to BUML format.
 """
 
 import json
+import re
 from fastapi import HTTPException
 
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Enumeration, Property, Method, BinaryAssociation,
-    Generalization, PrimitiveDataType, EnumerationLiteral, AssociationClass, Metadata
+    Generalization, PrimitiveDataType, EnumerationLiteral, AssociationClass,
+    Metadata, Parameter, MethodImplementationType
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import (
     parse_attribute, parse_method, parse_multiplicity, process_ocl_constraints
 )
+
+
+def parse_method_signature_from_code(method_code, domain_model):
+    """Extract method signature from code text when diagram name/signature is malformed."""
+    if not isinstance(method_code, str) or not method_code.strip():
+        return None
+
+    signature_match = re.search(
+        r"def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:->\s*([^:{\n]+))?\s*[:{]",
+        method_code,
+    )
+    if not signature_match:
+        return None
+
+    method_name, params_text, return_type = signature_match.groups()
+    signature = f"{method_name.strip()}({(params_text or '').strip()})"
+    if return_type:
+        signature_with_return = f"{signature}: {return_type.strip()}"
+    else:
+        signature_with_return = signature
+
+    try:
+        _, parsed_name, parsed_parameters, parsed_return_type = parse_method(signature_with_return, domain_model)
+    except ValueError:
+        # Some BAL snippets use return markers that are not BUML type names (e.g., "nothing").
+        _, parsed_name, parsed_parameters, parsed_return_type = parse_method(signature, domain_model)
+
+    parsed_parameters = [
+        param for param in parsed_parameters if param.get("name") not in {"self", "cls", "this"}
+    ]
+    return parsed_name, parsed_parameters, parsed_return_type
 
 
 def process_class_diagram(json_data):
@@ -99,8 +132,17 @@ def process_class_diagram(json_data):
             for attr_id in element.get("attributes", []):
                 attr = elements.get(attr_id)
                 if attr:
-                    visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
-                    if name is None:  # Skip if no name was returned
+                    # Check for new format (separate visibility and attributeType properties)
+                    if "visibility" in attr and "attributeType" in attr:
+                        # New format - use separate properties
+                        visibility = attr.get("visibility", "public")
+                        name = attr.get("name", "").strip()
+                        attr_type = attr.get("attributeType", "str")
+                    else:
+                        # Legacy format - parse from name string
+                        visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
+                    
+                    if not name:  # Skip if no name was returned
                         continue
                     if name in attribute_names:
                         raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
@@ -124,6 +166,45 @@ def process_class_diagram(json_data):
                 method = elements.get(method_id)
                 if method:
                     visibility, name, parameters, return_type = parse_method(method.get("name", ""), domain_model)
+                    
+                    # Get the code attribute for the method
+                    method_code = method.get("code", "")
+
+                    method_name_is_malformed = (
+                        isinstance(name, str)
+                        and name.count("(") != name.count(")")
+                    )
+                    if method_name_is_malformed or (not parameters and method_code):
+                        parsed_from_code = parse_method_signature_from_code(method_code, domain_model)
+                        if parsed_from_code:
+                            parsed_name, parsed_parameters, parsed_return_type = parsed_from_code
+                            if method_name_is_malformed and parsed_name:
+                                name = parsed_name
+                            if not parameters and parsed_parameters:
+                                parameters = parsed_parameters
+                            if not return_type and parsed_return_type:
+                                return_type = parsed_return_type
+                    
+                    # Get implementation type and diagram references
+                    impl_type_str = method.get("implementationType", "none")
+                    if isinstance(impl_type_str, str):
+                        impl_type_str = impl_type_str.strip().lower()
+                    state_machine_id = method.get("stateMachineId", "")
+                    quantum_circuit_id = method.get("quantumCircuitId", "")
+                    
+                    # Map string to MethodImplementationType enum
+                    impl_type_map = {
+                        "none": MethodImplementationType.NONE,
+                        "code": MethodImplementationType.CODE,
+                        "bal": MethodImplementationType.BAL,
+                        "state_machine": MethodImplementationType.STATE_MACHINE,
+                        "quantum_circuit": MethodImplementationType.QUANTUM_CIRCUIT,
+                    }
+                    implementation_type = impl_type_map.get(impl_type_str, MethodImplementationType.NONE)
+                    
+                    # Auto-detect implementation type if not set but code exists
+                    if implementation_type == MethodImplementationType.NONE and method_code:
+                        implementation_type = MethodImplementationType.CODE
 
                     # Create method parameters
                     method_params = []
@@ -140,21 +221,29 @@ def process_class_diagram(json_data):
                         if not param_type_obj:
                             param_type_obj = PrimitiveDataType(param_type_name)
                             
-                        param_obj = Property(
+                        param_obj = Parameter(
                             name=param['name'],
-                            type=param_type_obj,
-                            visibility='public'
+                            type=param_type_obj
                         )
                         if 'default' in param:
                             param_obj.default_value = param['default']
                         method_params.append(param_obj)
 
-                    # Create method with parameters and return type
+                    # Create method with parameters, return type, code, and implementation type
                     method_obj = Method(
                         name=name,
                         visibility=visibility,
-                        parameters=method_params
+                        parameters=method_params,
+                        code=method_code,
+                        implementation_type=implementation_type
                     )
+                    
+                    # Store diagram references as custom attributes for later resolution
+                    # These will be used by project-level processing to link to actual diagrams
+                    if state_machine_id:
+                        method_obj._state_machine_id = state_machine_id
+                    if quantum_circuit_id:
+                        method_obj._quantum_circuit_id = quantum_circuit_id
                     
                     # Handle return type
                     if return_type:

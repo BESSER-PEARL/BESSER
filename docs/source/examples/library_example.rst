@@ -20,5 +20,5 @@ code generators are implemented in this example (lines 50-61). Running this scri
 
 .. note::
     
-    This structural model can also be created :doc:`from a model designed with PlantUML <../buml_language/model_building/plantuml_structural>` or even 
-    :doc:`from an image <../buml_language/model_building/image_to_buml>`.
+    This structural model can also be created :doc:`from a model designed with PlantUML <../buml_language/model_building/plantuml_structural>`, 
+    :doc:`from an image <../buml_language/model_building/image_to_buml>`, or even :doc:`from a knowledge graph <../buml_language/model_building/kg_to_buml>`.

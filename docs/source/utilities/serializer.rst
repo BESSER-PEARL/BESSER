@@ -46,5 +46,6 @@ To deserialize a model (for example a Model Domain of B-UML) you can use the ``l
     model: DomainModel = serializer.load(model_path="/directory/filename")
 
 .. note::
-    
-    For a detailed description of the model serializer please refer to the :doc:`API documentation <../api/api_utilities>` documentation.
+
+    For a detailed description of the model serializer please refer to the
+    :doc:`API documentation <../api/utilities/api_model_serializer>`.

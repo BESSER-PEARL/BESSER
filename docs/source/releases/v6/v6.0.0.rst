@@ -1,0 +1,32 @@
+Version 6.0.0
+==============
+
+This release introduces **GitHub OAuth integration and automatic deployment on Render**,  
+along with improved environment configuration, frontend flexibility across environments, and important backend code-generation fixes.
+
+New Features
+=============
+
+GitHub OAuth Integration & Render Auto-Deployment
+--------------------------------------------------
+
+- Added **GitHub OAuth integration for WME**, enabling secure authentication and repository authorization.
+- Implemented a **deployment API that automatically provisions and deploys applications on Render** after successful OAuth authentication.
+- Deployment flow eliminates manual setup by linking GitHub repositories directly to Render services.
+
+Improvements
+============
+
+- Added a comprehensive `.env.example` file documenting all required environment variables.
+- Replaced hardcoded backend URLs in generated React components with `process.env.REACT_APP_API_URL`, enabling flexible frontend deployment across environments.
+
+Bug Fixes
+=========
+
+- #378 
+
+Backend Code Generation
+------------------------
+
+- Refactored object creation logic to use **Jinja2 namespaces** for collecting constructor arguments, fixing issues with missing or duplicated parameters.
+- Improved generated REST endpoints for **many-to-many (N:M) relationships**, including self-referential associations, to avoid naming conflicts and ensure correct query generation.

@@ -10,7 +10,8 @@ New Features and Improvements
 
 **Web Modeling Editor**:
 
-* Added support for creating and editing GUIs from a no-code visual editor (see :doc:`GUI modeling <../../web_modeling_editor/diagram types/gui_diagram>`).
+* Added support for creating and editing GUIs from a no-code visual editor (see
+  `GUI modeling <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/editor/gui_editor.html>`_).
 * Added a new shape to create comments in plain text within diagrams.
 * From project settings, you can choose if hide/show association names for class diagrams.
 * When creating/updating class attributes, you can now directly select their visibility and datatype from dropdown lists.

@@ -15,26 +15,35 @@ class Factory:
                 if name == end.name:
                     return end
 
-    def handleProp(self,name,iterator):
+    def handleProp(self,name,iterator,context = None):
         if "." in name:
             name = name.split('.')[1]
-
-        prop = self.checkInAttributes(name,self.context)
+        if context is None:
+            context = self.context
+        prop = self.checkInAttributes(name,context)
         if prop is None:
-            prop = self.checkInAssociation(name,self.context)
+            prop = self.checkInAssociation(name,context)
         if iterator is not None and prop is None and len(iterator)>0:
             prop = self.checkInAttributes(name,iterator[-1].get_iterator[-1].type)
             if prop is None:
                 prop = self.checkInAssociation(name, iterator[-1].get_iterator[-1].type)
             pass
+
         return prop
 
-    def create_property_Call_Expression(self,name, type, iterators=None):
-        prop = self.handleProp(name,iterators)
+    def create_property_Call_Expression(self,name, type, iterators=None, iterators_context = None):
+        prop = self.handleProp(name,iterators,self.context)
         if prop is not None:
             return prop
-        else:
-            raise Exception("Property "+name+ " not found in class "+str(self.context.name))
+        if prop is None:
+            if "." in name:
+                parameter_name = name.split(".")[0]
+                if parameter_name in iterators_context.keys():
+                    prop = self.handleProp(name, iterators, iterators_context[parameter_name])
+                if prop is not None:
+                    return prop
+                else:
+                    raise Exception("Property "+name+ " not found in class "+str(self.context.name))
 
     def create_date_literal_expression(self,name,value):
         return DateLiteralExpression(name,value)

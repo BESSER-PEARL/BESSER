@@ -6,21 +6,70 @@ def generate_docker_files(path: str = "output_backend"):
 def generate_dockerfile(path: str):
     with open(path + '/Dockerfile', 'w') as dockerfile:
         dockerfile.write('''FROM python:3.9-slim
+
+# Set working directory
 WORKDIR /app
 
-COPY main_api.py /app
-COPY pydantic_classes.py /app
-COPY sql_alchemy.py /app
+# Create non-root user for security
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 
-RUN pip install requests==2.31.0
-RUN pip install fastapi==0.110.0
-RUN pip install pydantic==2.6.3
-RUN pip install uvicorn==0.28.0
-RUN pip install SQLAlchemy==2.0.29
-RUN pip install httpx==0.27.0
+# Copy requirements first for better layer caching
+COPY requirements.txt .
 
+# Install dependencies in a single layer
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application files
+COPY main_api.py pydantic_classes.py sql_alchemy.py ./
+
+# Switch to non-root user
+USER appuser
+
+# Expose port
 EXPOSE 8000
-CMD ["python", "main_api.py"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
+    CMD python -c "import requests; requests.get('http://localhost:8000/health', timeout=2)" || exit 1
+
+# Run with uvicorn (production-ready ASGI server)
+CMD ["uvicorn", "main_api:app", "--host", "0.0.0.0", "--port", "8000"]
+'''
+        )
+    
+    # Generate requirements.txt
+    with open(path + '/requirements.txt', 'w') as requirements:
+        requirements.write('''fastapi>=0.110.0
+uvicorn>=0.28.0
+pydantic>=2.6.3
+sqlalchemy>=2.0.29
+httpx>=0.27.0
+requests>=2.31.0
+'''
+        )
+    
+    # Generate .dockerignore for smaller build context
+    with open(path + '/.dockerignore', 'w') as dockerignore:
+        dockerignore.write('''__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+.git
+.gitignore
+.env
+.venv
+venv/
+*.log
+.pytest_cache
+.coverage
+htmlcov/
+.DS_Store
 '''
         )
 

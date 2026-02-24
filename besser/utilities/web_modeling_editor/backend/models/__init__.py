@@ -1,4 +1,4 @@
-from .diagram import DiagramInput
+from .diagram import DiagramInput, FeedbackSubmission
 from .project import ProjectInput
 
-__all__ = ['DiagramInput'] 
+__all__ = ['DiagramInput', 'ProjectInput', 'FeedbackSubmission'] 

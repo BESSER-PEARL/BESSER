@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements if they exist
+COPY requirements.txt* ./
+RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
+
+# Install BESSER and BESSER Agent Framework
+RUN pip install --no-cache-dir besser-agentic-framework[all]
+
+# Copy agent files
+COPY . .
+
+# Expose ports
+EXPOSE 8765 5000
+
+# Run the agent
+CMD ["python", "{{ agent_model.name }}.py"]
+

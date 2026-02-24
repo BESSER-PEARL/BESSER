@@ -1,0 +1,29 @@
+Version 5.2.1
+=============
+
+New Features and Improvements
+-----------------------------
+
+**Method Code Support**
+
+* Added the possibility to include code blocks for structural elements in the editor and generators:
+    * Added method generation support in Django and Python class templates, handling both code and metadata for method definitions.
+    * Added support for ``code`` attribute in methods for BUML to JSON conversion.
+
+Fixes
+-----
+
+**Django Generator**
+
+* Updated Docker configuration and requirements for improved compatibility:
+    * Changed volume path in docker-compose template for PostgreSQL.
+    * Updated base image in Dockerfile to Python 3.12.
+    * Refined psycopg dependency in requirements to use binary version 3.2.4.
+
+**Deployment**
+
+* Fixed deployment listener to handle hyphens in region names.
+
+**Modeling Agent**
+
+* Added type normalization utility for UML components to handle type aliases from various sources (e.g., ``String`` → ``str``, ``Double`` → ``float``).

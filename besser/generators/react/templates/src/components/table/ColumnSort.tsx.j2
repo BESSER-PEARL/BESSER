@@ -1,0 +1,41 @@
+import React from "react";
+
+interface ColumnSortProps {
+  column: {
+    field: string;
+    label: string;
+    type?: string;
+  };
+  currentSort: { field: string; direction: "asc" | "desc" } | null;
+  onSortChange: (field: string) => void;
+}
+
+export const ColumnSort: React.FC<ColumnSortProps> = ({ column, currentSort, onSortChange }) => {
+  const isActive = currentSort?.field === column.field;
+  const direction = currentSort?.direction || "asc";
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSortChange(column.field)}
+      style={{
+        background: "transparent",
+        border: "none",
+        color: isActive ? "#fff" : "#94a3b8",
+        cursor: "pointer",
+        padding: "4px",
+        borderRadius: "4px",
+        fontSize: "12px",
+        marginLeft: "4px",
+        transition: "all 0.2s",
+        display: "inline-flex",
+        alignItems: "center",
+      }}
+      title={`Sort ${isActive && direction === "asc" ? "descending" : "ascending"}`}
+    >
+      {!isActive && "⇅"}
+      {isActive && direction === "asc" && "↑"}
+      {isActive && direction === "desc" && "↓"}
+    </button>
+  );
+};

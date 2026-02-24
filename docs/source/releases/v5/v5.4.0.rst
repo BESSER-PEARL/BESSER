@@ -1,0 +1,52 @@
+Version 5.4.0
+=============
+
+This release introduces the **Quantum Circuit Editor**, a visual drag-and-drop interface for building quantum circuits directly in the Web Modeling Editor, along with Qiskit code generation capabilities.
+
+New Features and Improvements
+-----------------------------
+
+**Quantum Circuit Editor**
+
+* Added a new **Quantum Circuit Editor** component to the Web Modeling Editor, enabling users to visually design quantum circuits using a drag-and-drop interface.
+* Implemented a comprehensive **gate palette** with support for:
+    * **Single-qubit gates**: Hadamard (H), Pauli-X/Y/Z, S, T, and parametric rotation gates (RX, RY, RZ, Phase)
+    * **Multi-qubit gates**: CNOT, SWAP, Toffoli (CCX), Fredkin (CSWAP), and controlled versions of single-qubit gates
+    * **Measurement operations**: Standard measurement and post-selection
+    * **Special gates**: QFT, barriers, spacers, and custom user-defined gates
+* Added **nested circuit support** allowing users to create reusable gate definitions and composite operations.
+* Implemented **undo/redo functionality** with keyboard shortcuts (Ctrl+Z / Ctrl+Y) for circuit editing.
+* Added **circuit persistence** with automatic saving to the project storage.
+* Introduced **example templates** (Bell State, GHZ State, Quantum Teleportation, Grover's Algorithm, Bernstein-Vazirani) accessible from the gate palette.
+* Implemented **minimum qubit validation** ensuring circuits have the required number of qubits for selected gates.
+* Added **measurement blocking** that prevents placing gates after measurement operations on the same qubit.
+
+**Qiskit Code Generator**
+
+* Added a new **Qiskit code generator** that converts visual quantum circuits to executable Python code using the Qiskit framework.
+* Implemented support for configurable **backend options**:
+    * Aer Simulator for local simulation
+    * Fake Backend for testing
+    * IBM Quantum for real quantum hardware execution
+* Added **configurable shot count** for quantum circuit execution.
+* Integrated the Qiskit generator into the Web Modeling Editor's Generate menu for seamless code export.
+
+**Quantum Metamodel**
+
+* Extended the B-UML metamodel with comprehensive **quantum circuit primitives** including:
+    * ``QuantumCircuit``, ``QuantumRegister``, and ``ClassicalRegister`` classes
+    * Gate classes for all supported quantum operations
+    * Support for parameterized gates with angle specifications
+    * Control state definitions for multi-qubit controlled operations
+
+**Web Modeling Editor**
+
+* Added **Quantum Circuit** as a new diagram type in the sidebar navigation.
+* Integrated the quantum editor route (``/quantum-editor``) into the application routing.
+* Extended project types to support ``QuantumCircuitDiagram`` alongside existing UML diagram types.
+* Added automatic diagram type detection for proper menu rendering in the quantum editor context.
+
+Fixes
+-----
+
+* Fixed issue: `#367 <https://github.com/BESSER-PEARL/BESSER/issues/367>`_

@@ -2,7 +2,8 @@ import os
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel, AssociationClass
 from besser.generators import GeneratorInterface
-from besser.utilities import sort_by_timestamp
+from besser.utilities.utils import sort_by_timestamp
+from besser.generators.structural_utils import get_foreign_keys
 
 class SQLAlchemyGenerator(GeneratorInterface):
     """
@@ -50,31 +51,6 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 ids_dict[cls.name] = id_attr
 
         return ids_dict
-
-    def get_foreign_keys(self):
-        """
-        Returns a dictionary with the association names as keys and the class names that should hold the foreign
-        keys as values.
-        """
-        fkeys = dict()
-
-        for association in self.model.associations:
-            ends = list(association.ends)  # Convert set to list
-
-            # One-to-one
-            if ends[0].multiplicity.max == 1 and ends[1].multiplicity.max == 1:
-                fkeys[association.name] = [ends[0].type.name, ends[1].name]
-                if ends[1].multiplicity.min == 0:
-                    fkeys[association.name] = [ends[1].type.name, ends[0].name]
-
-            # Many to one
-            elif ends[0].multiplicity.max > 1 and ends[1].multiplicity.max <= 1:
-                fkeys[association.name] = [ends[0].type.name, ends[1].name]
-
-            elif ends[0].multiplicity.max <= 1 and ends[1].multiplicity.max > 1:
-                fkeys[association.name] = [ends[1].type.name, ends[0].name]
-
-        return fkeys
 
     def separate_classes(self):
         """
@@ -145,7 +121,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 model_name=self.model.name,
                 dbms=dbms,
                 ids=self.get_ids(),
-                fkeys=self.get_foreign_keys(),
+                fkeys=get_foreign_keys(self.model),
                 sort=sort_by_timestamp,
                 concrete_parents=concrete_parents
             )

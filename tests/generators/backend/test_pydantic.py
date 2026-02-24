@@ -2,7 +2,7 @@ import pytest
 import os
 from besser.generators.pydantic_classes import PydanticGenerator
 from besser.BUML.metamodel.structural import DomainModel, Class, Property, \
-    IntegerType, StringType, Multiplicity, BinaryAssociation
+    IntegerType, StringType, AnyType, Multiplicity, BinaryAssociation
 
 # Test that a file is created with the correct content
 def test_file_generation():
@@ -58,6 +58,27 @@ def test_multiple_class_generation():
     # Check for the correct class definitions
     assert 'class name1(BaseModel):' in content, "Employee class definition is incorrect."
     assert 'class name2(BaseModel):' in content, "Department class definition is incorrect."
+
+    os.remove(output_file)
+
+def test_any_type_generation():
+    class1 = Class(name="Publication", attributes={
+        Property(name="year", type=AnyType),
+        Property(name="title", type=StringType)
+    })
+
+    domain_model = DomainModel(name="AnyTypeModel", types={class1})
+    output_file = 'output/pydantic_classes.py'
+    pydantic_model = PydanticGenerator(model=domain_model, backend=True)
+    pydantic_model.generate()
+
+    assert os.path.exists(output_file), "The file was not created."
+
+    with open(output_file, 'r') as file:
+        content = file.read()
+
+    assert 'from typing import Any' in content, "Missing Any import."
+    assert 'year: Any' in content, "Any type was not mapped correctly."
 
     os.remove(output_file)
 

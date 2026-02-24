@@ -118,6 +118,25 @@ AGENT_MODEL_FILENAME = "agent_model.py"
 AGENT_OUTPUT_FILENAME = "agent_output.zip"
 
 
+def _extract_openai_api_key(config: Any) -> Optional[str]:
+    if not isinstance(config, dict):
+        return None
+
+    for candidate_key in ("openai_api_key", "openaiApiKey", "OPENAI_API_KEY", "apiKey"):
+        candidate_value = config.get(candidate_key)
+        if isinstance(candidate_value, str) and candidate_value.strip():
+            return candidate_value.strip()
+
+    system_section = config.get("system")
+    if isinstance(system_section, dict):
+        for candidate_key in ("openai_api_key", "openaiApiKey", "OPENAI_API_KEY", "apiKey"):
+            candidate_value = system_section.get(candidate_key)
+            if isinstance(candidate_value, str) and candidate_value.strip():
+                return candidate_value.strip()
+
+    return None
+
+
 # API Endpoints
 @app.get("/besser_api/")
 def get_api_root():
@@ -177,13 +196,24 @@ def generate_agent_files(agent_model, config, generation_mode: GenerationMode = 
         # Get the BAFGenerator from the supported generators
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
+        openai_api_key = _extract_openai_api_key(config)
         
         # Use the BAFGenerator with the agent model from the module
         if hasattr(agent_module, 'agent'):
-            generator = generator_class(agent_module.agent, config=config, generation_mode=generation_mode)
+            generator = generator_class(
+                agent_module.agent,
+                config=config,
+                openai_api_key=openai_api_key,
+                generation_mode=generation_mode,
+            )
         else:
             # Fall back to the original agent model
-            generator = generator_class(agent_model, config=config, generation_mode=generation_mode)
+            generator = generator_class(
+                agent_model,
+                config=config,
+                openai_api_key=openai_api_key,
+                generation_mode=generation_mode,
+            )
         
         generator.generate()
 
@@ -492,10 +522,19 @@ async def _handle_agent_generation(json_data: dict):
                             spec.loader.exec_module(agent_module)
                             generator_info = get_generator_info("agent")
                             generator_class = generator_info.generator_class
+                            variant_openai_api_key = _extract_openai_api_key(new_config)
                             if hasattr(agent_module, 'agent'):
-                                generator = generator_class(agent_module.agent)
+                                generator = generator_class(
+                                    agent_module.agent,
+                                    config=new_config,
+                                    openai_api_key=variant_openai_api_key,
+                                )
                             else:
-                                generator = generator_class(agent_model)
+                                generator = generator_class(
+                                    agent_model,
+                                    config=new_config,
+                                    openai_api_key=variant_openai_api_key,
+                                )
                             generator.generate()
                             # Add agent model file inside language folder
                             zip_file.write(agent_file, f"{lang}/agent_model_{lang}.py")
@@ -626,7 +665,11 @@ async def transform_agent_model_json(input_data: DiagramInput):
 
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
-        generator_instance = generator_class(getattr(agent_module, "agent", agent_model), config=config)
+        generator_instance = generator_class(
+            getattr(agent_module, "agent", agent_model),
+            config=config,
+            openai_api_key=_extract_openai_api_key(config),
+        )
         generator_instance.generate()
 
         personalized_json_path = os.path.join(temp_dir, OUTPUT_DIR, "personalized_agent_model.json")

@@ -89,10 +89,12 @@ class BAFGenerator(GeneratorInterface):
         output_dir: str = None,
         config_path: str = None,
         config: dict = None,
+        openai_api_key: str = None,
         generation_mode: GenerationMode | str = GenerationMode.FULL,
     ):
         super().__init__(model, output_dir)
         self.config = flatten_agent_config_structure(config) if isinstance(config, dict) else config
+        self.openai_api_key = openai_api_key
         if isinstance(generation_mode, GenerationMode):
             self.generation_mode = generation_mode
         elif isinstance(generation_mode, str):
@@ -174,7 +176,11 @@ class BAFGenerator(GeneratorInterface):
             if 'personalizationrules' in config_for_personalization:
                 personalize_agent(self.model, config_for_personalization['personalizationrules'], personalized_messages)
             else:
-                configure_agent(self.model, config_for_personalization)
+                configure_agent(
+                    self.model,
+                    config_for_personalization,
+                    openai_api_key=self.openai_api_key,
+                )
 
             # Persist personalized agent python for downstream conversion
             agent_model_to_code(self.model, personalized_agent_path)

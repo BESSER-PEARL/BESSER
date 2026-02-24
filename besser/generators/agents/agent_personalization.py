@@ -9,6 +9,33 @@ from besser.BUML.metamodel.state_machine.agent import AgentReply
 import json
 
 
+OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
+
+
+def _resolve_openai_api_key(config: dict = None, openai_api_key: str = None) -> str | None:
+    if isinstance(openai_api_key, str) and openai_api_key.strip():
+        return openai_api_key.strip()
+
+    if isinstance(config, dict):
+        for candidate_key in ("openai_api_key", "openaiApiKey", OPENAI_API_KEY_ENV_VAR, "apiKey"):
+            candidate_value = config.get(candidate_key)
+            if isinstance(candidate_value, str) and candidate_value.strip():
+                return candidate_value.strip()
+
+        system_section = config.get("system")
+        if isinstance(system_section, dict):
+            for candidate_key in ("openai_api_key", "openaiApiKey", OPENAI_API_KEY_ENV_VAR, "apiKey"):
+                candidate_value = system_section.get(candidate_key)
+                if isinstance(candidate_value, str) and candidate_value.strip():
+                    return candidate_value.strip()
+
+    env_value = os.getenv(OPENAI_API_KEY_ENV_VAR)
+    if isinstance(env_value, str) and env_value.strip():
+        return env_value.strip()
+
+    return None
+
+
 def flatten_agent_config_structure(raw_config):
     """Flatten structured agent configuration sections into the legacy flat shape."""
     if not isinstance(raw_config, dict):
@@ -55,20 +82,18 @@ def flatten_agent_config_structure(raw_config):
     return flattened
 
 
-# Initialize OpenAI API key from environment variable or config
-OPENAI_API_KEY = ""
-if not OPENAI_API_KEY:
-    raise RuntimeError('OPENAI_API_KEY environment variable not set.')
-
-# Create a client instance for openai>=1.0.0
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-
-def call_openai_chat(system_prompt, user_prompt, model="gpt-5"):
+def call_openai_chat(system_prompt, user_prompt, model="gpt-5", openai_api_key=None, config=None):
     """
     Calls OpenAI ChatCompletion with a system prompt and user prompt (openai>=1.0.0).
     Returns the response text only.
     """
+    resolved_api_key = _resolve_openai_api_key(config=config, openai_api_key=openai_api_key)
+    if not resolved_api_key:
+        raise RuntimeError(
+            f"OpenAI API key not found. Set '{OPENAI_API_KEY_ENV_VAR}' or pass it via generator config."
+        )
+
+    client = OpenAI(api_key=resolved_api_key)
     response = client.chat.completions.create(
         model=model,
         messages=[
@@ -82,7 +107,7 @@ def call_openai_chat(system_prompt, user_prompt, model="gpt-5"):
 
 
 
-def translate_text_batch(texts, target_language, model="gpt-5"):
+def translate_text_batch(texts, target_language, model="gpt-5", openai_api_key=None, config=None):
     """
     Translates each text in `texts` to the target language using OpenAI GPT-5.
     Returns a list of translated texts in the same order as input.
@@ -101,7 +126,13 @@ def translate_text_batch(texts, target_language, model="gpt-5"):
     user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
 
     # Call the model once with all texts
-    response_text = call_openai_chat(system_prompt, user_prompt, model=model)
+    response_text = call_openai_chat(
+        system_prompt,
+        user_prompt,
+        model=model,
+        openai_api_key=openai_api_key,
+        config=config,
+    )
 
     # Try to split the returned text back into a list of outputs
     results = [
@@ -134,7 +165,7 @@ def translate_text_api(text, target_language):
 
 
 
-def style_text_batch(texts, style, model="gpt-5"):
+def style_text_batch(texts, style, model="gpt-5", openai_api_key=None, config=None):
     """
     Rewrites each text in `texts` to the requested `style` while preserving meaning and content.
     `style` should be 'formal' or 'informal'.
@@ -174,14 +205,20 @@ def style_text_batch(texts, style, model="gpt-5"):
     user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
 
     # Call the model once with all texts
-    response_text = call_openai_chat(system_prompt, user_prompt, model=model)
+    response_text = call_openai_chat(
+        system_prompt,
+        user_prompt,
+        model=model,
+        openai_api_key=openai_api_key,
+        config=config,
+    )
 
     # Try to split the returned text back into a list of outputs
     results = [line.split(". ", 1)[1].replace("'", "\\'") if ". " in line else line for line in response_text.splitlines() if line.strip()]
     return results
 
 
-def configure_agent(agent, config):
+def configure_agent(agent, config, openai_api_key: str = None):
     """
     Personalize the agent using OpenAI API or other logic.
     This is a placeholder for future agent personalization logic.
@@ -192,6 +229,12 @@ def configure_agent(agent, config):
         None (modifies agent in place)
     """
     config = flatten_agent_config_structure(config or {})
+    resolved_api_key = _resolve_openai_api_key(config=config, openai_api_key=openai_api_key)
+    if not resolved_api_key:
+        raise RuntimeError(
+            f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
+            "or include 'openaiApiKey'/'openai_api_key' in generator config."
+        )
     # Example: You could use OpenAI API here to modify agent intents, responses, etc.
     # openai.api_key = os.getenv('OPENAI_API_KEY')
     # ... personalization logic ...
@@ -212,7 +255,12 @@ def configure_agent(agent, config):
                 training_sentences.append(sentence)
     if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
         target_language = config['agentLanguage']
-        translated_sentences = translate_text_batch(training_sentences, target_language)
+        translated_sentences = translate_text_batch(
+            training_sentences,
+            target_language,
+            openai_api_key=resolved_api_key,
+            config=config,
+        )
         ti = 0
         for intent in getattr(agent, 'intents', []):
             for idx, sentence in enumerate(getattr(intent, 'training_sentences', [])):
@@ -250,7 +298,11 @@ def configure_agent(agent, config):
                         # action.message = replace_reply(action.message, config)
                         messages.append(action.message)
 
-    personalized_messages = replace_reply_batch(messages, config)
+    personalized_messages = replace_reply_batch(
+        messages,
+        config,
+        openai_api_key=resolved_api_key,
+    )
     for state in getattr(agent, 'states', []):
         for body_attr in ['body', 'fallback_body']:
             body = getattr(state, body_attr, None)
@@ -264,7 +316,7 @@ def configure_agent(agent, config):
 
 
 
-def replace_reply_batch(messages: list[str], config: dict) -> list[str]:
+def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str = None) -> list[str]:
     config = flatten_agent_config_structure(config or {})
     personalized_messages = messages
 
@@ -277,23 +329,47 @@ def replace_reply_batch(messages: list[str], config: dict) -> list[str]:
             personalized_messages[i] = translate_text_api(msg, target_language)
     if 'agentStyle' in config and config['agentStyle'] != 'original':
         style = config['agentStyle']
-        personalized_messages = style_text_batch(personalized_messages, style)
+        personalized_messages = style_text_batch(
+            personalized_messages,
+            style,
+            openai_api_key=openai_api_key,
+            config=config,
+        )
     if 'languageComplexity' in config and config['languageComplexity'] != 'original':
         complexity = config['languageComplexity']
-        personalized_messages = complexity_text_batch(personalized_messages, complexity)
+        personalized_messages = complexity_text_batch(
+            personalized_messages,
+            complexity,
+            openai_api_key=openai_api_key,
+            config=config,
+        )
     if 'sentenceLength' in config and config['sentenceLength'] != 'original':
         length_pref = config['sentenceLength']
-        personalized_messages = sentence_length_batch(personalized_messages, length_pref)
+        personalized_messages = sentence_length_batch(
+            personalized_messages,
+            length_pref,
+            openai_api_key=openai_api_key,
+            config=config,
+        )
     if isinstance(config.get('userProfileModel'), dict):
-        personalized_messages = replace_content_profile_batch(personalized_messages, config)
+        personalized_messages = replace_content_profile_batch(
+            personalized_messages,
+            config,
+            openai_api_key=openai_api_key,
+        )
     if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
         target_language = config['agentLanguage']
-        personalized_messages = translate_text_batch(personalized_messages, target_language)
+        personalized_messages = translate_text_batch(
+            personalized_messages,
+            target_language,
+            openai_api_key=openai_api_key,
+            config=config,
+        )
         
     return personalized_messages
 
 
-def replace_content_profile_batch(messages: list[str], config: dict) -> list[str]:
+def replace_content_profile_batch(messages: list[str], config: dict, openai_api_key: str = None) -> list[str]:
     """Adapt reply content so it aligns with the supplied user profile model."""
     flattened_config = flatten_agent_config_structure(config or {})
     user_profile = flattened_config.get('userProfileModel')
@@ -342,7 +418,13 @@ def replace_content_profile_batch(messages: list[str], config: dict) -> list[str
     )
 
     try:
-        response_text = call_openai_chat(system_prompt, user_prompt, model=model_name)
+        response_text = call_openai_chat(
+            system_prompt,
+            user_prompt,
+            model=model_name,
+            openai_api_key=openai_api_key,
+            config=flattened_config,
+        )
         results = [
             line.split(". ", 1)[1] if ". " in line else line
             for line in response_text.splitlines()
@@ -377,7 +459,7 @@ def append_speech(match):
     text = match.group(1)
     return f"session.reply('{text}')\n    platform.reply_speech(session, '{text}')"
 
-def complexity_text_batch(texts, complexity, model="gpt-5"):
+def complexity_text_batch(texts, complexity, model="gpt-5", openai_api_key=None, config=None):
     """
     Adjusts the complexity of each text in `texts` based on the specified `complexity` level.
     Complexity can be "simple", "medium", or "complex".
@@ -416,7 +498,13 @@ def complexity_text_batch(texts, complexity, model="gpt-5"):
     user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
 
     # Call the model once with all texts
-    response_text = call_openai_chat(system_prompt, user_prompt, model=model)
+    response_text = call_openai_chat(
+        system_prompt,
+        user_prompt,
+        model=model,
+        openai_api_key=openai_api_key,
+        config=config,
+    )
 
     # Try to split the returned text back into a list of outputs
     results = [
@@ -427,7 +515,7 @@ def complexity_text_batch(texts, complexity, model="gpt-5"):
     return results
 
 
-def sentence_length_batch(texts, preference, model="gpt-5"):
+def sentence_length_batch(texts, preference, model="gpt-5", openai_api_key=None, config=None):
     """
     Adjusts each text in `texts` to be more concise or verbose.
     `preference` accepts "concise" or "verbose" (case-insensitive).
@@ -456,7 +544,13 @@ def sentence_length_batch(texts, preference, model="gpt-5"):
         )
 
     user_prompt = "\n".join(f"{i+1}. {text}" for i, text in enumerate(texts))
-    response_text = call_openai_chat(system_prompt, user_prompt, model=model)
+    response_text = call_openai_chat(
+        system_prompt,
+        user_prompt,
+        model=model,
+        openai_api_key=openai_api_key,
+        config=config,
+    )
     results = [
         line.split(". ", 1)[1] if ". " in line else line
         for line in response_text.splitlines()

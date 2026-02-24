@@ -10,7 +10,7 @@ from besser.generators.pydantic_classes import PydanticGenerator
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.sql import SQLGenerator
 from besser.generators.backend import BackendGenerator
-from besser.generators.json import JSONSchemaGenerator
+from besser.generators.json import JSONSchemaGenerator, JSONObjectGenerator
 from besser.generators.agents.baf_generator import BAFGenerator
 from besser.generators.web_app import WebAppGenerator
 from besser.generators.qiskit import QiskitGenerator
@@ -97,6 +97,13 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="data_format",
         requires_class_diagram=True
     ),
+    "json": GeneratorInfo(
+        generator_class=JSONObjectGenerator,
+        output_type="file",
+        file_extension=".json",
+        category="object_model",
+        requires_class_diagram=False
+    ),
     
     # AI/Agent generators (agent diagram based)
     "agent": GeneratorInfo(
@@ -139,6 +146,8 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "tables.sql"
     elif generator_type == "jsonschema":
         return "json_schema.json"
+    elif generator_type == "json":
+        return "object_model.json"
     elif generator_type == "qiskit":
         return "qiskit_circuit.py"
     else:

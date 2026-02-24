@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import List, Dict, Any, Optional, Set
 import sys
 import json
-sys.path.append("C:/Users/conrardy/Desktop/git/BESSER")
+
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
 

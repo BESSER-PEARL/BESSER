@@ -15,6 +15,14 @@ from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
+from besser.utilities.buml_code_builder.common import contains_user_class, is_user_object_model
+
+try:
+    from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+        domain_model as reference_user_domain_model,
+    )
+except ImportError:
+    reference_user_domain_model = None
 
 
 def project_to_code(project: Project, file_path: str, sm: str = ""):
@@ -38,6 +46,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     domain_model = None
     objectmodel = None
     agent_model = None
+    user_domain_model = None
+    user_objectmodel = None
     gui_model = None
 
     # Import GUIModel locally to avoid circular imports
@@ -48,9 +58,15 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
     for model in project.models:
         if isinstance(model, DomainModel):
-            domain_model = model
+            if contains_user_class(model):
+                user_domain_model = user_domain_model or model
+            elif domain_model is None:
+                domain_model = model
         if isinstance(model, ObjectModel):
-            objectmodel = model
+            if is_user_object_model(model):
+                user_objectmodel = user_objectmodel or model
+            elif objectmodel is None:
+                objectmodel = model
         if isinstance(model, Agent):
             agent_model = model
         if GUIModel and isinstance(model, GUIModel):
@@ -62,6 +78,9 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
         quantum_model = next((m for m in project.models if isinstance(m, QuantumCircuit)), None)
     except ImportError:
         quantum_model = None
+
+    if user_objectmodel and not user_domain_model and reference_user_domain_model:
+        user_domain_model = reference_user_domain_model
 
     models = []
     with open(file_path, 'w', encoding='utf-8') as f:
@@ -87,6 +106,25 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             f.write(content_str)
             f.write("\n\n")
             models.append("domain_model")
+
+        if user_domain_model:
+            output_file_path = os.path.join(temp_dir, "user_model.py")
+            domain_model_to_code(
+                model=user_domain_model,
+                file_path=output_file_path,
+                objectmodel=user_objectmodel,
+                model_var_name="user_model",
+                metadata_var_name="user_metadata",
+                object_model_var_name="user_object_model",
+            )
+            with open(output_file_path, "r", encoding='utf-8') as m:
+                file_content = m.read()
+            content_str = file_content
+            f.write(content_str)
+            f.write("\n\n")
+            models.append("user_model")
+            if user_objectmodel:
+                models.append("user_object_model")
         
         if agent_model:
             output_file_path = os.path.join(temp_dir, "agent_model.py")

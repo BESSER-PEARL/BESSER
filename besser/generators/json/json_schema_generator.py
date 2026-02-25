@@ -459,16 +459,16 @@ class JSONSchemaGenerator(GeneratorInterface):
     @staticmethod
     def tojson_ordered(value, indent=4, base_indent=0):
         """
-        Serializa JSON ordenado con indentación adicional solo para líneas internas,
-        manteniendo la primera línea sin sangría extra.
+        Serializes ordered JSON with additional indentation only for internal lines,
+        keeping the first line without extra indentation.
 
         Args:
-            value (dict or list): La estructura JSON a serializar.
-            indent (int): Espacios de indentación por nivel.
-            base_indent (int): Espacios extra agregados a todas las líneas excepto la primera.
+            value (dict or list): The JSON structure to serialize.
+            indent (int): Number of spaces to indent per level.
+            base_indent (int): Extra spaces added to all lines except the first.
 
         Returns:
-            str: Cadena JSON con indentación formateada correctamente.
+            str: JSON string with properly formatted indentation.
         """
         json_str = json.dumps(value, indent=indent)
         lines = json_str.splitlines()

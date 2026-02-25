@@ -12,10 +12,13 @@ from besser.BUML.metamodel.structural.structural import DomainModel
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
-from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
+from besser.utilities.buml_code_builder.domain_model_builder import (
+    domain_model_to_code,
+    contains_user_class,
+    is_user_object_model,
+)
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
-from besser.utilities.buml_code_builder.common import contains_user_class, is_user_object_model
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (

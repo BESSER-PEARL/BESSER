@@ -51,6 +51,38 @@ def _format_method_code_literal(code: str) -> str:
     return f'"""{escaped_code}"""'
 
 
+def contains_user_class(model) -> bool:
+    """Return True if the supplied model exposes a Class literally named 'User'."""
+    if not model:
+        return False
+    get_classes = getattr(model, "get_classes", None)
+    if not callable(get_classes):
+        return False
+    classes = get_classes() or []
+    for cls in classes:
+        class_name = (getattr(cls, "name", "") or "").strip().lower()
+        if class_name == "user":
+            return True
+    return False
+
+
+def is_user_object_model(obj_model) -> bool:
+    """Detect whether an ObjectModel belongs to the user reference domain."""
+    if not obj_model:
+        return False
+    domain_model = getattr(obj_model, "domain_model", None)
+    if contains_user_class(domain_model):
+        return True
+
+    objects = getattr(obj_model, "objects", None) or []
+    for obj in objects:
+        classifier = getattr(obj, "classifier", None)
+        classifier_name = (getattr(classifier, "name", "") or "").strip().lower()
+        if classifier_name == "user":
+            return True
+    return False
+
+
 def domain_model_to_code(
     model: DomainModel,
     file_path: str,

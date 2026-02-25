@@ -125,6 +125,75 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
     state_comments = {}  # state_var -> comment_text
     agent_comment = None  # Agent metadata comment
     
+    def _add_action_elements_to_state(state_id: str, action_data: Any, fallback: bool = False) -> None:
+        element_type = "AgentStateFallbackBody" if fallback else "AgentStateBody"
+        state_key = "fallbackBodies" if fallback else "bodies"
+
+        if not isinstance(action_data, list):
+            return
+
+        for action in action_data:
+            if not isinstance(action, dict):
+                continue
+
+            action_type = action.get("type")
+            if action_type == "text":
+                message = (action.get("message") or "").replace("\\'", "'")
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": message,
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "replyType": "text",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "llm":
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": "AI response 🪄",
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "replyType": "llm",
+                }
+                elements[state_id][state_key].append(body_id)
+            elif action_type == "rag":
+                rag_db_name = action.get("ragDatabaseName") or ""
+                display_name = (
+                    f"RAG reply using {rag_db_name} database"
+                    if rag_db_name
+                    else "RAG reply"
+                )
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": display_name,
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "replyType": "rag",
+                    "ragDatabaseName": rag_db_name,
+                }
+                elements[state_id][state_key].append(body_id)
+
     try:
         # First pass: collect all intents and Agent metadata
         for node in ast.walk(tree):
@@ -200,6 +269,45 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             else:
                                 states_x = -280
                                 states_y += 220
+                    elif (
+                        isinstance(node.value.func, ast.Attribute)
+                        and node.value.func.attr == "new_rag"
+                    ):
+                        rag_name = None
+                        if (
+                            node.value.args
+                            and isinstance(node.value.args[0], ast.Constant)
+                            and isinstance(node.value.args[0].value, str)
+                        ):
+                            rag_name = node.value.args[0].value
+
+                        for kw in node.value.keywords:
+                            if (
+                                kw.arg == "name"
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, str)
+                            ):
+                                rag_name = kw.value.value
+
+                        if isinstance(rag_name, str) and rag_name.strip():
+                            rag_id = str(uuid.uuid4())
+                            elements[rag_id] = {
+                                "id": rag_id,
+                                "name": rag_name,
+                                "type": "AgentRagElement",
+                                "owner": None,
+                                "bounds": {
+                                    "x": states_x,
+                                    "y": states_y,
+                                    "width": 120,
+                                    "height": 110,
+                                },
+                            }
+                            if states_x < 200:
+                                states_x += 300
+                            else:
+                                states_x = -280
+                                states_y += 220
                                 
         # Second pass: collect all functions
         states_x = -280
@@ -249,11 +357,34 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         isinstance(node.value.args[0].args[0].value, str)
                         ):
                         if body_var not in actions:
-                            actions[body_var] = [node.value.args[0].args[0].value]
+                            actions[body_var] = [{"type": "text", "message": node.value.args[0].args[0].value}]
                         else:
-                            actions[body_var].append(node.value.args[0].args[0].value)
+                            actions[body_var].append({"type": "text", "message": node.value.args[0].args[0].value})
                     elif node.value.args[0].func.id == 'LLMReply':
-                        actions[body_var] = 'LLMReply'
+                        if body_var not in actions:
+                            actions[body_var] = [{"type": "llm"}]
+                        else:
+                            actions[body_var].append({"type": "llm"})
+                    elif node.value.args[0].func.id == 'RAGReply':
+                        rag_db_name = ""
+                        if (
+                            len(node.value.args[0].args) >= 1
+                            and isinstance(node.value.args[0].args[0], ast.Constant)
+                            and isinstance(node.value.args[0].args[0].value, str)
+                        ):
+                            rag_db_name = node.value.args[0].args[0].value
+                        for kw in node.value.args[0].keywords:
+                            if (
+                                kw.arg == 'rag_db_name'
+                                and isinstance(kw.value, ast.Constant)
+                                and isinstance(kw.value.value, str)
+                            ):
+                                rag_db_name = kw.value.value
+
+                        if body_var not in actions:
+                            actions[body_var] = [{"type": "rag", "ragDatabaseName": rag_db_name}]
+                        else:
+                            actions[body_var].append({"type": "rag", "ragDatabaseName": rag_db_name})
                 elif isinstance(node.value.args[0], ast.Name):
                     # Handle references to CustomCodeAction variables
                     action_var = node.value.args[0].id  # e.g., 'CustomCodeAction_initial'
@@ -691,7 +822,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         "replyType": "llm"
                                     }
                                     elements[state["id"]]["bodies"].append(body_id)
-                                    
+                                elif isinstance(actions[function_name], list):
+                                    _add_action_elements_to_state(state["id"], actions[function_name], fallback=False)
                                 else:
                                     for message in actions[function_name]:
                                         message = message.replace("\\'", "'")
@@ -761,9 +893,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 
                             state = states[state_name]
                             
-                            if function_name in functions or actions[function_name] in functions:
-                                if actions[function_name] in functions:
-                                    function_name = actions[function_name]
+                            mapped_action = actions.get(function_name)
+                            if function_name in functions or (isinstance(mapped_action, str) and mapped_action in functions):
+                                if isinstance(mapped_action, str) and mapped_action in functions:
+                                    function_name = mapped_action
                                 result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
                                 if result["replyType"] == "text":
                                     for reply in result["replies"]:
@@ -832,6 +965,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         "replyType": "llm"
                                     }
                                     elements[state["id"]]["fallbackBodies"].append(body_id)
+                                elif isinstance(actions[function_name], list):
+                                    _add_action_elements_to_state(state["id"], actions[function_name], fallback=True)
                                 else:
                                     body_id = str(uuid.uuid4())
                                     elements[body_id] = {

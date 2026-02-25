@@ -312,7 +312,6 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
         # Second pass: collect all functions
         states_x = -280
         states_y += 220
-        print("DEBUG: Collecting functions...")
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef):
                 function_name = node.name
@@ -335,7 +334,6 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         custom_code_actions[var_name] = callable_name  # e.g., 'CustomCodeAction_initial' -> 'action_name'
         
         # Third pass collect all actions
-        print("DEBUG: Collecting actions...")
         actions = {}
         for node in ast.walk(tree):
             if (
@@ -409,7 +407,6 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
         
         # Store the initial node ID for later use with transitions
 
-        print("DEBUG: Processing states and transitions...")
         
         # Second pass: collect states and their configurations
         for node in ast.walk(tree):
@@ -559,7 +556,6 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             }
                                 
         # Third pass: process state bodies and transitions
-        print("DEBUG: Processing state bodies and transitions...")
         
         for node in ast.walk(tree):
             try:

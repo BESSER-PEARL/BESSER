@@ -1,2 +1,2 @@
 from .json_schema_generator import *
-from .json_generator import JSONObjectGenerator
+from .json_object_generator import JSONObjectGenerator

@@ -92,6 +92,7 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_generatio
     append_zip_contents,
     build_configurations_package,
     slugify_name,
+    extract_openai_api_key
 )
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
@@ -132,25 +133,6 @@ TEMP_DIR_PREFIX = "besser_agent_"
 OUTPUT_DIR = "output"
 AGENT_MODEL_FILENAME = "agent_model.py"
 AGENT_OUTPUT_FILENAME = "agent_output.zip"
-
-
-def _extract_openai_api_key(config: Any) -> Optional[str]:
-    if not isinstance(config, dict):
-        return None
-
-    for candidate_key in ("openai_api_key", "openaiApiKey", "OPENAI_API_KEY", "apiKey"):
-        candidate_value = config.get(candidate_key)
-        if isinstance(candidate_value, str) and candidate_value.strip():
-            return candidate_value.strip()
-
-    system_section = config.get("system")
-    if isinstance(system_section, dict):
-        for candidate_key in ("openai_api_key", "openaiApiKey", "OPENAI_API_KEY", "apiKey"):
-            candidate_value = system_section.get(candidate_key)
-            if isinstance(candidate_value, str) and candidate_value.strip():
-                return candidate_value.strip()
-
-    return None
 
 
 # API Endpoints
@@ -216,7 +198,7 @@ def generate_agent_files(
         # Get the BAFGenerator from the supported generators
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
-        openai_api_key = _extract_openai_api_key(config)
+        openai_api_key = extract_openai_api_key(config)
         
         # Use the BAFGenerator with the agent model from the module
         if hasattr(agent_module, 'agent'):
@@ -602,7 +584,7 @@ async def _handle_agent_generation(json_data: dict):
                         spec.loader.exec_module(agent_module)
                         generator_info = get_generator_info("agent")
                         generator_class = generator_info.generator_class
-                        variant_openai_api_key = _extract_openai_api_key(new_config)
+                        variant_openai_api_key = extract_openai_api_key(new_config)
                         if hasattr(agent_module, 'agent'):
                             generator = generator_class(
                                 agent_module.agent,
@@ -796,7 +778,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         generator_instance = generator_class(
             getattr(agent_module, "agent", agent_model),
             config=config,
-            openai_api_key=_extract_openai_api_key(config),
+            openai_api_key=extract_openai_api_key(config),
         )
         generator_instance.generate()
 

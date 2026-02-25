@@ -10,6 +10,25 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 AgentZipGenerator = Callable[[Any, Optional[Dict[str, Any]]], Tuple[io.BytesIO, str]]
 
 
+def extract_openai_api_key(config: Any) -> Optional[str]:
+    if not isinstance(config, dict):
+        return None
+
+    for candidate_key in ("openai_api_key", "openaiApiKey", "OPENAI_API_KEY", "apiKey"):
+        candidate_value = config.get(candidate_key)
+        if isinstance(candidate_value, str) and candidate_value.strip():
+            return candidate_value.strip()
+
+    system_section = config.get("system")
+    if isinstance(system_section, dict):
+        for candidate_key in ("openai_api_key", "openaiApiKey", "OPENAI_API_KEY", "apiKey"):
+            candidate_value = system_section.get(candidate_key)
+            if isinstance(candidate_value, str) and candidate_value.strip():
+                return candidate_value.strip()
+
+    return None
+
+
 def slugify_name(value: Optional[str], fallback: str) -> str:
     """Sanitize folder names while keeping them human readable."""
     name = (value or fallback or "").strip()

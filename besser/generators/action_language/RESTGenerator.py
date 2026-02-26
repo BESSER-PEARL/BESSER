@@ -142,13 +142,13 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
             if isinstance(type, ObjectType):
                 class_name = type.clazz.name
                 mapping = []
-                for attr in type.clazz.all_attributes():
+                for attr in sorted(type.clazz.all_attributes(), key=lambda a: a.name):
                     if attr.name == f_access.field.name:
                         mapping.append(f"{attr.name} = {assignee}")
                     else:
                         mapping.append(f"{attr.name} = inst_to_update.{attr.name}")
 
-                for end in type.clazz.all_association_ends():
+                for end in sorted(type.clazz.all_association_ends(), key=lambda e: e.name):
                     if end.name == f_access.field.name:
                         mapping.append(f"{end.name} = {assignee_by_id}")
                     else:

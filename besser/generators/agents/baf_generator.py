@@ -174,7 +174,9 @@ class BAFGenerator(GeneratorInterface):
         config_for_personalization = dict(self.config) if self.config else None
         if generate_personalized_assets and config_for_personalization and self.generation_mode != GenerationMode.CODE_ONLY:
             if 'personalizationrules' in config_for_personalization:
-                personalize_agent(self.model, config_for_personalization['personalizationrules'], personalized_messages)
+                # Aaron: i don't this is used anymore, but leaving it here for now to check later when integrating the personalization
+                # personalize_agent(self.model, config_for_personalization['personalizationrules'], personalized_messages)
+                pass
             else:
                 configure_agent(
                     self.model,

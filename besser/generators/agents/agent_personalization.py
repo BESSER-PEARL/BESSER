@@ -1,8 +1,5 @@
 import os
 import re
-
-from openai import OpenAI
-from deep_translator import GoogleTranslator
 import traceback
 
 from besser.BUML.metamodel.state_machine.agent import AgentReply
@@ -93,6 +90,7 @@ def call_openai_chat(system_prompt, user_prompt, model="gpt-5", openai_api_key=N
             f"OpenAI API key not found. Set '{OPENAI_API_KEY_ENV_VAR}' or pass it via generator config."
         )
 
+    from openai import OpenAI  # lazy import – optional dependency
     client = OpenAI(api_key=resolved_api_key)
     response = client.chat.completions.create(
         model=model,
@@ -158,6 +156,7 @@ def translate_text_api(text, target_language):
 
     try:
         # deep_translator uses language codes like 'de' for German. It will auto-detect source by default.
+        from deep_translator import GoogleTranslator  # lazy import – optional dependency
         translated = GoogleTranslator(source='auto', target=target_language).translate(text)
         return translated
     except Exception as e:

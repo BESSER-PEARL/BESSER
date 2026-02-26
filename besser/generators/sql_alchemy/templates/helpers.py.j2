@@ -16,7 +16,7 @@
     {{ attribute.name }}: Mapped[{% if nullable %}Optional[{{ mapped_type(attribute.type.name) }}]{% else %}{{ mapped_type(attribute.type.name) }}{% endif %}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
     {%- if is_pk %}, primary_key=True{% endif %}
     {%- if nullable %}, nullable=True{% endif %}
-    {%- if attribute.default_value is not none %}, default={% if attribute.type.name == 'str' or attribute.type.name == 'string' %}"{{ attribute.default_value }}"{% elif attribute.type.name == 'bool' %}{{ attribute.default_value | capitalize }}{% else %}{{ attribute.default_value }}{% endif %}{% endif %})
+    {%- if attribute.default_value is not none %}, default={% if attribute.type.name == 'str' or attribute.type.name == 'string' %}"{{ attribute.default_value }}"{% elif attribute.type.name == 'bool' %}{{ attribute.default_value | capitalize }}{% elif attribute.type.__class__.__name__ == 'Enumeration' %}{{ attribute.type.name }}.{{ attribute.default_value }}{% else %}{{ attribute.default_value }}{% endif %}{% endif %})
     {%- endfor %}
 {%- endmacro %}
 

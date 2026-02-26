@@ -151,7 +151,7 @@ def class_buml_to_json(domain_model):
                         attr.type.name if hasattr(attr.type, "name") else str(attr.type)
                     )
 
-                    elements[attr_id] = {
+                    attr_element = {
                         "id": attr_id,
                         "name": attr.name,
                         "type": "ClassAttribute",
@@ -166,6 +166,9 @@ def class_buml_to_json(domain_model):
                         "attributeType": attr_type,
                         "isOptional": attr.is_optional,
                     }
+                    if attr.default_value is not None:
+                        attr_element["defaultValue"] = attr.default_value
+                    elements[attr_id] = attr_element
                     attribute_ids.append(attr_id)
                     y_offset += 30
 

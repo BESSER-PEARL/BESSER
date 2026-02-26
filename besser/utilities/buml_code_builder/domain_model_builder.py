@@ -155,8 +155,15 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                 attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
                 visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
                 is_optional_str = ", is_optional=True" if attr.is_optional else ""
+                if attr.default_value is not None:
+                    if isinstance(attr.default_value, str):
+                        default_value_str = f', default_value="{attr.default_value}"'
+                    else:
+                        default_value_str = f', default_value={attr.default_value}'
+                else:
+                    default_value_str = ""
                 f.write(f"{cls_var_name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
-                       f"type={attr_type}{visibility_str}{is_optional_str})\n")
+                       f"type={attr_type}{visibility_str}{is_optional_str}{default_value_str})\n")
 
             # Write methods
             for method in sort(cls.methods):
@@ -282,8 +289,16 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
                 for attr in sort(ac.attributes):
                     attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
                     visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
+                    is_optional_str = ", is_optional=True" if attr.is_optional else ""
+                    if attr.default_value is not None:
+                        if isinstance(attr.default_value, str):
+                            default_value_str = f', default_value="{attr.default_value}"'
+                        else:
+                            default_value_str = f', default_value={attr.default_value}'
+                    else:
+                        default_value_str = ""
                     f.write(f"{ac_var_name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
-                           f"type={attr_type}{visibility_str})\n")
+                           f"type={attr_type}{visibility_str}{is_optional_str}{default_value_str})\n")
 
                 # Write methods for the association class
                 for method in sort(ac.methods):

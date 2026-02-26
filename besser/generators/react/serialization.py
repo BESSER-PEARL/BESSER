@@ -596,6 +596,7 @@ class GuiSerializationMixin:
                         "label": attr.name,
                         "type": "str",
                         "required": False,
+                        "defaultValue": getattr(attr, "default_value", None),
                     }
 
                     if isinstance(field_type, Enumeration):

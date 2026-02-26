@@ -150,7 +150,8 @@ class {{ asso_class.name }}(Base):
     {%- set nullable = attribute.is_optional and not is_pk %}
     {{ attribute.name }}: Mapped[{% if nullable %}Optional[{{ helper.mapped_type(attribute.type.name) }}]{% else %}{{ helper.mapped_type(attribute.type.name) }}{% endif %}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
     {%- if is_pk %}, primary_key=True{% endif %}
-    {%- if nullable %}, nullable=True{% endif %})
+    {%- if nullable %}, nullable=True{% endif %}
+    {%- if attribute.default_value is not none %}, default={% if attribute.type.name == 'str' or attribute.type.name == 'string' %}"{{ attribute.default_value }}"{% elif attribute.type.name == 'bool' %}{{ attribute.default_value | capitalize }}{% else %}{{ attribute.default_value }}{% endif %}{% endif %})
     {%- endfor %}
 {% endfor %}
 

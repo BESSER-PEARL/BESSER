@@ -118,7 +118,7 @@ class {{ class.name }}{% if class.parents() %}({% for parent in class.parents() 
     {%- if method.is_abstract %}
     @abstractmethod
     {%- endif %}
-    def {{ method.name }}(self{% if method.parameters %}, {% for param in method.parameters %}{{ param.name }}: {{ param.type.name }}{% if param.default_value %} = "{{ param.default_value }}"{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}{% endif %}){%- if method.type %} -> {{ method.type.name }}{% endif %}:
+    def {{ method.name }}(self{% if method.parameters %}, {% for param in method.parameters %}{{ param.name }}: {{ param.type.name }}{% if param.default_value %}{% if param.type.name == 'str' %} = "{{ param.default_value }}"{% else %} = {{ param.default_value }}{% endif %}{% endif %}{{ ", " if not loop.last else "" }}{% endfor %}{% endif %}){%- if method.type %} -> {{ method.type.name }}{% endif %}:
         {%- if method.is_abstract %}
         pass
         {%- else %}

@@ -1100,15 +1100,23 @@ async def {{ class.name | lower }}_{{ clean_name }}(
         {% if param[3] %}
         {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %}), database)
         {% else %}
-        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %})
+        {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {% if param[1] == 'str' %}'{{ param[2] }}'{% else %}{{ param[2] }}{% endif %}{% endif %})
         {% endif %}
         {% endfor %}
+        {% endif %}
 
-        # Call the class method
-        result = {{ class.name }}.{{ clean_name }}(database{% for param in method_params %}, {{ param[0] }}{% endfor %})
+        {% if method_code %}
+        # Execute the class method body
+        {% set method_lines = method_code.split('\n') %}
+        {% set method_body = '\n'.join(method_lines[1:]) %}
+
+        def _{{ clean_name }}_impl(database{% for param in method_params %}, {{ param[0] }}{% endfor %}):
+{{ method_body | indent(4, first=True) | indent(4, first=True) }}
+
+        result = _{{ clean_name }}_impl(database{% for param in method_params %}, {{ param[0] }}{% endfor %})
         {% else %}
-        # Call the class method
-        result = {{ class.name }}.{{ clean_name }}(database)
+        # Method body not defined
+        result = None
         {% endif %}
 
         # Restore stdout
@@ -1168,7 +1176,7 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
     {% if param[3] %}
     {{ param[0] }} = await get_{{ param[1] | lower }}(params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %}), database)
     {% else %}
-    {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {{ param[2] }}{% endif %})
+    {{ param[0] }} = params.get('{{ param[0] }}'{% if param[2] is not none %}, {% if param[1] == 'str' %}'{{ param[2] }}'{% else %}{{ param[2] }}{% endif %}{% endif %})
     {% endif %}
     {% endfor %}
 
@@ -1179,6 +1187,7 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
         import sys
         captured_output = io.StringIO()
         sys.stdout = captured_output
+        {% if method_code %}
         {% set method_lines = method_code.split('\n') %}
         {% set method_body = '\n'.join(method_lines[1:]) %}
         {% set method_body_replaced = method_body.replace('self', '_' + class.name|lower + '_object') %}
@@ -1187,6 +1196,10 @@ async def execute_{{ class.name | lower }}_{{ clean_name }}(
 {{ method_body_replaced | indent(4, first=True) | indent(4, first=True) }}
 
         result = await wrapper(_{{ class.name | lower }}_object)
+        {% else %}
+        # Method body not defined
+        result = None
+        {% endif %}
         # Commit DB
         database.commit()
         database.refresh(_{{ class.name | lower }}_object)

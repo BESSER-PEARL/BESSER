@@ -6,7 +6,7 @@ This module generates Python code for BUML agent models.
 
 import os
 from re import search
-from besser.BUML.metamodel.state_machine.agent import Agent, AgentReply, LLMReply
+from besser.BUML.metamodel.state_machine.agent import Agent, AgentReply, LLMReply, RAGReply
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 
 
@@ -33,8 +33,16 @@ def agent_model_to_code(model: Agent, file_path: str):
         f.write("# AGENT MODEL #\n")
         f.write("###############\n")
         f.write("import datetime\n")
-        f.write("from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty\n")
-        f.write("from besser.BUML.metamodel.state_machine.agent import Agent, AgentSession, AgentReply, LLMReply, LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate\n")
+        f.write(
+            "from besser.BUML.metamodel.state_machine.state_machine import "
+            "Body, Condition, Event, ConfigProperty, CustomCodeAction\n"
+        )
+        f.write(
+            "from besser.BUML.metamodel.state_machine.agent import "
+            "Agent, AgentSession, AgentReply, LLMReply, RAGReply, "
+            "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
+            "RAGVectorStore, RAGTextSplitter\n"
+        )
         f.write("from besser.BUML.metamodel.structural import Metadata\n")
         f.write("import operator\n\n")
 
@@ -58,8 +66,46 @@ def agent_model_to_code(model: Agent, file_path: str):
                 # Escape single quotes for Python string literal
                 escaped_sentence = sentence.replace('\\', '\\\\').replace("'", "\\'")
                 f.write(f"    '{escaped_sentence}',\n")
-            f.write("])\n")
+            f.write("],\n")
+            if intent.description:
+                desc = intent.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+                f.write(f"description=\"{desc}\"")
+            f.write(")\n")
         f.write("\n")
+
+        rag_configs = getattr(model, 'rags', []) or []
+        if rag_configs:
+            f.write("# RAG CONFIGURATIONS\n")
+            for index, rag in enumerate(rag_configs):
+                vector_store = getattr(rag, 'vector_store', None)
+                splitter = getattr(rag, 'splitter', None)
+                if not vector_store or not splitter:
+                    continue
+                base_name = f"rag_{index}"
+                vector_var = f"{base_name}_vector_store"
+                splitter_var = f"{base_name}_splitter"
+                rag_var = f"{base_name}_rag"
+
+                f.write(f"{vector_var} = RAGVectorStore(\n")
+                f.write(f"    embedding_provider={repr(vector_store.embedding_provider)},\n")
+                f.write(f"    embedding_parameters={repr(vector_store.embedding_parameters or {})},\n")
+                f.write(f"    persist_directory={repr(vector_store.persist_directory)},\n")
+                f.write(")\n")
+
+                f.write(f"{splitter_var} = RAGTextSplitter(\n")
+                f.write(f"    splitter_type={repr(splitter.splitter_type)},\n")
+                f.write(f"    chunk_size={splitter.chunk_size},\n")
+                f.write(f"    chunk_overlap={splitter.chunk_overlap},\n")
+                f.write(")\n")
+
+                f.write(f"{rag_var} = agent.new_rag(\n")
+                f.write(f"    name={repr(rag.name)},\n")
+                f.write(f"    vector_store={vector_var},\n")
+                f.write(f"    splitter={splitter_var},\n")
+                f.write(f"    llm_name={repr(rag.llm_name)},\n")
+                f.write(f"    k={rag.k},\n")
+                f.write(f"    num_previous_messages={rag.num_previous_messages},\n")
+                f.write(")\n\n")
         
         # Check if an LLM is necessary
         llm_required = False
@@ -101,7 +147,6 @@ def agent_model_to_code(model: Agent, file_path: str):
             # Write body function if it exists
             if state.body:
                 # Check if the body has a messages attribute
-                
                 if hasattr(state.body, 'actions') and state.body.actions:
                     if isinstance(state.body.actions[0], AgentReply):
                         f.write(f"{state.name}_body = Body('{state.name}_body')\n")
@@ -112,19 +157,41 @@ def agent_model_to_code(model: Agent, file_path: str):
                         f.write(f"{state.name}.set_body({state.name}_body)\n")
                     elif isinstance(state.body.actions[0], LLMReply):
                         f.write(f"{state.name}_body = Body('{state.name}_body')\n")
-                        f.write(f"{state.name}_body.add_action(LLMReply())\n")
+                        for action in state.body.actions:
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                escaped_prompt = prompt.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(f"{state.name}_body.add_action(LLMReply(prompt='{escaped_prompt}'))\n")
+                            else:
+                                f.write(f"{state.name}_body.add_action(LLMReply())\n")
+                        f.write("\n")
+                        f.write(f"{state.name}.set_body({state.name}_body)\n")
+                    elif isinstance(state.body.actions[0], RAGReply):
+                        f.write(f"{state.name}_body = Body('{state.name}_body')\n")
+                        for action in state.body.actions:
+                            rag_name = (action.rag_db_name or '').replace('\\', '\\\\').replace("'", "\\'")
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                escaped_prompt = prompt.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(
+                                    f"{state.name}_body.add_action(RAGReply('{rag_name}', prompt='{escaped_prompt}'))\n"
+                                )
+                            else:
+                                f.write(f"{state.name}_body.add_action(RAGReply('{rag_name}'))\n")
+                        f.write("\n")
                         f.write(f"{state.name}.set_body({state.name}_body)\n")
                     elif isinstance(state.body.actions[0], CustomCodeAction):
                         action = state.body.actions[0]
                         f.write(f"{action.to_code()}\n")
                         function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', action.code)
-                        f.write(f"CustomCodeAction_{state.name} = CustomCodeAction(callable={function_match.group(1)})\n")
+                        f.write(
+                            f"CustomCodeAction_{state.name} = "
+                            f"CustomCodeAction(callable={function_match.group(1)})\n"
+                        )
                         f.write(f"{state.name}_body = Body('{state.name}_body')\n")
                         f.write(f"{state.name}_body.add_action(CustomCodeAction_{state.name})\n")
                         f.write(f"{state.name}.set_body({state.name}_body)\n")
-                            
-                        
-                
+
             # Write fallback body function if it exists
             if state.fallback_body:
                 # Check if the fallback body has a messages attribute
@@ -138,13 +205,39 @@ def agent_model_to_code(model: Agent, file_path: str):
                         f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
                     elif isinstance(state.fallback_body.actions[0], LLMReply):
                         f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
-                        f.write(f"{state.name}_fallback_body.add_action(LLMReply())\n")
+                        for action in state.fallback_body.actions:
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                escaped_prompt = prompt.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(
+                                    f"{state.name}_fallback_body.add_action(LLMReply(prompt='{escaped_prompt}'))\n"
+                                )
+                            else:
+                                f.write(f"{state.name}_fallback_body.add_action(LLMReply())\n")
+                        f.write("\n")
+                        f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
+                    elif isinstance(state.fallback_body.actions[0], RAGReply):
+                        f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
+                        for action in state.fallback_body.actions:
+                            rag_name = (action.rag_db_name or '').replace('\\', '\\\\').replace("'", "\\'")
+                            prompt = getattr(action, 'prompt', None)
+                            if prompt:
+                                escaped_prompt = prompt.replace('\\', '\\\\').replace("'", "\\'")
+                                f.write(f"{state.name}_fallback_body.add_action(\n")
+                                f.write(f"    RAGReply('{rag_name}', prompt='{escaped_prompt}')\n")
+                                f.write(")\n")
+                            else:
+                                f.write(f"{state.name}_fallback_body.add_action(RAGReply('{rag_name}'))\n")
+                        f.write("\n")
                         f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
                     elif isinstance(state.fallback_body.actions[0], CustomCodeAction):
                         action = state.fallback_body.actions[0]
                         f.write(f"{action.to_code()}\n")
                         function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', action.code)
-                        f.write(f"CustomCodeAction_{state.name}_fallback = CustomCodeAction(callable={function_match.group(1)})\n")
+                        f.write(
+                            f"CustomCodeAction_{state.name}_fallback = "
+                            f"CustomCodeAction(callable={function_match.group(1)})\n"
+                        )
                         f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
                         f.write(f"{state.name}_fallback_body.add_action(CustomCodeAction_{state.name}_fallback)\n")
                         f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")

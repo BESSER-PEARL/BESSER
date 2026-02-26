@@ -18,8 +18,11 @@ import importlib.util
 import sys
 import asyncio
 import json
+from collections import defaultdict
+from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Set
 
 from fastapi import FastAPI, HTTPException, File, UploadFile, Body, Form
 
@@ -37,6 +40,7 @@ from fastapi.responses import StreamingResponse, Response
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.project_builder import project_to_code
+from besser.generators.agents.baf_generator import GenerationMode
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -64,6 +68,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     gui_buml_to_json,
     project_to_json,
 )
+from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
+    domain_model as user_reference_domain_model,
+)
 
 # Backend services - Other services
 from besser.utilities.web_modeling_editor.backend.services.validators import (
@@ -80,6 +87,12 @@ from besser.utilities.web_modeling_editor.backend.services.deployment import (
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     cleanup_temp_resources,
     validate_generator,
+)
+from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+    append_zip_contents,
+    build_configurations_package,
+    slugify_name,
+    extract_openai_api_key
 )
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
@@ -148,7 +161,11 @@ def get_api_root():
     }
 
 
-def generate_agent_files(agent_model):
+def generate_agent_files(
+    agent_model,
+    config,
+    generation_mode: GenerationMode = GenerationMode.FULL,
+):
     """
     Generate agent files from an agent model.
     
@@ -181,15 +198,46 @@ def generate_agent_files(agent_model):
         # Get the BAFGenerator from the supported generators
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
+        openai_api_key = extract_openai_api_key(config)
         
         # Use the BAFGenerator with the agent model from the module
         if hasattr(agent_module, 'agent'):
-            generator = generator_class(agent_module.agent)
+            generator = generator_class(
+                agent_module.agent,
+                config=config,
+                openai_api_key=openai_api_key,
+                generation_mode=generation_mode,
+            )
         else:
             # Fall back to the original agent model
-            generator = generator_class(agent_model)
+            generator = generator_class(
+                agent_model,
+                config=config,
+                openai_api_key=openai_api_key,
+                generation_mode=generation_mode,
+            )
         
         generator.generate()
+
+        # Prepare user profile bundle when personalization mappings are provided
+        user_profiles_path = None
+        if isinstance(config, dict) and isinstance(config.get('personalizationMapping'), list):
+            user_profiles = []
+            for idx, entry in enumerate(config.get('personalizationMapping')):
+                if not isinstance(entry, dict):
+                    continue
+                profile_data = entry.get('user_profile')
+                profile_name = entry.get('name') or f"variant_{idx + 1}"
+                if profile_data is not None:
+                    user_profiles.append({
+                        "name": profile_name,
+                        "user_profile": profile_data,
+                    })
+
+            if user_profiles:
+                user_profiles_path = os.path.join(temp_dir, "user_profiles.json")
+                with open(user_profiles_path, "w", encoding="utf-8") as profiles_file:
+                    json.dump(user_profiles, profiles_file, indent=2)
         
         # Create a zip file with all the generated files
         zip_buffer = io.BytesIO()
@@ -197,12 +245,17 @@ def generate_agent_files(agent_model):
             # Add the agent model file
             zip_file.write(agent_file, os.path.basename(agent_file))
             
+            # Add user profiles if generated
+            if user_profiles_path and os.path.exists(user_profiles_path):
+                zip_file.write(user_profiles_path, os.path.basename(user_profiles_path))
+
             # Add all files from the output directory
             if os.path.exists(OUTPUT_DIR):
-                for file_name in os.listdir(OUTPUT_DIR):
-                    file_path = os.path.join(OUTPUT_DIR, file_name)
-                    if os.path.isfile(file_path):
-                        zip_file.write(file_path, file_name)
+                for root, _, files in os.walk(OUTPUT_DIR):
+                    for file_name in files:
+                        file_path = os.path.join(root, file_name)
+                        arcname = os.path.relpath(file_path, OUTPUT_DIR)
+                        zip_file.write(file_path, arcname)
         
         zip_buffer.seek(0)
         return zip_buffer, AGENT_OUTPUT_FILENAME
@@ -330,6 +383,25 @@ async def generate_code_output(input_data: DiagramInput):
         if generator_info.category == "quantum":
             return await _generate_qiskit(json_data, generator_info.generator_class, input_data.config, temp_dir)
 
+        if generator_info.category == "object_model":
+            diagram_type = _get_diagram_type(json_data)
+            if diagram_type == "UserDiagram":
+                return await _handle_user_diagram_generation(
+                    json_data,
+                    generator_type,
+                    generator_info,
+                    input_data.config,
+                    temp_dir,
+                )
+
+            return await _handle_object_diagram_generation(
+                json_data,
+                generator_type,
+                generator_info,
+                input_data.config,
+                temp_dir,
+            )
+
         # Handle class diagram based generators
         return await _handle_class_diagram_generation(
             json_data, generator_type, generator_info, input_data.config, temp_dir
@@ -405,7 +477,68 @@ async def _handle_agent_generation(json_data: dict):
     try:
         # Get languages from config if present
         config = json_data.get('config', {})
-        languages = config.get('languages') if config else None
+
+        if config is None:
+            # Single agent (default behavior)
+            agent_model = process_agent_diagram(json_data)
+            zip_buffer, file_name = generate_agent_files(agent_model, config)
+            return StreamingResponse(
+                zip_buffer,
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={file_name}"},
+            )
+
+        is_config_dict = isinstance(config, dict)
+        if is_config_dict and isinstance(config.get('personalizationMapping'), list):
+            normalized_mappings = []
+            for index, entry in enumerate(config.get('personalizationMapping') or []):
+                if not isinstance(entry, dict):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"personalizationMapping entry at index {index} must be an object",
+                    )
+
+                user_profile_payload = entry.get('user_profile')
+                if user_profile_payload is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "personalizationMapping entry "
+                            f"at index {index} is missing 'user_profile'"
+                        ),
+                    )
+
+                simplified_profile = _generate_user_profile_document(user_profile_payload)
+
+                agent_model_json = entry.get('agent_model')
+                agent_model_buml = None
+                if isinstance(agent_model_json, dict):
+                    mapping_payload = dict(json_data)
+                    mapping_payload['model'] = deepcopy(agent_model_json)
+                    try:
+                        agent_model_buml = process_agent_diagram(mapping_payload)
+                    except Exception as conversion_error:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                "Failed to convert personalizationMapping "
+                                f"agent_model at index {index} to BUML: {conversion_error}"
+                            ),
+                        ) from conversion_error
+
+                normalized_entry = dict(entry)
+                normalized_entry['user_profile'] = simplified_profile
+                if agent_model_buml is not None:
+                    normalized_entry['agent_model'] = agent_model_buml
+                normalized_mappings.append(normalized_entry)
+
+            config['personalizationMapping'] = normalized_mappings
+            json_data['config'] = config
+
+        languages = config.get('languages') if is_config_dict else None
+        configuration_variants = config.get('configurations') if is_config_dict else None
+        base_model_snapshot = config.get('baseModel') if is_config_dict else None
+        variation_entries = config.get('variations') if is_config_dict else None
 
         # New format: languages is a dict with 'source' and 'target'
         if languages and isinstance(languages, dict):
@@ -417,7 +550,9 @@ async def _handle_agent_generation(json_data: dict):
             # Default agent (no language)
             default_json_data = {**json_data}
             if 'config' in default_json_data and isinstance(default_json_data['config'], dict):
-                default_json_data['config'] = {k: v for k, v in default_json_data['config'].items() if k != 'languages'}
+                default_json_data['config'] = {
+                    k: v for k, v in default_json_data['config'].items() if k != 'languages'
+                }
             agent_models.append((process_agent_diagram(default_json_data), 'default'))
 
             # Agents for each target language
@@ -442,15 +577,26 @@ async def _handle_agent_generation(json_data: dict):
                         agent_model_to_code(agent_model, agent_file)
                         # Import and generate output files
                         sys.path.insert(0, temp_dir)
-                        spec = importlib.util.spec_from_file_location(f"agent_model_{lang}", agent_file)
+                        spec = importlib.util.spec_from_file_location(
+                            f"agent_model_{lang}", agent_file
+                        )
                         agent_module = importlib.util.module_from_spec(spec)
                         spec.loader.exec_module(agent_module)
                         generator_info = get_generator_info("agent")
                         generator_class = generator_info.generator_class
+                        variant_openai_api_key = extract_openai_api_key(new_config)
                         if hasattr(agent_module, 'agent'):
-                            generator = generator_class(agent_module.agent)
+                            generator = generator_class(
+                                agent_module.agent,
+                                config=new_config,
+                                openai_api_key=variant_openai_api_key,
+                            )
                         else:
-                            generator = generator_class(agent_model)
+                            generator = generator_class(
+                                agent_model,
+                                config=new_config,
+                                openai_api_key=variant_openai_api_key,
+                            )
                         generator.generate()
                         # Add agent model file inside language folder
                         zip_file.write(agent_file, f"{lang}/agent_model_{lang}.py")
@@ -468,15 +614,93 @@ async def _handle_agent_generation(json_data: dict):
                 media_type="application/zip",
                 headers={"Content-Disposition": "attachment; filename=agents_multi_lang.zip"},
             )
-        else:
-            # Single agent (default behavior)
+
+        if base_model_snapshot is not None and isinstance(variation_entries, list):
+            def to_agent_model(model_snapshot: Dict[str, Any]):
+                variant_payload = dict(json_data)
+                variant_payload['model'] = model_snapshot
+                return process_agent_diagram(variant_payload)
+
+            combined_zip = io.BytesIO()
+            with zipfile.ZipFile(combined_zip, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                base_agent_model = to_agent_model(base_model_snapshot)
+                base_buffer, _ = generate_agent_files(
+                    base_agent_model,
+                    config,
+                    generation_mode=GenerationMode.CODE_ONLY,
+                )
+                append_zip_contents(zip_file, base_buffer)
+
+                for index, entry in enumerate(variation_entries):
+                    if not isinstance(entry, dict):
+                        continue
+                    variant_snapshot = entry.get('model')
+                    if not variant_snapshot:
+                        continue
+                    try:
+                        variant_agent_model = to_agent_model(variant_snapshot)
+                    except Exception as conversion_error:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=(
+                                "Invalid agent model provided for variation "
+                                f"'{entry.get('name', index)}': {conversion_error}"
+                            ),
+                        ) from conversion_error
+
+                    folder_name = slugify_name(entry.get('name'), f"variation_{index + 1}")
+                    variant_buffer, _ = generate_agent_files(
+                        variant_agent_model,
+                        entry.get('config'),
+                        generation_mode=GenerationMode.CODE_ONLY,
+                    )
+                    append_zip_contents(
+                        zip_file,
+                        variant_buffer,
+                        prefix=folder_name or f"variation_{index + 1}",
+                    )
+
+            combined_zip.seek(0)
+            return StreamingResponse(
+                combined_zip,
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={AGENT_OUTPUT_FILENAME}"},
+            )
+
+        if configuration_variants and isinstance(configuration_variants, list):
             agent_model = process_agent_diagram(json_data)
-            zip_buffer, file_name = generate_agent_files(agent_model)
+            bundle_buffer = build_configurations_package(
+                agent_model,
+                configuration_variants,
+                generate_agent_files,
+            )
+            return StreamingResponse(
+                bundle_buffer,
+                media_type="application/zip",
+                headers={"Content-Disposition": f"attachment; filename={AGENT_OUTPUT_FILENAME}"},
+            )
+
+        if isinstance(config, dict) and 'personalizationMapping' in config:
+            agent_model = process_agent_diagram(json_data)
+            zip_buffer, file_name = generate_agent_files(
+                agent_model,
+                config,
+                generation_mode=GenerationMode.CODE_ONLY,
+            )
             return StreamingResponse(
                 zip_buffer,
                 media_type="application/zip",
                 headers={"Content-Disposition": f"attachment; filename={file_name}"},
             )
+
+        # Single agent fallback
+        agent_model = process_agent_diagram(json_data)
+        zip_buffer, file_name = generate_agent_files(agent_model, config)
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename={file_name}"},
+        )
     except Exception as e:
         raise HTTPException(
             status_code=500, 
@@ -508,6 +732,337 @@ async def _handle_class_diagram_generation(
         return await _generate_jsonschema(buml_model, generator_class, config, temp_dir)
 
     return await _generate_standard(buml_model, generator_class, generator_type, generator_info, temp_dir)
+
+
+@app.post("/besser_api/transform_agent_model_json")
+async def transform_agent_model_json(input_data: DiagramInput):
+    """Transform an agent JSON model using the generator and return personalized_agent_model as JSON."""
+    temp_dir = tempfile.mkdtemp(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_")
+    original_cwd = os.getcwd()
+    sys_path_added = False
+
+    try:
+        json_data = input_data.model_dump()
+        raw_config = json_data.get("config") if isinstance(json_data.get("config"), dict) else None
+        fallback_config = input_data.config if isinstance(input_data.config, dict) else None
+        base_config = raw_config if raw_config is not None else fallback_config
+        if not base_config:
+            raise HTTPException(status_code=400, detail="Config is required for transformation")
+
+        config = deepcopy(base_config)
+        user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
+        if isinstance(user_profile_payload, dict):
+            config["userProfileModel"] = _generate_user_profile_document(user_profile_payload)
+        elif isinstance(config, dict) and "userProfileModel" in config:
+            config.pop("userProfileModel", None)
+
+        json_data["config"] = config
+        # Convert to BUML model
+        agent_model = process_agent_diagram(json_data)
+
+        # Persist BUML to file for generator import
+        agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
+        agent_model_to_code(agent_model, agent_file)
+
+        # Prepare import context
+        sys.path.insert(0, temp_dir)
+        sys_path_added = True
+        os.chdir(temp_dir)
+
+        spec = importlib.util.spec_from_file_location("agent_model", agent_file)
+        agent_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(agent_module)
+
+        generator_info = get_generator_info("agent")
+        generator_class = generator_info.generator_class
+        generator_instance = generator_class(
+            getattr(agent_module, "agent", agent_model),
+            config=config,
+            openai_api_key=extract_openai_api_key(config),
+        )
+        generator_instance.generate()
+
+        personalized_json_path = os.path.join(temp_dir, OUTPUT_DIR, "personalized_agent_model.json")
+        if not os.path.isfile(personalized_json_path):
+            raise HTTPException(status_code=500, detail="personalized_agent_model.json not found after generation")
+
+        with open(personalized_json_path, "r", encoding="utf-8") as f:
+            personalized_json = json.load(f)
+
+        return {
+            "model": personalized_json,
+            "diagramType": "AgentDiagram",
+            "exportedAt": datetime.utcnow().isoformat(),
+            "version": "2.0.0",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Transform failed: {str(e)}")
+    finally:
+        os.chdir(original_cwd)
+        if sys_path_added:
+            try:
+                sys.path.remove(temp_dir)
+            except ValueError:
+                pass
+        cleanup_temp_resources(temp_dir)
+
+
+async def _handle_object_diagram_generation(
+    json_data: dict,
+    generator_type: str,
+    generator_info,
+    config: dict,
+    temp_dir: str,
+):
+    """Handle generators that operate on object diagrams."""
+    reference_payload = _extract_reference_class_diagram(json_data)
+    if not reference_payload:
+        raise HTTPException(
+            status_code=400,
+            detail="Object diagram generation requires reference class diagram data.",
+        )
+
+    domain_model = process_class_diagram(reference_payload)
+    object_model = process_object_diagram(json_data, domain_model)
+
+    generator_class = generator_info.generator_class
+    generator_instance = generator_class(object_model, output_dir=temp_dir)
+    generator_instance.generate()
+
+    return _create_file_response(temp_dir, generator_type)
+
+
+async def _handle_user_diagram_generation(
+    json_data: dict,
+    generator_type: str,
+    generator_info,
+    config: dict,
+    temp_dir: str,
+):
+    """Handle user diagram generation using the preset user reference domain."""
+    try:
+        object_model = process_object_diagram(json_data, user_reference_domain_model)
+    except Exception as conversion_error:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to convert user diagram to BUML: {conversion_error}",
+        ) from conversion_error
+
+    generator_class = generator_info.generator_class
+    generator_instance = generator_class(object_model, output_dir=temp_dir)
+    generator_instance.generate()
+
+    _normalize_user_model_output(object_model, temp_dir)
+
+    return _create_file_response(temp_dir, generator_type)
+
+
+def _generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate the normalized JSON document for a stored user profile diagram."""
+    if not isinstance(user_profile_model, dict):
+        raise HTTPException(status_code=400, detail="userProfileModel must contain a serialized UserDiagram")
+
+    diagram_title = (
+        user_profile_model.get("title")
+        or user_profile_model.get("name")
+        or user_profile_model.get("id")
+        or "UserProfile"
+    )
+    prepared_payload = {
+        "title": diagram_title,
+        "diagramType": "UserDiagram",
+        "model": deepcopy(user_profile_model),
+        "generator": "jsonobject",
+    }
+
+    model_section = prepared_payload["model"]
+    if isinstance(model_section, dict):
+        model_section.setdefault("type", "UserDiagram")
+
+    temp_dir = tempfile.mkdtemp(prefix=f"user_profile_{uuid.uuid4().hex}_")
+    try:
+        object_model = process_object_diagram(prepared_payload, user_reference_domain_model)
+        generator_info = get_generator_info("jsonobject")
+        if not generator_info:
+            raise HTTPException(status_code=500, detail="JSONObject generator is not configured")
+        generator_class = generator_info.generator_class
+        generator_instance = generator_class(object_model, output_dir=temp_dir)
+        generator_instance.generate()
+
+        _normalize_user_model_output(object_model, temp_dir)
+
+        file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
+        json_path = os.path.join(temp_dir, f"{file_name}.json")
+        if not os.path.isfile(json_path):
+            raise HTTPException(status_code=500, detail="Failed to render user profile JSON document")
+
+        with open(json_path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to convert user profile model: {exc}") from exc
+    finally:
+        cleanup_temp_resources(temp_dir)
+
+
+def _normalize_user_model_output(object_model, temp_dir: str) -> None:
+    file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
+    json_path = os.path.join(temp_dir, f"{file_name}.json")
+    if not os.path.isfile(json_path):
+        return
+
+    try:
+        with open(json_path, "r", encoding="utf-8") as source:
+            document = json.load(source)
+    except (OSError, json.JSONDecodeError):
+        return
+
+    normalized_document = _build_user_model_hierarchy(document)
+    if not normalized_document:
+        return
+
+    with open(json_path, "w", encoding="utf-8") as target:
+        json.dump(normalized_document, target, indent=2, ensure_ascii=False)
+
+
+def _build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    objects = document.get("objects")
+    if not isinstance(objects, list):
+        return None
+
+    objects_by_id: Dict[str, Dict[str, Any]] = {}
+    for obj in objects:
+        if not isinstance(obj, dict):
+            continue
+        object_id = obj.get("id")
+        if object_id:
+            objects_by_id[object_id] = obj
+
+    if not objects_by_id:
+        return None
+
+    root_id = next(
+        (obj_id for obj_id, obj in objects_by_id.items() if obj.get("class") == "User"),
+        None,
+    )
+    if not root_id:
+        return None
+
+    root_model = _build_user_model_node(root_id, objects_by_id, include_identity=True, path=set())
+    if root_model is None:
+        return None
+
+    normalized_document = {key: value for key, value in document.items() if key != "objects"}
+    normalized_document["model"] = root_model
+    return normalized_document
+
+
+def _build_user_model_node(
+    object_id: str,
+    objects_by_id: Dict[str, Dict[str, Any]],
+    include_identity: bool,
+    path: Set[str],
+) -> Optional[Dict[str, Any]]:
+    if object_id in path:
+        return None
+
+    obj = objects_by_id.get(object_id)
+    if not obj:
+        return None
+
+    path.add(object_id)
+    try:
+        node: Dict[str, Any] = {}
+        if include_identity:
+            node["id"] = obj.get("id")
+            node["class"] = obj.get("class")
+
+        attributes = obj.get("attributes")
+        if isinstance(attributes, dict):
+            node.update(attributes)
+
+        child_groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+
+        relationships = obj.get("relationships")
+        if isinstance(relationships, dict):
+            for target_ids in relationships.values():
+                if not isinstance(target_ids, list):
+                    continue
+                for target_id in target_ids:
+                    child_obj = objects_by_id.get(target_id)
+                    if not child_obj:
+                        continue
+                    child_node = _build_user_model_node(
+                        target_id,
+                        objects_by_id,
+                        include_identity=False,
+                        path=path,
+                    )
+                    if child_node is None:
+                        continue
+                    key = child_obj.get("class") or child_obj.get("id")
+                    if not key:
+                        continue
+                    child_groups[key].append(child_node)
+
+        for child_key, children in child_groups.items():
+            if not children:
+                continue
+            if len(children) == 1:
+                node[child_key] = children[0]
+            else:
+                node[child_key] = children
+
+        return node
+    finally:
+        path.remove(object_id)
+
+
+def _sanitize_object_model_filename(name: Optional[str]) -> str:
+    cleaned = (name or "object_model").strip().replace(" ", "_")
+    return cleaned or "object_model"
+
+
+def _extract_reference_class_diagram(json_data: dict):
+    reference_data = json_data.get("referenceDiagramData")
+    if not reference_data:
+        reference_data = json_data.get("model", {}).get("referenceDiagramData")
+
+    if not reference_data:
+        return None
+
+    if isinstance(reference_data, dict) and isinstance(reference_data.get("model"), dict):
+        model_payload = reference_data["model"]
+        title = reference_data.get("title") or reference_data["model"].get("title")
+    else:
+        model_payload = reference_data
+        title = reference_data.get("title")
+
+    if not isinstance(model_payload, dict) or "elements" not in model_payload:
+        return None
+
+    return {
+        "title": title or "ReferenceClassDiagram",
+        "model": model_payload,
+    }
+
+
+def _get_diagram_type(json_data: dict) -> Optional[str]:
+    """Safely extract the diagram type label from the payload."""
+    explicit_type = json_data.get("diagramType")
+    if isinstance(explicit_type, str):
+        return explicit_type
+
+    model_section = json_data.get("model")
+    if isinstance(model_section, dict):
+        model_type = model_section.get("type")
+        if isinstance(model_type, str):
+            return model_type
+
+    return None
 
 
 async def _generate_django(buml_model, generator_class, config: dict, temp_dir: str):
@@ -1361,6 +1916,18 @@ async def validate_diagram(input_data: DiagramInput):
                 validation_warnings.extend(domain_validation.get("warnings", []))
 
                 # If domain model is valid, process and validate object model
+                if domain_validation.get("success", False):
+                    object_model = process_object_diagram(input_data.model_dump(), buml_model)
+                    object_validation = object_model.validate(raise_exception=False)
+                    validation_errors.extend(object_validation.get("errors", []))
+                    validation_warnings.extend(object_validation.get("warnings", []))
+
+            elif diagram_type == "UserDiagram":
+                buml_model = user_reference_domain_model
+                domain_validation = buml_model.validate(raise_exception=False)
+                validation_errors.extend(domain_validation.get("errors", []))
+                validation_warnings.extend(domain_validation.get("warnings", []))
+
                 if domain_validation.get("success", False):
                     object_model = process_object_diagram(input_data.model_dump(), buml_model)
                     object_validation = object_model.validate(raise_exception=False)

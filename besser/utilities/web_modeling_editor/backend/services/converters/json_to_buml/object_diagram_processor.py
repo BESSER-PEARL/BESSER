@@ -79,14 +79,18 @@ def process_object_diagram(json_data, domain_model):
         title = title.replace(' ', '_')
 
     object_model = ObjectModel(title)
-    # Get elements and relationships from the JSON data
-    elements = json_data.get('model', {}).get('elements', {})
-    relationships = json_data.get('model', {}).get('relationships', {})
+    # Get elements, relationships, and reference data from the JSON payload
+    model_data = json_data.get('model', {})
+    elements = model_data.get('elements', {})
+    relationships = model_data.get('relationships', {})
+    reference_data = model_data.get('referenceDiagramData', {})
 
-     # If elements is empty, try the nested structure
-    if not elements and 'model' in json_data.get('model', {}):
-        elements = json_data.get('model', {}).get('elements', {})
-        relationships = json_data.get('model', {}).get('relationships', {})
+    # If elements is empty, try the nested structure some exporters use
+    if not elements and isinstance(model_data.get('model'), dict):
+        nested_model = model_data.get('model')
+        elements = nested_model.get('elements', {})
+        relationships = nested_model.get('relationships', {})
+        reference_data = nested_model.get('referenceDiagramData', reference_data)
 
     # Track objects by their ID for link creation
     objects_by_id = {}
@@ -103,47 +107,36 @@ def process_object_diagram(json_data, domain_model):
             comment_elements[element_id] = comment_text
             continue
             
-        if element.get("type") == "ObjectName":
+        if element.get("type") == "ObjectName" or element.get("type") == "UserModelName":
             # Extract object name and class ID
             object_name = element.get("name", "")
             class_id = element.get("classId")
 
             # Find the corresponding class in the domain model using classId
             class_obj = None
-            if class_id:
-                # Get the reference data to find the class name by ID
-                reference_data = json_data.get('model', {}).get('referenceDiagramData', {})
+            class_name = None
+            if class_id and reference_data:
+                reference_elements = reference_data.get('elements', {})
+                class_element = reference_elements.get(class_id)
+                if class_element:
+                    class_name = class_element.get("name", "")
+            if not class_name:
+                class_name = element.get("className")
 
-                if reference_data:
-                    reference_elements = reference_data.get('elements', {})
-                    class_element = reference_elements.get(class_id)
-                    if class_element:
-                        class_name = class_element.get("name", "")
-                        class_obj = domain_model.get_class_by_name(class_name)
-                        if not class_obj:
-                            raise HTTPException(
-                                status_code=400,
-                                detail=f"Class '{class_name}' with ID '{class_id}' not found in domain model. Please ensure the class diagram contains all required classes."
-                            )
-                    else:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Could not find class element with ID '{class_id}' in reference diagram data. Please verify the object diagram references are correct."
-                        )
-                else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="No reference diagram data found. Please ensure the class diagram is properly linked to the object diagram."
-                    )
+            if class_name:
+                class_obj = domain_model.get_class_by_name(class_name)
 
-            # Fall back to searching by object name if class ID lookup fails
             if not class_obj:
+                # Fall back to searching by object name if class lookup fails
                 class_obj = domain_model.get_class_by_name(object_name)
 
             if not class_obj:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Could not find class for object '{object_name}' with class ID '{class_id}'. Please ensure all objects have corresponding classes in the class diagram."
+                    detail=(
+                        f"Could not find class for object '{object_name}' with class ID '{class_id}'. "
+                        "Ensure either reference diagram data or explicit class names are provided."
+                    )
                 )
 
             # Create object using fluent API
@@ -153,85 +146,92 @@ def process_object_diagram(json_data, domain_model):
             attributes_dict = {}
             for attr_id in element.get("attributes", []):
                 attr_element = elements.get(attr_id)
-                if attr_element and attr_element.get("type") == "ObjectAttribute":
-                    attr_string = attr_element.get("name", "")
+                if not attr_element:
+                    continue
 
-                    # Parse the attribute string to extract name, type, and value
+                attr_type = attr_element.get("type")
+                attr_string = attr_element.get("name", "")
+                attr_name = None
+                value = None
+
+                if attr_type == "ObjectAttribute":
                     # Format: "+ name: type = value"
-                    value = None
                     if " = " in attr_string:
                         attr_part, value_part = attr_string.split(" = ", 1)
                         value = value_part.strip()
                         attr_string = attr_part.strip()
-                    
-                    # Parse the attribute definition
                     try:
-                        visibility, attr_name, attr_type = parse_attribute(attr_string, domain_model)
-                        if attr_name and value is not None:
-                            # Find the corresponding property in the class or its parents
-                            property_obj = None
-
-                            # First check the class itself
-                            for prop in class_obj.attributes:
-                                if prop.name == attr_name:
-                                    property_obj = prop
-                                    break
-
-                            # If not found, check parent classes (for inheritance)
-                            if not property_obj:
-                                for gen in domain_model.generalizations:
-                                    if gen.specific == class_obj:
-                                        for prop in gen.general.attributes:
-                                            if prop.name == attr_name:
-                                                property_obj = prop
-                                                break
-                                        if property_obj:
-                                            break
-
-                            if property_obj:
-                                # Convert value to appropriate type
-                                converted_value = value
-                                
-                                # Check if the property type is an enumeration
-                                if hasattr(property_obj.type, 'literals'):  # This is an enumeration
-                                    # Use the enumeration's __getattr__ method to get the literal
-                                    # This will return the actual literal from the enumeration
-                                    try:
-                                        # Find the literal in the enumeration by name
-                                        for literal in property_obj.type.literals:
-                                            if literal.name == value:
-                                                converted_value = literal
-                                                break
-                                        else:
-                                            # If not found by iteration, try getattr as fallback
-                                            converted_value = getattr(property_obj.type, value)
-                                    except (AttributeError, StopIteration):
-                                        # If literal not found, keep original value and warn
-                                        print(f"Warning: Enumeration literal '{value}' not found in {property_obj.type.name}")
-                                        converted_value = value
-                                    
-                                elif hasattr(property_obj.type, 'name'):
-                                    type_name = property_obj.type.name if hasattr(property_obj.type, 'name') else str(property_obj.type)
-                                    if type_name in ['int', 'IntegerType']:
-                                        try:
-                                            converted_value = int(value)
-                                        except ValueError:
-                                            converted_value = value
-                                    elif type_name in ['float', 'FloatType']:
-                                        try:
-                                            converted_value = float(value)
-                                        except ValueError:
-                                            converted_value = value
-                                    elif type_name in ['bool', 'BooleanType']:
-                                        converted_value = value.lower() in ['true', '1', 'yes']
-                                    elif type_name in ['datetime', 'DateTimeType', 'date', 'DateType', 'time', 'TimeType', 'timedelta', 'TimeDeltaType']:
-                                        converted_value = parse_datetime_value(value, type_name)
-                                
-                                attributes_dict[attr_name] = converted_value
-
+                        _, attr_name, _ = parse_attribute(attr_string, domain_model)
                     except Exception as e:
                         print(f"Warning: Could not process attribute '{attr_string}' for object '{object_name}': {e}")
                         continue
+                elif attr_type == "UserModelAttribute":
+                    operator = attr_element.get("attributeOperator", "==")
+                    if operator and operator in attr_string:
+                        attr_part, value_part = attr_string.split(operator, 1)
+                        attr_name = attr_part.strip()
+                        value = value_part.strip()
+                    else:
+                        attr_name = attr_string.strip()
+                        value = attr_element.get("attributeValue")
+                else:
+                    continue
+
+                if attr_name and value is not None:
+                    # Find the corresponding property in the class or its parents
+                    property_obj = None
+
+                    # First check the class itself
+                    for prop in class_obj.attributes:
+                        if prop.name == attr_name:
+                            property_obj = prop
+                            break
+
+                    # If not found, check parent classes (for inheritance)
+                    if not property_obj:
+                        for gen in domain_model.generalizations:
+                            if gen.specific == class_obj:
+                                for prop in gen.general.attributes:
+                                    if prop.name == attr_name:
+                                        property_obj = prop
+                                        break
+                                if property_obj:
+                                    break
+
+                    if property_obj:
+                        # Convert value to appropriate type
+                        converted_value = value
+                        
+                        # Check if the property type is an enumeration
+                        if hasattr(property_obj.type, 'literals'):  # This is an enumeration
+                            try:
+                                for literal in property_obj.type.literals:
+                                    if literal.name == value:
+                                        converted_value = literal
+                                        break
+                                else:
+                                    converted_value = getattr(property_obj.type, value)
+                            except (AttributeError, StopIteration):
+                                print(f"Warning: Enumeration literal '{value}' not found in {property_obj.type.name}")
+                                converted_value = value
+                        elif hasattr(property_obj.type, 'name'):
+                            type_name = property_obj.type.name if hasattr(property_obj.type, 'name') else str(property_obj.type)
+                            if type_name in ['int', 'IntegerType']:
+                                try:
+                                    converted_value = int(value)
+                                except ValueError:
+                                    converted_value = value
+                            elif type_name in ['float', 'FloatType']:
+                                try:
+                                    converted_value = float(value)
+                                except ValueError:
+                                    converted_value = value
+                            elif type_name in ['bool', 'BooleanType']:
+                                converted_value = value.lower() in ['true', '1', 'yes']
+                            elif type_name in ['datetime', 'DateTimeType', 'date', 'DateType', 'time', 'TimeType', 'timedelta', 'TimeDeltaType']:
+                                converted_value = parse_datetime_value(value, type_name)
+                        
+                        attributes_dict[attr_name] = converted_value
 
             # Add attributes to builder if any were found
             if attributes_dict:
@@ -244,7 +244,6 @@ def process_object_diagram(json_data, domain_model):
             # Add the object to the model and track it
             object_model.add_object(obj)
             objects_by_id[element_id] = obj
-
     # Second pass: Create links between objects
     for rel_id, relationship in relationships.items():
         # Handle Link (comment links)
@@ -278,7 +277,7 @@ def process_object_diagram(json_data, domain_model):
 
             source_obj = objects_by_id.get(source_id)
             target_obj = objects_by_id.get(target_id)
-            
+
             if not source_obj or not target_obj:
                 raise HTTPException(
                     status_code=400,

@@ -1,8 +1,52 @@
-{% set ns = namespace(last_section=None) -%}
-{% for prop in properties -%}
-{% if ns.last_section != prop.section -%}
-{% set ns.last_section = prop.section %}
-[{{ ns.last_section }}]
-{% endif -%}
-{{ prop.name }} = {{ prop.value }}
-{% endfor -%}
+[agent]
+agent.check_transitions.delay = 2
+
+[websocket_platform]
+websocket.host = localhost
+websocket.port = 8765
+streamlit.host = localhost
+streamlit.port = 5000
+
+[telegram_platform]
+telegram.token = YOUR-BOT-TOKEN
+
+[github_platform]
+github.personal_token = GITHUB-PERSONAL-TOKEN
+github.webhook_token = WEBHOOK-TOKEN
+github.webhook_port = 8901
+
+[gitlab_platform]
+gitlab.personal_token = GITLAB-PERSONAL-TOKEN
+gitlab.webhook_token = WEBHOOK-TOKEN
+gitlab.webhook_port = 8901
+
+[a2a_platform]
+a2a.port = 8000
+
+[nlp]
+nlp.language = en
+nlp.region = US
+nlp.timezone = Europe/Madrid
+nlp.pre_processing = True
+nlp.intent_threshold = 0.4
+nlp.openai.api_key = YOUR-API-KEY
+nlp.hf.api_key = YOUR-API-KEY
+nlp.replicate.api_key = YOUR-API-KEY
+
+[db]
+db.monitoring = True
+db.monitoring.dialect = postgresql
+db.monitoring.host = localhost
+db.monitoring.port = 5432
+db.monitoring.database = mydatabase
+db.monitoring.username = myuser
+db.monitoring.password = mypassword
+
+[streamlit_db]
+db.streamlit = True
+db.streamlit.dialect = postgresql
+db.streamlit.host = localhost
+db.streamlit.port = 5432
+db.streamlit.database = mydatabase
+db.streamlit.username = myuser
+db.streamlit.password = mypassword

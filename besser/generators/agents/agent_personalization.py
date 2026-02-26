@@ -1,9 +1,11 @@
+import json
+import logging
 import os
 import re
-import traceback
 
 from besser.BUML.metamodel.state_machine.agent import AgentReply
-import json
+
+logger = logging.getLogger(__name__)
 
 
 OPENAI_API_KEY_ENV_VAR = "OPENAI_API_KEY"
@@ -99,9 +101,9 @@ def call_openai_chat(system_prompt, user_prompt, model="gpt-5", openai_api_key=N
             {"role": "user", "content": user_prompt}
         ]
     )
-    # response.choices[0].message.content is the message content in the new client
-    print("OpenAI response:", response.choices[0].message.content.strip())
-    return response.choices[0].message.content.strip()
+    result = response.choices[0].message.content.strip()
+    logger.debug("OpenAI response: %s", result)
+    return result
 
 
 
@@ -236,16 +238,9 @@ def configure_agent(agent, config, openai_api_key: str = None):
     training_sentences = []
     for intent in getattr(agent, 'intents', []):
         for idx, sentence in enumerate(getattr(intent, 'training_sentences', [])):
-            # Here you can personalize each training sentence
-            print(f"Intent: {getattr(intent, 'name', '')}, Sentence {idx}: {sentence}")
-            # intent.training_sentences[idx] = ... # personalize as needed
-            if 'agentLanguage' in config and config['agentLanguage'] != 'none' and False:
-                target_language = config['agentLanguage']
-                translated_sentence = translate_text(sentence, target_language)
-                intent.training_sentences[idx] = translated_sentence
-                print(f"Translated Sentence {idx}: {translated_sentence}")
-            elif 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
-                print("Translating using API...")
+            logger.debug("Intent: %s, Sentence %d: %s", getattr(intent, 'name', ''), idx, sentence)
+            if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
+                logger.debug("Translating using API...")
                 training_sentences.append(sentence)
     if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
         if not resolved_api_key:
@@ -264,10 +259,10 @@ def configure_agent(agent, config, openai_api_key: str = None):
         for intent in getattr(agent, 'intents', []):
             for idx, sentence in enumerate(getattr(intent, 'training_sentences', [])):
                 if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
-                    print(f"Replacing sentence {ti} with translated version.")
+                    logger.debug("Replacing sentence %d with translated version.", ti)
                     intent.training_sentences[idx] = translated_sentences[ti]
                     ti += 1
-    """ code for translation using traditional API (Google Translate)
+                        """ code for translation using traditional API (Google Translate)
     for intent in getattr(agent, 'intents', []):
         for idx, sentence in enumerate(getattr(intent, 'training_sentences', [])):
             # Here you can personalize each training sentence
@@ -302,15 +297,24 @@ def configure_agent(agent, config, openai_api_key: str = None):
         config,
         openai_api_key=resolved_api_key,
     )
+
+    if len(personalized_messages) != len(messages):
+        logger.warning(
+            "Personalization returned %d messages but expected %d; falling back to originals.",
+            len(personalized_messages), len(messages),
+        )
+        personalized_messages = list(messages)
+
+    msg_index = 0
     for state in getattr(agent, 'states', []):
         for body_attr in ['body', 'fallback_body']:
             body = getattr(state, body_attr, None)
             if body and body.actions:
                 for action in body.actions:
-                    if isinstance(action, AgentReply):  
-                        # process each message individually
-                        action.message = personalized_messages.pop(0)
+                    if isinstance(action, AgentReply):
+                        action.message = personalized_messages[msg_index]
                         action.message = action.message.replace("'", "\\'")
+                        msg_index += 1
 
 
 
@@ -456,8 +460,9 @@ def replace_content_profile_batch(messages: list[str], config: dict, openai_api_
         ]
 
         if len(results) != len(valid_entries):
-            print(
-                "Content profile adaptation returned unexpected count; falling back to originals."
+            logger.warning(
+                "Content profile adaptation returned %d results but expected %d; falling back to originals.",
+                len(results), len(valid_entries),
             )
             results = [text for _, text in valid_entries]
 
@@ -467,8 +472,7 @@ def replace_content_profile_batch(messages: list[str], config: dict, openai_api_
                 final_text = final_text.replace("'", "\\'")
             personalized_messages[msg_idx] = final_text
     except Exception as exc:
-        print("Content profile adaptation failed:", exc)
-        traceback.print_exc()
+        logger.error("Content profile adaptation failed: %s", exc, exc_info=True)
         for msg_idx, original_text in valid_entries:
             fallback_text = (
                 original_text.replace("'", "\\'")

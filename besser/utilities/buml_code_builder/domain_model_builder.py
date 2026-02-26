@@ -154,8 +154,9 @@ def domain_model_to_code(model: DomainModel, file_path: str, objectmodel: Object
             for attr in sort(cls.attributes):
                 attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
                 visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
+                is_optional_str = ", is_optional=True" if attr.is_optional else ""
                 f.write(f"{cls_var_name}_{attr.name}: Property = Property(name=\"{attr.name}\", "
-                       f"type={attr_type}{visibility_str})\n")
+                       f"type={attr_type}{visibility_str}{is_optional_str})\n")
 
             # Write methods
             for method in sort(cls.methods):

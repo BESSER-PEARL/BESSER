@@ -562,6 +562,7 @@ class Property(TypedElement):
         is_navigable (bool): Indicates whether the property is navigable in a relationship (True as default).
         is_id (bool): Indicates whether the property is an id (False as default).
         is_read_only (bool): Indicates whether the property is read only (False as default).
+        is_optional (bool): Indicates whether the property is optional/nullable (False as default).
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the property (None as default).
          is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -576,6 +577,7 @@ class Property(TypedElement):
         is_navigable (bool): Indicates whether the property is navigable in a relationship (True as default).
         is_id (bool): Indicates whether the property is an id (False as default).
         is_read_only (bool): Indicates whether the property is read only (False as default).
+        is_optional (bool): Indicates whether the property is optional/nullable (False as default).
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the property (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -583,8 +585,9 @@ class Property(TypedElement):
 
     def __init__(self, name: str, type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1),
                  visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True,
-                 is_id: bool = False, is_read_only: bool = False, timestamp: int = None,
-                 metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+                 is_id: bool = False, is_read_only: bool = False, is_optional: bool = False,
+                 timestamp: int = None, metadata: Metadata = None, is_derived: bool = False,
+                 uncertainty: float = 0.0):
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
@@ -592,6 +595,7 @@ class Property(TypedElement):
         self.is_navigable: bool = is_navigable
         self.is_id: bool = is_id
         self.is_read_only: bool = is_read_only
+        self.is_optional: bool = is_optional
 
     @property
     def owner(self) -> Type:
@@ -660,6 +664,16 @@ class Property(TypedElement):
         """bool: Set whether the property is read only."""
         self.__is_read_only = is_read_only
 
+    @property
+    def is_optional(self) -> bool:
+        """bool: Get whether the property is optional."""
+        return self.__is_optional
+
+    @is_optional.setter
+    def is_optional(self, is_optional: bool):
+        """bool: Set whether the property is optional."""
+        self.__is_optional = is_optional
+
     def opposite_end(self) -> "Property":
         """Property: Get the opposite end of the property if it is an association end."""
         # Delayed import to avoid circular dependency
@@ -674,7 +688,8 @@ class Property(TypedElement):
         return (
             f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, '
             f'is_composite={self.is_composite}, is_id={self.is_id}, '
-            f'is_read_only={self.is_read_only}, {self.timestamp}, {self.metadata}, '
+            f'is_read_only={self.is_read_only}, is_optional={self.is_optional}, '
+            f'{self.timestamp}, {self.metadata}, '
             f'is_derived={self.is_derived})'
         )
 

@@ -153,7 +153,7 @@ def class_buml_to_json(domain_model):
 
                     elements[attr_id] = {
                         "id": attr_id,
-                        "name": attr.name, 
+                        "name": attr.name,
                         "type": "ClassAttribute",
                         "owner": element_id,
                         "bounds": {
@@ -164,6 +164,7 @@ def class_buml_to_json(domain_model):
                         },
                         "visibility": attr.visibility,
                         "attributeType": attr_type,
+                        "isOptional": attr.is_optional,
                     }
                     attribute_ids.append(attr_id)
                     y_offset += 30

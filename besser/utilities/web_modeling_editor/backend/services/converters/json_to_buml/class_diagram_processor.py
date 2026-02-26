@@ -138,27 +138,29 @@ def process_class_diagram(json_data):
                         visibility = attr.get("visibility", "public")
                         name = attr.get("name", "").strip()
                         attr_type = attr.get("attributeType", "str")
+                        is_optional = attr.get("isOptional", False)
                     else:
                         # Legacy format - parse from name string
                         visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
-                    
+                        is_optional = False
+
                     if not name:  # Skip if no name was returned
                         continue
                     if name in attribute_names:
                         raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
                     attribute_names.add(name)
-                    
+
                     # Find the type in the domain model
                     type_obj = None
                     for t in domain_model.types:
                         if isinstance(t, (Enumeration, Class)) and t.name == attr_type:
                             type_obj = t
                             break
-                    
+
                     if type_obj:
-                        property_ = Property(name=name, type=type_obj, visibility=visibility)
+                        property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional)
                     else:
-                        property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility)
+                        property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility, is_optional=is_optional)
                     cls.add_attribute(property_)
 
             # Add methods

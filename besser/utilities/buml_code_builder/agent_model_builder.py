@@ -35,7 +35,7 @@ def agent_model_to_code(model: Agent, file_path: str):
         f.write("import datetime\n")
         f.write(
             "from besser.BUML.metamodel.state_machine.state_machine import "
-            "Body, Condition, Event, ConfigProperty\n"
+            "Body, Condition, Event, ConfigProperty, CustomCodeAction\n"
         )
         f.write(
             "from besser.BUML.metamodel.state_machine.agent import "

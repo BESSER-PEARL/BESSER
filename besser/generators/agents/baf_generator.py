@@ -140,21 +140,24 @@ class BAFGenerator(GeneratorInterface):
                 )
 
             # Persist personalized agent python for downstream conversion
-            agent_model_to_code(self.model, personalized_agent_path)
+            # removed for current release
+            # agent_model_to_code(self.model, personalized_agent_path)
 
             # Also emit JSON representation of personalized agent
-            try:
-                with open(personalized_agent_path, "r", encoding="utf-8") as f:
-                    personalized_code = f.read()
-                personalized_json = agent_buml_to_json(personalized_code)
-                with open(personalized_json_path, "w", encoding="utf-8") as jf:
-                    json.dump(personalized_json, jf, indent=2)
-                print("Personalized agent JSON generated in the location: " + personalized_json_path)
-            except Exception as conversion_error:
-                print(f"Failed to convert personalized agent to JSON: {conversion_error}")
+            # removed for current release, but leaving code here for now to check later when integrating the personalization
+            if False:
+                try:
+                    with open(personalized_agent_path, "r", encoding="utf-8") as f:
+                        personalized_code = f.read()
+                    personalized_json = agent_buml_to_json(personalized_code)
+                    with open(personalized_json_path, "w", encoding="utf-8") as jf:
+                        json.dump(personalized_json, jf, indent=2)
+                    print("Personalized agent JSON generated in the location: " + personalized_json_path)
+                except Exception as conversion_error:
+                    print(f"Failed to convert personalized agent to JSON: {conversion_error}")
 
-            if not generate_code_assets:
-                return
+                if not generate_code_assets:
+                    return
             
         if config_for_personalization and 'personalizationMapping' in config_for_personalization:
             print("Generating agent with personalization mappings...")

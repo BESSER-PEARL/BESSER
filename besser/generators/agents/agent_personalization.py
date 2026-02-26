@@ -262,24 +262,7 @@ def configure_agent(agent, config, openai_api_key: str = None):
                     logger.debug("Replacing sentence %d with translated version.", ti)
                     intent.training_sentences[idx] = translated_sentences[ti]
                     ti += 1
-                        """ code for translation using traditional API (Google Translate)
-    for intent in getattr(agent, 'intents', []):
-        for idx, sentence in enumerate(getattr(intent, 'training_sentences', [])):
-            # Here you can personalize each training sentence
-            print(f"Intent: {getattr(intent, 'name', '')}, Sentence {idx}: {sentence}")
-            # intent.training_sentences[idx] = ... # personalize as needed
-            if 'agentLanguage' in config and config['agentLanguage'] != 'none' and False:
-                target_language = config['agentLanguage']
-                translated_sentence = translate_text(sentence, target_language)
-                intent.training_sentences[idx] = translated_sentence
-                print(f"Translated Sentence {idx}: {translated_sentence}")
-            elif 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
-                print("Translating using API...")
-                target_language = config['agentLanguage']
-                
-                translated_sentence = translate_text_api(sentence, target_language)
-                intent.training_sentences[idx] = translated_sentence.replace("'", "\\'")
-    """
+    
     messages = []
     for state in getattr(agent, 'states', []):
 

@@ -2,6 +2,7 @@
 # import sys
 # sys.path.append("/Path/to/directory/besser-agentic-framework") # Replace with your directory path
 
+import json
 import logging
 import operator
 
@@ -14,23 +15,123 @@ from besser.agent.core.session import Session
 from besser.agent.nlp.intent_classifier.intent_classifier_configuration import LLMIntentClassifierConfiguration, SimpleIntentClassifierConfiguration
 from besser.agent.nlp.speech2text.openai_speech2text import OpenAISpeech2Text
 from besser.agent.nlp.text2speech.openai_text2speech import OpenAIText2Speech
+{% if agent.rags and agent.rags|length > 0 %}
+from langchain_community.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from besser.agent import nlp
+from besser.agent.nlp.rag.rag import RAG
+{% endif %}
 
 # Configure the logging module
 logging.basicConfig(level=logging.INFO, format='{levelname} - {asctime}: {message}', style='{')
 
+{% if personalization_mapping is defined and personalization_mapping %}
+def build_agent_configuration_prompt(agent_configuration: dict) -> str:
+    base_prompt = """
+You are a personalized AI assistant.
+
+You will be provided with an object called `agent_configuration` as a JSON string.
+This object defines how you should present yourself and formulate your responses.
+
+It controls stylistic and presentation aspects such as:
+- Response language
+- Level of formality
+- Language complexity
+- Sentence length
+- And more
+
+You must strictly follow the preferences defined in `agent_configuration` for all responses.
+
+Here is the current agent configuration (JSON):
+
+{agent_configuration_json}
+"""
+    return base_prompt.format(agent_configuration_json=json.dumps(agent_configuration, indent=2))
+
+
+def build_user_profile_prompt(user_profile: dict) -> str:
+    profile_prompt = """
+You have access to the current user's profile encoded as JSON.
+Leverage these traits whenever the agent configuration instructs you to adapt content.
+
+Here is the active user profile (JSON):
+
+{user_profile_json}
+"""
+    return profile_prompt.format(user_profile_json=json.dumps(user_profile, indent=2))
+
+{% endif %}
+
 # Create the bot
-agent = Agent('{{ agent.name }}')
+agent = Agent('{{ agent.name }}'{% if personalization_mapping is defined and personalization_mapping %}, user_profiles_path='user_profiles.json', persist_sessions=True{% endif %})
 # Load bot properties stored in a dedicated file
 agent.load_properties('config.ini')
 
 # Define the platform your chatbot will use
-{% for platform in agent.platforms -%}
-{% if platform.__class__.__name__ == 'WebSocketPlatform' -%}
+{% for platform in agent.platforms %}
+{% if platform.__class__.__name__ == 'WebSocketPlatform' %}
 platform = agent.use_websocket_platform(use_ui=True)
-{% elif platform.__class__.__name__ == 'TelegramPlatform' -%}
+{% elif platform.__class__.__name__ == 'TelegramPlatform' %}
 telegram_platform = agent.use_telegram_platform()
-{% endif -%}
-{% endfor -%}
+{% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
+platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
+{% endif %}
+{% endfor %}
+
+{% if personalization_mapping is defined and personalization_mapping %}
+# Collect profile names from provided personalization mappings
+profile_names = []
+agent_configurations = {}
+user_profiles = {}
+context_prompts = {}
+profile_prompts = {}
+{% for entry in personalization_mapping %}
+{% set profile_name = entry.get("name", "variant_" ~ loop.index) %}
+{% set profile_slug = profile_name | replace(' ', '_') | replace('-', '_') %}
+profile_names.append('{{ profile_name }}')
+agent_configurations['{{ profile_slug }}'] = json.loads(r'''{{ entry.get("configuration", {}) | tojson(indent=2) }}''')
+user_profiles['{{ profile_slug }}'] = json.loads(r'''{{ entry.get("user_profile", {}) | tojson(indent=2) }}''')
+context_prompts['{{ profile_slug }}'] = build_agent_configuration_prompt(agent_configurations['{{ profile_slug }}'])
+{% set personalization_config = entry.get("configuration", {}) %}
+{% if personalization_config.get("adaptContentToUserProfile") and personalization_config.get("userProfileName") == profile_name %}
+profile_prompts['{{ profile_slug }}'] = build_user_profile_prompt(user_profiles['{{ profile_slug }}'])
+{% endif %}
+{% endfor %}
+agent.set_agent_configurations(agent_configurations)
+{% endif %}
+{% if personalized_messages is defined and personalized_messages %}
+personalized_messages = json.loads(r'''{{ personalized_messages | tojson(indent=2) }}''')
+# load the personalization rules from the generator context into a Python variable called `rules`
+rules = json.loads(r'''{{ config['personalizationrules'] | tojson(indent=2) }}''')
+{% endif %}
+{% set speech_flags = namespace(
+    input=config and config.inputModalities and ('speech' in (config.inputModalities | map('lower'))),
+    output=config and config.outputModalities and ('speech' in (config.outputModalities | map('lower')))
+) %}
+
+{% if not speech_flags.input and personalization_mapping is defined and personalization_mapping %}
+    {% for entry in personalization_mapping %}
+        {% set entry_config = entry.get('configuration', {}) %}
+        {% set entry_inputs = entry_config.get('inputModalities') %}
+        {% if entry_inputs and ('speech' in (entry_inputs | map('lower'))) %}
+            {% set speech_flags.input = true %}
+        {% endif %}
+    {% endfor %}
+{% endif %}
+
+{% if not speech_flags.output and personalization_mapping is defined and personalization_mapping %}
+    {% for entry in personalization_mapping %}
+        {% set entry_config = entry.get('configuration', {}) %}
+        {% set entry_outputs = entry_config.get('outputModalities') %}
+        {% if entry_outputs and ('speech' in (entry_outputs | map('lower'))) %}
+            {% set speech_flags.output = true %}
+        {% endif %}
+    {% endfor %}
+{% endif %}
+
+{% set has_speech_input = speech_flags.input %}
+{% set has_speech_output = speech_flags.output %}
 
 {% set platform_name = config['agentPlatform'] if config and 'agentPlatform' in config else None %}
 {% if platform_name == 'websocket' %}
@@ -38,67 +139,123 @@ platform = agent.use_websocket_platform()
 {% elif platform_name == 'telegram' %}
 platform = agent.use_telegram_platform()
 {% elif platform_name == 'streamlit' %}
-platform = agent.use_streamlit_platform(use_ui=True)
+platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
 {% elif agent.platforms and agent.platforms|length > 0 %}
     {% set found_platform = false %}
-    {% for platform in agent.platforms -%}
+    {% for platform in agent.platforms %}
         {% if not found_platform %}
-            {% if platform.__class__.__name__ == 'WebSocketPlatform' -%}
+            {% if platform.__class__.__name__ == 'WebSocketPlatform' %}
 platform = agent.use_websocket_platform(use_ui=True)
                 {% set found_platform = true %}
-            {% elif platform.__class__.__name__ == 'TelegramPlatform' -%}
+            {% elif platform.__class__.__name__ == 'TelegramPlatform' %}
 platform = agent.use_telegram_platform()
                 {% set found_platform = true %}
-            {% elif platform.__class__.__name__ == 'StreamlitPlatform' -%}
-platform = agent.use_streamlit_platform()
+            {% elif platform.__class__.__name__ == 'StreamlitPlatform' %}
+platform = agent.use_websocket_platform(use_ui=True{% if personalization_mapping is defined and personalization_mapping %}, authenticate_users=True{% endif %})
                 {% set found_platform = true %}
-            {% endif -%}
-        {% endif -%}
-    {% endfor -%}
+            {% endif %}
+        {% endif %}
+    {% endfor %}
 {% else %}
 platform = agent.use_websocket_platform(use_ui=True)
 {% endif %}
-
 # LLM instantiation based on config['llm']
+{% set has_reply_llm_state = namespace(value=false) %}
 {% if config and 'llm' in config and config['llm'] %}
+{% set has_reply_llm_state.value = true %}
     {% if config['llm']['provider'] == 'openai' %}
-gpt = LLMOpenAI(
+reply_llm = LLMOpenAI(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
+
     {% elif config['llm']['provider'] == 'huggingface' %}
-hf_llm = LLMHuggingFace(
+reply_llm = LLMHuggingFace(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
+
     {% elif config['llm']['provider'] == 'huggingfaceapi' %}
-hf_llm_api = LLMHuggingFaceAPI(
+reply_llm_api = LLMHuggingFaceAPI(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
     {% elif config['llm']['provider'] == 'replicate' %}
-replicate_llm = LLMReplicate(
+reply_llm = LLMReplicate(
     agent=agent,
     name='{{ config['llm']['model'] }}',
     parameters={}
 )
+
     {% endif %}
 {% endif %}
-
-
-{% if config and 'inputModalities' in config and 'speech' in config['inputModalities'] %}
+{% if has_speech_input %}
 stt = OpenAISpeech2Text(agent=agent, model_name="whisper-1")
 {% endif %}
-
-{% if config and 'outputModalities' in config and 'speech' in config['outputModalities'] %}
+{% if has_speech_output %}
 tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
 {% endif %}
 
-{% macro write_ic_config(ic_config) -%}
-{% if is_class(ic_config, 'SimpleIntentClassifierConfiguration') -%}SimpleIntentClassifierConfiguration(
+{% if agent.rags and agent.rags|length > 0 %}
+rag_llm = LLMOpenAI(
+    agent=agent,
+    name='gpt-4o-mini',
+    parameters={},
+    num_previous_messages=10
+)
+{% endif %}
+
+{% if agent.rags and agent.rags|length > 0 %}
+##############################
+# RAG CONFIGURATIONS
+##############################
+
+{% for rag in agent.rags %}
+    {% set rag_slug = rag.name | lower | replace(' ', '_') | replace('-', '_') %}
+    {% if rag_slug == '' %}
+        {% set rag_slug = 'rag_' ~ loop.index0 %}
+    {% endif %}
+    {% set vector_var = rag_slug ~ '_vector_store' %}
+    {% set splitter_var = rag_slug ~ '_splitter' %}
+    {% set rag_var = rag_slug ~ '_rag' %}
+    {% if rag.vector_store and rag.vector_store.persist_directory %}
+        {% set persist_dir = rag.vector_store.persist_directory %}
+    {% else %}
+        {% set persist_dir = 'vector_store/' ~ rag_slug %}
+    {% endif %}
+    {% if rag.splitter and rag.splitter.chunk_size %}
+        {% set chunk_size = rag.splitter.chunk_size %}
+    {% else %}
+        {% set chunk_size = 1000 %}
+    {% endif %}
+    {% if rag.splitter and rag.splitter.chunk_overlap is not none %}
+        {% set chunk_overlap = rag.splitter.chunk_overlap %}
+    {% else %}
+        {% set chunk_overlap = 100 %}
+    {% endif %}
+{{ vector_var }} = Chroma(
+    embedding_function=OpenAIEmbeddings(openai_api_key=agent.get_property(nlp.OPENAI_API_KEY)),
+    persist_directory='{{ persist_dir }}'
+)
+{{ splitter_var }} = RecursiveCharacterTextSplitter(chunk_size={{ chunk_size }}, chunk_overlap={{ chunk_overlap }})
+{{ rag_var }} = RAG(
+    agent=agent,
+    vector_store={{ vector_var }},
+    splitter={{ splitter_var }},
+    llm_name='{{ rag.llm_name | replace('\\', '\\\\') | replace("'", "\\'") if rag.llm_name else 'gpt-4o-mini' }}',
+    k={{ rag.k if rag.k is not none else 4 }},
+    num_previous_messages={{ rag.num_previous_messages if rag.num_previous_messages is not none else 0 }}
+)
+{{ rag_var }}.load_pdfs('./{{ rag_slug }}')
+
+{% endfor %}
+{% endif %}
+
+{% macro write_ic_config(ic_config) %}
+{% if is_class(ic_config, 'SimpleIntentClassifierConfiguration') %}SimpleIntentClassifierConfiguration(
         num_words={{ ic_config.num_words }},
         num_epochs={{ ic_config.num_epochs }},
         embedding_dim={{ ic_config.embedding_dim }},
@@ -108,158 +265,380 @@ tts = OpenAIText2Speech(agent=agent, model_name="gpt-4o-mini-tts")
         activation_last_layer='{{ ic_config.activation_last_layer }}',
         activation_hidden_layers='{{ ic_config.activation_hidden_layers }}',
         lr={{ ic_config.lr }}
-){% elif is_class(ic_config, 'LLMIntentClassifierConfiguration') -%}LLMIntentClassifierConfiguration(
+){% elif is_class(ic_config, 'LLMIntentClassifierConfiguration') %}LLMIntentClassifierConfiguration(
         llm_suite='{{ ic_config.llm_suite }}',
         parameters={{ ic_config.parameters }},
         use_intent_descriptions={{ ic_config.use_intent_descriptions }},
         use_training_sentences={{ ic_config.use_training_sentences }},
         use_entity_descriptions={{ ic_config.use_entity_descriptions }},
         use_entity_synonyms={{ ic_config.use_entity_synonyms }}
-){% endif -%}
-{% endmacro -%}
+){% endif %}
+{% endmacro %}
 
-{% if agent.llms != [] %}
-{% for llm in agent.llms -%}
-llm = {{ llm.__class__.__name__}}(
+{% if config and "intentRecognitionTechnology" in config and config["intentRecognitionTechnology"] == 'llm-based' %}
+{% if 'llm' in config  and 'model' in config['llm'] %}
+ic_config = LLMIntentClassifierConfiguration(
+    llm_name='{{ config['llm']['model'] }}',
+    parameters={},
+    use_intent_descriptions=True,
+    use_training_sentences=True,
+    use_entity_descriptions=False,
+    use_entity_synonyms=False
+)
+{% else %}
+ic_config = LLMIntentClassifierConfiguration(
+    llm_name='gpt-4o-mini',
+    parameters={},
+    use_intent_descriptions=True,
+    use_training_sentences=True,
+    use_entity_descriptions=False,
+    use_entity_synonyms=False
+)
+{% endif %}
+
+agent.set_default_ic_config(ic_config)
+{% endif %}
+
+{% if agent.llms != [] and (not config or 'llm' not in config or not config['llm']) %}
+{% for llm in agent.llms %}
+reply_llm = {{ llm.__class__.__name__}}(
     name='{{ llm.name }}',
     agent=agent,
-    {% if llm.parameters -%}
+    {% if llm.parameters %}
     parameters={{ llm.parameters }},
-    {% else -%}
+    {% else %}
     parameters={},
-    {% endif -%}
-    {% if llm.num_previous_messages -%}
+    {% endif %}
+    {% if llm.num_previous_messages %}
     num_previous_messages={{ llm.num_previous_messages }},
-    {% endif -%}
+    {% endif %}
 )
-{% endfor -%}
-{% endif -%}
+{% set has_reply_llm_state.value = true %}
+{% endfor %}
+{% endif %}
+{% set has_reply_llm = has_reply_llm_state.value %}
 
-{% if agent.default_ic_config != None -%}
+{% if agent.default_ic_config != None %}
 agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
-{% endif -%}
-{% if agent.entities -%}
+{% endif %}
+{% if agent.entities %}
 ##############################
 # ENTITIES
 ##############################
 
-{% for entity in agent.entities -%}
-{% if is_class(entity, 'BaseEntity') -%}
+{% for entity in agent.entities %}
+{% if is_class(entity, 'BaseEntity') %}
 from besser.agent.library.entity.base_entities import {{ entity.name }}
-{% endif -%}
+{% endif %}
 {% endfor %}
-{% for entity in agent.entities -%}
-{% if is_class(entity, 'CustomEntity') -%}
+{% for entity in agent.entities %}
+{% if is_class(entity, 'CustomEntity') %}
 {{ entity.name }} = agent.new_entity('{{ entity.name }}',
-    {% if entity.description -%}
+    {% if entity.description %}
     description='{{ entity.description }}',
-    {%  endif -%}
+    {%  endif %}
     entries={
-        {% for entry in entity.entries -%}
+        {% for entry in entity.entries %}
         '{{ entry.value }}': [
-            {% for synonym in entry.synonyms -%}
+            {% for synonym in entry.synonyms %}
             '{{ synonym }}',
-            {% endfor -%}
+            {% endfor %}
         ],
-        {% endfor -%}
+        {% endfor %}
     }
 )
-{% endif -%}
-{% endfor -%}
-{% endif -%}
+{% endif %}
+{% endfor %}
+{% endif %}
 ##############################
 # INTENTS
 ##############################
-
-{% for intent in agent.intents -%}
-{{ intent.name }} = agent.new_intent('{{ intent.name }}', [
-    {% for training_sentence in intent.training_sentences -%}
+{% macro render_intents(agent_model, suffix=None) %}
+{% if agent_model and agent_model.intents %}
+{% set suffix_part = '_' ~ suffix if suffix else '' %}
+{% for intent in agent_model.intents %}
+{% set intent_name = intent.name ~ suffix_part %}
+{{ intent_name }} = agent.new_intent('{{ intent_name }}', [
+    {% for training_sentence in intent.training_sentences %}
     '{{ training_sentence | replace('\\', '\\\\') | replace("'", "\\'") }}',
-    {% endfor -%}
-])
-{% for parameter in intent.parameters -%}
-{{ intent.name }}.parameter('{{ parameter.name }}', '{{ parameter.fragment }}', {{ parameter.entity.name }})
+    {% endfor %}
+    ]{% if intent.description %},
+    description='{{ intent.description | replace('\\', '\\\\') | replace("'", "\\'") }}'
+    {% endif %})
+{% for parameter in intent.parameters %}
+{{ intent_name }}.parameter('{{ parameter.name }}', '{{ parameter.fragment }}', {{ parameter.entity.name }})
 {% endfor %}
-{% endfor -%}
+{% endfor %}
+{% endif %}
+{% endmacro %}
+{{ render_intents(agent) }}
+{% if personalization_mapping is defined and personalization_mapping %}
+##############################
+# PERSONALIZED INTENTS
+##############################
+{% for mapping in personalization_mapping %}
+{% set profile_suffix = (mapping.name if mapping.name is defined else 'variant_' ~ loop.index) | replace(' ', '_') | replace('-', '_') %}
+{% set profile_agent = mapping.agent_model if mapping.agent_model is defined else mapping.model %}
+# Intents for profile {{ profile_suffix }}
+{{ render_intents(profile_agent, profile_suffix) }}
+{% endfor %}
+{% endif %}
 
 ##############################
 # STATES
 ##############################
 
-{% for state in agent.states -%}
-{{ state.name }} = agent.new_state('{{ state.name }}'{% if state.initial %}, initial=True{% endif %}{% if state.ic_config != None %},
-    ic_config={{ write_ic_config(state.ic_config) }}{% endif -%})
+{% set has_personalization = personalization_mapping is defined and personalization_mapping %}
+{% if has_personalization %}
+# Dummy entry state to fan out to profile-specific initial states
+router_initial_state = agent.new_state('router_initial_state', initial=True)
+{% endif %}
+
+{% for state in agent.states %}
+{{ state.name }} = agent.new_state('{{ state.name }}'{% if state.initial and not has_personalization %}, initial=True{% endif %}{% if state.ic_config != None %}, ic_config={{ write_ic_config(state.ic_config) }}{% endif %})
 {% endfor %}
 
-{% if agent.global_initial_states != [] -%}
+{% if has_personalization %}
+##############################
+# PROFILE STATES
+##############################
+{% for mapping in personalization_mapping %}
+{% set profile_suffix = (mapping.name if mapping.name is defined else 'variant_' ~ loop.index) | replace(' ', '_') | replace('-', '_') %}
+{% set profile_agent = mapping.agent_model if mapping.agent_model is defined else mapping.model %}
+{% if profile_agent and profile_agent.states %}
+# States for profile {{ profile_suffix }}
+{% for state in profile_agent.states %}
+{{ state.name }}_{{ profile_suffix }} = agent.new_state('{{ state.name }}_{{ profile_suffix }}'{% if state.ic_config != None %}, ic_config={{ write_ic_config(state.ic_config) }}{% endif %})
+{% endfor %}
+{% endif %}
+{% endfor %}
+
+##############################
+# ROUTER TRANSITIONS TO PROFILE INITIAL STATES
+##############################
+{% for mapping in personalization_mapping %}
+{% set profile_suffix = (mapping.name if mapping.name is defined else 'variant_' ~ loop.index) | replace(' ', '_') | replace('-', '_') %}
+{% set profile_name = mapping.name if mapping.name is defined else 'variant_' ~ loop.index %}
+{% set profile_agent = mapping.agent_model if mapping.agent_model is defined else mapping.model %}
+{% if profile_agent and profile_agent.states %}
+{% for state in profile_agent.states %}
+{% if state.initial %}
+router_initial_state.when_variable_matches_operation('user_profile', operator.eq, '{{ profile_name }}').go_to({{ state.name }}_{{ profile_suffix }})
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% if agent.global_initial_states != [] %}
 # GLOBAL STATES
 
-{% for (state, intent) in agent.global_initial_states -%}
+{% for (state, intent) in agent.global_initial_states %}
 {{ state.name }}.set_global({{ intent.name }})
 {% endfor %}
-{% endif -%}
-{% set ns = namespace(custom_events=[], bodies=[]) -%}
-{% for state in agent.states -%}
-# {{ state.name }}
-{% if state.body != None -%}
-{% if state.body.name not in ns.bodies -%}
+{% endif %}
+{% macro render_state_bodies_and_transitions(agent_model, suffix=None, current_profile_name=None, configuration=None) %}
+{% if agent_model and agent_model.states %}
+{% set ns = namespace(custom_events=[], bodies=[]) %}
+{% set suffix_part = '_' ~ suffix if suffix else '' %}
+{% set speech_enabled = configuration and configuration.outputModalities and ('speech' in (configuration.outputModalities | map('lower'))) %}
+{% for state in agent_model.states %}
+{% set state_name = state.name ~ suffix_part %}
+# {{ state.name }}{% if suffix %} ({{ suffix }}){% endif %}
+{% set inject_profile_context = has_personalization and suffix and state.initial %}
 
+{% if state.body != None %}
+{% set body_name = state.body.name ~ suffix_part %}
+{% if body_name not in ns.bodies %}
 {% if state.body.actions and is_class(state.body.actions[0], 'AgentReply') %}
-def {{ state.body.name }}(session: Session):
-    {% for action in state.body.actions -%}
-    session.reply('{{ action.message }}')
-    {% endfor -%}
-{% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
-def {{ state.body.name }}(session: Session):
-    message = llm.predict(session.event.message)
-    session.reply(message)
-{% else %}
-{{ replace_bot_session_with_session_in_signature(state.body) }}
-{% endif %}
-{% set ns.bodies = ns.bodies + [state.body.name] %}
-{% endif -%}
-{{ state.name }}.set_body({{ state.body.name}})
-{% endif %}
-{% if state.fallback_body != None -%}
-{% if state.fallback_body.name not in ns.bodies -%}
-{% if state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'AgentReply') %}
-def {{ state.fallback_body.name }}(session: Session):
-    {% for action in state.fallback_body.actions -%}
-    session.reply('{{ action.message }}')
+def {{ body_name }}(session: Session):
+    {% if inject_profile_context and has_reply_llm %}
+    reply_llm.add_user_context(
+        session=session,
+        context=context_prompts.get('{{ suffix }}'),
+        context_name='agent_configuration_{{ suffix }}'
+    )
+    {% if configuration.adaptContentToUserProfile %}
+    reply_llm.add_user_context(
+        session=session,
+        context=profile_prompts.get('{{ suffix }}'),
+        context_name='user_profile_{{ suffix }}'
+    )
+    {% endif %}
+    {% endif %}
+    {% if speech_enabled %}
+    speech_messages = []
+    {% endif %}
+    {% for action in state.body.actions %}
+    {% if personalized_messages is defined and personalized_messages and not suffix %}
+    reply_text = choose_variant_for_message('{{ action.message }}', session)
+    {% else %}
+    reply_text = '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'") }}'
+    {% endif %}
+    session.reply(reply_text)
+    {% if speech_enabled %}
+    speech_messages.append(reply_text)
+    {% endif %}
     {% endfor %}
-{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}
-def {{ state.fallback_body.name }}(session: Session):
-    message = llm.predict(session.event.message)
+    {% if speech_enabled %}
+    if speech_messages:
+        platform.reply_speech(session, ' '.join(speech_messages))
+    {% endif %}
+{% elif state.body.actions and is_class(state.body.actions[0], 'LLMReply') %}
+def {{ body_name }}(session: Session):
+    {% if inject_profile_context and has_reply_llm %}
+    reply_llm.add_user_context(
+        session=session,
+        context=context_prompts.get('{{ suffix }}'),
+        context_name='agent_configuration'
+    )
+    {% if configuration.adaptContentToUserProfile %}
+    reply_llm.add_user_context(
+        session=session,
+        context=profile_prompts.get('{{ suffix }}'),
+        context_name='user_profile'
+    )
+    {% endif %}
+    {% endif %}
+    {% set llm_action = state.body.actions[0] %}
+    {% if llm_action.prompt %}
+    message = reply_llm.predict(message=session.event.message, session=session, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    message = reply_llm.predict(message=session.event.message, session=session)
+    {% endif %}
     session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+{% elif state.body.actions and is_class(state.body.actions[0], 'RAGReply') %}
+def {{ body_name }}(session: Session):
+    {% if inject_profile_context and has_reply_llm %}
+    reply_llm.add_user_context(
+        session=session,
+        context=context_prompts.get('{{ suffix }}'),
+        context_name='agent_configuration'
+    )
+    {% if configuration.adaptContentToUserProfile %}
+    reply_llm.add_user_context(
+        session=session,
+        context=profile_prompts.get('{{ suffix }}'),
+        context_name='user_profile'
+    )
+    {% endif %}
+    {% endif %}
+    {% for action in state.body.actions %}
+    {% if action.prompt %}
+    rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    rag_message = session.run_rag(session.event.message)
+    {% endif %}
+    platform.reply_rag(session, rag_message)
+    {% endfor %}
 {% else %}
-{{ replace_bot_session_with_session_in_signature(state.fallback_body) }}
+{{ replace_bot_session_with_session_in_signature(state.body) | replace(state.body.name, body_name) }}
 {% endif %}
-{% set ns.bodies = ns.bodies + [state.fallback_body.name] %}
-{% endif -%}
-{{ state.name }}.set_fallback_body({{ state.fallback_body.name}})
+{% set ns.bodies = ns.bodies + [body_name] %}
 {% endif %}
-{% for transition in state.transitions -%}
-{% if is_class(transition.conditions, 'IntentMatcher') -%}
-{% if transition.conditions.intent.name == 'fallback_intent' -%}
-{{ state.name }}.when_no_intent_matched().go_to({{ transition.dest.name }})
-{% else -%}
-{{ state.name }}.when_intent_matched({{ transition.conditions.intent.name }}).go_to({{ transition.dest.name }})
-{% endif -%}
-{% elif is_class(transition.conditions, 'VariableOperationMatcher') -%}
-{{ state.name }}.when_variable_matches_operation('{{ transition.conditions.var_name }}', operator.{{ transition.conditions.operation.__name__ }}, '{{ transition.conditions.target }}').go_to({{ transition.dest.name }})
-{% elif is_class(transition.conditions, 'FileTypeMatcher') -%}
-{{ state.name }}.when_file_received({% if transition.conditions.allowed_types -%}{% if is_type(transition.conditions.allowed_types, 'str') -%}'{{ transition.conditions.allowed_types }}'{% else -%}{{ transition.conditions.allowed_types }}{% endif -%}{% endif -%}).go_to({{ transition.dest.name }})
+{{ state_name }}.set_body({{ body_name }})
+{% endif %}
+{% if state.fallback_body != None %}
+{% set fallback_name = state.fallback_body.name ~ suffix_part %}
+{% if fallback_name not in ns.bodies %}
+{% if state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'AgentReply') %}
+def {{ fallback_name }}(session: Session):
+    {% if speech_enabled %}
+    speech_messages = []
+    {% endif %}
+    {% for action in state.fallback_body.actions %}
+    reply_text = '{{ action.message | replace('\\', '\\\\') | replace("'", "\\'")}}'
+    session.reply(reply_text)
+    {% if speech_enabled %}
+    speech_messages.append(reply_text)
+    {% endif %}
+    {% endfor %}
+    {% if speech_enabled %}
+    if speech_messages:
+        platform.reply_speech(session, ' '.join(speech_messages))
+    {% endif %}
+{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'LLMReply') %}
+def {{ fallback_name }}(session: Session):
+    {% set llm_action = state.fallback_body.actions[0] %}
+    {% if llm_action.prompt %}
+    message = reply_llm.predict(message=session.event.message, session=session, system_message='{{ llm_action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    message = reply_llm.predict(message=session.event.message, session=session)
+    {% endif %}
+    session.reply(message)
+    {% if speech_enabled %}
+    platform.reply_speech(session, message)
+    {% endif %}
+{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'RAGReply') %}
+def {{ fallback_name }}(session: Session):
+    {% for action in state.fallback_body.actions %}
+    {% if action.prompt %}
+    rag_message = session.run_rag(session.event.message, llm_prompt='{{ action.prompt | replace('\\', '\\\\') | replace("'", "\\'") }}')
+    {% else %}
+    rag_message = session.run_rag(session.event.message)
+    {% endif %}
+    platform.reply_rag(session, rag_message)
+    {% endfor %}
+{% else %}
+{{ replace_bot_session_with_session_in_signature(state.fallback_body) | replace(state.fallback_body.name, fallback_name) }}
+{% endif %}
+{% set ns.bodies = ns.bodies + [fallback_name] %}
+{% endif %}
+{{ state_name }}.set_fallback_body({{ fallback_name }})
+{% endif %}
+{% set auto_ns = namespace(found=False) %}
+{% for transition in state.transitions %}
+{% set dest_name = transition.dest.name ~ suffix_part %}
+{% if is_class(transition.conditions, 'IntentMatcher') %}
+{% if transition.conditions.intent.name == 'fallback_intent' %}
+{{ state_name }}.when_no_intent_matched().go_to({{ dest_name }})
+{% else %}
+{% set intent_name = transition.conditions.intent.name ~ suffix_part if suffix else transition.conditions.intent.name %}
+{{ state_name }}.when_intent_matched({{ intent_name }}).go_to({{ dest_name }})
+{% endif %}
+{% elif is_class(transition.conditions, 'VariableOperationMatcher') %}
+{{ state_name }}.when_variable_matches_operation('{{ transition.conditions.var_name }}', operator.{{ transition.conditions.operation.__name__ }}, '{{ transition.conditions.target }}').go_to({{ dest_name }})
+{% elif is_class(transition.conditions, 'FileTypeMatcher') %}
+{{ state_name }}.when_file_received({% if transition.conditions.allowed_types %}{% if is_type(transition.conditions.allowed_types, 'str') %}'{{ transition.conditions.allowed_types }}'{% else %}{{ transition.conditions.allowed_types }}{% endif %}{% endif %}).go_to({{ dest_name }})
 {% elif is_class(transition.conditions, 'Auto')%}
-{{ state.name }}.go_to({{ transition.dest.name }})
+{{ state_name }}.go_to({{ dest_name }})
+{% set auto_ns.found = True %}
 {% else %}
-{% if transition.event.name not in ns.custom_events -%}
-
+{% if transition.event.name not in ns.custom_events %}
 {% set ns.custom_events = ns.custom_events + [transition.event.name] %}
-{% endif -%}
-{{ state.name }}.when_event_go_to({{ transition.event.name }}, {{ transition.dest.name }}, event_params={{ transition.event_params }})
-{% endif -%}
+{% endif %}
+{{ state_name }}.when_event_go_to({{ transition.event.name }}, {{ dest_name }}, event_params={{ transition.event_params }})
+{% endif %}
 {% endfor %}
-{% endfor -%}
+{% if personalization_mapping and not auto_ns.found %}
+{% for target_profile in personalization_mapping %}
+{% set target_profile_name = target_profile.name if target_profile.name is defined else 'variant_' ~ loop.index %}
+{% if not current_profile_name or target_profile_name != current_profile_name %}
+{{ state_name }}.when_variable_matches_operation('user_profile', operator.eq, '{{ target_profile_name }}').go_to(router_initial_state)
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endmacro %}
+
+{{ render_state_bodies_and_transitions(agent,configuration=config) }}
+
+
+{% if has_personalization %}
+##############################
+# PROFILE STATE BODIES & TRANSITIONS
+##############################
+{% for mapping in personalization_mapping %}
+{% set profile_suffix = (mapping.name if mapping.name is defined else 'variant_' ~ loop.index) | replace(' ', '_') | replace('-', '_') %}
+{% set profile_agent = mapping.agent_model if mapping.agent_model is defined else mapping.model %}
+{% set profile_name = mapping.name if mapping.name is defined else 'variant_' ~ loop.index %}
+{{ render_state_bodies_and_transitions(profile_agent, profile_suffix, profile_name, mapping.configuration) }}
+{% endfor %}
+{% endif %}
 
 # RUN APPLICATION
 

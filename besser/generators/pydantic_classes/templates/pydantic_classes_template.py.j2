@@ -44,7 +44,17 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
             {%- set ns.id_found = true %}
         {%- endif %}
         {%- if attribute.name not in inherited_attr_names %}
-    {{ attribute.name }}: {{ 'Any' if attribute.type.name == 'any' else attribute.type.name }}{% if attribute.is_id %}  # the id{% endif %}
+        {%- set is_opt = attribute.is_optional and not attribute.is_id %}
+        {%- set attr_type_name = 'Any' if attribute.type.name == 'any' else attribute.type.name %}
+        {%- if is_opt and attribute.default_value is not none %}
+    {{ attribute.name }}: Optional[{{ attr_type_name }}] = {% if attribute.type.name == 'str' %}"{{ attribute.default_value }}"{% else %}{{ attribute.default_value }}{% endif %}
+        {%- elif is_opt %}
+    {{ attribute.name }}: Optional[{{ attr_type_name }}] = None
+        {%- elif attribute.default_value is not none %}
+    {{ attribute.name }}: {{ attr_type_name }} = {% if attribute.type.name == 'str' %}"{{ attribute.default_value }}"{% else %}{{ attribute.default_value }}{% endif %}
+        {%- else %}
+    {{ attribute.name }}: {{ attr_type_name }}
+        {%- endif %}{% if attribute.is_id %}  # the id{% endif %}
     {% set ns.has_field = true %}
 
         {% endif %}

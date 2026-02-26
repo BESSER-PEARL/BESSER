@@ -11,8 +11,12 @@
 {# ---------- Attribute Renderer ---------- #}
 {%- macro render_attributes(class, enumerations, types, ids, sort) %}
     {%- for attribute in sort(class.attributes) %}
-    {{ attribute.name }}: Mapped[{{ mapped_type(attribute.type.name) }}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
-    {%- if attribute.is_id or (attribute.name == ids.get(class.name)) %}, primary_key=True{% endif %})
+    {%- set is_pk = attribute.is_id or (attribute.name == ids.get(class.name)) %}
+    {%- set nullable = attribute.is_optional and not is_pk %}
+    {{ attribute.name }}: Mapped[{% if nullable %}Optional[{{ mapped_type(attribute.type.name) }}]{% else %}{{ mapped_type(attribute.type.name) }}{% endif %}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {%- if is_pk %}, primary_key=True{% endif %}
+    {%- if nullable %}, nullable=True{% endif %}
+    {%- if attribute.default_value is not none %}, default={% if attribute.type.name == 'str' or attribute.type.name == 'string' %}"{{ attribute.default_value }}"{% elif attribute.type.name == 'bool' %}{{ attribute.default_value | capitalize }}{% else %}{{ attribute.default_value }}{% endif %}{% endif %})
     {%- endfor %}
 {%- endmacro %}
 

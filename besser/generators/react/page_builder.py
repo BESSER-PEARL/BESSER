@@ -303,8 +303,8 @@ class PageBuilderMixin:
                 field_type = (input_field.get("type") or "text").lower()
                 label_expr = f"{{{json.dumps(label, ensure_ascii=False)}}}"
                 input_lines.append(
-                    f"{indent_str}  <div style={{\"marginBottom\": \"10px\"}}>\n"
-                    f"{indent_str}    <label htmlFor={json.dumps(input_id)} style={{\"display\": \"block\", \"marginBottom\": \"5px\"}}>"
+                    f"{indent_str}  <div style={{{{\"marginBottom\": \"10px\"}}}}>\n"
+                    f"{indent_str}    <label htmlFor={json.dumps(input_id)} style={{{{\"display\": \"block\", \"marginBottom\": \"5px\"}}}}>"
                     f"{label_expr}"
                     f"</label>\n"
                     f"{indent_str}    <input id={json.dumps(input_id)} type={json.dumps(field_type)} />\n"

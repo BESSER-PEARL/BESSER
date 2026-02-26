@@ -61,7 +61,7 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
         class_id_to_attributes = {}
         
         for elem_id, elem in reference_diagram_json["elements"].items():
-            if elem["type"] == "Class":
+            if elem["type"] in ("Class", "AbstractClass"):
                 class_name_to_id[elem["name"]] = elem_id
                 # Store class attributes for object attribute mapping
                 class_attributes = {}
@@ -70,7 +70,20 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                         attr_elem = reference_diagram_json["elements"][attr_id]
                         # Extract attribute name (remove visibility and type info)
                         attr_name = attr_elem["name"].split(":")[0].strip().lstrip("+-#~")
-                        class_attributes[attr_name] = attr_id
+                        # Get the type: new format has attributeType, legacy has it in the name
+                        attr_type = attr_elem.get("attributeType")
+                        if not attr_type:
+                            # Legacy format: parse type from name like "+ name: type"
+                            parts = attr_elem["name"].split(":")
+                            attr_type = parts[1].strip() if len(parts) > 1 else "str"
+                        attr_default = attr_elem.get("defaultValue")
+                        attr_visibility = attr_elem.get("visibility", "public")
+                        class_attributes[attr_name] = {
+                            "id": attr_id,
+                            "type": attr_type,
+                            "defaultValue": attr_default,
+                            "visibility": attr_visibility,
+                        }
                 class_id_to_attributes[elem_id] = class_attributes
         
         # Parse the Python code to extract object instances
@@ -183,19 +196,21 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
             for attr_name, attr_value in obj_info["attributes"].items():
                 attr_id = str(uuid.uuid4())
                 object_attribute_ids.append(attr_id)
-                
+
                 # Format the value appropriately
                 if isinstance(attr_value, str):
                     formatted_value = attr_value
                 else:
                     formatted_value = str(attr_value)
-                
-                # Get the corresponding class attribute ID if available
-                class_attr_id = class_attributes.get(attr_name, None)
-                
-                elements[attr_id] = {
+
+                # Get the corresponding class attribute info if available
+                class_attr_info = class_attributes.get(attr_name)
+                class_attr_id = class_attr_info["id"] if class_attr_info else None
+                attr_type = class_attr_info["type"] if class_attr_info else "str"
+
+                attr_element = {
                     "id": attr_id,
-                    "name": f"+ {attr_name}: str = {formatted_value}",
+                    "name": f"{attr_name} = {formatted_value}",
                     "type": "ObjectAttribute",
                     "owner": object_id,
                     "bounds": {
@@ -204,8 +219,12 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                         "width": 199,
                         "height": 30
                     },
-                    "attributeId": class_attr_id
+                    "attributeId": class_attr_id,
+                    "attributeType": attr_type,
                 }
+                if class_attr_info and class_attr_info.get("defaultValue") is not None:
+                    attr_element["defaultValue"] = class_attr_info["defaultValue"]
+                elements[attr_id] = attr_element
                 attr_y_offset += 30
             
             # Calculate object height based on attributes

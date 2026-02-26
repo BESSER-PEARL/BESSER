@@ -4,7 +4,7 @@ Common utilities for BUML code builders
 
 PRIMITIVE_TYPE_MAPPING = {
     'str': 'StringType',
-    'string': 'StringType', 
+    'string': 'StringType',
     'int': 'IntegerType',
     'integer': 'IntegerType',
     'float': 'FloatType',

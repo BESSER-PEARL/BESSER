@@ -1,0 +1,64 @@
+Version 6.4.0
+=============
+
+This release introduces RAG support for agents, optional attributes with default values, and a JSON object generator.
+
+New Features
+-------------
+
+**RAG Support for Agents**
+
+- New metamodel classes: ``RAG``, ``RAGVectorStore``, ``RAGTextSplitter``, and ``RAGReply``.
+- ``Agent`` supports a ``rags`` list and ``new_rag()`` factory method.
+- BAF template generates Chroma vector store setup, text splitter configuration, and ``session.run_rag()`` calls.
+- Full round-trip support in JSON-to-BUML and BUML-to-JSON converters.
+
+**Optional Attributes and Default Values**
+
+- ``Property`` now supports ``is_optional`` and ``default_value`` (closes #428, #429).
+- Propagated to Pydantic, SQLAlchemy, React, and Python class generators.
+- Converters and BUML code builders handle ``isOptional`` / ``defaultValue``.
+
+**LLM Reply Prompts**
+
+- ``LLMReply`` and ``RAGReply`` accept an optional ``prompt`` parameter.
+- Agent and user profile context is injected into LLM states during generation.
+
+**Intent Descriptions**
+
+- Intents now support a ``description`` field across metamodel, converters, and code builders.
+
+**JSON Object Generator**
+
+- New ``JSONObjectGenerator`` converts ``ObjectModel`` instances into JSON with proper type handling.
+
+**Agent Template Improvements**
+
+- Rewritten ``baf_agent_template.py.j2`` with reusable Jinja2 macros.
+- LLM intent classification configuration support.
+- New comprehensive static INI config template covering all platform sections.
+
+Fixes
+------
+
+- Fix #428: ``is_optional`` attribute support for property definitions.
+- Fix #429: ``default_value`` support for class attributes.
+- Fix #432: REST API generator — class methods now have their body embedded in endpoints.
+- Fix #433: Quantum editor — fixed gate placement offset from mouse cursor.
+- Fix #437: Web App UI builder — fixed text cursor resetting in text components.
+- Fix #398: Object diagram — fixed DateTime validation error.
+- Fix #410: Python/REST API generators — method parameters support default values with type-aware quoting.
+- Fix #407: Agent generator — custom Python code no longer breaks generation.
+- BUML-to-JSON converter — enhanced attribute mapping for classes and abstract classes.
+- Object diagram converter — improved attribute info with type, default value, and visibility.
+- React generator — fixed double-brace escaping for inline JSX style objects.
+- Python classes template — type-aware default value rendering.
+- REST API template — guards for methods without a body definition.
+- JSON schema generator — translated docstrings to English.
+- Text parser — ``sanitize_text()`` escapes single quotes with backslash.
+
+**Web Modeling Editor Fixes** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+
+- Fix WME#18: Fixed reversed text, missing live preview, and wrapping in AgentState code blocks.
+- Fix WME#46: Buttons can link to methods inherited from abstract parent classes.
+- Fix WME#47: Removed redundant home icon from toolbar.

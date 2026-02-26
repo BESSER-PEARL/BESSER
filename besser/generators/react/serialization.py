@@ -596,6 +596,7 @@ class GuiSerializationMixin:
                         "label": attr.name,
                         "type": "str",
                         "required": False,
+                        "defaultValue": getattr(attr, "default_value", None),
                     }
 
                     if isinstance(field_type, Enumeration):
@@ -604,9 +605,11 @@ class GuiSerializationMixin:
                     elif field_type and getattr(field_type, "name", None):
                         column_dict["type"] = field_type.name
 
-                    multiplicity = getattr(attr, "multiplicity", None)
-                    if multiplicity and getattr(multiplicity, "min", 0) > 0:
-                        column_dict["required"] = True
+                    is_optional = getattr(attr, "is_optional", False)
+                    if not is_optional:
+                        multiplicity = getattr(attr, "multiplicity", None)
+                        if multiplicity and getattr(multiplicity, "min", 0) > 0:
+                            column_dict["required"] = True
 
                     form_columns.append(column_dict)
 

@@ -233,7 +233,6 @@ def configure_agent(agent, config, openai_api_key: str = None):
     # Example: You could use OpenAI API here to modify agent intents, responses, etc.
     # openai.api_key = os.getenv('OPENAI_API_KEY')
     # ... personalization logic ...
-    print("beep boop - personalizing agent with config:", config)
     training_sentences = []
     for intent in getattr(agent, 'intents', []):
         for idx, sentence in enumerate(getattr(intent, 'training_sentences', [])):

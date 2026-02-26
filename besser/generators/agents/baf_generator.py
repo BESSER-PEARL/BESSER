@@ -10,7 +10,7 @@ from besser.BUML.metamodel.state_machine.agent import Agent
 from besser.BUML.metamodel.structural import Method
 from besser.generators import GeneratorInterface
 
-from besser.generators.agents.agent_personalization import configure_agent
+from besser.generators.agents.agent_personalization import configure_agent, flatten_agent_config_structure
 
 # BESSER utilities
 from besser.utilities.buml_code_builder import (
@@ -18,51 +18,6 @@ from besser.utilities.buml_code_builder import (
 )
 from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
 
-
-def flatten_agent_config_structure(raw_config):
-    """Flatten structured agent configuration sections into the legacy flat shape."""
-    if not isinstance(raw_config, dict):
-        return raw_config
-
-    flattened = dict(raw_config)
-    section_field_map = {
-        "presentation": {
-            "agentLanguage": "agentLanguage",
-            "agentStyle": "agentStyle",
-            "languageComplexity": "languageComplexity",
-            "sentenceLength": "sentenceLength",
-            "interfaceStyle": "interfaceStyle",
-            "voiceStyle": "voiceStyle",
-            "avatar": "avatar",
-            "useAbbreviations": "useAbbreviations",
-        },
-        "modality": {
-            "inputModalities": "inputModalities",
-            "outputModalities": "outputModalities",
-        },
-        "behavior": {
-            "responseTiming": "responseTiming",
-        },
-        "content": {
-            "adaptContentToUserProfile": "adaptContentToUserProfile",
-        },
-        "system": {
-            "agentPlatform": "agentPlatform",
-            "intentRecognitionTechnology": "intentRecognitionTechnology",
-            "llm": "llm",
-        },
-    }
-
-    for section_name, mapping in section_field_map.items():
-        section_data = flattened.get(section_name)
-        if not isinstance(section_data, dict):
-            continue
-        for source_key, target_key in mapping.items():
-            if source_key in section_data:
-                flattened[target_key] = section_data[source_key]
-        flattened.pop(section_name, None)
-
-    return flattened
 
 
 class GenerationMode(Enum):

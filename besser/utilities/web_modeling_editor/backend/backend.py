@@ -92,7 +92,12 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_generatio
     append_zip_contents,
     build_configurations_package,
     slugify_name,
-    extract_openai_api_key
+    extract_openai_api_key,
+    normalize_personalization_mapping,
+    handle_multi_language_generation,
+    handle_variation_generation,
+    handle_configuration_variants,
+    handle_personalized_agent,
 )
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
@@ -472,238 +477,69 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
         raise HTTPException(status_code=500, detail=f"Web App generation failed: {str(e)}")
 
 
+def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
+    """Return a StreamingResponse wrapping a ZIP buffer."""
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={file_name}"},
+    )
+
+
+
 async def _handle_agent_generation(json_data: dict):
-    """Handle agent diagram generation."""
+    """Handle agent diagram generation by dispatching to specialized helpers."""
     try:
-        # Get languages from config if present
         config = json_data.get('config', {})
 
         if config is None:
-            # Single agent (default behavior)
             agent_model = process_agent_diagram(json_data)
             zip_buffer, file_name = generate_agent_files(agent_model, config)
-            return StreamingResponse(
-                zip_buffer,
-                media_type="application/zip",
-                headers={"Content-Disposition": f"attachment; filename={file_name}"},
-            )
+            return _streaming_zip(zip_buffer, file_name)
 
         is_config_dict = isinstance(config, dict)
+
+        # Normalize personalization mappings in-place
         if is_config_dict and isinstance(config.get('personalizationMapping'), list):
-            normalized_mappings = []
-            for index, entry in enumerate(config.get('personalizationMapping') or []):
-                if not isinstance(entry, dict):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"personalizationMapping entry at index {index} must be an object",
-                    )
-
-                user_profile_payload = entry.get('user_profile')
-                if user_profile_payload is None:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=(
-                            "personalizationMapping entry "
-                            f"at index {index} is missing 'user_profile'"
-                        ),
-                    )
-
-                simplified_profile = _generate_user_profile_document(user_profile_payload)
-
-                agent_model_json = entry.get('agent_model')
-                agent_model_buml = None
-                if isinstance(agent_model_json, dict):
-                    mapping_payload = dict(json_data)
-                    mapping_payload['model'] = deepcopy(agent_model_json)
-                    try:
-                        agent_model_buml = process_agent_diagram(mapping_payload)
-                    except Exception as conversion_error:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=(
-                                "Failed to convert personalizationMapping "
-                                f"agent_model at index {index} to BUML: {conversion_error}"
-                            ),
-                        ) from conversion_error
-
-                normalized_entry = dict(entry)
-                normalized_entry['user_profile'] = simplified_profile
-                if agent_model_buml is not None:
-                    normalized_entry['agent_model'] = agent_model_buml
-                normalized_mappings.append(normalized_entry)
-
-            config['personalizationMapping'] = normalized_mappings
-            json_data['config'] = config
+            normalize_personalization_mapping(config, json_data, _generate_user_profile_document)
 
         languages = config.get('languages') if is_config_dict else None
         configuration_variants = config.get('configurations') if is_config_dict else None
         base_model_snapshot = config.get('baseModel') if is_config_dict else None
         variation_entries = config.get('variations') if is_config_dict else None
 
-        # New format: languages is a dict with 'source' and 'target'
         if languages and isinstance(languages, dict):
-            source_lang = languages.get('source')
-            target_langs = languages.get('target', None)
-            # If no target languages, fall back to single agent generation
-            agent_models = []
-
-            # Default agent (no language)
-            default_json_data = {**json_data}
-            if 'config' in default_json_data and isinstance(default_json_data['config'], dict):
-                default_json_data['config'] = {
-                    k: v for k, v in default_json_data['config'].items() if k != 'languages'
-                }
-            agent_models.append((process_agent_diagram(default_json_data), 'default'))
-
-            # Agents for each target language
-            for lang in target_langs:
-                new_config = dict(config) if config else {}
-                new_config['language'] = lang
-                # Pass source language to process_agent_diagram via config
-                if source_lang:
-                    new_config['source_language'] = source_lang
-                new_json_data = dict(json_data)
-                new_json_data['config'] = new_config
-                agent_models.append((process_agent_diagram(new_json_data), lang))
-
-            # Generate files for each agent model
-            zip_buffer = io.BytesIO()
-            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                for agent_model, lang in agent_models:
-                    temp_dir = tempfile.mkdtemp(prefix=f"besser_agent_{lang}_")
-                    try:
-                        # Generate agent files in temp dir
-                        agent_file = os.path.join(temp_dir, f"agent_model_{lang}.py")
-                        agent_model_to_code(agent_model, agent_file)
-                        # Import and generate output files
-                        sys.path.insert(0, temp_dir)
-                        spec = importlib.util.spec_from_file_location(
-                            f"agent_model_{lang}", agent_file
-                        )
-                        agent_module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(agent_module)
-                        generator_info = get_generator_info("agent")
-                        generator_class = generator_info.generator_class
-                        variant_openai_api_key = extract_openai_api_key(new_config)
-                        if hasattr(agent_module, 'agent'):
-                            generator = generator_class(
-                                agent_module.agent,
-                                config=new_config,
-                                openai_api_key=variant_openai_api_key,
-                            )
-                        else:
-                            generator = generator_class(
-                                agent_model,
-                                config=new_config,
-                                openai_api_key=variant_openai_api_key,
-                            )
-                        generator.generate()
-                        # Add agent model file inside language folder
-                        zip_file.write(agent_file, f"{lang}/agent_model_{lang}.py")
-                        # Add all files from output dir inside language folder
-                        if os.path.exists(OUTPUT_DIR):
-                            for file_name in os.listdir(OUTPUT_DIR):
-                                file_path = os.path.join(OUTPUT_DIR, file_name)
-                                if os.path.isfile(file_path):
-                                    zip_file.write(file_path, f"{lang}/{file_name}")
-                    finally:
-                        cleanup_temp_resources(temp_dir)
-            zip_buffer.seek(0)
-            return StreamingResponse(
-                zip_buffer,
-                media_type="application/zip",
-                headers={"Content-Disposition": "attachment; filename=agents_multi_lang.zip"},
+            buf, name = await handle_multi_language_generation(
+                json_data, config, languages, generate_agent_files, output_dir=OUTPUT_DIR,
             )
+            return _streaming_zip(buf, name)
 
         if base_model_snapshot is not None and isinstance(variation_entries, list):
-            def to_agent_model(model_snapshot: Dict[str, Any]):
-                variant_payload = dict(json_data)
-                variant_payload['model'] = model_snapshot
-                return process_agent_diagram(variant_payload)
-
-            combined_zip = io.BytesIO()
-            with zipfile.ZipFile(combined_zip, "w", zipfile.ZIP_DEFLATED) as zip_file:
-                base_agent_model = to_agent_model(base_model_snapshot)
-                base_buffer, _ = generate_agent_files(
-                    base_agent_model,
-                    config,
-                    generation_mode=GenerationMode.CODE_ONLY,
-                )
-                append_zip_contents(zip_file, base_buffer)
-
-                for index, entry in enumerate(variation_entries):
-                    if not isinstance(entry, dict):
-                        continue
-                    variant_snapshot = entry.get('model')
-                    if not variant_snapshot:
-                        continue
-                    try:
-                        variant_agent_model = to_agent_model(variant_snapshot)
-                    except Exception as conversion_error:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=(
-                                "Invalid agent model provided for variation "
-                                f"'{entry.get('name', index)}': {conversion_error}"
-                            ),
-                        ) from conversion_error
-
-                    folder_name = slugify_name(entry.get('name'), f"variation_{index + 1}")
-                    variant_buffer, _ = generate_agent_files(
-                        variant_agent_model,
-                        entry.get('config'),
-                        generation_mode=GenerationMode.CODE_ONLY,
-                    )
-                    append_zip_contents(
-                        zip_file,
-                        variant_buffer,
-                        prefix=folder_name or f"variation_{index + 1}",
-                    )
-
-            combined_zip.seek(0)
-            return StreamingResponse(
-                combined_zip,
-                media_type="application/zip",
-                headers={"Content-Disposition": f"attachment; filename={AGENT_OUTPUT_FILENAME}"},
+            buf, name = handle_variation_generation(
+                json_data, config, base_model_snapshot, variation_entries, generate_agent_files,
             )
+            return _streaming_zip(buf, name)
 
         if configuration_variants and isinstance(configuration_variants, list):
-            agent_model = process_agent_diagram(json_data)
-            bundle_buffer = build_configurations_package(
-                agent_model,
-                configuration_variants,
-                generate_agent_files,
+            buf, name = handle_configuration_variants(
+                json_data, configuration_variants, generate_agent_files,
             )
-            return StreamingResponse(
-                bundle_buffer,
-                media_type="application/zip",
-                headers={"Content-Disposition": f"attachment; filename={AGENT_OUTPUT_FILENAME}"},
-            )
+            return _streaming_zip(buf, name)
 
-        if isinstance(config, dict) and 'personalizationMapping' in config:
-            agent_model = process_agent_diagram(json_data)
-            zip_buffer, file_name = generate_agent_files(
-                agent_model,
-                config,
-                generation_mode=GenerationMode.CODE_ONLY,
-            )
-            return StreamingResponse(
-                zip_buffer,
-                media_type="application/zip",
-                headers={"Content-Disposition": f"attachment; filename={file_name}"},
-            )
+        if is_config_dict and 'personalizationMapping' in config:
+            buf, name = handle_personalized_agent(json_data, config, generate_agent_files)
+            return _streaming_zip(buf, name)
 
         # Single agent fallback
         agent_model = process_agent_diagram(json_data)
         zip_buffer, file_name = generate_agent_files(agent_model, config)
-        return StreamingResponse(
-            zip_buffer,
-            media_type="application/zip",
-            headers={"Content-Disposition": f"attachment; filename={file_name}"},
-        )
+        return _streaming_zip(zip_buffer, file_name)
+
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
-            status_code=500, 
+            status_code=500,
             detail=f"Error processing agent diagram: {str(e)}"
         )
 

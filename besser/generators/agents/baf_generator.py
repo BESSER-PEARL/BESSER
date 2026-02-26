@@ -205,7 +205,6 @@ class BAFGenerator(GeneratorInterface):
                 generated_code = agent_template.render(agent=self.model, config=self.config, personalization_mapping=config_for_personalization['personalizationMapping'])
                 f.write(generated_code)
         elif personalized_messages == {}:
-            print("ungunugneunun")
             with open(agent_path, mode="w", encoding="utf-8") as f:
                 # todo: how to handle llm variable names that are used in bodies?
                 generated_code = agent_template.render(agent=self.model, config=self.config)

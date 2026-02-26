@@ -874,7 +874,7 @@ def _generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[
         "title": diagram_title,
         "diagramType": "UserDiagram",
         "model": deepcopy(user_profile_model),
-        "generator": "json",
+        "generator": "jsonobject",
     }
 
     model_section = prepared_payload["model"]
@@ -884,9 +884,9 @@ def _generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[
     temp_dir = tempfile.mkdtemp(prefix=f"user_profile_{uuid.uuid4().hex}_")
     try:
         object_model = process_object_diagram(prepared_payload, user_reference_domain_model)
-        generator_info = get_generator_info("json")
+        generator_info = get_generator_info("jsonobject")
         if not generator_info:
-            raise HTTPException(status_code=500, detail="JSON generator is not configured")
+            raise HTTPException(status_code=500, detail="JSONObject generator is not configured")
         generator_class = generator_info.generator_class
         generator_instance = generator_class(object_model, output_dir=temp_dir)
         generator_instance.generate()

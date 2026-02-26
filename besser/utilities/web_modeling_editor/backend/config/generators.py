@@ -97,7 +97,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="data_format",
         requires_class_diagram=True
     ),
-    "json": GeneratorInfo(
+    "jsonobject": GeneratorInfo(
         generator_class=JSONObjectGenerator,
         output_type="file",
         file_extension=".json",
@@ -146,7 +146,7 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "tables.sql"
     elif generator_type == "jsonschema":
         return "json_schema.json"
-    elif generator_type == "json":
+    elif generator_type == "jsonobject":
         return "object_model.json"
     elif generator_type == "qiskit":
         return "qiskit_circuit.py"

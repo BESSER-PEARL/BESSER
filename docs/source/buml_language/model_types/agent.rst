@@ -34,6 +34,18 @@ Beyond the state machine-like elements, the agent metamodel also includes agent 
 
 To read about their meaning and usage, please refer to the `documentation <https://besser-agentic-framework.readthedocs.io/latest/>`_ of the BESSER Agentic Framework.
 
+RAG (Retrieval-Augmented Generation)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Agents can use RAG to answer questions from a set of documents (e.g. PDFs).
+A RAG element is added to an agent via ``agent.new_rag()`` and combines a
+``RAGVectorStore`` (embedding config), a ``RAGTextSplitter`` (chunking strategy),
+and an LLM name. Use ``RAGReply`` in a state body to trigger a RAG query.
+
+When generated, a data folder named after the RAG element is created
+(e.g. ``"Knowledge Base"`` produces ``knowledge_base/``). Place your PDF
+documents in this folder before running the agent.
+
 .. image:: ../../img/agent_mm.png
   :width: 1600
   :alt: Agent metamodel

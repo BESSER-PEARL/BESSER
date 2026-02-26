@@ -229,11 +229,7 @@ def configure_agent(agent, config, openai_api_key: str = None):
     """
     config = flatten_agent_config_structure(config or {})
     resolved_api_key = _resolve_openai_api_key(config=config, openai_api_key=openai_api_key)
-    if not resolved_api_key:
-        raise RuntimeError(
-            f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
-            "or include 'openaiApiKey'/'openai_api_key' in generator config."
-        )
+
     # Example: You could use OpenAI API here to modify agent intents, responses, etc.
     # openai.api_key = os.getenv('OPENAI_API_KEY')
     # ... personalization logic ...
@@ -253,6 +249,11 @@ def configure_agent(agent, config, openai_api_key: str = None):
                 print("Translating using API...")
                 training_sentences.append(sentence)
     if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
+        if not resolved_api_key:
+            raise RuntimeError(
+                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
+                "or include 'openaiApiKey'/'openai_api_key' in generator config."
+            )
         target_language = config['agentLanguage']
         translated_sentences = translate_text_batch(
             training_sentences,
@@ -327,6 +328,11 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
         for i, msg in enumerate(personalized_messages):
             personalized_messages[i] = translate_text_api(msg, target_language)
     if 'agentStyle' in config and config['agentStyle'] != 'original':
+        if not openai_api_key:
+            raise RuntimeError(
+                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
+                "or include 'openaiApiKey'/'openai_api_key' in generator config."
+            )
         style = config['agentStyle']
         personalized_messages = style_text_batch(
             personalized_messages,
@@ -335,6 +341,11 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
             config=config,
         )
     if 'languageComplexity' in config and config['languageComplexity'] != 'original':
+        if not openai_api_key:
+            raise RuntimeError(
+                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
+                "or include 'openaiApiKey'/'openai_api_key' in generator config."
+            )
         complexity = config['languageComplexity']
         personalized_messages = complexity_text_batch(
             personalized_messages,
@@ -343,6 +354,11 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
             config=config,
         )
     if 'sentenceLength' in config and config['sentenceLength'] != 'original':
+        if not openai_api_key:
+            raise RuntimeError(
+                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
+                "or include 'openaiApiKey'/'openai_api_key' in generator config."
+            )
         length_pref = config['sentenceLength']
         personalized_messages = sentence_length_batch(
             personalized_messages,
@@ -351,12 +367,22 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
             config=config,
         )
     if isinstance(config.get('userProfileModel'), dict):
+        if not openai_api_key:
+            raise RuntimeError(
+                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
+                "or include 'openaiApiKey'/'openai_api_key' in generator config."
+            )
         personalized_messages = replace_content_profile_batch(
             personalized_messages,
             config,
             openai_api_key=openai_api_key,
         )
     if 'agentLanguage' in config and config['agentLanguage'] != 'none' and config['agentLanguage'] != 'original':
+        if not openai_api_key:
+            raise RuntimeError(
+                f"OpenAI API key is required for agent personalization. Set '{OPENAI_API_KEY_ENV_VAR}' "
+                "or include 'openaiApiKey'/'openai_api_key' in generator config."
+            )
         target_language = config['agentLanguage']
         personalized_messages = translate_text_batch(
             personalized_messages,

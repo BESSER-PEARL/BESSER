@@ -452,6 +452,7 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
         agent_model = None
         has_agent_components = _check_for_agent_components(gui_model)
 
+        agent_config = None
         if has_agent_components:
             # Extract AgentDiagram if present
             agent_diagram = input_data.diagrams.get("AgentDiagram")
@@ -461,6 +462,7 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
                 agent_diagram_dict = agent_diagram.model_dump()
                 if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
                     agent_model = process_agent_diagram(agent_diagram_dict)
+                    agent_config = agent_diagram_dict.get('config', {})
                 else:
                     print("Warning: AgentDiagram data is invalid. Agent components will not be functional.")
             else:
@@ -469,7 +471,7 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
         # Generate Web App TypeScript project
         generator_class = generator_info.generator_class
 
-        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir, agent_model)
+        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir, agent_model, agent_config)
 
     except HTTPException:
         raise
@@ -1096,9 +1098,9 @@ def _check_container_for_agent_components(container):
                 return True
     return False
 
-async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str, agent_model=None):
+async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str, agent_model=None, agent_config=None):
     """Generate web application files. Optionally includes agent model if agent components are present."""
-    generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir, agent_model=agent_model)
+    generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir, agent_model=agent_model, agent_config=agent_config)
     generator_instance.generate()
     return _create_zip_response(temp_dir, "web_app")
 

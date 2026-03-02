@@ -24,10 +24,11 @@ class WebAppGenerator(GeneratorInterface):
         output_dir (str, optional): Directory where generated code will be saved. Defaults to None.
     """
 
-    def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None, agent_model=None):
+    def __init__(self, model: DomainModel, gui_model: GUIModel, output_dir: str = None, agent_model=None, agent_config=None):
         super().__init__(model, output_dir)
         self.gui_model = gui_model
         self.agent_model = agent_model
+        self.agent_config = agent_config
         # Jinja environment configuration
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
@@ -73,7 +74,7 @@ class WebAppGenerator(GeneratorInterface):
         # agent_model_to_code(self.agent_model, agent_file)
         
         # Generate agent files using BAFGenerator
-        agent_gen = BAFGenerator(self.agent_model, output_dir=agent_dir)
+        agent_gen = BAFGenerator(self.agent_model, output_dir=agent_dir, config=self.agent_config)
         agent_gen.generate()
 
     def _generate_docker_files(self, env):

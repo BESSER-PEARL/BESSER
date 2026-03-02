@@ -145,21 +145,24 @@ async def deploy_webapp_to_github(
         
         # Check for agent diagram — only process if the model contains actual elements
         agent_model = None
+        agent_config = None
         agent_diagram_data = diagrams.get("AgentDiagram", {})
         agent_model_data = agent_diagram_data.get("model", {}) if agent_diagram_data else {}
         if agent_model_data and agent_model_data.get("elements"):
             agent_model = process_agent_diagram(agent_diagram_data)
-        
+            agent_config = agent_diagram_data.get("config", {})
+
         # Generate web app
         temp_dir = tempfile.mkdtemp(prefix=f"besser_github_{uuid.uuid4().hex}_")
-        
+
         generator_info = get_generator_info("web_app")
         generator_class = generator_info.generator_class
         generator = generator_class(
             buml_model,
             gui_model,
             output_dir=temp_dir,
-            agent_model=agent_model
+            agent_model=agent_model,
+            agent_config=agent_config
         )
         generator.generate()
         

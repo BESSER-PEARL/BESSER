@@ -319,13 +319,13 @@ def _add_deployment_configs(
     name: {agent_service_name}
     runtime: python
     plan: free
-    buildCommand: pip install besser-agentic-framework[all]
-    startCommand: cd agent && python {agent_script}
+    buildCommand: pip install besser-agentic-framework[all] && (python -c "import nltk; nltk.download('popular', quiet=True)" || true)
+    startCommand: cd agent && sed -i 's/^websocket\\.host = .*/websocket.host = 0.0.0.0/' config.ini && sed -i "s/^websocket\\.port = .*/websocket.port = $PORT/" config.ini && sed -i "s/^nlp\\.openai\\.api_key = .*/nlp.openai.api_key = $OPENAI_API_KEY/" config.ini && python -u {agent_script}
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      - key: PORT
-        value: 8765
+      - key: OPENAI_API_KEY
+        sync: false
 """
         render_config += agent_config
     

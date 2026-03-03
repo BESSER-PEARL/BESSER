@@ -150,7 +150,9 @@ async def deploy_webapp_to_github(
         agent_model_data = agent_diagram_data.get("model", {}) if agent_diagram_data else {}
         if agent_model_data and agent_model_data.get("elements"):
             agent_model = process_agent_diagram(agent_diagram_data)
-            agent_config = agent_diagram_data.get("config", {})
+            # Try diagram-level config first, fall back to project settings config
+            settings = body.get("settings", {}) or {}
+            agent_config = agent_diagram_data.get("config") or settings.get("config") or {}
 
         # Generate web app
         temp_dir = tempfile.mkdtemp(prefix=f"besser_github_{uuid.uuid4().hex}_")
@@ -323,7 +325,7 @@ def _add_deployment_configs(
     runtime: python
     plan: free
     buildCommand: pip install besser-agentic-framework[llms] && python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)"
-    startCommand: cd agent && sed -i 's/^websocket\\.host = .*/websocket.host = 0.0.0.0/' config.ini && sed -i "s/^websocket\\.port = .*/websocket.port = $PORT/" config.ini && sed -i "s/^nlp\\.openai\\.api_key = .*/nlp.openai.api_key = $OPENAI_API_KEY/" config.ini && python -u {agent_script}
+    startCommand: cd agent && sed -i 's/^websocket\\.host = .*/websocket.host = 0.0.0.0/' config.ini && sed -i "s/^websocket\\.port = .*/websocket.port = $PORT/" config.ini && sed -i 's/^streamlit\\.host = .*/streamlit.host = 0.0.0.0/' config.ini && sed -i "s/^streamlit\\.port = .*/streamlit.port = $PORT/" config.ini && sed -i "s/^nlp\\.openai\\.api_key = .*/nlp.openai.api_key = $OPENAI_API_KEY/" config.ini && python -u {agent_script}
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9

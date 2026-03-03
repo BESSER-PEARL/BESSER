@@ -462,7 +462,8 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
                 agent_diagram_dict = agent_diagram.model_dump()
                 if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
                     agent_model = process_agent_diagram(agent_diagram_dict)
-                    agent_config = agent_diagram_dict.get('config', {})
+                    # Try diagram-level config first, fall back to project-level config
+                    agent_config = agent_diagram_dict.get('config') or agent_diagram.config or config
                 else:
                     print("Warning: AgentDiagram data is invalid. Agent components will not be functional.")
             else:

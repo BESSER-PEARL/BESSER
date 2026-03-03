@@ -294,7 +294,7 @@ def _add_deployment_configs(
     startCommand: cd backend && uvicorn main_api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9.16
+        value: 3.11.9
       - key: PORT
         value: 8000
 
@@ -322,7 +322,7 @@ def _add_deployment_configs(
     name: {agent_service_name}
     runtime: python
     plan: free
-    buildCommand: pip install besser-agentic-framework[all] && (python -c "import nltk; nltk.download('popular', quiet=True)" || true)
+    buildCommand: pip install besser-agentic-framework[llms] && python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)"
     startCommand: cd agent && sed -i 's/^websocket\\.host = .*/websocket.host = 0.0.0.0/' config.ini && sed -i "s/^websocket\\.port = .*/websocket.port = $PORT/" config.ini && sed -i "s/^nlp\\.openai\\.api_key = .*/nlp.openai.api_key = $OPENAI_API_KEY/" config.ini && python -u {agent_script}
     envVars:
       - key: PYTHON_VERSION

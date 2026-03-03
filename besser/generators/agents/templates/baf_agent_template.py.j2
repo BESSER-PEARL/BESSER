@@ -275,6 +275,7 @@ rag_llm = LLMOpenAI(
 ){% endif %}
 {% endmacro %}
 
+{% set ic_config_set = namespace(value=false) %}
 {% if config and "intentRecognitionTechnology" in config and config["intentRecognitionTechnology"] == 'llm-based' %}
 {% if 'llm' in config  and 'model' in config['llm'] %}
 ic_config = LLMIntentClassifierConfiguration(
@@ -297,6 +298,7 @@ ic_config = LLMIntentClassifierConfiguration(
 {% endif %}
 
 agent.set_default_ic_config(ic_config)
+{% set ic_config_set.value = true %}
 {% endif %}
 
 {% if agent.llms != [] and (not config or 'llm' not in config or not config['llm']) %}
@@ -320,6 +322,19 @@ reply_llm = {{ llm.__class__.__name__}}(
 
 {% if agent.default_ic_config != None %}
 agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
+{% set ic_config_set.value = true %}
+{% endif %}
+{% if not ic_config_set.value %}
+# Default to LLM-based intent classification (avoids PyTorch dependency)
+ic_config = LLMIntentClassifierConfiguration(
+    llm_name='gpt-4o-mini',
+    parameters={},
+    use_intent_descriptions=True,
+    use_training_sentences=True,
+    use_entity_descriptions=False,
+    use_entity_synonyms=False
+)
+agent.set_default_ic_config(ic_config)
 {% endif %}
 {% if agent.entities %}
 ##############################

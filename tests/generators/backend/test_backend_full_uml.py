@@ -265,8 +265,8 @@ def test_backend_generator_full_uml_and_implem(tmpdir):
 
     # REST API: Methods implementation
     assert "inst_to_update = _manager_object" in api_code
-    assert "await update_manager(inst_to_update.id, ManagerCreate(level = inst_to_update.level, created_at = inst_to_update.created_at, name = inst_to_update.name, role = inst_to_update.role, email = inst_to_update.email, salary = (1.1 * _manager_object.salary), department = inst_to_update.department, projects = inst_to_update.projects), database)" in api_code
-    assert "await update_manager(inst_to_update.id, ManagerCreate(level = (_manager_object.level + 1), created_at = inst_to_update.created_at, name = inst_to_update.name, role = inst_to_update.role, email = inst_to_update.email, salary = inst_to_update.salary, department = inst_to_update.department, projects = inst_to_update.projects), database)" in api_code
+    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = inst_to_update.level, name = inst_to_update.name, role = inst_to_update.role, salary = (1.1 * _manager_object.salary), department = inst_to_update.department, projects = inst_to_update.projects), database)" in api_code
+    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = (_manager_object.level + 1), name = inst_to_update.name, role = inst_to_update.role, salary = inst_to_update.salary, department = inst_to_update.department, projects = inst_to_update.projects), database)" in api_code
 
 
 def test_backend_generator_one_to_one_optional_field(tmpdir):

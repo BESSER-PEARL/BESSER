@@ -1,0 +1,32 @@
+Version 6.4.1
+=============
+
+This patch release fixes agent deployment on Render, a UI builder bug, and adds app redeployment support in the web modeling editor.
+
+Fixes
+------
+
+**Agent Deployment on Render (Fix #442)**
+
+- Fixed agent crash (``NameError: name 'nn' is not defined``) when deploying a webapp with an agent to Render.
+- Root cause: the frontend did not include agent configuration (LLM, intent classifier, platform) in the deploy-webapp request payload, causing the agent to fall back to PyTorch-based ``SimpleIntentClassifier`` which is not installed on Render.
+- Frontend now includes the active agent configuration from the editor in deploy requests; defaults to websocket+streamlit platform, LLM-based intent classification, and OpenAI ``gpt-5-nano`` when no configuration is explicitly set.
+- Backend template (``baf_agent_template.py.j2``) adds safe fallback defaults: ``LLMOpenAI(gpt-5-nano)`` and ``LLMIntentClassifierConfiguration`` to avoid PyTorch dependency in deployment environments.
+- Added config fallback chain in backend: diagram-level config -> project settings config -> template defaults.
+- Fixed Render port conflict by removing streamlit port override that clashed with the websocket server binding to ``$PORT``.
+- Render YAML template now includes ``Content-Type`` headers for static JS/CSS assets to prevent MIME type issues during CDN propagation.
+- Optimized Docker images and Render build commands for faster deployments (NLTK data pre-download, ``besser-agentic-framework[llms]`` instead of ``[all]``).
+
+**Card Component Text Editing (Fix #446)**
+
+- Fixed inability to edit or change text in Card components in the Webapp UI builder.
+- Double-clicking text in a Card now correctly activates the editable state with a cursor.
+
+**App Redeployment - Reuse Existing GitHub Repo (WME #50)**
+
+- Redeploying a web app now pushes to the same GitHub repository instead of creating a new one each time.
+- After the first deploy, the linked repo is saved in localStorage keyed by project ID.
+- On subsequent deploys, the modal shows the linked repo and an "Update & Publish" button with a custom commit message field.
+- Manually added files in the repo (e.g. custom docs) are preserved across redeployments via Git ``base_tree`` merge.
+- "Create new repo instead" button lets users break the link and start fresh.
+- If the repo was deleted on GitHub, the backend detects the 404 and falls back to creating a new repo.

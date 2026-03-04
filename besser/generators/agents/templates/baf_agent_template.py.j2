@@ -318,6 +318,15 @@ reply_llm = {{ llm.__class__.__name__}}(
 {% set has_reply_llm_state.value = true %}
 {% endfor %}
 {% endif %}
+{% if not has_reply_llm_state.value %}
+# Default LLM when no config or model provides one
+reply_llm = LLMOpenAI(
+    agent=agent,
+    name='gpt-4o-mini',
+    parameters={}
+)
+{% set has_reply_llm_state.value = true %}
+{% endif %}
 {% set has_reply_llm = has_reply_llm_state.value %}
 
 {% if agent.default_ic_config != None %}

@@ -300,13 +300,6 @@ async def generate_code_output_from_project(input_data: ProjectInput):
         # Get configuration from project settings
         config = input_data.settings.get("config", {}) if input_data.settings else {}
 
-        # Debug: log full project structure
-        print(f"[DEBUG] settings keys: {list(input_data.settings.keys()) if input_data.settings else 'None'}")
-        print(f"[DEBUG] settings: {input_data.settings}")
-        print(f"[DEBUG] diagram keys: {list(input_data.diagrams.keys())}")
-        for diag_name, diag in input_data.diagrams.items():
-            print(f"[DEBUG] diagram '{diag_name}' config: {diag.config}")
-
         # Handle Web App generator (requires both ClassDiagram and GUINoCodeDiagram)
         if generator_type == "web_app":
             return await _handle_web_app_project_generation(input_data, generator_info, config)
@@ -470,13 +463,7 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
                 if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
                     agent_model = process_agent_diagram(agent_diagram_dict)
                     # Try diagram-level config first, fall back to project-level config
-                    diagram_config = agent_diagram_dict.get('config')
-                    pydantic_config = agent_diagram.config
-                    print(f"[DEBUG] diagram_config type={type(diagram_config)}, truthy={bool(diagram_config)}, value={diagram_config}")
-                    print(f"[DEBUG] pydantic_config type={type(pydantic_config)}, truthy={bool(pydantic_config) if pydantic_config is not None else 'None'}, value={pydantic_config}")
-                    print(f"[DEBUG] project config type={type(config)}, truthy={bool(config)}, keys={list(config.keys()) if isinstance(config, dict) else 'N/A'}")
-                    agent_config = diagram_config or pydantic_config or config
-                    print(f"[DEBUG] final agent_config type={type(agent_config)}, truthy={bool(agent_config)}, keys={list(agent_config.keys()) if isinstance(agent_config, dict) else 'N/A'}")
+                    agent_config = agent_diagram_dict.get('config') or agent_diagram.config or config
                 else:
                     print("Warning: AgentDiagram data is invalid. Agent components will not be functional.")
             else:

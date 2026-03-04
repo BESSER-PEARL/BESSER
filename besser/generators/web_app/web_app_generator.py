@@ -72,8 +72,9 @@ class WebAppGenerator(GeneratorInterface):
         # # Generate agent model file
         # agent_file = os.path.join(agent_dir, "agent_model.py")
         # agent_model_to_code(self.agent_model, agent_file)
-        
+
         # Generate agent files using BAFGenerator
+        print(f"[DEBUG WebAppGenerator] agent_config type={type(self.agent_config)}, value={self.agent_config}")
         agent_gen = BAFGenerator(self.agent_model, output_dir=agent_dir, config=self.agent_config)
         agent_gen.generate()
 

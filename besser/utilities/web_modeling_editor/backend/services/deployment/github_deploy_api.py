@@ -145,21 +145,26 @@ async def deploy_webapp_to_github(
         
         # Check for agent diagram — only process if the model contains actual elements
         agent_model = None
+        agent_config = None
         agent_diagram_data = diagrams.get("AgentDiagram", {})
         agent_model_data = agent_diagram_data.get("model", {}) if agent_diagram_data else {}
         if agent_model_data and agent_model_data.get("elements"):
             agent_model = process_agent_diagram(agent_diagram_data)
-        
+            # Try diagram-level config first, fall back to project settings config
+            settings = body.get("settings", {}) or {}
+            agent_config = agent_diagram_data.get("config") or settings.get("config") or {}
+
         # Generate web app
         temp_dir = tempfile.mkdtemp(prefix=f"besser_github_{uuid.uuid4().hex}_")
-        
+
         generator_info = get_generator_info("web_app")
         generator_class = generator_info.generator_class
         generator = generator_class(
             buml_model,
             gui_model,
             output_dir=temp_dir,
-            agent_model=agent_model
+            agent_model=agent_model,
+            agent_config=agent_config
         )
         generator.generate()
         
@@ -291,7 +296,7 @@ def _add_deployment_configs(
     startCommand: cd backend && uvicorn main_api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.9.16
+        value: 3.11.9
       - key: PORT
         value: 8000
 
@@ -304,6 +309,13 @@ def _add_deployment_configs(
     envVars:
       - key: VITE_API_URL
         value: https://{backend_service_name}.onrender.com
+    headers:
+      - path: /assets/*.js
+        name: Content-Type
+        value: application/javascript
+      - path: /assets/*.css
+        name: Content-Type
+        value: text/css
     routes:
       - type: rewrite
         source: /*
@@ -319,13 +331,13 @@ def _add_deployment_configs(
     name: {agent_service_name}
     runtime: python
     plan: free
-    buildCommand: pip install besser-agentic-framework[all]
-    startCommand: cd agent && python {agent_script}
+    buildCommand: pip install besser-agentic-framework[llms] && python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)"
+    startCommand: cd agent && sed -i 's/^websocket\\.host = .*/websocket.host = 0.0.0.0/' config.ini && sed -i "s/^websocket\\.port = .*/websocket.port = $PORT/" config.ini && sed -i "s/^nlp\\.openai\\.api_key = .*/nlp.openai.api_key = $OPENAI_API_KEY/" config.ini && python -u {agent_script}
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      - key: PORT
-        value: 8765
+      - key: OPENAI_API_KEY
+        sync: false
 """
         render_config += agent_config
     

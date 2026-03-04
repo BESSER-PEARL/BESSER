@@ -11,8 +11,11 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt* ./
 RUN if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
 
-# Install BESSER and BESSER Agent Framework
-RUN pip install --no-cache-dir besser-agentic-framework[all]
+# Install BESSER Agent Framework with LLM support (add [extras] if RAG is needed)
+RUN pip install --no-cache-dir besser-agentic-framework[llms]
+
+# Download NLTK data at build time so it's cached in the image layer
+RUN python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)"
 
 # Copy agent files
 COPY . .

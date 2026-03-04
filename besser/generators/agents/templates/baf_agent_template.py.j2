@@ -288,7 +288,7 @@ ic_config = LLMIntentClassifierConfiguration(
 )
 {% else %}
 ic_config = LLMIntentClassifierConfiguration(
-    llm_name='gpt-4o-mini',
+    llm_name='gpt-5-nano',
     parameters={},
     use_intent_descriptions=True,
     use_training_sentences=True,
@@ -322,7 +322,7 @@ reply_llm = {{ llm.__class__.__name__}}(
 # Default LLM when no config or model provides one
 reply_llm = LLMOpenAI(
     agent=agent,
-    name='gpt-4o-mini',
+    name='gpt-5-nano',
     parameters={}
 )
 {% set has_reply_llm_state.value = true %}
@@ -336,7 +336,7 @@ agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
 {% if not ic_config_set.value %}
 # Default to LLM-based intent classification (avoids PyTorch dependency)
 ic_config = LLMIntentClassifierConfiguration(
-    llm_name='gpt-4o-mini',
+    llm_name='gpt-5-nano',
     parameters={},
     use_intent_descriptions=True,
     use_training_sentences=True,

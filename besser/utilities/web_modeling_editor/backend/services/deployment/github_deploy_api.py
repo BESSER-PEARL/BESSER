@@ -309,6 +309,13 @@ def _add_deployment_configs(
     envVars:
       - key: VITE_API_URL
         value: https://{backend_service_name}.onrender.com
+    headers:
+      - path: /assets/*.js
+        name: Content-Type
+        value: application/javascript
+      - path: /assets/*.css
+        name: Content-Type
+        value: text/css
     routes:
       - type: rewrite
         source: /*

@@ -300,6 +300,13 @@ async def generate_code_output_from_project(input_data: ProjectInput):
         # Get configuration from project settings
         config = input_data.settings.get("config", {}) if input_data.settings else {}
 
+        # Debug: log full project structure
+        print(f"[DEBUG] settings keys: {list(input_data.settings.keys()) if input_data.settings else 'None'}")
+        print(f"[DEBUG] settings: {input_data.settings}")
+        print(f"[DEBUG] diagram keys: {list(input_data.diagrams.keys())}")
+        for diag_name, diag in input_data.diagrams.items():
+            print(f"[DEBUG] diagram '{diag_name}' config: {diag.config}")
+
         # Handle Web App generator (requires both ClassDiagram and GUINoCodeDiagram)
         if generator_type == "web_app":
             return await _handle_web_app_project_generation(input_data, generator_info, config)

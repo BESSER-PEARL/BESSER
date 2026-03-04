@@ -1,7 +1,7 @@
 Version 6.4.1
 =============
 
-This patch release fixes agent deployment on Render via the web modeling editor (issue #442).
+This patch release fixes agent deployment on Render and a UI builder bug in the web modeling editor.
 
 Fixes
 ------
@@ -16,3 +16,8 @@ Fixes
 - Fixed Render port conflict by removing streamlit port override that clashed with the websocket server binding to ``$PORT``.
 - Render YAML template now includes ``Content-Type`` headers for static JS/CSS assets to prevent MIME type issues during CDN propagation.
 - Optimized Docker images and Render build commands for faster deployments (NLTK data pre-download, ``besser-agentic-framework[llms]`` instead of ``[all]``).
+
+**Card Component Text Editing (Fix #446)**
+
+- Fixed inability to edit or change text in Card components in the Webapp UI builder.
+- Double-clicking text in a Card now correctly activates the editable state with a cursor.

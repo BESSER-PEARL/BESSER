@@ -233,8 +233,7 @@ To add a new generator:
 The frontend lives at `besser/utilities/web_modeling_editor/frontend` (git submodule).
 
 **Important**:
-- Only touch frontend code when absolutely necessary for backend integration
-- UI changes should go to the upstream [BESSER-WEB-MODELING-EDITOR](https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR) repository
+- Frontend code can be modified when necessary (features, bug fixes, improvements)
 - Keep TypeScript/React tooling consistent with upstream (`npm install`, `npm test`)
 - Update OpenAPI schemas when changing backend API contracts
 

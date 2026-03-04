@@ -1,7 +1,7 @@
 Version 6.4.1
 =============
 
-This patch release fixes agent deployment on Render and a UI builder bug in the web modeling editor.
+This patch release fixes agent deployment on Render, a UI builder bug, and adds app redeployment support in the web modeling editor.
 
 Fixes
 ------
@@ -21,3 +21,12 @@ Fixes
 
 - Fixed inability to edit or change text in Card components in the Webapp UI builder.
 - Double-clicking text in a Card now correctly activates the editable state with a cursor.
+
+**App Redeployment - Reuse Existing GitHub Repo (WME #50)**
+
+- Redeploying a web app now pushes to the same GitHub repository instead of creating a new one each time.
+- After the first deploy, the linked repo is saved in localStorage keyed by project ID.
+- On subsequent deploys, the modal shows the linked repo and an "Update & Publish" button with a custom commit message field.
+- Manually added files in the repo (e.g. custom docs) are preserved across redeployments via Git ``base_tree`` merge.
+- "Create new repo instead" button lets users break the link and start fresh.
+- If the repo was deleted on GitHub, the backend detects the 404 and falls back to creating a new repo.

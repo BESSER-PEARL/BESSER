@@ -1784,12 +1784,9 @@ async def validate_diagram(input_data: DiagramInput):
 
             elif diagram_type == "AgentDiagram":
                 agent_model = process_agent_diagram(input_data.model_dump())
-                return {
-                    "isValid": True,
-                    "message": "✅ Agent diagram is valid",
-                    "errors": [],
-                    "warnings": []
-                }
+                validation_result = agent_model.validate(raise_exception=False)
+                validation_errors.extend(validation_result.get("errors", []))
+                validation_warnings.extend(validation_result.get("warnings", []))
 
             elif diagram_type == "GUINoCodeDiagram":
                 return {

@@ -5,7 +5,14 @@ Agent diagram processing for converting JSON to BUML format.
 import operator
 from deep_translator import GoogleTranslator
 import json as json_lib
-from besser.BUML.metamodel.state_machine.state_machine import Body, Condition, Event, ConfigProperty, CustomCodeAction
+from besser.BUML.metamodel.state_machine.state_machine import (
+    Body,
+    Condition,
+    Event,
+    ConfigProperty,
+    CustomCodeAction,
+    TransitionBuilder,
+)
 from besser.BUML.metamodel.state_machine.agent import (
     Agent,
     Intent,
@@ -472,6 +479,14 @@ def process_agent_diagram(json_data):
 
                     if intent_to_match:
                         source_state.when_intent_matched(intent_to_match).go_to(target_state)
+                        transition_count += 1
+                    elif isinstance(condition_value, str) and condition_value.strip():
+                        unresolved_intent = Intent(condition_value.strip())
+                        TransitionBuilder(
+                            source=source_state,
+                            event=ReceiveTextEvent(),
+                            conditions=IntentMatcher(unresolved_intent),
+                        ).go_to(target_state)
                         transition_count += 1
 
                 elif condition_name == "when_no_intent_matched":

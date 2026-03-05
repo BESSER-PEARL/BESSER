@@ -1,0 +1,40 @@
+Version 6.4.2
+=============
+
+This release adds agent model validation, classical intent classifier support, and improves the GitHub deployment pipeline.
+
+Features
+--------
+
+**Agent Model Validation**
+
+- Added ``Agent.validate()`` method that checks for state/intent name collisions and unresolved intent references in transitions.
+- The ``/validate-diagram`` endpoint now runs agent-specific validation instead of returning a blanket success.
+
+**Classical Intent Classifier Support**
+
+- Agent template (``baf_agent_template.py.j2``) now generates ``SimpleIntentClassifierConfiguration`` when the intent recognition technology is set to ``classical``.
+- Render deployment detects the IC technology and installs PyTorch CPU + scikit-learn only when classical IC is selected, keeping LLM-based deploys lightweight.
+
+**Unresolved Intent Handling**
+
+- When a transition references an intent not defined in the agent, the processor now creates a placeholder intent and wires the transition instead of silently dropping it. This ensures validation can report the issue.
+
+Improvements
+------------
+
+**GitHub Deployment**
+
+- Repositories created via deploy now get metadata: description, homepage link to the BESSER editor, and topic tags (``besser``, ``low-code``, ``model-driven``, etc.).
+- Added ``GitHubService.update_repository()`` method for setting description, homepage, and topics.
+- Improved README template with badges, deploy button, and a cleaner layout.
+- Agent config resolution now checks ``agentConfig`` at the project level in addition to diagram-level and settings-level config.
+
+**Pinned Backend Dependencies**
+
+- Generated ``requirements.txt`` in Docker files now uses pinned versions (``==``) instead of minimum versions (``>=``) for reproducible builds.
+
+Removed
+-------
+
+- Removed ``.github/workflows/deploy-wme.yml`` (EC2 deployment workflow).

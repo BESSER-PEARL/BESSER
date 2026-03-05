@@ -1197,6 +1197,96 @@ class Agent(StateMachine):
         self.llms: list[LLMWrapper] = []
         self.rags: list[RAG] = []
 
+    def validate(self, raise_exception: bool = True) -> dict:
+        """
+        Validate the agent model according to agent constraints.
+
+        Args:
+            raise_exception (bool): If True, raise ValueError when validation fails.
+
+        Returns:
+            dict: Validation result with success flag, errors, and warnings.
+        """
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        self._validate_state_intent_name_collisions(errors)
+        self._validate_transition_intent_references(errors)
+
+        result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
+        if errors and raise_exception:
+            raise ValueError("\n".join(errors))
+        return result
+
+    def _validate_state_intent_name_collisions(self, errors: list[str]):
+        """Ensure state names and intent names do not overlap in the same agent."""
+        state_names: dict[str, str] = {}
+        intent_names: dict[str, str] = {}
+
+        for state in self.states:
+            if not isinstance(state.name, str):
+                continue
+            normalized_name = state.name.strip()
+            if not normalized_name:
+                continue
+            state_names.setdefault(normalized_name.casefold(), normalized_name)
+
+        for intent in self.intents:
+            if not isinstance(intent.name, str):
+                continue
+            normalized_name = intent.name.strip()
+            if not normalized_name:
+                continue
+            intent_names.setdefault(normalized_name.casefold(), normalized_name)
+
+        overlapping_names = sorted(set(state_names.keys()) & set(intent_names.keys()))
+        for overlap_name in overlapping_names:
+            display_name = state_names.get(overlap_name) or intent_names.get(overlap_name) or overlap_name
+            errors.append(
+                f"State and intent names must be different. '{display_name}' is used by both a state and an intent."
+            )
+
+    def _validate_transition_intent_references(self, errors: list[str]):
+        """Ensure intent-matching transitions only reference intents defined in the agent."""
+        defined_intents = {
+            intent.name.strip().casefold()
+            for intent in self.intents
+            if isinstance(intent.name, str) and intent.name.strip()
+        }
+
+        for state in self.states:
+            for transition in state.transitions:
+                conditions = transition.conditions
+                if conditions is None:
+                    continue
+
+                if isinstance(conditions, list):
+                    condition_items = conditions
+                else:
+                    condition_items = [conditions]
+
+                for condition in condition_items:
+                    if not isinstance(condition, IntentMatcher):
+                        continue
+
+                    intent = getattr(condition, "intent", None)
+                    intent_name = getattr(intent, "name", None)
+                    if not isinstance(intent_name, str):
+                        continue
+
+                    normalized_intent_name = intent_name.strip().casefold()
+                    if not normalized_intent_name:
+                        continue
+
+                    if normalized_intent_name == "fallback_intent":
+                        continue
+
+                    if normalized_intent_name not in defined_intents:
+                        errors.append(
+                            f"Transition from '{state.name}' to '{transition.dest.name}' references intent "
+                            f"'{intent_name}' which is not defined in agent '{self.name}'."
+                        )
+
     def new_state(self,
                   name: str,
                   initial: bool = False,

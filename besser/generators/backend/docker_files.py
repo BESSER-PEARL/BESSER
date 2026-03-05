@@ -39,12 +39,12 @@ CMD ["uvicorn", "main_api:app", "--host", "0.0.0.0", "--port", "8000"]
     
     # Generate requirements.txt
     with open(path + '/requirements.txt', 'w') as requirements:
-        requirements.write('''fastapi>=0.110.0
-uvicorn>=0.28.0
-pydantic>=2.6.3
-sqlalchemy>=2.0.29
-httpx>=0.27.0
-requests>=2.31.0
+        requirements.write('''fastapi==0.135.1
+uvicorn==0.41.0
+pydantic==2.12.5
+sqlalchemy==2.0.48
+httpx==0.28.1
+requests==2.32.3
 '''
         )
     

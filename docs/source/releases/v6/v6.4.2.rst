@@ -1,0 +1,35 @@
+Version 6.4.2
+=============
+
+Adds agent model validation, classical intent classifier support, and improvements to the GitHub deployment pipeline.
+
+Features
+--------
+
+**Agent Validation**
+- New `Agent.validate()` checks for state/intent name collisions and unresolved intents in transitions.
+- `/validate-diagram` now runs actual agent validation.
+
+**Classical Intent Classifier**
+- Agent template generates `SimpleIntentClassifierConfiguration` when IC technology is `classical`.
+- Render deploy installs PyTorch CPU + scikit-learn only for classical IC.
+
+**Unresolved Intents**
+- Transitions referencing undefined intents now create placeholder intents so validation can report them.
+
+Improvements
+------------
+
+**GitHub Deployment**
+- Deploy-created repositories now include description, homepage, and topic tags.
+- Added `GitHubService.update_repository()` to set repo metadata.
+- Improved README template.
+- Agent config resolution now also checks project-level `agentConfig`.
+
+**Dependencies**
+- Generated `requirements.txt` now pins versions (`==`) for reproducible builds.
+
+Removed
+-------
+
+- Removed `.github/workflows/deploy-wme.yml` (EC2 deployment workflow).

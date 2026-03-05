@@ -299,6 +299,21 @@ ic_config = LLMIntentClassifierConfiguration(
 
 agent.set_default_ic_config(ic_config)
 {% set ic_config_set.value = true %}
+{% elif config and "intentRecognitionTechnology" in config and config["intentRecognitionTechnology"] == 'classical' %}
+ic_config = SimpleIntentClassifierConfiguration(
+    framework='pytorch',
+    num_epochs=50,
+    embedding_dim=128,
+    hidden_dim=128,
+    input_max_num_tokens=15,
+    discard_oov_sentences=True,
+    check_exact_prediction_match=True,
+    activation_last_layer='sigmoid',
+    lr=0.001
+)
+
+agent.set_default_ic_config(ic_config)
+{% set ic_config_set.value = true %}
 {% endif %}
 
 {% if agent.llms != [] and (not config or 'llm' not in config or not config['llm']) %}

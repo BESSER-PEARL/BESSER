@@ -43,4 +43,6 @@ besser/utilities/web_modeling_editor/backend/feedback_data
 
 generated/*
 .agents/
+.claude/
 skills-lock.json
+scripts/

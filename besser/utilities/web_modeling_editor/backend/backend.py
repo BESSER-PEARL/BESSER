@@ -8,6 +8,7 @@ The editor is available at: https://editor.besser-pearl.org
 """
 
 # Standard library imports
+import logging
 import os
 import io
 import uuid
@@ -110,6 +111,8 @@ from besser.utilities.web_modeling_editor.backend.config import (
     get_filename_for_generator,
     is_generator_supported,
 )
+
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI application
 app = FastAPI(
@@ -462,8 +465,10 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
                 agent_diagram_dict = agent_diagram.model_dump()
                 if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
                     agent_model = process_agent_diagram(agent_diagram_dict)
-                    # Try diagram-level config first, fall back to project-level config
-                    agent_config = agent_diagram_dict.get('config') or agent_diagram.config or config
+                    # Try diagram-level config first, then project-level agentConfig, then project config
+                    project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
+                    agent_config = agent_diagram_dict.get('config') or agent_diagram.config or project_agent_config or config
+                    print(f"[WebApp agent] resolved agent_config: {json.dumps(agent_config, indent=2, default=str) if agent_config else 'None'}")
                 else:
                     print("Warning: AgentDiagram data is invalid. Agent components will not be functional.")
             else:
@@ -494,6 +499,7 @@ async def _handle_agent_generation(json_data: dict):
     """Handle agent diagram generation by dispatching to specialized helpers."""
     try:
         config = json_data.get('config', {})
+        print(f"[Agent generation] config: {json.dumps(config, indent=2, default=str) if config else 'None'}")
 
         if config is None:
             agent_model = process_agent_diagram(json_data)
@@ -588,6 +594,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         if not base_config:
             raise HTTPException(status_code=400, detail="Config is required for transformation")
 
+        print(f"[Agent transform] config: {json.dumps(base_config, indent=2, default=str)}")
         config = deepcopy(base_config)
         user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
         if isinstance(user_profile_payload, dict):
@@ -1784,12 +1791,9 @@ async def validate_diagram(input_data: DiagramInput):
 
             elif diagram_type == "AgentDiagram":
                 agent_model = process_agent_diagram(input_data.model_dump())
-                return {
-                    "isValid": True,
-                    "message": "✅ Agent diagram is valid",
-                    "errors": [],
-                    "warnings": []
-                }
+                validation_result = agent_model.validate(raise_exception=False)
+                validation_errors.extend(validation_result.get("errors", []))
+                validation_warnings.extend(validation_result.get("warnings", []))
 
             elif diagram_type == "GUINoCodeDiagram":
                 return {

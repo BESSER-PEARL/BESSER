@@ -8,6 +8,7 @@ The editor is available at: https://editor.besser-pearl.org
 """
 
 # Standard library imports
+import logging
 import os
 import io
 import uuid
@@ -110,6 +111,8 @@ from besser.utilities.web_modeling_editor.backend.config import (
     get_filename_for_generator,
     is_generator_supported,
 )
+
+logger = logging.getLogger(__name__)
 
 # Initialize FastAPI application
 app = FastAPI(
@@ -494,6 +497,7 @@ async def _handle_agent_generation(json_data: dict):
     """Handle agent diagram generation by dispatching to specialized helpers."""
     try:
         config = json_data.get('config', {})
+        print(f"[Agent generation] config: {json.dumps(config, indent=2, default=str) if config else 'None'}")
 
         if config is None:
             agent_model = process_agent_diagram(json_data)
@@ -588,6 +592,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         if not base_config:
             raise HTTPException(status_code=400, detail="Config is required for transformation")
 
+        print(f"[Agent transform] config: {json.dumps(base_config, indent=2, default=str)}")
         config = deepcopy(base_config)
         user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
         if isinstance(user_profile_payload, dict):

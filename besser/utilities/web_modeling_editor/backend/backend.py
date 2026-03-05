@@ -465,8 +465,10 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
                 agent_diagram_dict = agent_diagram.model_dump()
                 if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
                     agent_model = process_agent_diagram(agent_diagram_dict)
-                    # Try diagram-level config first, fall back to project-level config
-                    agent_config = agent_diagram_dict.get('config') or agent_diagram.config or config
+                    # Try diagram-level config first, then project-level agentConfig, then project config
+                    project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
+                    agent_config = agent_diagram_dict.get('config') or agent_diagram.config or project_agent_config or config
+                    print(f"[WebApp agent] resolved agent_config: {json.dumps(agent_config, indent=2, default=str) if agent_config else 'None'}")
                 else:
                     print("Warning: AgentDiagram data is invalid. Agent components will not be functional.")
             else:

@@ -301,14 +301,14 @@ agent.set_default_ic_config(ic_config)
 {% set ic_config_set.value = true %}
 {% elif config and "intentRecognitionTechnology" in config and config["intentRecognitionTechnology"] == 'classical' %}
 ic_config = SimpleIntentClassifierConfiguration(
-    num_words=1000,
-    num_epochs=300,
+    framework='pytorch',
+    num_epochs=50, // Old default was 300, reduced for efficiency - adjust as needed
     embedding_dim=128,
+    hidden_dim=128,
     input_max_num_tokens=15,
     discard_oov_sentences=True,
     check_exact_prediction_match=True,
     activation_last_layer='sigmoid',
-    activation_hidden_layers='tanh',
     lr=0.001
 )
 

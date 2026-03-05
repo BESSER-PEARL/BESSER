@@ -154,7 +154,9 @@ async def deploy_webapp_to_github(
             agent_model = process_agent_diagram(agent_diagram_data)
             # Try diagram-level config first, fall back to project settings config
             settings = body.get("settings", {}) or {}
-            agent_config = agent_diagram_data.get("config") or settings.get("config") or {}
+            settings_config = settings.get("config") or {}
+            agent_config = agent_diagram_data.get("config") or settings_config
+            print(f"[GitHub deploy] resolved agent_config: {json.dumps(agent_config, indent=2, default=str) if agent_config else 'None'}")
 
         # Generate web app
         temp_dir = tempfile.mkdtemp(prefix=f"besser_github_{uuid.uuid4().hex}_")
@@ -175,7 +177,8 @@ async def deploy_webapp_to_github(
             temp_dir,
             repo_name,
             has_agent=agent_model is not None,
-            agent_entrypoint=agent_model.name if agent_model is not None else None
+            agent_entrypoint=agent_model.name if agent_model is not None else None,
+            agent_config=agent_config
         )
         
         # Determine whether to reuse an existing repo or create a new one
@@ -298,7 +301,8 @@ def _add_deployment_configs(
     app_name: str,
     has_agent: bool = False,
     agent_entrypoint: str | None = None,
-    service_suffix: str | None = None
+    service_suffix: str | None = None,
+    agent_config: dict | None = None
 ):
     """
     Add Render deployment configuration (only free platform for full-stack auto-deploy).
@@ -354,13 +358,33 @@ def _add_deployment_configs(
     # Add agent service if the app includes an agent
     if has_agent:
         agent_script = f"{agent_entrypoint}.py" if agent_entrypoint else "Agent_Diagram.py"
-        agent_config = f"""
+
+        # Determine IC technology from agent config
+        ic_tech = None
+        if agent_config and isinstance(agent_config, dict):
+            ic_tech = agent_config.get("intentRecognitionTechnology")
+
+        if ic_tech == "classical":
+            # Classical IC needs PyTorch CPU + scikit-learn, plus [llms] for unconditional imports in generated code
+            build_cmd = (
+                "pip install torch --index-url https://download.pytorch.org/whl/cpu "
+                "&& pip install scikit-learn besser-agentic-framework[llms] "
+                '&& python -c "import nltk; nltk.download(\'punkt\', quiet=True); nltk.download(\'punkt_tab\', quiet=True)"'
+            )
+        else:
+            # LLM-based IC (default)
+            build_cmd = (
+                "pip install besser-agentic-framework[llms] "
+                '&& python -c "import nltk; nltk.download(\'punkt\', quiet=True); nltk.download(\'punkt_tab\', quiet=True)"'
+            )
+
+        agent_service_config = f"""
   # Agent Service (Free tier - WebSocket-based AI agent)
   - type: web
     name: {agent_service_name}
     runtime: python
     plan: free
-    buildCommand: pip install besser-agentic-framework[llms] && python -c "import nltk; nltk.download('punkt', quiet=True); nltk.download('punkt_tab', quiet=True)"
+    buildCommand: {build_cmd}
     startCommand: cd agent && sed -i 's/^websocket\\.host = .*/websocket.host = 0.0.0.0/' config.ini && sed -i "s/^websocket\\.port = .*/websocket.port = $PORT/" config.ini && sed -i "s/^nlp\\.openai\\.api_key = .*/nlp.openai.api_key = $OPENAI_API_KEY/" config.ini && python -u {agent_script}
     envVars:
       - key: PYTHON_VERSION
@@ -368,7 +392,7 @@ def _add_deployment_configs(
       - key: OPENAI_API_KEY
         sync: false
 """
-        render_config += agent_config
+        render_config += agent_service_config
     
     render_path = os.path.join(directory, "render.yaml")
     with open(render_path, "w") as f:

@@ -229,6 +229,75 @@ def get_user_token(session_id: str) -> Optional[str]:
     return session_data["access_token"]
 
 
+BESSER_REPO_OWNER = "BESSER-PEARL"
+BESSER_REPO_NAME = "BESSER"
+
+
+@router.get("/star/status")
+async def get_star_status(session_id: str):
+    """Check if the authenticated user has starred the BESSER repository."""
+    token = get_user_token(session_id)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        resp = requests.get(
+            f"https://api.github.com/user/starred/{BESSER_REPO_OWNER}/{BESSER_REPO_NAME}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=10,
+        )
+        return {"starred": resp.status_code == 204}
+    except requests.RequestException:
+        return {"starred": False}
+
+
+@router.put("/star")
+async def star_besser_repo(session_id: str):
+    """Star the BESSER repository on behalf of the authenticated user."""
+    token = get_user_token(session_id)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        resp = requests.put(
+            f"https://api.github.com/user/starred/{BESSER_REPO_OWNER}/{BESSER_REPO_NAME}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return {"success": True}
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"GitHub API error: {str(e)}")
+
+
+@router.delete("/star")
+async def unstar_besser_repo(session_id: str):
+    """Unstar the BESSER repository on behalf of the authenticated user."""
+    token = get_user_token(session_id)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    try:
+        resp = requests.delete(
+            f"https://api.github.com/user/starred/{BESSER_REPO_OWNER}/{BESSER_REPO_NAME}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/vnd.github+json",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return {"success": True}
+    except requests.RequestException as e:
+        raise HTTPException(status_code=502, detail=f"GitHub API error: {str(e)}")
+
+
 def _cleanup_old_sessions():
     """Remove OAuth sessions older than 10 minutes."""
     cutoff_time = datetime.utcnow() - timedelta(minutes=10)

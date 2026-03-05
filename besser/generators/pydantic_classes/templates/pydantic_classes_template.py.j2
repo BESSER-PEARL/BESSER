@@ -74,7 +74,7 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                     {%- set ns.end2 = end %}
                 {%- endif %}
             {%- endfor %}
-            {%- if ns.end1 and ns.end2 %}
+            {%- if ns.end1 and ns.end2 and ns.end2.is_navigable %}
                 {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
                     {%- if nested_creations %}
                         {%- if backend %}

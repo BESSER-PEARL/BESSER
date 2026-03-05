@@ -285,6 +285,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
         {% set class2_name = lns.end2.type.name %}
         {% set name_end1 = lns.end1.name %}
         {% set name_end2 = lns.end2.name %}
+        {% if lns.end2.is_navigable %}
         {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), lns.end2.multiplicity.min, lns.end2.multiplicity.max)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max > 1 %}
@@ -294,6 +295,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
             {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% endif %}
         {% endif %}
     {% endif %}
 {% endfor %}
@@ -310,6 +312,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
         {% set class2_name = plns.end2.type.name %}
         {% set name_end1 = plns.end1.name %}
         {% set name_end2 = plns.end2.name %}
+        {% if plns.end2.is_navigable %}
         {% if plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max > 1 %}
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), plns.end2.multiplicity.min, plns.end2.multiplicity.max)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max > 1 %}
@@ -319,6 +322,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
             {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% endif %}
         {% endif %}
     {% endif %}
 {% endfor %}

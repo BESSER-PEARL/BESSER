@@ -1891,6 +1891,22 @@ class DomainModel(Model):
         """Association: Add an association to the set of associations of the model."""
         self.associations = self.associations | {association}
 
+    def remove_association(self, association: Association):
+        """Remove an association from the model and clean up references in involved classes.
+
+        Args:
+            association (Association): The association to remove.
+
+        Raises:
+            ValueError: if the association is not in the model.
+        """
+        if association not in self.__associations:
+            raise ValueError(f"Association '{association.name}' is not in the model")
+        for end in association.ends:
+            end.type._delete_association(association)
+        self.__associations.discard(association)
+        self._update_elements()
+
     @property
     def generalizations(self) -> set[Generalization]:
         """set[Generalization]: Get the set of generalizations in the domain model."""

@@ -12,11 +12,6 @@ Bug Fixes
 - Self-associations now generate fields for both ends using role names, with proper getters, setters, and ``addTo`` methods.
 - Added test suite for the Java generator covering both normal and self-association scenarios.
 
-**Self-Association Fix for All Generators** (`#441 <https://github.com/BESSER-PEARL/BESSER/issues/441>`_)
-- Extended the self-association fix to the Pydantic, REST API (FastAPI), and Django generators.
-- All generators now correctly detect when both ends of an association point to the same class and generate fields for both ends using role names.
-- Added dedicated test suites for each fixed generator.
-
 **DomainModel: Association Removal** (`#237 <https://github.com/BESSER-PEARL/BESSER/issues/237>`_)
 - Added ``DomainModel.remove_association(association)`` method that removes an association from the model and automatically cleans up references in all involved classes.
 - Previously, users had to manually call private ``_delete_association()`` on each class, which was error-prone and not documented.

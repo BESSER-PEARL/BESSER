@@ -1,0 +1,12 @@
+Version 6.4.4
+=============
+
+Self-association fix extended to all remaining code generators.
+
+Bug Fixes
+---------
+
+**Self-Association Support for All Generators** (`#441 <https://github.com/BESSER-PEARL/BESSER/issues/441>`_)
+- Extended the self-association fix (introduced in v6.4.3 for Java) to the Pydantic, REST API (FastAPI), and Django generators.
+- All generators now correctly detect when both ends of an association point to the same class and generate fields for both ends using role names.
+- Added dedicated test suites for each fixed generator.

@@ -14,3 +14,4 @@ See the following examples where we define B-UML models and implement some code 
    examples/terraform_example
    examples/mockup_to_buml_example
    examples/agent
+   examples/smart_web

@@ -1,0 +1,17 @@
+Version 6.4.3
+=============
+
+Bug fixes for the Java code generator and the structural metamodel API.
+
+Bug Fixes
+---------
+
+**Java Generator: Self-Association Support** (`#441 <https://github.com/BESSER-PEARL/BESSER/issues/441>`_)
+- The Java generator now correctly handles self-associations (e.g., ``Employee`` manages ``Employee``).
+- Previously, the Jinja2 template crashed because it identified association ends by type name, which fails when both ends point to the same class.
+- Self-associations now generate fields for both ends using role names, with proper getters, setters, and ``addTo`` methods.
+- Added test suite for the Java generator covering both normal and self-association scenarios.
+
+**DomainModel: Association Removal** (`#237 <https://github.com/BESSER-PEARL/BESSER/issues/237>`_)
+- Added ``DomainModel.remove_association(association)`` method that removes an association from the model and automatically cleans up references in all involved classes.
+- Previously, users had to manually call private ``_delete_association()`` on each class, which was error-prone and not documented.

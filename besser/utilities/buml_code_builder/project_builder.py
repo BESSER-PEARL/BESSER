@@ -19,6 +19,7 @@ from besser.utilities.buml_code_builder.domain_model_builder import (
 )
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
+from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -84,6 +85,13 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
 
     if user_objectmodel and not user_domain_model and reference_user_domain_model:
         user_domain_model = reference_user_domain_model
+
+    # Check for NN model
+    try:
+        from besser.BUML.metamodel.nn import NN
+        nn_model = next((m for m in project.models if isinstance(m, NN)), None)
+    except ImportError:
+        nn_model = None
 
     models = []
     with open(file_path, 'w', encoding='utf-8') as f:
@@ -162,6 +170,20 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             f.write(content_str)
             f.write("\n\n")
             models.append("quantum_model")
+
+        if nn_model:
+            output_file_path = os.path.join(temp_dir, "nn_model.py")
+            nn_model_to_code(model=nn_model, file_path=output_file_path)
+            with open(output_file_path, "r", encoding='utf-8') as m:
+                file_content = m.read()
+            content_str = file_content
+            f.write(content_str)
+            f.write("\n\n")
+            # Use the same variable naming logic as nn_model_builder
+            nn_var_name = nn_model.name.replace(' ', '_').replace('-', '_').lower()
+            if nn_var_name and nn_var_name[0].isdigit():
+                nn_var_name = 'nn_' + nn_var_name
+            models.append(nn_var_name if nn_var_name else 'nn_model')
 
         if sm != "":
             f.write(sm)

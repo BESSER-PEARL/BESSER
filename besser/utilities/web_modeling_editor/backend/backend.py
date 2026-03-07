@@ -60,6 +60,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     json_to_buml_project,
     process_gui_diagram,
     process_quantum_diagram,
+    process_nn_diagram,
     # BUML to JSON converters
     class_buml_to_json,
     parse_buml_content,
@@ -327,6 +328,26 @@ async def generate_code_output_from_project(input_data: ProjectInput):
             )
             return await generate_code_output(diagram_input)
 
+        # Handle PyTorch/TensorFlow generators (requires NNDiagram)
+        if generator_type in ("pytorch", "tensorflow"):
+            nn_diagram = input_data.diagrams.get("NNDiagram")
+            if not nn_diagram:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"NNDiagram is required for {generator_type} generator"
+                )
+            # Convert to DiagramInput with the NN diagram data
+            diagram_input = DiagramInput(
+                id=nn_diagram.id,
+                title=nn_diagram.title,
+                model=nn_diagram.model,
+                lastUpdate=nn_diagram.lastUpdate,
+                generator=generator_type,
+                config=config,
+                referenceDiagramData=nn_diagram.referenceDiagramData if hasattr(nn_diagram, 'referenceDiagramData') else None
+            )
+            return await generate_code_output(diagram_input)
+
         # For other generators, use the current diagram
         current_diagram = input_data.diagrams.get(input_data.currentDiagramType)
         if not current_diagram:
@@ -409,6 +430,10 @@ async def generate_code_output(input_data: DiagramInput):
                 input_data.config,
                 temp_dir,
             )
+
+        # Handle neural network generators
+        if generator_info.category == "neural_network":
+            return await _generate_nn(json_data, generator_type, generator_info.generator_class, input_data.config, temp_dir)
 
         # Handle class diagram based generators
         return await _handle_class_diagram_generation(
@@ -1066,6 +1091,64 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
     generator_instance.generate()
 
     return _create_file_response(temp_dir, "qiskit")
+
+
+async def _generate_nn(json_data: dict, generator_type: str, generator_class, config: dict, temp_dir: str):
+    """Generate Neural Network code (PyTorch or TensorFlow)."""
+    # Validate that this is an NN diagram (has 'elements' in model with NN layer types)
+    model_data = json_data.get('model', {})
+    if not isinstance(model_data, dict) or 'elements' not in model_data:
+        diagram_type = model_data.get('type', 'unknown') if isinstance(model_data, dict) else 'unknown'
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid diagram type for {generator_type} generator. Expected NNDiagram but received '{diagram_type}'."
+        )
+
+    # Check if this looks like an NN diagram by looking for NN layer types
+    elements = model_data.get('elements', {})
+    nn_layer_types = [
+        'Conv1DLayer', 'Conv2DLayer', 'Conv3DLayer', 'PoolingLayer',
+        'RNNLayer', 'LSTMLayer', 'GRULayer', 'LinearLayer', 'FlattenLayer',
+        'EmbeddingLayer', 'DropoutLayer', 'LayerNormalizationLayer',
+        'BatchNormalizationLayer', 'TensorOp', 'Configuration'
+    ]
+    has_nn_elements = any(
+        elements.get(eid, {}).get('type', '') in nn_layer_types
+        for eid in elements
+    )
+
+    if not has_nn_elements:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No neural network layers found in diagram. Please ensure the diagram contains NN elements."
+        )
+
+    # Process the NN diagram to BUML
+    nn_model = process_nn_diagram(json_data)
+
+    # Extract config options - generation_type can be 'subclassing' or 'sequential'
+    generation_type = config.get('generation_type', 'subclassing') if config else 'subclassing'
+
+    # Create generator instance based on type
+    if generator_type == "pytorch":
+        channel_last = config.get('channel_last', True) if config else True
+        generator_instance = generator_class(
+            nn_model,
+            output_dir=temp_dir,
+            generation_type=generation_type,
+            channel_last=channel_last
+        )
+    else:  # tensorflow
+        generator_instance = generator_class(
+            nn_model,
+            output_dir=temp_dir,
+            generation_type=generation_type
+        )
+
+    generator_instance.generate()
+
+    return _create_file_response(temp_dir, generator_type)
+
 
 def _check_for_agent_components(gui_model):
     """Check if the GUI model contains any agent components."""

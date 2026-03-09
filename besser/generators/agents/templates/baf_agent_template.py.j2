@@ -633,11 +633,28 @@ def {{ body_name }}(session: Session):
         query=session.event.message,
         llm=reply_llm
     )
+    if isinstance(db_result, (dict, list)):
+        retrieved_answer = json.dumps(db_result, default=str)
+    else:
+        retrieved_answer = str(db_result)
+    llm_input = (
+        f"Original user query:\n{session.event.message}\n\n"
+        f"Retrieved database answer:\n{retrieved_answer}"
+    )
+    reply_text = reply_llm.predict(
+        message=llm_input,
+        session=session,
+        system_message='You are a helpful assistant. Generate a concise plain-text answer for the user using the original query and the retrieved database answer. Do not mention internal processing details.'
+    )
+    if reply_text is None:
+        reply_text = retrieved_answer
     {% endif %}
+    {% if action.db_query_mode == 'sql' %}
     if isinstance(db_result, (dict, list)):
         reply_text = json.dumps(db_result, default=str)
     else:
         reply_text = str(db_result)
+    {% endif %}
     session.reply(reply_text)
     {% if speech_enabled %}
     platform.reply_speech(session, reply_text)
@@ -707,11 +724,28 @@ def {{ fallback_name }}(session: Session):
         query=session.event.message,
         llm=reply_llm
     )
+    if isinstance(db_result, (dict, list)):
+        retrieved_answer = json.dumps(db_result, default=str)
+    else:
+        retrieved_answer = str(db_result)
+    llm_input = (
+        f"Original user query:\n{session.event.message}\n\n"
+        f"Retrieved database answer:\n{retrieved_answer}"
+    )
+    reply_text = reply_llm.predict(
+        message=llm_input,
+        session=session,
+        system_message='You are a helpful assistant. Generate a concise plain-text answer for the user using the original query and the retrieved database answer. Do not mention internal processing details.'
+    )
+    if reply_text is None:
+        reply_text = retrieved_answer
     {% endif %}
+    {% if action.db_query_mode == 'sql' %}
     if isinstance(db_result, (dict, list)):
         reply_text = json.dumps(db_result, default=str)
     else:
         reply_text = str(db_result)
+    {% endif %}
     session.reply(reply_text)
     {% if speech_enabled %}
     platform.reply_speech(session, reply_text)

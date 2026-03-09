@@ -1,0 +1,83 @@
+name: Deploy WME to EC2
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'What to deploy'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - backend
+          - frontend
+
+env:
+  REGISTRY: artefacts.list.lu/besser/web_modeling_editor
+  SSH_TARGET: ec2-user@ec2-16-16-223-38.eu-north-1.compute.amazonaws.com
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Login to Docker registry
+        run: echo "${{ secrets.DOCKER_REGISTRY_PASSWORD }}" | docker login artefacts.list.lu -u "${{ secrets.DOCKER_REGISTRY_USERNAME }}" --password-stdin
+
+      # ── Backend ──────────────────────────────────────────────
+      - name: Build backend image
+        if: inputs.target == 'all' || inputs.target == 'backend'
+        run: docker build -t ${{ env.REGISTRY }}/backend:latest -f Dockerfile .
+
+      - name: Push backend image
+        if: inputs.target == 'all' || inputs.target == 'backend'
+        run: docker push ${{ env.REGISTRY }}/backend:latest
+
+      # ── Frontend ─────────────────────────────────────────────
+      - name: Build frontend image
+        if: inputs.target == 'all' || inputs.target == 'frontend'
+        run: |
+          docker build -t ${{ env.REGISTRY }}/frontend:latest \
+            -f besser/utilities/web_modeling_editor/frontend/Dockerfile \
+            besser/utilities/web_modeling_editor/frontend/
+
+      - name: Push frontend image
+        if: inputs.target == 'all' || inputs.target == 'frontend'
+        run: docker push ${{ env.REGISTRY }}/frontend:latest
+
+      # ── Deploy to EC2 ───────────────────────────────────────
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ec2-16-16-223-38.eu-north-1.compute.amazonaws.com >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Deploy on EC2
+        run: |
+          SERVICES=""
+          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "backend" ]]; then
+            SERVICES="$SERVICES besser-wme-backend"
+          fi
+          if [[ "${{ inputs.target }}" == "all" || "${{ inputs.target }}" == "frontend" ]]; then
+            SERVICES="$SERVICES besser-wme-frontend"
+          fi
+
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no ${{ env.SSH_TARGET }} << EOF
+            set -e
+            echo "Pulling latest images..."
+            docker compose pull $SERVICES
+            echo "Restarting services..."
+            docker compose up -d $SERVICES
+            echo "Running containers:"
+            docker compose ps
+          EOF
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

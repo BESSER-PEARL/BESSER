@@ -1,7 +1,6 @@
 from abc import ABC
 from datetime import datetime, timedelta
 from enum import Enum
-from os import name
 from typing import Any, Union, List, TYPE_CHECKING
 import time
 
@@ -34,12 +33,12 @@ class Element(ABC):
 
     @property
     def timestamp(self) -> datetime:
-        """str: Get the timestamp of the element."""
+        """datetime: Get the timestamp of the element."""
         return self.__timestamp
 
     @timestamp.setter
     def timestamp(self, timestamp: datetime):
-        """str: Set the timestamp of the element."""
+        """datetime: Set the timestamp of the element."""
         self.__timestamp = timestamp
 
     @property
@@ -228,7 +227,7 @@ class Type(NamedElement):
         is_derived (bool): Indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, timestamp: int = None, metadata: Metadata = None,
+    def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None,
                 is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
 
@@ -297,7 +296,7 @@ TimeType = PrimitiveDataType("time")
 DateType = PrimitiveDataType("date")
 DateTimeType = PrimitiveDataType("datetime")
 TimeDeltaType = PrimitiveDataType("timedelta")
-AnyType = DataType("any")
+AnyType = PrimitiveDataType("any")
 data_types = {StringType, IntegerType, FloatType, BooleanType,
               TimeType, DateType, DateTimeType, TimeDeltaType, AnyType}
 
@@ -338,7 +337,7 @@ class EnumerationLiteral(NamedElement):
         metadata (Metadata): Metadata information for the literal (None as default).
     """
 
-    def __init__(self, name: str, owner: DataType=None, timestamp: int = None, metadata: Metadata = None, uncertainty: float = 0.0):
+    def __init__(self, name: str, owner: DataType=None, timestamp: datetime = None, metadata: Metadata = None, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, uncertainty=uncertainty)
         self.owner: DataType = owner
 
@@ -384,7 +383,7 @@ class Enumeration(DataType):
         metadata (Metadata): Metadata information for the enumeration (None as default).
     """
 
-    def __init__(self, name: str, literals: set[EnumerationLiteral] = None, timestamp: int = None,
+    def __init__(self, name: str, literals: set[EnumerationLiteral] = None, timestamp: datetime = None,
                  metadata: Metadata = None, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, uncertainty=uncertainty)
         self.literals: set[EnumerationLiteral] = literals if literals is not None else set()
@@ -422,6 +421,7 @@ class Enumeration(DataType):
         if self.literals is not None:
             if literal.name in [literal.name for literal in self.literals]:
                 raise ValueError(f"An enumeration cannot have two literals with the same name: '{literal.name}'")
+        literal.owner = self
         self.literals.add(literal)
 
     def __getattr__(self, name):
@@ -449,7 +449,6 @@ class TypedElement(NamedElement):
         name (str): Inherited from NamedElement, represents the name of the typed element.
         type (Type): The data type of the typed element.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
-        type (Type, str): The data type of the typed element.
         metadata (Metadata): Metadata information for the typed element (None as default).
         visibility (str): Inherited from NamedElement, represents the visibility of the typed element (public as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -467,7 +466,7 @@ class TypedElement(NamedElement):
         "timedelta": TimeDeltaType
     }
 
-    def __init__(self, name: str, type: Union[Type, str], timestamp: int = None, metadata: Metadata = None,
+    def __init__(self, name: str, type: Union[Type, str], timestamp: datetime = None, metadata: Metadata = None,
                  visibility: str="public", is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, visibility, is_derived, uncertainty)
         self.type = self.type_mapping.get(type, type)
@@ -490,12 +489,12 @@ class Multiplicity(Element):
     Args:
         min_multiplicity (int): The minimum multiplicity.
         max_multiplicity (int): The maximum multiplicity. Use "*" for unlimited.
-         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        is_derived (bool): Indicates whether the element is derived (False as default).
 
     Attributes:
         min (int): The minimum multiplicity.
         max (int): The maximum multiplicity. Use "*" for unlimited.
-         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
+        is_derived (bool): Indicates whether the element is derived (False as default).
     """
 
     def __init__(self, min_multiplicity: int, max_multiplicity: int, is_derived: bool = False, uncertainty: float = 0.0):
@@ -589,7 +588,7 @@ class Property(TypedElement):
                  visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True,
                  is_id: bool = False, is_read_only: bool = False, is_optional: bool = False,
                  default_value: Any = None,
-                 timestamp: int = None, metadata: Metadata = None, is_derived: bool = False,
+                 timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False,
                  uncertainty: float = 0.0):
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.owner: Type = owner
@@ -728,7 +727,7 @@ class Parameter(TypedElement):
         metadata (Metadata): Metadata information for the parameter (None as default).
     """
 
-    def __init__(self, name: str, type: Type, default_value: Any = None, timestamp: int = None,
+    def __init__(self, name: str, type: Type, default_value: Any = None, timestamp: datetime = None,
                  metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, type, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.default_value: Any = default_value
@@ -794,7 +793,7 @@ class Method(TypedElement):
                  parameters: list[Parameter] = None, type: Type = None, owner: Type = None,
                  code: str = "", implementation_type: MethodImplementationType = None,
                  state_machine: "StateMachine" = None, quantum_circuit: "QuantumCircuit" = None,
-                 timestamp: int = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+                 timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.is_abstract: bool = is_abstract
         self.parameters: list[Parameter] = parameters if parameters is not None else list()
@@ -1011,10 +1010,6 @@ class Class(Type):
 
     Attributes:
         name (str): Inherited from Type, represents the name of the class.
-        attributes (set[Property]): The set of attributes associated with the class.
-        behaviors (set[BehaviorDeclaration]): The set of behaviors associated with the class (None as default).
-        is_abstract (bool): Indicates whether the class is abstract.
-        is_read_only (bool): Indicates whether the class is read only.
         attributes (set[Property]): The set of attributes associated with the class (set() as default).
         methods (set[Method]): The set of methods of the class (set() as default).
         is_abstract (bool): Indicates whether the class is abstract (False as default).
@@ -1028,7 +1023,7 @@ class Class(Type):
 
     def __init__(self, name: str, attributes: set[Property] = None, methods: set[Method] = None,
                  is_abstract: bool= False, is_read_only: bool= False, behaviors: set[BehaviorDeclaration] = None,
-                 timestamp: int = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+                 timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.is_abstract: bool = is_abstract
         self.is_read_only: bool = is_read_only
@@ -1335,7 +1330,7 @@ class Association(NamedElement):
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, ends: set[Property], timestamp: int = None, metadata: Metadata = None,
+    def __init__(self, name: str, ends: set[Property], timestamp: datetime = None, metadata: Metadata = None,
                 is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.__ends: set[Property] = set()
@@ -1444,7 +1439,7 @@ class AssociationClass(Class):
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, attributes: set[Property], association: Association, timestamp: int = None,
+    def __init__(self, name: str, attributes: set[Property], association: Association, timestamp: datetime = None,
                  metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, attributes, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.association: Association = association
@@ -1481,7 +1476,7 @@ class Generalization(Element):
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, general: Class, specific: Class, timestamp: int = None, is_derived: bool = False, uncertainty: float = 0.0):
+    def __init__(self, general: Class, specific: Class, timestamp: datetime = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(timestamp, is_derived, uncertainty)
         self.general: Class = general
         self.specific: Class = specific
@@ -1555,7 +1550,7 @@ class GeneralizationSet(NamedElement):
     """
 
     def __init__(self, name: str, generalizations: set[Generalization], is_disjoint: bool, is_complete: bool,
-                timestamp: int = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
+                timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.generalizations: set[Generalization] = generalizations
         self.is_disjoint: bool = is_disjoint
@@ -1601,13 +1596,13 @@ class GeneralizationSet(NamedElement):
 class Package(NamedElement):
     """A Package is a grouping mechanism that allows organizing and managing a set of NamedElements.
 
-    Attributes:
+    Args:
         name (str): The name of the package.
         elements (set[NamedElement]): The set of elements contained in the package.
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the package (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
-    
+
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the package.
         elements (set[NamedElement]): The set of elements contained in the package.
@@ -1616,7 +1611,7 @@ class Package(NamedElement):
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, elements: set[NamedElement], timestamp: int = None, metadata: Metadata = None,
+    def __init__(self, name: str, elements: set[NamedElement], timestamp: datetime = None, metadata: Metadata = None,
                 is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.elements: set[NamedElement] = elements
@@ -1673,7 +1668,7 @@ class Constraint(NamedElement):
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, context: Class, expression: Any, language: str, timestamp: int = None,
+    def __init__(self, name: str, context: Class, expression: Any, language: str, timestamp: datetime = None,
                  metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.context: Class = context
@@ -1716,7 +1711,7 @@ class Constraint(NamedElement):
             f'{self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
         )
 class Model(NamedElement):
-    """A model is the root element. A model is the root element. There are different types of models
+    """A model is the root element. There are different types of models
     that inherit from this class. For example, DomainModel, ObjectModel, or GUIModel.
 
     Args:
@@ -1733,7 +1728,7 @@ class Model(NamedElement):
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
         elements (set[Element]): Set of model Elements in the Model.
     """
-    def __init__(self, name: str, timestamp: int = None, metadata: Metadata = None, is_derived: bool = False,
+    def __init__(self, name: str, timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False,
                 elements: set[Element] = None, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.elements: set[Element] = elements if elements is not None else set()
@@ -1782,7 +1777,7 @@ class DomainModel(Model):
 
     def __init__(self, name: str, types: set[Type] = None, associations: set[Association] = None,
                 generalizations: set[Generalization] = None, packages: set[Package] = None,
-                constraints: set[Constraint] = None, timestamp: int = None, metadata: Metadata = None,
+                constraints: set[Constraint] = None, timestamp: datetime = None, metadata: Metadata = None,
                 is_derived: bool = False, elements: set[Element] = None, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, elements=elements, uncertainty=uncertainty)
         # A flag to prevent premature `_update_elements` calls during initialization
@@ -1849,6 +1844,20 @@ class DomainModel(Model):
     def add_type(self, type_: Type):
         """Type: Add a type (Class or DataType) to the set of types of the model."""
         self.types = self.types | {type_}
+
+    def remove_type(self, type_: Type):
+        """Remove a type from the model.
+
+        Args:
+            type_ (Type): The type to remove.
+
+        Raises:
+            ValueError: if the type is not in the model.
+        """
+        if type_ not in self.__types:
+            raise ValueError(f"Type '{type_.name}' is not in the model")
+        self.__types.discard(type_)
+        self._update_elements()
 
     @property
     def associations(self) -> set[Association]:
@@ -1936,6 +1945,22 @@ class DomainModel(Model):
         """Generalization: Add a generalization to the set of generalizations of the model."""
         self.generalizations = self.generalizations | {generalization}
 
+    def remove_generalization(self, generalization: Generalization):
+        """Remove a generalization from the model and clean up references in involved classes.
+
+        Args:
+            generalization (Generalization): The generalization to remove.
+
+        Raises:
+            ValueError: if the generalization is not in the model.
+        """
+        if generalization not in self.__generalizations:
+            raise ValueError("Generalization is not in the model")
+        generalization.general._delete_generalization(generalization)
+        generalization.specific._delete_generalization(generalization)
+        self.__generalizations.discard(generalization)
+        self._update_elements()
+
     def get_enumerations(self) -> set[Enumeration]:
         """set[Enumeration]: Get the set of enumerations in the domain model."""
         return {element for element in self.types if isinstance(element, Enumeration)}
@@ -1948,8 +1973,8 @@ class DomainModel(Model):
     @packages.setter
     def packages(self, packages: set[Package]):
         """
-        set[Package]: Get the set of packages in the domain model.
-        
+        set[Package]: Set the set of packages in the domain model.
+
         Raises:
             ValueError: if there are two packages with the same name.
             TypeError: if any element in packages is not a Package instance.
@@ -1985,8 +2010,8 @@ class DomainModel(Model):
     @constraints.setter
     def constraints(self, constraints: set[Constraint]):
         """
-        set[Constraint]: Get the set of constraints in the domain model.
-        
+        set[Constraint]: Set the set of constraints in the domain model.
+
         Raises:
             ValueError: if there are two constraints with the same name.
             TypeError: if any element in constraints is not a Constraint instance.
@@ -2004,6 +2029,24 @@ class DomainModel(Model):
         else:
             self.__constraints = set()
 
+        self._update_elements()
+
+    def add_constraint(self, constraint: Constraint):
+        """Constraint: Add a constraint to the set of constraints of the model."""
+        self.constraints = self.constraints | {constraint}
+
+    def remove_constraint(self, constraint: Constraint):
+        """Remove a constraint from the model.
+
+        Args:
+            constraint (Constraint): The constraint to remove.
+
+        Raises:
+            ValueError: if the constraint is not in the model.
+        """
+        if constraint not in self.__constraints:
+            raise ValueError(f"Constraint '{constraint.name}' is not in the model")
+        self.__constraints.discard(constraint)
         self._update_elements()
 
     def get_classes(self) -> set[Class]:

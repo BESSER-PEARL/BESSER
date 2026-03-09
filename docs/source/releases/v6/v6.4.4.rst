@@ -1,7 +1,7 @@
 Version 6.4.4
 =============
 
-Self-association fix extended to all remaining code generators.
+Self-association fix extended to all remaining code generators, structural metamodel improvements and fixes.
 
 Bug Fixes
 ---------
@@ -10,3 +10,24 @@ Bug Fixes
 - Extended the self-association fix (introduced in v6.4.3 for Java) to the Pydantic, REST API (FastAPI), and Django generators.
 - All generators now correctly detect when both ends of an association point to the same class and generate fields for both ends using role names.
 - Added dedicated test suites for each fixed generator.
+
+**Structural Metamodel Fixes**
+- Fixed ``timestamp`` type hints from ``int`` to ``datetime`` across all metamodel class constructors.
+- Fixed ``AnyType`` to use ``PrimitiveDataType`` instead of ``DataType``, consistent with all other primitive types.
+- Fixed ``Enumeration.add_literal()`` to correctly set ``literal.owner`` on the added literal.
+- Fixed ``test_package_initialization`` test that was incorrectly nested and never executed.
+
+Improvements
+------------
+
+**DomainModel API Enhancements**
+- Added ``remove_type(type_)`` method to remove a type from the model.
+- Added ``remove_generalization(generalization)`` method to remove a generalization and clean up references in involved classes.
+- Added ``add_constraint(constraint)`` and ``remove_constraint(constraint)`` methods for constraint management.
+
+**Docstring Cleanups**
+- Fixed duplicate docstring entries in ``Class`` attributes.
+- Fixed duplicate sentence in ``Model`` docstring.
+- Fixed setter docstrings incorrectly saying "Get" instead of "Set" for ``packages`` and ``constraints``.
+- Fixed ``Multiplicity`` docstring indentation and incorrect "Inherited from NamedElement" reference.
+- Removed unused ``from os import name`` import.

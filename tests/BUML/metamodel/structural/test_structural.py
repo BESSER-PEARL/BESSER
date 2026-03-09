@@ -331,43 +331,44 @@ def test_attribute_reassignment():
     assert attribute1 not in class1.attributes
     assert attribute1.owner == class2
 
-    def test_package_initialization():
-        # Create classes
-        class1: Class = Class(name="Class1", attributes=set())
-        class2: Class = Class(name="Class2", attributes=set())
 
-        # Create associations
-        aend1: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
-        aend2: Property = Property(name="end2", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
-        association1: BinaryAssociation = BinaryAssociation(name="Association1", ends={aend1, aend2})
+def test_package_initialization():
+    # Create classes
+    class1: Class = Class(name="Class1", attributes=set())
+    class2: Class = Class(name="Class2", attributes=set())
 
-        aend3: Property = Property(name="end3", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
-        aend4: Property = Property(name="end4", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
-        association2: BinaryAssociation = BinaryAssociation(name="Association2", ends={aend3, aend4})
+    # Create associations
+    aend1: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
+    aend2: Property = Property(name="end2", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
+    association1: BinaryAssociation = BinaryAssociation(name="Association1", ends={aend1, aend2})
 
-        # Create enumeration
-        literal1: EnumerationLiteral = EnumerationLiteral(name="Literal1", owner=None)
-        enumeration: Enumeration = Enumeration(name="Enumeration", literals={literal1})
+    aend3: Property = Property(name="end3", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
+    aend4: Property = Property(name="end4", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
+    association2: BinaryAssociation = BinaryAssociation(name="Association2", ends={aend3, aend4})
 
-        # Create package
-        package: Package = Package(name="Package1", elements={class1, class2, association1, association2,enumeration})
+    # Create enumeration
+    literal1: EnumerationLiteral = EnumerationLiteral(name="Literal1", owner=None)
+    enumeration: Enumeration = Enumeration(name="Enumeration", literals={literal1})
 
-        # Test get_classes method
-        classes = package.get_classes()
-        assert len(classes) == 2
-        assert class1 in classes
-        assert class2 in classes
+    # Create package
+    package: Package = Package(name="Package1", elements={class1, class2, association1, association2, enumeration})
 
-        # Test get_associations method
-        associations = package.get_associations()
-        assert len(associations) == 2
-        assert association1 in associations
-        assert association2 in associations
+    # Test get_classes method
+    classes = package.get_classes()
+    assert len(classes) == 2
+    assert class1 in classes
+    assert class2 in classes
 
-        # Test get_enumerations method
-        enumerations = package.get_enumerations()
-        assert len(enumerations) == 1
-        assert enumeration in enumerations
+    # Test get_associations method
+    associations = package.get_associations()
+    assert len(associations) == 2
+    assert association1 in associations
+    assert association2 in associations
+
+    # Test get_enumerations method
+    enumerations = package.get_enumerations()
+    assert len(enumerations) == 1
+    assert enumeration in enumerations
 
 def test_domain_model_elements_recalculation():
     # Create types

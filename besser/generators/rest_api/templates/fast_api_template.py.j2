@@ -25,17 +25,32 @@ app = FastAPI()
 {% set ns = namespace(end_name_one=[], end_name_multiple=[], manytomany_associations=[]) %}
 {% for association in class.associations %}
     {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
-        {% set lns = namespace(end1=None, end2=None) %}
-        {% for end in association.ends %}
-            {% set lns.end1 = end if end.type.name == class.name else lns.end1 %}
-            {% set lns.end2 = end if end.type.name != class.name else lns.end2 %}
-        {% endfor %}
-        {% set class1_name = lns.end1.type.name %}
-        {% set class2_name = lns.end2.type.name %}
-        {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
-            {% do ns.end_name_multiple.append((class2_name, association.name.lower())) %}
-        {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
-            {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min)) %}
+        {% set ends_list = association.ends | list %}
+        {% set is_self_assoc = (ends_list[0].type.name == ends_list[1].type.name) %}
+        {% if is_self_assoc %}
+            {% for i in range(2) %}
+                {% set lns = namespace(end1=ends_list[1 - i], end2=ends_list[i]) %}
+                {% set class1_name = lns.end1.type.name %}
+                {% set class2_name = lns.end2.type.name %}
+                {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
+                    {% do ns.end_name_multiple.append((class2_name, association.name.lower())) %}
+                {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
+                    {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min)) %}
+                {% endif %}
+            {% endfor %}
+        {% else %}
+            {% set lns = namespace(end1=None, end2=None) %}
+            {% for end in association.ends %}
+                {% set lns.end1 = end if end.type.name == class.name else lns.end1 %}
+                {% set lns.end2 = end if end.type.name != class.name else lns.end2 %}
+            {% endfor %}
+            {% set class1_name = lns.end1.type.name %}
+            {% set class2_name = lns.end2.type.name %}
+            {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
+                {% do ns.end_name_multiple.append((class2_name, association.name.lower())) %}
+            {% elif lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max == 1 %}
+                {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min)) %}
+            {% endif %}
         {% endif %}
     {% endif %}
 {% endfor %}

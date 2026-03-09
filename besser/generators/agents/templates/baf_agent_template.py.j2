@@ -161,6 +161,30 @@ platform = agent.use_websocket_platform(use_ui=True)
 {% endif %}
 # LLM instantiation based on config['llm']
 {% set has_reply_llm_state = namespace(value=false) %}
+{% set has_db_reply_state = namespace(value=false) %}
+{% for state in agent.states %}
+{% if state.body and state.body.actions and is_class(state.body.actions[0], 'DBReply') %}
+{% set has_db_reply_state.value = true %}
+{% endif %}
+{% if state.fallback_body and state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'DBReply') %}
+{% set has_db_reply_state.value = true %}
+{% endif %}
+{% endfor %}
+{% if personalization_mapping is defined and personalization_mapping %}
+{% for mapping in personalization_mapping %}
+{% set profile_agent = mapping.agent_model if mapping.agent_model is defined else mapping.model %}
+{% if profile_agent and profile_agent.states %}
+{% for state in profile_agent.states %}
+{% if state.body and state.body.actions and is_class(state.body.actions[0], 'DBReply') %}
+{% set has_db_reply_state.value = true %}
+{% endif %}
+{% if state.fallback_body and state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'DBReply') %}
+{% set has_db_reply_state.value = true %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}
 {% if config and 'llm' in config and config['llm'] %}
 {% set has_reply_llm_state.value = true %}
     {% if config['llm']['provider'] == 'openai' %}
@@ -343,6 +367,12 @@ reply_llm = LLMOpenAI(
 {% set has_reply_llm_state.value = true %}
 {% endif %}
 {% set has_reply_llm = has_reply_llm_state.value %}
+{% set has_db_reply = has_db_reply_state.value %}
+
+{% if has_db_reply %}
+# Make relational databases available through session.db_handler
+agent.use_db_handler()
+{% endif %}
 
 {% if agent.default_ic_config != None %}
 agent.set_default_ic_config({{ write_ic_config(agent.default_ic_config) }})
@@ -573,6 +603,46 @@ def {{ body_name }}(session: Session):
     {% endif %}
     platform.reply_rag(session, rag_message)
     {% endfor %}
+{% elif state.body.actions and is_class(state.body.actions[0], 'DBReply') %}
+def {{ body_name }}(session: Session):
+    {% if inject_profile_context and has_reply_llm %}
+    reply_llm.add_user_context(
+        session=session,
+        context=context_prompts.get('{{ suffix }}'),
+        context_name='agent_configuration'
+    )
+    {% if configuration.adaptContentToUserProfile %}
+    reply_llm.add_user_context(
+        session=session,
+        context=profile_prompts.get('{{ suffix }}'),
+        context_name='user_profile'
+    )
+    {% endif %}
+    {% endif %}
+    {% for action in state.body.actions %}
+    {% set db_name = action.db_custom_name if action.db_selection_type == 'custom' and action.db_custom_name else 'db1' %}
+    {% if action.db_query_mode == 'sql' %}
+    db_query = '{{ (action.db_sql_query or '') | replace('\\', '\\\\') | replace("'", "\\'") }}'
+    if not db_query.strip():
+        db_result = 'No SQL query configured for this database action.'
+    else:
+        db_result = session.db_handler.query(db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}', query=db_query)
+    {% else %}
+    db_result = session.db_handler.query(
+        db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        query=session.event.message,
+        llm=reply_llm
+    )
+    {% endif %}
+    if isinstance(db_result, (dict, list)):
+        reply_text = json.dumps(db_result, default=str)
+    else:
+        reply_text = str(db_result)
+    session.reply(reply_text)
+    {% if speech_enabled %}
+    platform.reply_speech(session, reply_text)
+    {% endif %}
+    {% endfor %}
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.body) | replace(state.body.name, body_name) }}
 {% endif %}
@@ -620,6 +690,32 @@ def {{ fallback_name }}(session: Session):
     rag_message = session.run_rag(session.event.message)
     {% endif %}
     platform.reply_rag(session, rag_message)
+    {% endfor %}
+{% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'DBReply') %}
+def {{ fallback_name }}(session: Session):
+    {% for action in state.fallback_body.actions %}
+    {% set db_name = action.db_custom_name if action.db_selection_type == 'custom' and action.db_custom_name else 'db1' %}
+    {% if action.db_query_mode == 'sql' %}
+    db_query = '{{ (action.db_sql_query or '') | replace('\\', '\\\\') | replace("'", "\\'") }}'
+    if not db_query.strip():
+        db_result = 'No SQL query configured for this database action.'
+    else:
+        db_result = session.db_handler.query(db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}', query=db_query)
+    {% else %}
+    db_result = session.db_handler.query(
+        db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        query=session.event.message,
+        llm=reply_llm
+    )
+    {% endif %}
+    if isinstance(db_result, (dict, list)):
+        reply_text = json.dumps(db_result, default=str)
+    else:
+        reply_text = str(db_result)
+    session.reply(reply_text)
+    {% if speech_enabled %}
+    platform.reply_speech(session, reply_text)
+    {% endif %}
     {% endfor %}
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.fallback_body) | replace(state.fallback_body.name, fallback_name) }}

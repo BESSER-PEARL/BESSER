@@ -6,7 +6,7 @@ This module generates Python code for BUML agent models.
 
 import os
 from re import search
-from besser.BUML.metamodel.state_machine.agent import Agent, AgentReply, LLMReply, RAGReply
+from besser.BUML.metamodel.state_machine.agent import Agent, AgentReply, LLMReply, RAGReply, DBReply
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 
 
@@ -39,7 +39,7 @@ def agent_model_to_code(model: Agent, file_path: str):
         )
         f.write(
             "from besser.BUML.metamodel.state_machine.agent import "
-            "Agent, AgentSession, AgentReply, LLMReply, RAGReply, "
+            "Agent, AgentSession, AgentReply, LLMReply, RAGReply, DBReply, "
             "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
             "RAGVectorStore, RAGTextSplitter\n"
         )
@@ -180,6 +180,22 @@ def agent_model_to_code(model: Agent, file_path: str):
                                 f.write(f"{state.name}_body.add_action(RAGReply('{rag_name}'))\n")
                         f.write("\n")
                         f.write(f"{state.name}.set_body({state.name}_body)\n")
+                    elif isinstance(state.body.actions[0], DBReply):
+                        f.write(f"{state.name}_body = Body('{state.name}_body')\n")
+                        for action in state.body.actions:
+                            db_args = []
+                            if getattr(action, 'db_selection_type', 'default') != 'default':
+                                db_args.append(f"db_selection_type={action.db_selection_type!r}")
+                            if getattr(action, 'db_custom_name', None):
+                                db_args.append(f"db_custom_name={action.db_custom_name!r}")
+                            if getattr(action, 'db_query_mode', 'llm_query') != 'llm_query':
+                                db_args.append(f"db_query_mode={action.db_query_mode!r}")
+                            if getattr(action, 'db_query_mode', 'llm_query') == 'sql' and getattr(action, 'db_sql_query', None):
+                                db_args.append(f"db_sql_query={action.db_sql_query!r}")
+                            args = ", ".join(db_args)
+                            f.write(f"{state.name}_body.add_action(DBReply({args}))\n" if args else f"{state.name}_body.add_action(DBReply())\n")
+                        f.write("\n")
+                        f.write(f"{state.name}.set_body({state.name}_body)\n")
                     elif isinstance(state.body.actions[0], CustomCodeAction):
                         action = state.body.actions[0]
                         f.write(f"{action.to_code()}\n")
@@ -228,6 +244,22 @@ def agent_model_to_code(model: Agent, file_path: str):
                                 f.write(")\n")
                             else:
                                 f.write(f"{state.name}_fallback_body.add_action(RAGReply('{rag_name}'))\n")
+                        f.write("\n")
+                        f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
+                    elif isinstance(state.fallback_body.actions[0], DBReply):
+                        f.write(f"{state.name}_fallback_body = Body('{state.name}_fallback_body')\n")
+                        for action in state.fallback_body.actions:
+                            db_args = []
+                            if getattr(action, 'db_selection_type', 'default') != 'default':
+                                db_args.append(f"db_selection_type={action.db_selection_type!r}")
+                            if getattr(action, 'db_custom_name', None):
+                                db_args.append(f"db_custom_name={action.db_custom_name!r}")
+                            if getattr(action, 'db_query_mode', 'llm_query') != 'llm_query':
+                                db_args.append(f"db_query_mode={action.db_query_mode!r}")
+                            if getattr(action, 'db_query_mode', 'llm_query') == 'sql' and getattr(action, 'db_sql_query', None):
+                                db_args.append(f"db_sql_query={action.db_sql_query!r}")
+                            args = ", ".join(db_args)
+                            f.write(f"{state.name}_fallback_body.add_action(DBReply({args}))\n" if args else f"{state.name}_fallback_body.add_action(DBReply())\n")
                         f.write("\n")
                         f.write(f"{state.name}.set_fallback_body({state.name}_fallback_body)\n")
                     elif isinstance(state.fallback_body.actions[0], CustomCodeAction):

@@ -89,6 +89,67 @@ class RAGReply(Action):
         return f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r})"
 
 
+class DBReply(Action):
+    """Primitive action that represents fetching information from a database.
+
+    Args:
+        db_selection_type (str): Database selection mode. Supported values are ``default`` and ``custom``.
+        db_custom_name (str, optional): Custom database identifier used when ``db_selection_type`` is ``custom``.
+        db_query_mode (str): Query execution mode. Supported values are ``llm_query`` and ``sql``.
+        db_sql_query (str, optional): SQL query to run when ``db_query_mode`` is ``sql``.
+
+    Attributes:
+        db_selection_type (str): Whether the default application database or a named custom database is used.
+        db_custom_name (str | None): Name of the custom database when applicable.
+        db_query_mode (str): How the query will be produced at runtime.
+        db_sql_query (str | None): Raw SQL query when SQL mode is selected.
+    """
+
+    VALID_SELECTION_TYPES = {"default", "custom"}
+    VALID_QUERY_MODES = {"llm_query", "sql"}
+
+    def __init__(
+            self,
+            db_selection_type: str = "default",
+            db_custom_name: Optional[str] = None,
+            db_query_mode: str = "llm_query",
+            db_sql_query: Optional[str] = None,
+    ):
+        super().__init__()
+
+        normalized_selection_type = (db_selection_type or "default").strip().lower()
+        if normalized_selection_type not in self.VALID_SELECTION_TYPES:
+            raise ValueError(
+                f"Unsupported db_selection_type '{db_selection_type}'. "
+                f"Expected one of {sorted(self.VALID_SELECTION_TYPES)}."
+            )
+
+        normalized_query_mode = (db_query_mode or "llm_query").strip().lower()
+        if normalized_query_mode not in self.VALID_QUERY_MODES:
+            raise ValueError(
+                f"Unsupported db_query_mode '{db_query_mode}'. "
+                f"Expected one of {sorted(self.VALID_QUERY_MODES)}."
+            )
+
+        normalized_custom_name = (db_custom_name or "").strip() or None
+        normalized_sql_query = db_sql_query if db_sql_query is not None else None
+
+        self.db_selection_type: str = normalized_selection_type
+        self.db_custom_name: Optional[str] = normalized_custom_name
+        self.db_query_mode: str = normalized_query_mode
+        self.db_sql_query: Optional[str] = normalized_sql_query
+
+    def __repr__(self):
+        return (
+            "DBReply("
+            f"db_selection_type={self.db_selection_type!r}, "
+            f"db_custom_name={self.db_custom_name!r}, "
+            f"db_query_mode={self.db_query_mode!r}, "
+            f"db_sql_query={self.db_sql_query!r}"
+            ")"
+        )
+
+
 class IntentClassifierConfiguration(ABC):
     """The Intent Classifier Configuration abstract class.
 

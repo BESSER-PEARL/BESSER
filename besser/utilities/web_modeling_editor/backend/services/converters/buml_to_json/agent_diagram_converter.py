@@ -193,6 +193,32 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "ragDatabaseName": rag_db_name,
                 }
                 elements[state_id][state_key].append(body_id)
+            elif action_type == "db_reply":
+                db_selection_type = action.get("dbSelectionType") or "default"
+                db_custom_name = action.get("dbCustomName") or ""
+                db_query_mode = action.get("dbQueryMode") or "llm_query"
+                db_sql_query = action.get("dbSqlQuery") or ""
+                database_label = db_custom_name if db_selection_type == "custom" and db_custom_name else "Default database"
+                mode_label = "SQL" if db_query_mode == "sql" else "LLM query"
+                body_id = str(uuid.uuid4())
+                elements[body_id] = {
+                    "id": body_id,
+                    "name": f"DB action using {database_label} ({mode_label})",
+                    "type": element_type,
+                    "owner": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"],
+                        "width": 159,
+                        "height": 30,
+                    },
+                    "replyType": "db_reply",
+                    "dbSelectionType": db_selection_type,
+                    "dbCustomName": db_custom_name,
+                    "dbQueryMode": db_query_mode,
+                    "dbSqlQuery": db_sql_query,
+                }
+                elements[state_id][state_key].append(body_id)
 
     try:
         # First pass: collect all intents and Agent metadata
@@ -383,6 +409,29 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             actions[body_var] = [{"type": "rag", "ragDatabaseName": rag_db_name}]
                         else:
                             actions[body_var].append({"type": "rag", "ragDatabaseName": rag_db_name})
+                    elif node.value.args[0].func.id == 'DBReply':
+                        db_action = {
+                            "type": "db_reply",
+                            "dbSelectionType": "default",
+                            "dbCustomName": "",
+                            "dbQueryMode": "llm_query",
+                            "dbSqlQuery": "",
+                        }
+                        for kw in node.value.args[0].keywords:
+                            if isinstance(kw.value, ast.Constant) and isinstance(kw.value.value, str):
+                                if kw.arg == 'db_selection_type':
+                                    db_action["dbSelectionType"] = kw.value.value
+                                elif kw.arg == 'db_custom_name':
+                                    db_action["dbCustomName"] = kw.value.value
+                                elif kw.arg == 'db_query_mode':
+                                    db_action["dbQueryMode"] = kw.value.value
+                                elif kw.arg == 'db_sql_query':
+                                    db_action["dbSqlQuery"] = kw.value.value
+
+                        if body_var not in actions:
+                            actions[body_var] = [db_action]
+                        else:
+                            actions[body_var].append(db_action)
                 elif isinstance(node.value.args[0], ast.Name):
                     # Handle references to CustomCodeAction variables
                     action_var = node.value.args[0].id  # e.g., 'CustomCodeAction_initial'

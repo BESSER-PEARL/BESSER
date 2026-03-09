@@ -176,7 +176,7 @@ class BAFGenerator(GeneratorInterface):
                 f.write(generated_code)
         if generate_code_assets:
             config_template = env.get_template('baf_config_template.py.j2')
-            config_path = self.build_generation_path(file_name="config.ini")
+            config_path = self.build_generation_path(file_name="config.yaml")
             with open(config_path, mode="w", encoding="utf-8") as f:
                 properties = sorted(self.model.properties, key=lambda prop: prop.section)
                 generated_code = config_template.render(properties=properties)

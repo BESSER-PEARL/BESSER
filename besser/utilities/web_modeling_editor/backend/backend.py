@@ -112,6 +112,8 @@ from besser.utilities.web_modeling_editor.backend.config import (
     is_generator_supported,
 )
 
+from besser.utilities.web_modeling_editor.backend.api.external_db_routes import router as external_db_router
+
 logger = logging.getLogger(__name__)
 
 # Initialize FastAPI application
@@ -134,6 +136,9 @@ app.add_middleware(
 # Include GitHub OAuth and deployment routers
 app.include_router(github_oauth_router, prefix="/besser_api")
 app.include_router(github_deploy_router, prefix="/besser_api")
+
+# Include External DB router
+app.include_router(external_db_router, prefix="/besser_api")
 
 # Constants
 API_VERSION = "1.0.0"

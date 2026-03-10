@@ -197,13 +197,15 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 db_selection_type = action.get("dbSelectionType") or "default"
                 db_custom_name = action.get("dbCustomName") or ""
                 db_query_mode = action.get("dbQueryMode") or "llm_query"
+                db_operation = action.get("dbOperation") or "any"
                 db_sql_query = action.get("dbSqlQuery") or ""
                 database_label = db_custom_name if db_selection_type == "custom" and db_custom_name else "Default database"
                 mode_label = "SQL" if db_query_mode == "sql" else "LLM query"
+                operation_label = "Any" if db_operation == "any" else db_operation.upper()
                 body_id = str(uuid.uuid4())
                 elements[body_id] = {
                     "id": body_id,
-                    "name": f"DB action using {database_label} ({mode_label})",
+                    "name": f"DB action using {database_label} ({mode_label}, {operation_label})",
                     "type": element_type,
                     "owner": state_id,
                     "bounds": {
@@ -216,6 +218,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "dbSelectionType": db_selection_type,
                     "dbCustomName": db_custom_name,
                     "dbQueryMode": db_query_mode,
+                    "dbOperation": db_operation,
                     "dbSqlQuery": db_sql_query,
                 }
                 elements[state_id][state_key].append(body_id)
@@ -415,6 +418,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             "dbSelectionType": "default",
                             "dbCustomName": "",
                             "dbQueryMode": "llm_query",
+                            "dbOperation": "any",
                             "dbSqlQuery": "",
                         }
                         for kw in node.value.args[0].keywords:
@@ -425,6 +429,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     db_action["dbCustomName"] = kw.value.value
                                 elif kw.arg == 'db_query_mode':
                                     db_action["dbQueryMode"] = kw.value.value
+                                elif kw.arg == 'db_operation':
+                                    db_action["dbOperation"] = kw.value.value
                                 elif kw.arg == 'db_sql_query':
                                     db_action["dbSqlQuery"] = kw.value.value
 

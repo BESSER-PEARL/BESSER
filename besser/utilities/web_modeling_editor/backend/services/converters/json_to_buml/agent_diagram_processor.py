@@ -69,6 +69,7 @@ def process_agent_diagram(json_data):
             db_selection_type=sanitize_text(element.get("dbSelectionType", "default")) or "default",
             db_custom_name=sanitize_text(element.get("dbCustomName", "")) or None,
             db_query_mode=sanitize_text(element.get("dbQueryMode", "llm_query")) or "llm_query",
+            db_operation=sanitize_text(element.get("dbOperation", "any")) or "any",
             db_sql_query=element.get("dbSqlQuery") or None,
         )
 
@@ -77,6 +78,7 @@ def process_agent_diagram(json_data):
             "dbSelectionType": element.get("dbSelectionType", "default") or "default",
             "dbCustomName": element.get("dbCustomName", "") or "",
             "dbQueryMode": element.get("dbQueryMode", "llm_query") or "llm_query",
+            "dbOperation": element.get("dbOperation", "any") or "any",
             "dbSqlQuery": element.get("dbSqlQuery", "") or "",
         }
         return f"DB:{json_lib.dumps(payload)}"

@@ -190,6 +190,8 @@ def agent_model_to_code(model: Agent, file_path: str):
                                 db_args.append(f"db_custom_name={action.db_custom_name!r}")
                             if getattr(action, 'db_query_mode', 'llm_query') != 'llm_query':
                                 db_args.append(f"db_query_mode={action.db_query_mode!r}")
+                            if getattr(action, 'db_operation', 'any') != 'any':
+                                db_args.append(f"db_operation={action.db_operation!r}")
                             if getattr(action, 'db_query_mode', 'llm_query') == 'sql' and getattr(action, 'db_sql_query', None):
                                 db_args.append(f"db_sql_query={action.db_sql_query!r}")
                             args = ", ".join(db_args)
@@ -256,6 +258,8 @@ def agent_model_to_code(model: Agent, file_path: str):
                                 db_args.append(f"db_custom_name={action.db_custom_name!r}")
                             if getattr(action, 'db_query_mode', 'llm_query') != 'llm_query':
                                 db_args.append(f"db_query_mode={action.db_query_mode!r}")
+                            if getattr(action, 'db_operation', 'any') != 'any':
+                                db_args.append(f"db_operation={action.db_operation!r}")
                             if getattr(action, 'db_query_mode', 'llm_query') == 'sql' and getattr(action, 'db_sql_query', None):
                                 db_args.append(f"db_sql_query={action.db_sql_query!r}")
                             args = ", ".join(db_args)

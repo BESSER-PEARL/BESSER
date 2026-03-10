@@ -621,14 +621,20 @@ def {{ body_name }}(session: Session):
     {% endif %}
     {% for action in state.body.actions %}
     {% set db_name = action.db_custom_name if action.db_selection_type == 'custom' and action.db_custom_name else 'db1' %}
+    {% set db_operation = action.db_operation if action.db_operation else 'any' %}
+    {% if db_operation in ['select', 'insert', 'update', 'delete'] %}
+    {% set db_method = db_operation %}
+    {% else %}
+    {% set db_method = 'query' %}
+    {% endif %}
     {% if action.db_query_mode == 'sql' %}
     db_query = '{{ (action.db_sql_query or '') | replace('\\', '\\\\') | replace("'", "\\'") }}'
     if not db_query.strip():
         db_result = 'No SQL query configured for this database action.'
     else:
-        db_result = session.db_handler.query(db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}', query=db_query)
+        db_result = session.db_handler.{{ db_method }}(db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}', query=db_query)
     {% else %}
-    db_result = session.db_handler.query(
+    db_result = session.db_handler.{{ db_method }}(
         db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}',
         query=session.event.message,
         llm=reply_llm
@@ -712,14 +718,20 @@ def {{ fallback_name }}(session: Session):
 def {{ fallback_name }}(session: Session):
     {% for action in state.fallback_body.actions %}
     {% set db_name = action.db_custom_name if action.db_selection_type == 'custom' and action.db_custom_name else 'db1' %}
+    {% set db_operation = action.db_operation if action.db_operation else 'any' %}
+    {% if db_operation in ['select', 'insert', 'update', 'delete'] %}
+    {% set db_method = db_operation %}
+    {% else %}
+    {% set db_method = 'query' %}
+    {% endif %}
     {% if action.db_query_mode == 'sql' %}
     db_query = '{{ (action.db_sql_query or '') | replace('\\', '\\\\') | replace("'", "\\'") }}'
     if not db_query.strip():
         db_result = 'No SQL query configured for this database action.'
     else:
-        db_result = session.db_handler.query(db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}', query=db_query)
+        db_result = session.db_handler.{{ db_method }}(db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}', query=db_query)
     {% else %}
-    db_result = session.db_handler.query(
+    db_result = session.db_handler.{{ db_method }}(
         db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}',
         query=session.event.message,
         llm=reply_llm

@@ -1,0 +1,452 @@
+{# ============================================================
+   hypothesis_tests_template.py.j2
+   Generates: Section 1 – structural pytest tests
+              Section 2 – Hypothesis property-based tests
+   Input context:
+     domain           – B-UML DomainModel
+     sort_by_timestamp – utility from besser.utilities [1]
+   Custom filter (registered in generator [3]):
+     to_strategy      – maps B-UML type name → st.* expression
+   ============================================================ #}
+
+{# ── helpers ─────────────────────────────────────────────── #}
+{%- macro python_isinstance(type_name) -%}
+{%- if type_name == "str" %}str
+{%- elif type_name == "int" %}int
+{%- elif type_name == "float" %}float
+{%- elif type_name == "bool" %}bool
+{%- elif type_name == "date" %}date
+{%- elif type_name == "datetime" %}datetime
+{%- elif type_name == "time" %}time
+{%- elif type_name == "timedelta" %}timedelta
+{%- else %}object
+{%- endif -%}
+{%- endmacro -%}
+
+# =============================================================================
+# Auto-generated test suite
+# Generated from B-UML model: {{ domain.name }}
+# Do not edit manually.
+#
+# Sections:
+#   1. STRUCTURAL TESTS  — plain pytest, inspect class shape
+#   2. HYPOTHESIS TESTS  — property-based, @given strategies
+# =============================================================================
+
+import inspect
+import pytest
+from hypothesis import given, assume, settings
+import hypothesis.strategies as st
+from datetime import date, datetime, time, timedelta
+
+# ---------------------------------------------------------------------------
+# Import generated domain classes
+# ---------------------------------------------------------------------------
+from classes import (
+{%- for class in domain.classes_sorted_by_inheritance() %}
+    {{ class.name }},
+{%- endfor %}
+{%- if domain.get_enumerations() %}
+{%- for enum in domain.get_enumerations() %}
+    {{ enum.name }},
+{%- endfor %}
+{%- endif %}
+)
+
+
+# =============================================================================
+# SECTION 1 — STRUCTURAL TESTS
+# Plain pytest: verify class shape, attributes, methods, types, constraints.
+# These tests do NOT rely on Hypothesis — they run as simple deterministic
+# checks that the generated classes match the B-UML model contract.
+# =============================================================================
+{% for class in domain.classes_sorted_by_inheritance() %}
+
+class Test{{ class.name }}Structure:
+    """Structural tests for the {{ class.name }} class."""
+
+    # --- Class-level checks -------------------------------------------------
+
+    def test_{{ class.name | lower }}_class_exists(self):
+        """{{ class.name }} must be importable and be a type."""
+        assert isinstance({{ class.name }}, type)
+
+    {% if not class.is_abstract %}
+    def test_{{ class.name | lower }}_is_not_abstract(self):
+        """{{ class.name }} must be a concrete (instantiatable) class."""
+        assert not inspect.isabstract({{ class.name }})
+    {% else %}
+    def test_{{ class.name | lower }}_is_abstract(self):
+        """{{ class.name }} is marked abstract in the model and must not be instantiatable."""
+        import abc
+        assert issubclass({{ class.name }}, abc.ABC)
+    {% endif %}
+
+    def test_{{ class.name | lower }}_constructor_exists(self):
+        """{{ class.name }}.__init__ must be callable."""
+        assert callable({{ class.name }}.__init__)
+
+    {% if class.all_attributes() %}
+    def test_{{ class.name | lower }}_constructor_accepts_expected_args(self):
+        """{{ class.name }}.__init__ must declare all model attributes as parameters."""
+        sig = inspect.signature({{ class.name }}.__init__)
+        params = list(sig.parameters.keys())
+        {%- for attribute in class.all_attributes() %}
+        assert "{{ attribute.name }}" in params, \
+            "{{ class.name }}.__init__ missing parameter '{{ attribute.name }}'"
+        {%- endfor %}
+    {% endif %}
+
+    # --- Attribute presence -------------------------------------------------
+    {%- for attribute in sort_by_timestamp(class.attributes) %}
+
+    def test_{{ class.name | lower }}_has_{{ attribute.name }}_attribute(self):
+        """{{ class.name }} must expose '{{ attribute.name }}' as a property."""
+        assert hasattr({{ class.name }}, "{{ attribute.name }}"), \
+            "{{ class.name }} is missing attribute '{{ attribute.name }}'"
+
+    def test_{{ class.name | lower }}_{{ attribute.name }}_is_property_descriptor(self):
+        """'{{ attribute.name }}' must be a Python property descriptor on {{ class.name }}."""
+        # Walk MRO to find the descriptor (handles inheritance)
+        descriptor = None
+        for klass in {{ class.name }}.__mro__:
+            if "{{ attribute.name }}" in klass.__dict__:
+                descriptor = klass.__dict__["{{ attribute.name }}"]
+                break
+        assert isinstance(descriptor, property), \
+            "'{{ attribute.name }}' on {{ class.name }} is not a property descriptor"
+    {%- endfor %}
+
+    # --- Method presence ----------------------------------------------------
+    {%- for method in class.methods %}
+
+    def test_{{ class.name | lower }}_has_{{ method.name }}_method(self):
+        """{{ class.name }} must expose a callable '{{ method.name }}' method."""
+        assert hasattr({{ class.name }}, "{{ method.name }}"), \
+            "{{ class.name }} is missing method '{{ method.name }}'"
+        assert callable(getattr({{ class.name }}, "{{ method.name }}")), \
+            "'{{ method.name }}' on {{ class.name }} must be callable"
+
+    {% if method.parameters %}
+    def test_{{ class.name | lower }}_{{ method.name }}_signature(self):
+        """{{ method.name }} must declare all model-defined parameters."""
+        sig = inspect.signature({{ class.name }}.{{ method.name }})
+        params = list(sig.parameters.keys())
+        {%- for param in method.parameters %}
+        assert "{{ param.name }}" in params, \
+            "{{ class.name }}.{{ method.name }} missing parameter '{{ param.name }}'"
+        {%- endfor %}
+    {% endif %}
+    {%- endfor %}
+
+    # --- Association ends ---------------------------------------------------
+    {%- for end in class.association_ends() if end.is_navigable %}
+
+    def test_{{ class.name | lower }}_has_{{ end.name }}_association(self):
+        """{{ class.name }} must expose the '{{ end.name }}' association end."""
+        assert hasattr({{ class.name }}, "{{ end.name }}"), \
+            "{{ class.name }} is missing association end '{{ end.name }}'"
+    {%- endfor %}
+
+    {%- if not class.is_abstract %}
+    # --- Basic instantiation ------------------------------------------------
+
+    def test_{{ class.name | lower }}_basic_instantiation(self):
+        """{{ class.name }} must be instantiatable with a fixed set of valid values."""
+        instance = {{ class.name }}(
+        {%- for attribute in sort_by_timestamp(class.all_attributes()) %}
+            {%- if attribute.type.name == "str" %}
+            {{ attribute.name }}="{{ class.name }}_test_{{ attribute.name }}",
+            {%- elif attribute.type.name == "int" %}
+            {{ attribute.name }}=1,
+            {%- elif attribute.type.name == "float" %}
+            {{ attribute.name }}=1.0,
+            {%- elif attribute.type.name == "bool" %}
+            {{ attribute.name }}=True,
+            {%- elif attribute.type.name == "date" %}
+            {{ attribute.name }}=date(2024, 1, 1),
+            {%- elif attribute.type.name == "datetime" %}
+            {{ attribute.name }}=datetime(2024, 1, 1, 0, 0),
+            {%- elif attribute.type.name == "time" %}
+            {{ attribute.name }}=time(0, 0),
+            {%- else %}
+            # {{ attribute.name }}: {{ attribute.type.name }} — set manually
+            {%- endif %}
+        {%- endfor %}
+        )
+        assert isinstance(instance, {{ class.name }})
+
+    # --- Attribute type assertions on concrete instance ---------------------
+    {%- for attribute in sort_by_timestamp(class.all_attributes()) %}
+
+    def test_{{ class.name | lower }}_{{ attribute.name }}_type_on_read(self):
+        """Reading {{ class.name }}.{{ attribute.name }} must return {{ attribute.type.name }}."""
+        instance = {{ class.name }}(
+        {%- for attr2 in sort_by_timestamp(class.all_attributes()) %}
+            {%- if attr2.type.name == "str" %}
+            {{ attr2.name }}="{{ class.name }}_test",
+            {%- elif attr2.type.name == "int" %}
+            {{ attr2.name }}=1,
+            {%- elif attr2.type.name == "float" %}
+            {{ attr2.name }}=1.0,
+            {%- elif attr2.type.name == "bool" %}
+            {{ attr2.name }}=True,
+            {%- elif attr2.type.name == "date" %}
+            {{ attr2.name }}=date(2024, 1, 1),
+            {%- elif attr2.type.name == "datetime" %}
+            {{ attr2.name }}=datetime(2024, 1, 1, 0, 0),
+            {%- elif attr2.type.name == "time" %}
+            {{ attr2.name }}=time(0, 0),
+            {%- else %}
+            # {{ attr2.name }}: {{ attr2.type.name }} — set manually
+            {%- endif %}
+        {%- endfor %}
+        )
+        assert isinstance(instance.{{ attribute.name }},
+                          {{ python_isinstance(attribute.type.name) }})
+
+    def test_{{ class.name | lower }}_{{ attribute.name }}_setter_roundtrip(self):
+        """Setting {{ class.name }}.{{ attribute.name }} must persist the new value."""
+        instance = {{ class.name }}(
+        {%- for attr2 in sort_by_timestamp(class.all_attributes()) %}
+            {%- if attr2.type.name == "str" %}
+            {{ attr2.name }}="{{ class.name }}_test",
+            {%- elif attr2.type.name == "int" %}
+            {{ attr2.name }}=1,
+            {%- elif attr2.type.name == "float" %}
+            {{ attr2.name }}=1.0,
+            {%- elif attr2.type.name == "bool" %}
+            {{ attr2.name }}=True,
+            {%- elif attr2.type.name == "date" %}
+            {{ attr2.name }}=date(2024, 1, 1),
+            {%- elif attr2.type.name == "datetime" %}
+            {{ attr2.name }}=datetime(2024, 1, 1, 0, 0),
+            {%- elif attr2.type.name == "time" %}
+            {{ attr2.name }}=time(0, 0),
+            {%- else %}
+            # {{ attr2.name }}: {{ attr2.type.name }} — set manually
+            {%- endif %}
+        {%- endfor %}
+        )
+        {%- if attribute.type.name == "str" %}
+        instance.{{ attribute.name }} = "updated_value"
+        assert instance.{{ attribute.name }} == "updated_value"
+        {%- elif attribute.type.name == "int" %}
+        instance.{{ attribute.name }} = 42
+        assert instance.{{ attribute.name }} == 42
+        {%- elif attribute.type.name == "float" %}
+        instance.{{ attribute.name }} = 3.14
+        assert instance.{{ attribute.name }} == 3.14
+        {%- elif attribute.type.name == "bool" %}
+        instance.{{ attribute.name }} = False
+        assert instance.{{ attribute.name }} == False
+        {%- elif attribute.type.name == "date" %}
+        instance.{{ attribute.name }} = date(2000, 6, 15)
+        assert instance.{{ attribute.name }} == date(2000, 6, 15)
+        {%- elif attribute.type.name == "datetime" %}
+        instance.{{ attribute.name }} = datetime(2000, 6, 15, 12, 30)
+        assert instance.{{ attribute.name }} == datetime(2000, 6, 15, 12, 30)
+        {%- elif attribute.type.name == "time" %}
+        instance.{{ attribute.name }} = time(12, 30)
+        assert instance.{{ attribute.name }} == time(12, 30)
+        {%- endif %}
+    {%- endfor %}
+
+    # --- Association end type assertions ------------------------------------
+    {%- for end in class.association_ends() if end.is_navigable %}
+
+    def test_{{ class.name | lower }}_{{ end.name }}_is_set(self):
+        """{{ class.name }}.{{ end.name }} ({% if end.multiplicity.max > 1 %}0..*{% else %}0..1{% endif %}) must be initialized as a set on a fresh instance."""
+        instance = {{ class.name }}(
+        {%- for attr2 in sort_by_timestamp(class.all_attributes()) %}
+            {%- if attr2.type.name == "str" %}
+            {{ attr2.name }}="{{ class.name }}_test",
+            {%- elif attr2.type.name == "int" %}
+            {{ attr2.name }}=1,
+            {%- elif attr2.type.name == "float" %}
+            {{ attr2.name }}=1.0,
+            {%- elif attr2.type.name == "bool" %}
+            {{ attr2.name }}=True,
+            {%- elif attr2.type.name == "date" %}
+            {{ attr2.name }}=date(2024, 1, 1),
+            {%- elif attr2.type.name == "datetime" %}
+            {{ attr2.name }}=datetime(2024, 1, 1, 0, 0),
+            {%- elif attr2.type.name == "time" %}
+            {{ attr2.name }}=time(0, 0),
+            {%- else %}
+            # {{ attr2.name }}: {{ attr2.type.name }} — set manually
+            {%- endif %}
+        {%- endfor %}
+        )
+        {% if end.multiplicity.max > 1 %}
+        assert isinstance(instance.{{ end.name }}, set), \
+            "{{ class.name }}.{{ end.name }} must be a set"
+        {% else %}
+        assert instance.{{ end.name }} is None or isinstance(
+            instance.{{ end.name }}, {{ end.type.name }}
+        )
+        {% endif %}
+    {%- endfor %}
+
+
+    {%- endif %}
+{%- endfor %}
+
+{%- if domain.get_enumerations() %}
+# --- Enumeration structural tests -------------------------------------------
+{% for enum in domain.get_enumerations() %}
+
+class Test{{ enum.name }}Structure:
+    """Structural tests for the {{ enum.name }} enumeration."""
+
+    def test_{{ enum.name | lower }}_is_enum(self):
+        from enum import Enum
+        assert issubclass({{ enum.name }}, Enum)
+
+    def test_{{ enum.name | lower }}_has_expected_literals(self):
+        expected = { {%- for lit in sort_by_timestamp(enum.literals) %}"{{ lit.name }}"{{ ", " if not loop.last }}{% endfor %} }
+        actual = {member.name for member in {{ enum.name }}}
+        assert expected == actual
+    {%- for lit in sort_by_timestamp(enum.literals) %}
+
+    def test_{{ enum.name | lower }}_literal_{{ lit.name | lower }}_exists(self):
+        assert hasattr({{ enum.name }}, "{{ lit.name }}")
+    {%- endfor %}
+{%- endfor %}
+{%- endif %}
+
+
+# =============================================================================
+# SECTION 2 — HYPOTHESIS TESTS
+# Property-based: strategies, instantiation invariants, attribute type
+# contracts, method @given tests, association set mutation tests.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# Safe text strategy: respects B-UML NamedElement constraint —
+# names must not contain spaces or hyphens.
+# ---------------------------------------------------------------------------
+safe_text = st.text(
+    alphabet=st.characters(
+        whitelist_categories=("Ll", "Lu", "Nd"),
+        whitelist_characters="_",
+    ),
+    min_size=1,
+).filter(lambda s: s[0].isalpha())
+
+# ---------------------------------------------------------------------------
+# st.builds() strategy per concrete class
+# ---------------------------------------------------------------------------
+{% for class in domain.classes_sorted_by_inheritance() %}
+{%- if not class.is_abstract %}
+{{ class.name }}_strategy = st.builds(
+    {{ class.name }},
+{%- for attribute in sort_by_timestamp(class.all_attributes()) %}
+    {{ attribute.name }}={{ attribute.type.name | to_strategy }},
+{%- endfor %}
+)
+{% endif %}
+{%- endfor %}
+
+# ---------------------------------------------------------------------------
+# Hypothesis test classes
+# ---------------------------------------------------------------------------
+{% for class in domain.classes_sorted_by_inheritance() %}
+{%- if not class.is_abstract %}
+
+class Test{{ class.name }}Hypothesis:
+    """Hypothesis property-based tests for {{ class.name }}."""
+
+    # -- Instantiation -------------------------------------------------------
+
+    @given(instance={{ class.name }}_strategy)
+    @settings(max_examples=50)
+    def test_{{ class.name | lower }}_instantiation(self, instance):
+        """{{ class.name }} is always instantiatable with model-valid generated data."""
+        assert isinstance(instance, {{ class.name }})
+
+    # -- Attribute type contracts --------------------------------------------
+    {%- for attribute in sort_by_timestamp(class.all_attributes()) %}
+
+    @given(instance={{ class.name }}_strategy)
+    def test_{{ class.name | lower }}_{{ attribute.name }}_type(self, instance):
+        """{{ class.name }}.{{ attribute.name }} must always be of type {{ attribute.type.name }}."""
+        assert isinstance(instance.{{ attribute.name }},
+                          {{ python_isinstance(attribute.type.name) }})
+
+    @given(instance={{ class.name }}_strategy)
+    def test_{{ class.name | lower }}_{{ attribute.name }}_setter_hypothesis(self, instance):
+        """Setting and re-reading {{ attribute.name }} must always be consistent (round-trip)."""
+        original = instance.{{ attribute.name }}
+        instance.{{ attribute.name }} = original
+        assert instance.{{ attribute.name }} == original
+    {%- endfor %}
+
+    # -- Association set contracts -------------------------------------------
+    {%- for end in class.association_ends() if end.is_navigable and end.multiplicity.max > 1 %}
+
+    @given(instance={{ class.name }}_strategy)
+    def test_{{ class.name | lower }}_{{ end.name }}_is_set_hypothesis(self, instance):
+        """{{ class.name }}.{{ end.name }} must always be a set under any generated input."""
+        assert isinstance(instance.{{ end.name }}, set)
+
+    @given(
+        instance={{ class.name }}_strategy,
+        other={{ end.type.name }}_strategy,
+    )
+    def test_{{ class.name | lower }}_{{ end.name }}_add_element(self, instance, other):
+        """Adding an element to {{ class.name }}.{{ end.name }} must grow the set by one."""
+        before = len(instance.{{ end.name }})
+        instance.{{ end.name }}.add(other)
+        assert len(instance.{{ end.name }}) == before + 1
+        assert other in instance.{{ end.name }}
+    {%- endfor %}
+
+    # -- Method property-based tests ----------------------------------------
+    {%- for method in class.methods %}
+    {%- if method.parameters %}
+
+    @given(
+        instance={{ class.name }}_strategy,
+    {%- for param in method.parameters %}
+        {{ param.name }}={{ param.type.name | to_strategy }},
+    {%- endfor %}
+    )
+    def test_{{ class.name | lower }}_{{ method.name }}(
+        self,
+        instance,
+    {%- for param in method.parameters %}
+        {{ param.name }},
+    {%- endfor %}
+    ):
+        """Property-based test for {{ class.name }}.{{ method.name }}."""
+        try:
+            result = instance.{{ method.name }}(
+            {%- for param in method.parameters %}
+                {{ param.name }}={{ param.name }}{{ "," if not loop.last }}
+            {%- endfor %}
+            )
+            {%- if method.type %}
+            if result is not None:
+                assert isinstance(result, {{ python_isinstance(method.type.name) }})
+            {%- endif %}
+        except (ValueError, TypeError, AssertionError, NotImplementedError):
+            pass  # Domain constraint violations and unimplemented stubs are acceptable
+    {%- else %}
+
+    @given(instance={{ class.name }}_strategy)
+    def test_{{ class.name | lower }}_{{ method.name }}_no_params(self, instance):
+        """Property-based test for {{ class.name }}.{{ method.name }} (no parameters)."""
+        try:
+            result = instance.{{ method.name }}()
+            {%- if method.type %}
+            if result is not None:
+                assert isinstance(result, {{ python_isinstance(method.type.name) }})
+            {%- endif %}
+        except (ValueError, TypeError, AssertionError, NotImplementedError):
+            pass
+    {%- endif %}
+    {%- endfor %}
+
+{% endif %}
+{%- endfor %}

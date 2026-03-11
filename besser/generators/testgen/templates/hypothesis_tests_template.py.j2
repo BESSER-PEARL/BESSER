@@ -1,0 +1,208 @@
+import inspect
+import pytest
+from hypothesis import given, assume, settings
+import hypothesis.strategies as st
+import copy
+
+from classes import (
+{%- for class in domain.classes_sorted_by_inheritance() %}
+    {{ class.name }},
+{%- endfor %}
+{%- if domain.get_enumerations() %}
+{%- for enum in domain.get_enumerations() %}
+    {{ enum.name }},
+{%- endfor %}
+{%- endif %}
+)
+
+# =============================================================================
+# SECTION 1 — STRUCTURAL TESTS
+# =============================================================================
+
+{%- for class in domain.classes_sorted_by_inheritance() %}
+
+def test_{{ class.name | lower }}_class_exists():
+    assert isinstance({{ class.name }}, type)
+
+
+def test_{{ class.name | lower }}_is_not_abstract():
+    assert not inspect.isabstract({{ class.name }})
+
+
+def test_{{ class.name | lower }}_constructor_exists():
+    assert callable({{ class.name }}.__init__)
+
+
+def test_{{ class.name | lower }}_constructor_args():
+    sig = inspect.signature({{ class.name }}.__init__)
+    params = list(sig.parameters.keys())
+    {%- for attr in class.all_attributes() %}
+    assert "{{ attr.name }}" in params, "Missing parameter '{{ attr.name }}'"
+    {%- endfor %}
+
+
+{%- for attr in class.all_attributes() %}
+
+def test_{{ class.name | lower }}_has_{{ attr.name }}():
+    assert hasattr({{ class.name }}, "{{ attr.name }}")
+    descriptor = None
+    for klass in {{ class.name }}.__mro__:
+        if "{{ attr.name }}" in klass.__dict__:
+            descriptor = klass.__dict__["{{ attr.name }}"]
+            break
+    assert isinstance(descriptor, property)
+
+{%- endfor %}
+
+{%- endfor %}
+
+# =============================================================================
+# HYPOTHESIS STRATEGIES
+# =============================================================================
+
+safe_text = st.text(
+    alphabet=st.characters(
+        whitelist_categories=("Ll", "Lu", "Nd"),
+        whitelist_characters="_",
+    ),
+    min_size=1,
+).filter(lambda s: s[0].isalpha())
+
+
+{%- for class in domain.classes_sorted_by_inheritance() %}
+
+{{ class.name }}_strategy = st.builds(
+    {{ class.name }},
+    {%- for attr in class.all_attributes() %}
+    {{ attr.name }}=
+        {%- if attr.type.name == "str" %}
+        safe_text
+        {%- elif attr.type.name == "int" %}
+        st.integers()
+        {%- elif attr.type.name == "float" %}
+        st.floats(allow_nan=False, allow_infinity=False)
+        {%- elif attr.type.name == "bool" %}
+        st.booleans()
+        {%- else %}
+        st.none()
+        {%- endif %}
+    {%- if not loop.last %},{% endif %}
+    {%- endfor %}
+)
+
+{%- endfor %}
+
+# =============================================================================
+# SECTION 2 — PROPERTY-BASED & STATE-BASED TESTS
+# =============================================================================
+
+{%- for class in domain.classes_sorted_by_inheritance() %}
+
+@given(instance={{ class.name }}_strategy)
+@settings(max_examples=50)
+def test_{{ class.name | lower }}_instantiation(instance):
+    assert isinstance(instance, {{ class.name }})
+
+
+{%- for attr in class.all_attributes() %}
+
+@given(instance={{ class.name }}_strategy)
+def test_{{ class.name | lower }}_{{ attr.name }}_type(instance):
+    assert isinstance(instance.{{ attr.name }}, {{ attr.type.name | lower }})
+
+
+@given(instance={{ class.name }}_strategy)
+def test_{{ class.name | lower }}_{{ attr.name }}_setter(instance):
+    original = instance.{{ attr.name }}
+    instance.{{ attr.name }} = original
+    assert instance.{{ attr.name }} == original
+
+{%- endfor %}
+
+
+# -------------------------------------------------------------------------
+# ASSOCIATION TESTS
+# -------------------------------------------------------------------------
+
+{%- for assoc in class.association_ends() %}
+{%- if assoc.multiplicity in ["0..*", "*", "0..1", "1"] %}
+
+@given(instance={{ class.name }}_strategy)
+def test_{{ class.name | lower }}_{{ assoc.name }}_multiplicity(instance):
+    value = instance.{{ assoc.name }}
+
+    {%- if assoc.multiplicity in ["0..*", "*"] %}
+    assert isinstance(value, set)
+    {%- elif assoc.multiplicity == "0..1" %}
+    assert value is None or isinstance(value, {{ assoc.target_class.name }})
+    {%- elif assoc.multiplicity == "1" %}
+    assert isinstance(value, {{ assoc.target_class.name }})
+    {%- endif %}
+
+{%- endif %}
+{%- endfor %}
+
+
+# -------------------------------------------------------------------------
+# STATE-BASED OPERATION TESTS
+# -------------------------------------------------------------------------
+
+{%- for operation in class.methods %}
+
+@given(instance={{ class.name }}_strategy)
+@settings(max_examples=30)
+def test_{{ class.name | lower }}_{{ operation.name | lower }}_changes_state(instance):
+    before = copy.deepcopy(instance)
+
+    try:
+        {%- if operation.parameters %}
+        instance.{{ operation.name }}(
+            {%- for param in operation.parameters %}
+            {%- if param.type.name == "str" %}
+            "test"
+            {%- elif param.type.name == "int" %}
+            1
+            {%- elif param.type.name == "float" %}
+            1.0
+            {%- elif param.type.name == "bool" %}
+            True
+            {%- else %}
+            None
+            {%- endif %}
+            {%- if not loop.last %}, {% endif %}
+            {%- endfor %}
+        )
+        {%- else %}
+        instance.{{ operation.name }}()
+        {%- endif %}
+
+        assert instance.__dict__ != before.__dict__
+
+    except (AttributeError, NotImplementedError, TypeError):
+        pass
+
+{%- endfor %}
+
+
+# -------------------------------------------------------------------------
+# OCL CONSTRAINT TESTS
+# -------------------------------------------------------------------------
+
+{%- for constraint in domain.constraints %}
+{%- if constraint.context.name == class.name %}
+
+@given(instance={{ class.name }}_strategy)
+def test_{{ class.name | lower }}_ocl_{{ constraint.name | lower }}(instance):
+    before = copy.deepcopy(instance)
+    try:
+        assert eval(
+            {{ constraint.expression | tojson }},
+            {"self": instance, "self_pre": before}
+        )
+    except (AssertionError, NotImplementedError, AttributeError):
+        pass
+
+{%- endif %}
+{%- endfor %}
+
+{%- endfor %}

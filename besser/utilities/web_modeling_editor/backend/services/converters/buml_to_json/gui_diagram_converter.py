@@ -48,11 +48,13 @@ from besser.BUML.metamodel.gui.events_actions import (
     Create,
     Delete,
     Event,
+    Parameter,
     Read,
     Transition,
     Update,
 )
-from besser.BUML.metamodel.gui.style import Alignment, Layout, LayoutType, PositionType, Styling
+from besser.BUML.metamodel.gui.graphical_ui import InputFieldType
+from besser.BUML.metamodel.gui.style import Alignment, Color, Layout, LayoutType, Position, PositionType, Size, Styling, UnitSize
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -120,7 +122,7 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
             "True": True,
             "False": False,
             "None": None,
-            "print": print,
+            "print": lambda *a, **kw: None,  # no-op to prevent info leakage
         },
         "GUIModel": GUIModel,
         "Module": Module,
@@ -154,21 +156,44 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         "Update": Update,
         "Delete": Delete,
         "Event": Event,
+        "Parameter": Parameter,
         "DataBinding": DataBinding,
         "Styling": Styling,
+        "Size": Size,
+        "Position": Position,
+        "Color": Color,
+        "UnitSize": UnitSize,
         "Layout": Layout,
         "LayoutType": LayoutType,
         "Alignment": Alignment,
         "PositionType": PositionType,
+        "InputFieldType": InputFieldType,
         "domain_model": None,
         "set": set,
         "list": list,
         "tuple": tuple,
         "dict": dict,
     }
+    # Strip import lines -- all required types are in safe_globals already.
+    # Handle multi-line imports (e.g. from ... import (\n    ...\n))
+    cleaned_lines = []
+    in_import_block = False
+    for line in content.splitlines():
+        stripped = line.lstrip()
+        if in_import_block:
+            if ")" in line:
+                in_import_block = False
+            continue
+        if stripped.startswith(("import ", "from ")):
+            if "(" in line and ")" not in line:
+                in_import_block = True
+            continue
+        cleaned_lines.append(line)
+    cleaned_content = "\n".join(cleaned_lines)
+
     local_vars: Dict[str, Any] = {}
     try:
-        exec(content, safe_globals, local_vars)
+        exec(cleaned_content, safe_globals, local_vars)
     except Exception as exc:
         raise ValueError(f"Failed to execute GUI BUML content: {exc}") from exc
     gui_candidates = [

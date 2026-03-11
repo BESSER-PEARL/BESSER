@@ -11,6 +11,7 @@ from . import (
     process_class_diagram,
     process_object_diagram,
     process_agent_diagram,
+    process_state_machine,
 )
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.structural.structural import Metadata
@@ -181,10 +182,16 @@ def json_to_buml_project(project):
         quantum_model = process_quantum_diagram(quantum_diag.model_dump())
         model_list.append(quantum_model)
 
-    # ── StateMachineDiagrams ──────────────────────────────────────────
-    # Note: StateMachineDiagram processing produces code strings (not model
-    # objects) and is handled separately in the backend endpoints.  We do not
-    # add them to model_list here.
+    # ── Process ALL StateMachineDiagrams ────────────────────────────────
+    for sm_diag in diagrams.get("StateMachineDiagram", []):
+        try:
+            sm_model = process_state_machine(sm_diag.model_dump())
+            model_list.append(sm_model)
+        except Exception as e:
+            logger.warning(
+                "StateMachineDiagram '%s' could not be processed: %s",
+                getattr(sm_diag, "title", "unknown"), e,
+            )
 
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the

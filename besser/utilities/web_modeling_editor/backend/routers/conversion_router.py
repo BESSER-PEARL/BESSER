@@ -31,6 +31,7 @@ from besser.utilities.kg_to_buml import kg_to_buml
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.project_builder import project_to_code
+from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -90,21 +91,11 @@ router = APIRouter(prefix="/besser_api", tags=["conversion"])
 async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     try:
         buml_project = json_to_buml_project(input_data)
-        state_machine = input_data.get_active_diagram("StateMachineDiagram")
-
-        state_machine_code = ""
-        if (
-            state_machine is not None
-            and hasattr(state_machine, "model")
-            and state_machine.model
-            and state_machine.model.get("elements")
-        ):
-            state_machine_code = process_state_machine(state_machine.model_dump())
 
         temp_dir = tempfile.mkdtemp(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_")
         try:
             output_file_path = os.path.join(temp_dir, "project.py")
-            project_to_code(project=buml_project, file_path=output_file_path, sm=state_machine_code)
+            project_to_code(project=buml_project, file_path=output_file_path)
             with open(output_file_path, "r", encoding="utf-8") as f:
                 file_content = f.read()
             return Response(
@@ -129,13 +120,11 @@ async def export_buml(input_data: DiagramInput):
         json_data = input_data.model_dump()
         elements_data = input_data.model
         if elements_data.get("type") == "StateMachineDiagram":
-            state_machine_code = process_state_machine(json_data)
+            state_machine = process_state_machine(json_data)
             output_file_path = os.path.join(temp_dir, "state_machine.py")
-            with open(output_file_path, "w") as f:
-                f.write(state_machine_code)
+            state_machine_to_code(model=state_machine, file_path=output_file_path)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
-            shutil.rmtree(temp_dir, ignore_errors=True)
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -150,7 +139,6 @@ async def export_buml(input_data: DiagramInput):
             domain_model_to_code(model=buml_model, file_path=output_file_path)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
-            shutil.rmtree(temp_dir, ignore_errors=True)
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -174,7 +162,6 @@ async def export_buml(input_data: DiagramInput):
             domain_model_to_code(model=buml_model, file_path=output_file_path, objectmodel=object_model)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
-            shutil.rmtree(temp_dir, ignore_errors=True)
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -187,7 +174,6 @@ async def export_buml(input_data: DiagramInput):
             agent_model_to_code(agent_model, output_file_path)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
-            shutil.rmtree(temp_dir, ignore_errors=True)
             return Response(
                 content=file_content,
                 media_type="text/plain",
@@ -202,15 +188,11 @@ async def export_buml(input_data: DiagramInput):
             )
 
     except HTTPException as e:
-        # Handle known exceptions with specific status codes
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
         raise e
     except Exception as e:
-        # Handle unexpected exceptions
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @router.post("/get-project-json-model", response_model=ProjectExportResponse)

@@ -1,17 +1,418 @@
 """
 State machine conversion from BUML to JSON format.
+
+Provides two entry points:
+- ``state_machine_object_to_json(sm)`` - converts a StateMachine metamodel object directly
+- ``state_machine_to_json(content)`` - legacy: AST-parses a Python code string (for file import)
 """
 
 import uuid
+import re
 import ast
+from besser.BUML.metamodel.state_machine.state_machine import (
+    StateMachine, State, Body, Event, CustomCodeAction,
+)
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
 )
 
 
+def _sanitize_identifier(name: str) -> str:
+    """Sanitize a string to be a valid Python identifier."""
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
+    return sanitized or 'unnamed'
+
+
+def state_machine_object_to_json(sm: StateMachine) -> dict:
+    """Convert a StateMachine metamodel instance to JSON format matching the frontend structure.
+
+    This is the preferred converter that works directly from the metamodel object,
+    avoiding the need to generate and re-parse Python code strings.
+
+    Args:
+        sm: A StateMachine metamodel instance.
+
+    Returns:
+        Dictionary in the frontend JSON format for state machine diagrams.
+    """
+    elements = {}
+    relationships = {}
+
+    default_size = {"width": 1980, "height": 640}
+
+    # Track positions for layout
+    states_x = -550
+    states_y = -300
+    code_blocks_x = -970
+    code_blocks_y = 80
+
+    # Create initial node
+    initial_node_id = str(uuid.uuid4())
+    elements[initial_node_id] = {
+        "id": initial_node_id,
+        "name": "",
+        "type": "StateInitialNode",
+        "owner": None,
+        "bounds": {"x": states_x - 300, "y": states_y + 20, "width": 45, "height": 45},
+    }
+
+    # Collect all unique Body and Event objects for code blocks
+    all_bodies = {}  # name -> Body
+    all_events = {}  # name -> Event
+    state_id_map = {}  # State object -> element_id
+    state_var_map = {}  # State object -> variable name (sanitized)
+
+    for state in sm.states:
+        if state.body and state.body.name not in all_bodies:
+            all_bodies[state.body.name] = state.body
+        if state.fallback_body and state.fallback_body.name not in all_bodies:
+            all_bodies[state.fallback_body.name] = state.fallback_body
+        for transition in state.transitions:
+            if transition.event and transition.event.name not in all_events:
+                all_events[transition.event.name] = transition.event
+
+    # Create code block elements for functions
+    created_code_blocks = {}  # function name -> {"id": ..., "source": ...}
+
+    # Process bodies
+    for name, body in all_bodies.items():
+        if name in created_code_blocks:
+            continue
+        source_code = ""
+        for action in body.actions:
+            if isinstance(action, CustomCodeAction):
+                source_code = action.code
+                break
+        if not source_code and body.code:
+            source_code = body.code
+
+        if source_code:
+            code_block_id = str(uuid.uuid4())
+            cleaned_source = "\n".join(
+                line.rstrip() for line in source_code.splitlines() if line.strip()
+            )
+            elements[code_block_id] = {
+                "id": code_block_id,
+                "name": name,
+                "type": "StateCodeBlock",
+                "owner": None,
+                "bounds": {
+                    "x": code_blocks_x,
+                    "y": code_blocks_y,
+                    "width": 580,
+                    "height": 200,
+                },
+                "code": cleaned_source,
+                "language": "python",
+            }
+            created_code_blocks[name] = {"id": code_block_id, "source": cleaned_source}
+            code_blocks_x += 610
+
+    # Process events
+    for name, event in all_events.items():
+        if name in created_code_blocks:
+            continue
+        source_code = getattr(event, '_source_code', "")
+        if source_code:
+            code_block_id = str(uuid.uuid4())
+            cleaned_source = "\n".join(
+                line.rstrip() for line in source_code.splitlines() if line.strip()
+            )
+            elements[code_block_id] = {
+                "id": code_block_id,
+                "name": name,
+                "type": "StateCodeBlock",
+                "owner": None,
+                "bounds": {
+                    "x": code_blocks_x,
+                    "y": code_blocks_y,
+                    "width": 580,
+                    "height": 200,
+                },
+                "code": cleaned_source,
+                "language": "python",
+            }
+            created_code_blocks[name] = {"id": code_block_id, "source": cleaned_source}
+            code_blocks_x += 610
+
+    # Create state elements
+    for state in sm.states:
+        state_id = str(uuid.uuid4())
+        state_id_map[state] = state_id
+        state_var_map[state] = _sanitize_identifier(state.name)
+
+        elements[state_id] = {
+            "id": state_id,
+            "name": state.name,
+            "type": "State",
+            "owner": None,
+            "bounds": {
+                "x": states_x,
+                "y": states_y,
+                "width": 160,
+                "height": 100,
+            },
+            "bodies": [],
+            "fallbackBodies": [],
+        }
+
+        if states_x < 200:
+            states_x += 490
+        else:
+            states_x = -280
+            states_y += 220
+
+    # Add initial node transition
+    for state in sm.states:
+        if state.initial:
+            state_id = state_id_map[state]
+            initial_rel_id = str(uuid.uuid4())
+            relationships[initial_rel_id] = {
+                "id": initial_rel_id,
+                "name": "",
+                "type": "StateTransition",
+                "owner": None,
+                "source": {
+                    "direction": "Right",
+                    "element": initial_node_id,
+                    "bounds": {
+                        "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "target": {
+                    "direction": "Left",
+                    "element": state_id,
+                    "bounds": {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[state_id]["bounds"]["y"] + 35,
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "bounds": {
+                    "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                    "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    "width": elements[state_id]["bounds"]["x"]
+                    - (elements[initial_node_id]["bounds"]["x"] + 45),
+                    "height": 1,
+                },
+                "path": [
+                    {
+                        "x": elements[initial_node_id]["bounds"]["x"] + 45,
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    },
+                    {
+                        "x": elements[state_id]["bounds"]["x"],
+                        "y": elements[initial_node_id]["bounds"]["y"] + 22.5,
+                    },
+                ],
+                "isManuallyLayouted": False,
+            }
+            break  # Only one initial state
+
+    # Process state bodies and fallback bodies
+    for state in sm.states:
+        state_id = state_id_map[state]
+
+        if state.body and state.body.name in created_code_blocks:
+            body_id = str(uuid.uuid4())
+            elements[body_id] = {
+                "id": body_id,
+                "name": state.body.name,
+                "type": "StateBody",
+                "owner": state_id,
+                "bounds": {
+                    "x": elements[state_id]["bounds"]["x"] + 0.5,
+                    "y": elements[state_id]["bounds"]["y"] + 40.5,
+                    "width": 159,
+                    "height": 30,
+                },
+            }
+            elements[state_id]["bodies"].append(body_id)
+
+        if state.fallback_body and state.fallback_body.name in created_code_blocks:
+            fallback_id = str(uuid.uuid4())
+            elements[fallback_id] = {
+                "id": fallback_id,
+                "name": state.fallback_body.name,
+                "type": "StateFallbackBody",
+                "owner": state_id,
+                "bounds": {
+                    "x": elements[state_id]["bounds"]["x"] + 0.5,
+                    "y": elements[state_id]["bounds"]["y"] + 70.5,
+                    "width": 159,
+                    "height": 30,
+                },
+            }
+            elements[state_id]["fallbackBodies"].append(fallback_id)
+
+    # Create transitions
+    for state in sm.states:
+        source_id = state_id_map[state]
+        for transition in state.transitions:
+            if not transition.event:
+                continue
+
+            dest_id = state_id_map.get(transition.dest)
+            if not dest_id:
+                continue
+
+            rel_id = str(uuid.uuid4())
+            source_element = elements[source_id]
+            target_element = elements[dest_id]
+
+            source_dir, target_dir = determine_connection_direction(
+                source_element["bounds"], target_element["bounds"]
+            )
+            source_point = calculate_connection_points(source_element["bounds"], source_dir)
+            target_point = calculate_connection_points(target_element["bounds"], target_dir)
+            path_points = calculate_path_points(source_point, target_point, source_dir, target_dir)
+            rel_bounds = calculate_relationship_bounds(path_points)
+
+            event_var = _sanitize_identifier(transition.event.name)
+
+            relationships[rel_id] = {
+                "id": rel_id,
+                "name": event_var,
+                "type": "StateTransition",
+                "owner": None,
+                "bounds": rel_bounds,
+                "path": path_points,
+                "source": {
+                    "direction": source_dir,
+                    "element": source_id,
+                    "bounds": {
+                        "x": source_point["x"],
+                        "y": source_point["y"],
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "target": {
+                    "direction": target_dir,
+                    "element": dest_id,
+                    "bounds": {
+                        "x": target_point["x"],
+                        "y": target_point["y"],
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "isManuallyLayouted": False,
+            }
+
+            # Add event_params if present
+            event_params = getattr(transition, '_event_params', None)
+            if event_params:
+                relationships[rel_id]["params"] = str(event_params)
+
+    # Position for comments
+    comment_x = -970
+    comment_y = -300
+
+    # Create comment elements from metadata
+    if sm.metadata and sm.metadata.description:
+        comment_id = str(uuid.uuid4())
+        elements[comment_id] = {
+            "id": comment_id,
+            "name": sm.metadata.description,
+            "type": "Comments",
+            "owner": None,
+            "bounds": {
+                "x": comment_x,
+                "y": comment_y,
+                "width": 200,
+                "height": 100,
+            },
+        }
+        comment_y += 130
+
+    # State comments (linked to states)
+    for state in sm.states:
+        if state.metadata and state.metadata.description:
+            comment_id = str(uuid.uuid4())
+            state_id = state_id_map[state]
+
+            elements[comment_id] = {
+                "id": comment_id,
+                "name": state.metadata.description,
+                "type": "Comments",
+                "owner": None,
+                "bounds": {
+                    "x": comment_x,
+                    "y": comment_y,
+                    "width": 200,
+                    "height": 100,
+                },
+            }
+
+            link_id = str(uuid.uuid4())
+            source_element = elements[comment_id]
+            target_element = elements[state_id]
+
+            source_dir, target_dir = determine_connection_direction(
+                source_element["bounds"], target_element["bounds"]
+            )
+            source_point = calculate_connection_points(source_element["bounds"], source_dir)
+            target_point = calculate_connection_points(target_element["bounds"], target_dir)
+            path_points = calculate_path_points(source_point, target_point, source_dir, target_dir)
+            rel_bounds = calculate_relationship_bounds(path_points)
+
+            relationships[link_id] = {
+                "id": link_id,
+                "name": "",
+                "type": "Link",
+                "owner": None,
+                "bounds": rel_bounds,
+                "path": path_points,
+                "source": {
+                    "direction": source_dir,
+                    "element": comment_id,
+                    "bounds": {
+                        "x": source_point["x"],
+                        "y": source_point["y"],
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "target": {
+                    "direction": target_dir,
+                    "element": state_id,
+                    "bounds": {
+                        "x": target_point["x"],
+                        "y": target_point["y"],
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "isManuallyLayouted": False,
+            }
+
+            comment_y += 130
+
+    return {
+        "version": "3.0.0",
+        "type": "StateMachineDiagram",
+        "size": default_size,
+        "interactive": {"elements": {}, "relationships": {}},
+        "elements": elements,
+        "relationships": relationships,
+        "assessments": {},
+    }
+
+
 def state_machine_to_json(content: str):
-    """Convert a state machine Python file content to JSON format matching the frontend structure."""
+    """Convert a state machine Python file content to JSON format matching the frontend structure.
+
+    This is the legacy entry point that AST-parses a Python code string. It is still
+    used for file-import scenarios (e.g. ``/get-json-model`` endpoint). For converting
+    a StateMachine metamodel object, use ``state_machine_object_to_json`` instead.
+    """
 
     elements = {}
     relationships = {}

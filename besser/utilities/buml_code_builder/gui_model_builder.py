@@ -146,11 +146,11 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
                 if hasattr(screen, 'route_path') and screen.route_path:
                     screen_params.append(f'route_path="{_escape_string(screen.route_path)}"')
                 if hasattr(screen, 'x_dpi') and screen.x_dpi:
-                    screen_params.append(f'x_dpi="{screen.x_dpi}"')
+                    screen_params.append(f'x_dpi="{_escape_string(screen.x_dpi)}"')
                 if hasattr(screen, 'y_dpi') and screen.y_dpi:
-                    screen_params.append(f'y_dpi="{screen.y_dpi}"')
+                    screen_params.append(f'y_dpi="{_escape_string(screen.y_dpi)}"')
                 if hasattr(screen, 'screen_size') and screen.screen_size:
-                    screen_params.append(f'screen_size="{screen.screen_size}"')
+                    screen_params.append(f'screen_size="{_escape_string(screen.screen_size)}"')
                 
                 f.write(f"{screen_var} = Screen({', '.join(screen_params)})\n")
                 
@@ -305,14 +305,14 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
                     child_vars.append(child_var)
             
             children_str = f'{{{", ".join(child_vars)}}}' if child_vars else 'set()'
-            f.write(f'{comp_var} = ViewContainer(name="{component.name}", description="{component.description or ""}", view_elements={children_str})\n')
+            f.write(f'{comp_var} = ViewContainer(name="{_escape_string(component.name)}", description="{_escape_string(component.description or "")}", view_elements={children_str})\n')
             
             if hasattr(component, 'layout') and component.layout:
                 layout_var = _write_layout(f, component.layout, created_vars, f"{comp_var}_layout")
                 f.write(f'{comp_var}.layout = {layout_var}\n')
         else:
             # Simple ViewComponent with no children
-            f.write(f'{comp_var} = ViewComponent(name="{component.name}", description="{component.description or ""}")\n')
+            f.write(f'{comp_var} = ViewComponent(name="{_escape_string(component.name)}", description="{_escape_string(component.description or "")}")\n')
     
     # Write styling if present
     if hasattr(component, 'styling') and component.styling:
@@ -443,27 +443,27 @@ def _write_action(f, var_name, action, created_vars):
         f.write(f'{var_name} = Transition(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_screen={target_screen}{params_code})\n')
 
     elif isinstance(action, Create):
-        target_class = 'None  # TODO: Set target_class reference'
+        target_class = 'None'
         if hasattr(action, 'target_class') and action.target_class:
-            target_class = f'# {action.target_class.name}'
+            target_class = safe_class_name(action.target_class.name)
         f.write(f'{var_name} = Create(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
 
     elif isinstance(action, Read):
-        target_class = 'None  # TODO: Set target_class reference'
+        target_class = 'None'
         if hasattr(action, 'target_class') and action.target_class:
-            target_class = f'# {action.target_class.name}'
+            target_class = safe_class_name(action.target_class.name)
         f.write(f'{var_name} = Read(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
 
     elif isinstance(action, Update):
-        target_class = 'None  # TODO: Set target_class reference'
+        target_class = 'None'
         if hasattr(action, 'target_class') and action.target_class:
-            target_class = f'# {action.target_class.name}'
+            target_class = safe_class_name(action.target_class.name)
         f.write(f'{var_name} = Update(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
 
     elif isinstance(action, Delete):
-        target_class = 'None  # TODO: Set target_class reference'
+        target_class = 'None'
         if hasattr(action, 'target_class') and action.target_class:
-            target_class = f'# {action.target_class.name}'
+            target_class = safe_class_name(action.target_class.name)
         f.write(f'{var_name} = Delete(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
 
 
@@ -594,16 +594,16 @@ def _write_line_chart(f, var_name, chart):
     if hasattr(chart, 'show_tooltip'):
         params.append(f'show_tooltip={chart.show_tooltip}')
     if hasattr(chart, 'curve_type'):
-        params.append(f'curve_type="{chart.curve_type}"')
+        params.append(f'curve_type="{_escape_string(chart.curve_type)}"')
     if hasattr(chart, 'animate'):
         params.append(f'animate={chart.animate}')
     if hasattr(chart, 'legend_position'):
-        params.append(f'legend_position="{chart.legend_position}"')
+        params.append(f'legend_position="{_escape_string(chart.legend_position)}"')
     if hasattr(chart, 'grid_color'):
-        params.append(f'grid_color="{chart.grid_color}"')
+        params.append(f'grid_color="{_escape_string(chart.grid_color)}"')
     if hasattr(chart, 'dot_size'):
         params.append(f'dot_size={chart.dot_size}')
-    
+
     f.write(f'{var_name} = LineChart({", ".join(params)})\n')
     
     # Write data binding if present
@@ -621,7 +621,7 @@ def _write_bar_chart(f, var_name, chart):
     if hasattr(chart, 'bar_width'):
         params.append(f'bar_width={chart.bar_width}')
     if hasattr(chart, 'orientation'):
-        params.append(f'orientation="{chart.orientation}"')
+        params.append(f'orientation="{_escape_string(chart.orientation)}"')
     if hasattr(chart, 'show_grid'):
         params.append(f'show_grid={chart.show_grid}')
     if hasattr(chart, 'show_legend'):
@@ -633,12 +633,12 @@ def _write_bar_chart(f, var_name, chart):
     if hasattr(chart, 'animate'):
         params.append(f'animate={chart.animate}')
     if hasattr(chart, 'legend_position'):
-        params.append(f'legend_position="{chart.legend_position}"')
+        params.append(f'legend_position="{_escape_string(chart.legend_position)}"')
     if hasattr(chart, 'grid_color'):
-        params.append(f'grid_color="{chart.grid_color}"')
+        params.append(f'grid_color="{_escape_string(chart.grid_color)}"')
     if hasattr(chart, 'bar_gap'):
         params.append(f'bar_gap={chart.bar_gap}')
-    
+
     f.write(f'{var_name} = BarChart({", ".join(params)})\n')
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
@@ -691,14 +691,14 @@ def _write_radar_chart(f, var_name, chart):
     if hasattr(chart, 'show_legend'):
         params.append(f'show_legend={chart.show_legend}')
     if hasattr(chart, 'legend_position'):
-        params.append(f'legend_position="{chart.legend_position}"')
+        params.append(f'legend_position="{_escape_string(chart.legend_position)}"')
     if hasattr(chart, 'dot_size'):
         params.append(f'dot_size={chart.dot_size}')
     if hasattr(chart, 'grid_type'):
-        params.append(f'grid_type="{chart.grid_type}"')
+        params.append(f'grid_type="{_escape_string(chart.grid_type)}"')
     if hasattr(chart, 'stroke_width'):
         params.append(f'stroke_width={chart.stroke_width}')
-    
+
     f.write(f'{var_name} = RadarChart({", ".join(params)})\n')
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
@@ -722,10 +722,10 @@ def _write_radial_bar_chart(f, var_name, chart):
     if hasattr(chart, 'show_legend'):
         params.append(f'show_legend={chart.show_legend}')
     if hasattr(chart, 'legend_position'):
-        params.append(f'legend_position="{chart.legend_position}"')
+        params.append(f'legend_position="{_escape_string(chart.legend_position)}"')
     if hasattr(chart, 'show_tooltip'):
         params.append(f'show_tooltip={chart.show_tooltip}')
-    
+
     f.write(f'{var_name} = RadialBarChart({", ".join(params)})\n')
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
@@ -778,7 +778,7 @@ def _write_container(f, var_name, container, created_vars, pending_button_events
     
     # Create ViewContainer with view_elements as required parameter
     children_str = f'{{{", ".join(child_vars)}}}' if child_vars else 'set()'
-    f.write(f'{var_name} = ViewContainer(name="{container.name}", description="{container.description or ""}", view_elements={children_str})\n')
+    f.write(f'{var_name} = ViewContainer(name="{_escape_string(container.name)}", description="{_escape_string(container.description or "")}", view_elements={children_str})\n')
     
     # Write styling if present
     if hasattr(container, 'styling') and container.styling:
@@ -832,17 +832,17 @@ def _write_styling(f, component_var, styling, created_vars):
     if hasattr(styling, 'size') and styling.size:
         size_params = []
         if hasattr(styling.size, 'width') and styling.size.width:
-            size_params.append(f'width="{styling.size.width}"')
+            size_params.append(f'width="{_escape_string(styling.size.width)}"')
         if hasattr(styling.size, 'height') and styling.size.height:
-            size_params.append(f'height="{styling.size.height}"')
+            size_params.append(f'height="{_escape_string(styling.size.height)}"')
         if hasattr(styling.size, 'padding') and styling.size.padding:
-            size_params.append(f'padding="{styling.size.padding}"')
+            size_params.append(f'padding="{_escape_string(styling.size.padding)}"')
         if hasattr(styling.size, 'margin') and styling.size.margin:
-            size_params.append(f'margin="{styling.size.margin}"')
+            size_params.append(f'margin="{_escape_string(styling.size.margin)}"')
         if hasattr(styling.size, 'font_size') and styling.size.font_size:
-            size_params.append(f'font_size="{styling.size.font_size}"')
+            size_params.append(f'font_size="{_escape_string(styling.size.font_size)}"')
         if hasattr(styling.size, 'line_height') and styling.size.line_height:
-            size_params.append(f'line_height="{styling.size.line_height}"')
+            size_params.append(f'line_height="{_escape_string(styling.size.line_height)}"')
         if hasattr(styling.size, 'unit_size') and styling.size.unit_size:
             size_params.append(f'unit_size=UnitSize.{styling.size.unit_size.name}')
         
@@ -881,15 +881,15 @@ def _write_styling(f, component_var, styling, created_vars):
                     if mapped:
                         pos_params.append(f'alignment=Alignment.{mapped}')
                     else:
-                        pos_params.append(f'alignment="{alignment_val}"')
+                        pos_params.append(f'alignment="{_escape_string(alignment_val)}"')
         if hasattr(styling.position, 'top') and styling.position.top:
-            pos_params.append(f'top="{styling.position.top}"')
+            pos_params.append(f'top="{_escape_string(styling.position.top)}"')
         if hasattr(styling.position, 'left') and styling.position.left:
-            pos_params.append(f'left="{styling.position.left}"')
+            pos_params.append(f'left="{_escape_string(styling.position.left)}"')
         if hasattr(styling.position, 'right') and styling.position.right:
-            pos_params.append(f'right="{styling.position.right}"')
+            pos_params.append(f'right="{_escape_string(styling.position.right)}"')
         if hasattr(styling.position, 'bottom') and styling.position.bottom:
-            pos_params.append(f'bottom="{styling.position.bottom}"')
+            pos_params.append(f'bottom="{_escape_string(styling.position.bottom)}"')
         if hasattr(styling.position, 'z_index') and styling.position.z_index is not None:
             pos_params.append(f'z_index={styling.position.z_index}')
         if hasattr(styling.position, 'p_type') and styling.position.p_type:
@@ -906,13 +906,13 @@ def _write_styling(f, component_var, styling, created_vars):
     if hasattr(styling, 'color') and styling.color:
         color_params = []
         if hasattr(styling.color, 'background_color') and styling.color.background_color:
-            color_params.append(f'background_color="{styling.color.background_color}"')
+            color_params.append(f'background_color="{_escape_string(styling.color.background_color)}"')
         if hasattr(styling.color, 'text_color') and styling.color.text_color:
-            color_params.append(f'text_color="{styling.color.text_color}"')
+            color_params.append(f'text_color="{_escape_string(styling.color.text_color)}"')
         if hasattr(styling.color, 'border_color') and styling.color.border_color:
-            color_params.append(f'border_color="{styling.color.border_color}"')
+            color_params.append(f'border_color="{_escape_string(styling.color.border_color)}"')
         if hasattr(styling.color, 'opacity') and styling.color.opacity:
-            color_params.append(f'opacity="{styling.color.opacity}"')
+            color_params.append(f'opacity="{_escape_string(styling.color.opacity)}"')
         
         if color_params:
             f.write(f'{color_var} = Color({", ".join(color_params)})\n')
@@ -935,8 +935,8 @@ def _write_styling(f, component_var, styling, created_vars):
 
 def _write_agent_component(f, var_name, agent):
     """Write code for an AgentComponent."""
-    params = [f'name="{agent.name}"']
-    params.append(f'description="{agent.description or ""}"')
+    params = [f'name="{_escape_string(agent.name)}"']
+    params.append(f'description="{_escape_string(agent.description or "")}"')
     
     if hasattr(agent, 'agent_name') and agent.agent_name:
         params.append(f'agent_name="{_escape_string(agent.agent_name)}"')
@@ -958,7 +958,7 @@ def _write_data_binding_assignment(f, var_name, binding):
     # DataBinding requires domain_concept as first parameter, so we need to handle missing domain
     if domain_name:
         escaped_domain = _escape_string(domain_name)
-        f.write("domain_model_ref = globals().get('domain_model')\n")
+        f.write("domain_model_ref = globals().get('domain_model') or next((v for k, v in globals().items() if k.startswith('domain_model') and hasattr(v, 'get_class_by_name')), None)\n")
         f.write(f"{binding_var}_domain = None\n")
         f.write("if domain_model_ref is not None:\n")
         f.write(f"    {binding_var}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
@@ -1005,7 +1005,7 @@ def _update_data_source_element(f, var_name, source):
     if not any([domain_name, field_names, label_name, value_name]):
         return
 
-    f.write("domain_model_ref = globals().get('domain_model')\n")
+    f.write("domain_model_ref = globals().get('domain_model') or next((v for k, v in globals().items() if k.startswith('domain_model') and hasattr(v, 'get_class_by_name')), None)\n")
     f.write(f"{var_name}_domain = None\n")
     if domain_name:
         escaped_domain = _escape_string(domain_name)
@@ -1051,21 +1051,21 @@ def _write_layout(f, layout, created_vars, layout_var):
     if hasattr(layout, 'layout_type') and layout.layout_type:
         params.append(f'layout_type=LayoutType.{layout.layout_type.name}')
     if hasattr(layout, 'flex_direction') and layout.flex_direction:
-        params.append(f'flex_direction="{layout.flex_direction}"')
+        params.append(f'flex_direction="{_escape_string(layout.flex_direction)}"')
     if hasattr(layout, 'justify_content') and layout.justify_content:
-        params.append(f'justify_content="{layout.justify_content}"')
+        params.append(f'justify_content="{_escape_string(layout.justify_content)}"')
     if hasattr(layout, 'align_items') and layout.align_items:
-        params.append(f'align_items="{layout.align_items}"')
+        params.append(f'align_items="{_escape_string(layout.align_items)}"')
     if hasattr(layout, 'flex_wrap') and layout.flex_wrap:
-        params.append(f'flex_wrap="{layout.flex_wrap}"')
+        params.append(f'flex_wrap="{_escape_string(layout.flex_wrap)}"')
     if hasattr(layout, 'grid_template_columns') and layout.grid_template_columns:
-        params.append(f'grid_template_columns="{layout.grid_template_columns}"')
+        params.append(f'grid_template_columns="{_escape_string(layout.grid_template_columns)}"')
     if hasattr(layout, 'grid_template_rows') and layout.grid_template_rows:
-        params.append(f'grid_template_rows="{layout.grid_template_rows}"')
+        params.append(f'grid_template_rows="{_escape_string(layout.grid_template_rows)}"')
     if hasattr(layout, 'grid_gap') and layout.grid_gap:
-        params.append(f'grid_gap="{layout.grid_gap}"')
+        params.append(f'grid_gap="{_escape_string(layout.grid_gap)}"')
     if hasattr(layout, 'gap') and layout.gap:
-        params.append(f'gap="{layout.gap}"')
+        params.append(f'gap="{_escape_string(layout.gap)}"')
     
     if params:
         f.write(f'{layout_var} = Layout({", ".join(params)})\n')

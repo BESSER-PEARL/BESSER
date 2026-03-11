@@ -114,13 +114,24 @@ async def validate_diagram(input_data: DiagramInput):
                     validation_warnings.extend(object_validation.get("warnings", []))
 
             elif diagram_type == "StateMachineDiagram":
-                state_machine_code = process_state_machine(input_data.model_dump())
-                return {
-                    "isValid": True,
-                    "message": "\u2705 State machine diagram is valid",
-                    "errors": [],
-                    "warnings": []
-                }
+                state_machine = process_state_machine(input_data.model_dump())
+
+                # StateMachine does not inherit DomainModel.validate(), so
+                # perform basic structural validation here.
+                if not state_machine.states:
+                    validation_errors.append("State machine has no states.")
+                else:
+                    has_initial = any(s.initial for s in state_machine.states)
+                    if not has_initial:
+                        validation_errors.append("State machine has no initial state.")
+
+                    # Check for duplicate state names
+                    state_names = [s.name for s in state_machine.states]
+                    seen = set()
+                    for sn in state_names:
+                        if sn in seen:
+                            validation_errors.append(f"Duplicate state name: '{sn}'.")
+                        seen.add(sn)
 
             elif diagram_type == "AgentDiagram":
                 agent_model = process_agent_diagram(input_data.model_dump())

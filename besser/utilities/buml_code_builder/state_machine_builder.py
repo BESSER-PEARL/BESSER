@@ -1,0 +1,160 @@
+"""
+State Machine Builder
+
+Generates Python code from a StateMachine metamodel instance.
+The generated code can be exec()'d to recreate the StateMachine.
+"""
+
+import re
+from besser.BUML.metamodel.state_machine.state_machine import (
+    StateMachine, State, Body, Event, Transition, CustomCodeAction,
+)
+from besser.utilities.buml_code_builder.common import _escape_python_string
+
+
+def _sanitize_identifier(name: str) -> str:
+    """Sanitize a string to be a valid Python identifier."""
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
+    return sanitized or 'unnamed'
+
+
+def state_machine_to_code(model: StateMachine, file_path: str = None,
+                          model_var_name: str = "sm") -> str:
+    """
+    Generate Python code from a StateMachine metamodel instance.
+
+    Args:
+        model: The StateMachine instance to convert.
+        file_path: Optional path to write the generated code to.
+        model_var_name: Variable name to use for the state machine (default: "sm").
+
+    Returns:
+        The generated Python code as a string.
+    """
+    code_lines = []
+    code_lines.append("#######################")
+    code_lines.append("# STATE MACHINE MODEL #")
+    code_lines.append("#######################")
+    code_lines.append("")
+    code_lines.append("import datetime")
+    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event")
+    code_lines.append("from besser.BUML.metamodel.structural import Metadata\n")
+
+    sm_name_safe = _escape_python_string(model.name)
+    code_lines.append(f"{model_var_name} = StateMachine(name='{sm_name_safe}')\n")
+
+    # Collect all unique Body and Event objects across all states
+    all_bodies = {}  # name -> Body
+    all_events = {}  # name -> Event
+
+    for state in model.states:
+        if state.body and state.body.name not in all_bodies:
+            all_bodies[state.body.name] = state.body
+        if state.fallback_body and state.fallback_body.name not in all_bodies:
+            all_bodies[state.fallback_body.name] = state.fallback_body
+        for transition in state.transitions:
+            if transition.event and transition.event.name not in all_events:
+                all_events[transition.event.name] = transition.event
+
+    # Write function definitions and Body/Event objects
+    written_code_blocks = set()
+
+    for name, body in all_bodies.items():
+        safe_name = _sanitize_identifier(name)
+        # Extract source code from CustomCodeAction if present
+        source_code = ""
+        for action in body.actions:
+            if isinstance(action, CustomCodeAction):
+                source_code = action.code
+                break
+        if not source_code and body.code:
+            source_code = body.code
+
+        if source_code and name not in written_code_blocks:
+            cleaned_code = "\n".join(line for line in source_code.splitlines() if line.strip())
+            code_lines.append(cleaned_code)
+            code_lines.append("")
+            written_code_blocks.add(name)
+
+        code_lines.append(f"{safe_name} = Body(name='{_escape_python_string(name)}', callable={safe_name})")
+        code_lines.append("")
+
+    for name, event in all_events.items():
+        safe_name = _sanitize_identifier(name)
+        # Check for attached source code (from round-trip)
+        source_code = getattr(event, '_source_code', "")
+
+        if source_code and name not in written_code_blocks:
+            cleaned_code = "\n".join(line for line in source_code.splitlines() if line.strip())
+            code_lines.append(cleaned_code)
+            code_lines.append("")
+            written_code_blocks.add(name)
+            code_lines.append(f"{safe_name} = Event(name='{_escape_python_string(name)}', callable={safe_name})")
+        else:
+            code_lines.append(f"{safe_name} = Event(name='{_escape_python_string(name)}')")
+        code_lines.append("")
+
+    # Create states
+    for state in model.states:
+        safe_state = _sanitize_identifier(state.name)
+        state_name_safe = _escape_python_string(state.name)
+        code_lines.append(
+            f"{safe_state}_state = {model_var_name}.new_state("
+            f"name='{state_name_safe}', initial={state.initial})"
+        )
+    code_lines.append("")
+
+    # Assign bodies to states
+    for state in model.states:
+        safe_state = _sanitize_identifier(state.name)
+        if state.body:
+            safe_body = _sanitize_identifier(state.body.name)
+            code_lines.append(f"{safe_state}_state.set_body(body={safe_body})")
+        if state.fallback_body:
+            safe_fallback = _sanitize_identifier(state.fallback_body.name)
+            code_lines.append(f"{safe_state}_state.set_fallback_body({safe_fallback})")
+    code_lines.append("")
+
+    # Write transitions
+    for state in model.states:
+        safe_source = _sanitize_identifier(state.name)
+        for transition in state.transitions:
+            if transition.event:
+                safe_event = _sanitize_identifier(transition.event.name)
+                safe_dest = _sanitize_identifier(transition.dest.name)
+
+                # Check for event_params (informal attribute from round-trip)
+                event_params = getattr(transition, '_event_params', None)
+                if event_params:
+                    safe_params = _escape_python_string(str(event_params))
+                    params_str = f"event_params={{ {safe_params} }}"
+                else:
+                    params_str = "event_params={}"
+
+                code_lines.append(f"{safe_source}_state.when_event_go_to(")
+                code_lines.append(f"    event={safe_event},")
+                code_lines.append(f"    dest={safe_dest}_state,")
+                code_lines.append(f"    {params_str}")
+                code_lines.append(")")
+
+    # Process metadata/comments
+    for state in model.states:
+        if state.metadata and state.metadata.description:
+            safe_state = _sanitize_identifier(state.name)
+            escaped_comment = _escape_python_string(state.metadata.description)
+            code_lines.append(f"{safe_state}_state.metadata = Metadata(description='{escaped_comment}')")
+
+    if model.metadata and model.metadata.description:
+        escaped_comment = _escape_python_string(model.metadata.description)
+        code_lines.append(f"{model_var_name}.metadata = Metadata(description='{escaped_comment}')")
+
+    code_lines.append("")
+
+    result = "\n".join(code_lines)
+
+    if file_path:
+        with open(file_path, 'w', encoding='utf-8') as f:
+            f.write(result)
+
+    return result

@@ -1,10 +1,16 @@
 """
 State machine processing for converting JSON to BUML format.
+
+Returns a StateMachine metamodel instance (not a code string).
 """
 
 import logging
 import re
 
+from besser.BUML.metamodel.state_machine.state_machine import (
+    StateMachine, State, Body, Event, Transition, CustomCodeAction,
+)
+from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
 logger = logging.getLogger(__name__)
@@ -21,26 +27,23 @@ def _sanitize_identifier(name: str) -> str:
     return sanitized or 'unnamed'
 
 
-def _safe_string(value: str) -> str:
-    """Escape a value for safe inclusion inside a Python single-quoted string."""
-    return value.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
-
-
 def process_state_machine(json_data):
-    """Process State Machine Diagram specific elements and return Python code as string."""
-    code_lines = []
-    code_lines.append("#######################")
-    code_lines.append("# STATE MACHINE MODEL #")
-    code_lines.append("#######################")
-    code_lines.append("")
-    code_lines.append("import datetime")
-    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event")
-    code_lines.append("from besser.BUML.metamodel.structural import Metadata\n")
+    """Process State Machine Diagram specific elements and return a StateMachine instance.
+
+    Args:
+        json_data: Dictionary containing the state machine diagram JSON data.
+
+    Returns:
+        StateMachine: A BUML StateMachine metamodel instance.
+
+    Raises:
+        ConversionError: If the JSON data is invalid or missing required fields.
+    """
     sm_name = json_data.get("title", "Generated_State_Machine")
     if ' ' in sm_name:
         sm_name = sm_name.replace(' ', '_')
-    sm_name_safe = _safe_string(sm_name)
-    code_lines.append(f"sm = StateMachine(name='{sm_name_safe}')\n")
+
+    sm = StateMachine(name=sm_name)
 
     model_data = json_data.get('model')
     if not model_data:
@@ -48,11 +51,11 @@ def process_state_machine(json_data):
     elements = model_data.get('elements', {})
     relationships = model_data.get('relationships', {})
 
-    # Track states by ID for later reference
-    states_by_id = {}
+    # Track states by element ID for later reference
+    states_by_id = {}  # element_id -> State object
     body_names = set()
     event_names = set()
-    
+
     # Store comments for later processing
     comment_elements = {}  # {comment_id: comment_text}
     comment_links = {}  # {comment_id: [linked_element_ids]}
@@ -76,144 +79,172 @@ def process_state_machine(json_data):
             # Handle comment links
             source_element_id = rel.get("source", {}).get("element")
             target_element_id = rel.get("target", {}).get("element")
-            
+
             comment_id = None
             target_id = None
-            
+
             if source_element_id in comment_elements:
                 comment_id = source_element_id
                 target_id = target_element_id
             elif target_element_id in comment_elements:
                 comment_id = target_element_id
                 target_id = source_element_id
-            
+
             if comment_id and target_id:
                 if comment_id not in comment_links:
                     comment_links[comment_id] = []
                 comment_links[comment_id].append(target_id)
 
-    # Write function definitions first
+    # Build Body and Event objects from code blocks
+    body_objects = {}  # function name -> Body instance
+    event_objects = {}  # function name -> Event instance
+
     for element in elements.values():
         if element.get("type") == "StateCodeBlock":
             name = element.get("name", "")
-            code_content = element.get("code", {})
+            code_content = element.get("code", "")
 
             # If name is empty, try to extract function name from code content
             if not name:
-                # Look for "def function_name(" pattern in the code
                 function_match = re.search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', code_content)
                 if function_match:
                     name = function_match.group(1)
 
+            if not name:
+                continue
+
             # Clean up the code content by removing extra newlines
             cleaned_code = "\n".join(line for line in code_content.splitlines() if line.strip())
-            # Write the function definition with its code content
-            code_lines.append(cleaned_code)  # Write the actual function code
-            code_lines.append("")  # Add single blank line after function
 
-            safe_name = _sanitize_identifier(name)
             if name in body_names:
-                code_lines.append(f"{safe_name} = Body(name='{_safe_string(name)}', callable={safe_name})")
+                # Create a Body with a CustomCodeAction containing the source code.
+                # We cannot pass a live callable here since we only have source text,
+                # so we use the actions-based constructor with CustomCodeAction.
+                body = Body(name=name, actions=[CustomCodeAction(source=cleaned_code)])
+                body_objects[name] = body
+
             if name in event_names:
-                code_lines.append(f"{safe_name} = Event(name='{_safe_string(name)}', callable={safe_name})")
-            code_lines.append("")  # Add blank line after Body/Event creation
+                # The Event metamodel class only takes a name (no callable).
+                # The code content is stored separately on the code block element
+                # and will be preserved through round-trip via code blocks.
+                event = Event(name=name)
+                # Attach the source code for round-trip fidelity (not part of
+                # Event's formal metamodel, but needed for BUML export).
+                event._source_code = cleaned_code
+                event_objects[name] = event
 
-    # Create states
+    # Determine which element IDs are initial states (targets of transitions from StateInitialNode)
+    initial_state_ids = set()
+    for rel in relationships.values():
+        if rel.get("type") == "StateTransition":
+            source_id = rel.get("source", {}).get("element")
+            target_id = rel.get("target", {}).get("element")
+            if elements.get(source_id, {}).get("type") == "StateInitialNode":
+                initial_state_ids.add(target_id)
+
+    # Create states - initial state(s) first to satisfy StateMachine ordering constraint
+    state_elements = [
+        (eid, elem) for eid, elem in elements.items()
+        if elem.get("type") == "State"
+    ]
+
+    # Sort so initial states come first
+    state_elements.sort(key=lambda pair: pair[0] not in initial_state_ids)
+
+    for element_id, element in state_elements:
+        raw_name = element.get("name", "")
+        if not raw_name.strip():
+            logger.warning("State element '%s' has an empty name, using 'unnamed'.", element_id)
+            raw_name = "unnamed"
+
+        is_initial = element_id in initial_state_ids
+
+        try:
+            state = sm.new_state(name=raw_name, initial=is_initial)
+        except ValueError as e:
+            # Handle duplicate state names or other validation errors gracefully
+            logger.warning("Could not create state '%s': %s", raw_name, e)
+            continue
+
+        states_by_id[element_id] = state
+
+    # Assign bodies and fallback bodies to states
     for element_id, element in elements.items():
         if element.get("type") == "State":
-            raw_name = element.get("name", "")
-            if not raw_name.strip():
-                logger.warning("State element '%s' has an empty name, using 'unnamed'.", element_id)
+            state = states_by_id.get(element_id)
+            if not state:
+                continue
 
-            is_initial = False
-            for rel in relationships.values():
-                if (rel.get("type") == "StateTransition" and
-                    rel.get("target", {}).get("element") == element_id and
-                    elements.get(rel.get("source", {}).get("element", ""), {}).get("type") == "StateInitialNode"):
-                    is_initial = True
-                    break
-
-            state_name = _sanitize_identifier(raw_name)
-            code_lines.append(f"{state_name}_state = sm.new_state(name='{_safe_string(raw_name)}', initial={str(is_initial)})")
-            states_by_id[element_id] = state_name
-    code_lines.append("")
-
-    # Assign bodies to states
-    for element_id, element in elements.items():
-        if element.get("type") == "State":
-            state_name = _sanitize_identifier(element.get("name", ""))
             for body_id in element.get("bodies", []):
                 body_element = elements.get(body_id)
                 if body_element:
                     body_name = body_element.get("name")
-                    if body_name in body_names:
-                        safe_body = _sanitize_identifier(body_name)
-                        code_lines.append(f"{state_name}_state.set_body(body={safe_body})")
+                    if body_name in body_objects:
+                        state.set_body(body=body_objects[body_name])
 
             for fallback_id in element.get("fallbackBodies", []):
                 fallback_element = elements.get(fallback_id)
                 if fallback_element:
                     fallback_name = fallback_element.get("name")
-                    if fallback_name in body_names:
-                        safe_fallback = _sanitize_identifier(fallback_name)
-                        code_lines.append(f"{state_name}_state.set_fallback_body({safe_fallback})")
-    code_lines.append("")
+                    if fallback_name in body_objects:
+                        state.set_fallback_body(body=body_objects[fallback_name])
 
-    # Write transitions
+    # Create transitions
     for relationship in relationships.values():
         if relationship.get("type") == "StateTransition":
             source_id = relationship.get("source", {}).get("element")
             target_id = relationship.get("target", {}).get("element")
 
+            # Skip transitions from initial node (already handled by is_initial flag)
             if elements.get(source_id, {}).get("type") == "StateInitialNode":
                 continue
 
-            source_name = states_by_id.get(source_id)
-            target_name = states_by_id.get(target_id)
+            source_state = states_by_id.get(source_id)
+            target_state = states_by_id.get(target_id)
 
-            if not source_name or not target_name:
+            if not source_state or not target_state:
                 logger.warning(
                     "Skipping transition: source state '%s' or target state '%s' not found.",
                     source_id, target_id
                 )
                 continue
 
-            if source_name and target_name:
-                event_name = relationship.get("name", "")
-                params = relationship.get("params")
+            event_name = relationship.get("name", "")
+            params = relationship.get("params")
 
-                if event_name:
-                    safe_event = _sanitize_identifier(event_name)
-                    if params:
-                        # Sanitize params: only allow safe key=value pairs
-                        safe_params = _safe_string(str(params))
-                        event_params = f"event_params={{ {safe_params} }}"
-                    else:
-                        event_params = "event_params={}"
-                    code_lines.append(f"{source_name}_state.when_event_go_to(")
-                    code_lines.append(f"    event={safe_event},")
-                    code_lines.append(f"    dest={target_name}_state,")
-                    code_lines.append(f"    {event_params}")
-                    code_lines.append(")")
+            if event_name:
+                event = event_objects.get(event_name)
+                if not event:
+                    # Create a simple event if no code block was associated
+                    event = Event(name=event_name)
+                    event_objects[event_name] = event
 
-    # Process comments
-    state_id_to_name = {state_id: state_name for state_id, state_name in states_by_id.items()}
-    
+                # Use the TransitionBuilder API: state.when_event(event).go_to(dest)
+                try:
+                    source_state.when_event(event).go_to(target_state)
+                except ValueError as e:
+                    logger.warning(
+                        "Could not create transition from '%s' to '%s': %s",
+                        source_state.name, target_state.name, e
+                    )
+
+                # Store event_params on the transition for round-trip fidelity.
+                # The metamodel Transition class does not have a formal event_params
+                # attribute, so we attach it as an informal attribute.
+                if params and source_state.transitions:
+                    last_transition = source_state.transitions[-1]
+                    last_transition._event_params = params
+
+    # Process comments - apply as metadata
     for comment_id, comment_text in comment_elements.items():
         if comment_id in comment_links:
             # Comment is linked to one or more elements
             for linked_element_id in comment_links[comment_id]:
-                if linked_element_id in state_id_to_name:
-                    # Apply comment to state's metadata
-                    state_name = state_id_to_name[linked_element_id]
-                    escaped_comment = _safe_string(comment_text)
-                    code_lines.append(f"{state_name}_state.metadata = Metadata(description='{escaped_comment}')")
+                if linked_element_id in states_by_id:
+                    state = states_by_id[linked_element_id]
+                    state.metadata = Metadata(description=comment_text)
         else:
             # Unlinked comment - add to StateMachine metadata
-            escaped_comment = _safe_string(comment_text)
-            code_lines.append(f"sm.metadata = Metadata(description='{escaped_comment}')")
-    
-    if comment_elements:
-        code_lines.append("")
+            sm.metadata = Metadata(description=comment_text)
 
-    return "\n".join(code_lines)
+    return sm

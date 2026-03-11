@@ -243,7 +243,7 @@ class ErrorHandler:
                 logger.info("Error recovery successful")
                 return result
             except Exception as recovery_error:
-                logger.error(f"Error recovery failed: {recovery_error}")
+                logger.error("Error recovery failed: %s", recovery_error)
                 raise wrapped_error
         
         # No recovery possible
@@ -300,7 +300,7 @@ class ErrorRecovery:
     def log_and_continue(message: str):
         """Recovery strategy: Log a message and continue."""
         def recovery():
-            logger.info(f"Recovery: {message}")
+            logger.info("Recovery: %s", message)
             return None
         return recovery
 

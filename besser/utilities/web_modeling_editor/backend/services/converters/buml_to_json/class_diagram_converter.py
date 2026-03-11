@@ -6,7 +6,8 @@ import logging
 import uuid
 import ast
 from besser.BUML.metamodel.structural import (
-    Class, Property, Method, DomainModel, PrimitiveDataType, Enumeration,
+    Class, Property, Method, Parameter as StructuralParameter, DomainModel,
+    PrimitiveDataType, Enumeration,
     EnumerationLiteral, BinaryAssociation, Generalization, Multiplicity,
     UNLIMITED_MAX_MULTIPLICITY, Constraint, AssociationClass, Metadata,
     MethodImplementationType
@@ -45,11 +46,12 @@ def parse_buml_content(content: str) -> DomainModel:
                 "True": True,
                 "False": False,
                 "None": None,
-                "print": print,
+                "print": lambda *a, **kw: None,  # no-op to prevent info leakage
             },
             "Class": Class,
             "Property": Property,
             "Method": Method,
+            "Parameter": StructuralParameter,
             "PrimitiveDataType": PrimitiveDataType,
             "BinaryAssociation": BinaryAssociation,
             "Constraint": Constraint,
@@ -58,21 +60,46 @@ def parse_buml_content(content: str) -> DomainModel:
             "Generalization": Generalization,
             "Enumeration": Enumeration,
             "EnumerationLiteral": EnumerationLiteral,
+            "DomainModel": DomainModel,
+            "AssociationClass": AssociationClass,
+            "Metadata": Metadata,
+            "MethodImplementationType": MethodImplementationType,
             "set": set,
             "StringType": PrimitiveDataType("str"),
             "IntegerType": PrimitiveDataType("int"),
+            "FloatType": PrimitiveDataType("float"),
+            "BooleanType": PrimitiveDataType("bool"),
+            "TimeType": PrimitiveDataType("time"),
             "DateType": PrimitiveDataType("date"),
+            "DateTimeType": PrimitiveDataType("datetime"),
+            "TimeDeltaType": PrimitiveDataType("timedelta"),
+            "AnyType": PrimitiveDataType("any"),
         }
 
         # Ensure we have a string before preprocessing
         if not isinstance(content, str):
             raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
-        # Pre-process the content to remove generator-related lines
+        # Pre-process the content to remove import and generator-related lines.
+        # All required types are already provided in safe_globals, so import
+        # statements are unnecessary and would fail in the sandboxed environment.
         cleaned_lines = []
+        in_import_block = False
         for line in content.splitlines():
-            if not any(gen in line for gen in ["Generator(", ".generate("]):
-                cleaned_lines.append(line)
+            stripped = line.lstrip()
+            if in_import_block:
+                # Continue skipping until we find the closing parenthesis
+                if ")" in line:
+                    in_import_block = False
+                continue
+            if stripped.startswith(("import ", "from ")):
+                # Check if this is a multi-line import (has open paren but no close)
+                if "(" in line and ")" not in line:
+                    in_import_block = True
+                continue
+            if any(gen in line for gen in ["Generator(", ".generate("]):
+                continue
+            cleaned_lines.append(line)
         cleaned_content = "\n".join(cleaned_lines)
 
         # Execute the cleaned B-UML content
@@ -151,8 +178,11 @@ def class_buml_to_json(domain_model):
     # First pass: Create all class and enumeration elements
     class_id_map = {}  # Store mapping between Class objects and their IDs
 
-    for type_obj in domain_model.types | domain_model.constraints:
-        if isinstance(type_obj, (Class, Enumeration, Constraint)):
+    # Sort types/constraints by name for deterministic output across runs.
+    for type_obj in sorted(
+        (t for t in domain_model.types | domain_model.constraints if isinstance(t, (Class, Enumeration, Constraint))),
+        key=lambda t: t.name,
+    ):
             # Generate UUID for the element
             element_id = str(uuid.uuid4())
             class_id_map[type_obj] = element_id
@@ -167,7 +197,7 @@ def class_buml_to_json(domain_model):
             # Process attributes/literals
             y_offset = y + 40  # Starting position for attributes
             if isinstance(type_obj, Class):
-                for attr in type_obj.attributes:
+                for attr in sorted(type_obj.attributes, key=lambda a: a.name):
                     attr_id = str(uuid.uuid4())
                     attr_type = (
                         attr.type.name if hasattr(attr.type, "name") else str(attr.type)
@@ -195,7 +225,7 @@ def class_buml_to_json(domain_model):
                     y_offset += 30
 
                 # Process methods
-                for method in type_obj.methods:
+                for method in sorted(type_obj.methods, key=lambda m: m.name):
                     method_id = str(uuid.uuid4())
                     visibility_symbol = next(
                         k for k, v in VISIBILITY_MAP.items() if v == method.visibility
@@ -367,11 +397,13 @@ def class_buml_to_json(domain_model):
             elements[element_id] = element_data
 
     # Second pass: Create relationships
-    for association in domain_model.associations:
+    for association in sorted(domain_model.associations, key=lambda a: a.name):
         try:
             rel_id = str(uuid.uuid4())
             name = association.name if association.name else ""
-            ends = list(association.ends)
+            # Sort ends by name for deterministic source/target assignment
+            # before applying the swap logic below.
+            ends = sorted(association.ends, key=lambda e: e.name)
             if len(ends) == 2:
                 source_prop, target_prop = ends
 
@@ -466,7 +498,7 @@ def class_buml_to_json(domain_model):
             continue
 
     # Handle generalizations
-    for generalization in domain_model.generalizations:
+    for generalization in sorted(domain_model.generalizations, key=lambda g: (g.specific.name, g.general.name)):
         rel_id = str(uuid.uuid4())
         if (
             generalization.general in class_id_map
@@ -492,7 +524,7 @@ def class_buml_to_json(domain_model):
             }
 
     # Handle association classes
-    for type_obj in domain_model.types:
+    for type_obj in sorted(domain_model.types, key=lambda t: t.name):
         if isinstance(type_obj, AssociationClass) and type_obj in class_id_map:
             # Track associations by name for easier lookup
             association_by_name = {}
@@ -529,7 +561,7 @@ def class_buml_to_json(domain_model):
     # class it applies to. On the json_to_buml side, ClassOCLLink relationships are
     # intentionally skipped (the context class is derived from the OCL expression text).
     # Both are needed: the element for data, the link for visual layout.
-    for type_obj in domain_model.constraints:
+    for type_obj in sorted(domain_model.constraints, key=lambda c: c.name):
         if isinstance(type_obj, Constraint) and type_obj.context in class_id_map:
             rel_id = str(uuid.uuid4())
             relationships[rel_id] = {

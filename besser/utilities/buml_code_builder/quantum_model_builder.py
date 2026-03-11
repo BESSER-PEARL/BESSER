@@ -2,6 +2,7 @@
 Quantum Model Builder: Generates Python code for BESSER QuantumCircuit models.
 """
 
+from besser.utilities.buml_code_builder.common import _escape_python_string
 from besser.BUML.metamodel.quantum.quantum import (
     QuantumCircuit, QuantumRegister, ClassicalRegister, 
     HadamardGate, PauliXGate, PauliYGate, PauliZGate, 
@@ -43,12 +44,12 @@ def _write_circuit(f, model: QuantumCircuit, var_name: str):
     """Helper to write a circuit definition."""
     f.write(f"# Quantum Circuit: {model.name}\n")
     total_qubits = sum(reg.size for reg in model.qregs)
-    f.write(f"{var_name} = QuantumCircuit(name='{model.name}', qubits={total_qubits})\n\n")
+    f.write(f"{var_name} = QuantumCircuit(name='{_escape_python_string(model.name)}', qubits={total_qubits})\n\n")
     
     # Add classical registers if any
     if model.cregs:
         for creg in model.cregs:
-            f.write(f"{var_name}.add_creg(ClassicalRegister('{creg.name}', {creg.size}))\n")
+            f.write(f"{var_name}.add_creg(ClassicalRegister('{_escape_python_string(creg.name)}', {creg.size}))\n")
         f.write("\n")
     
     # Operations
@@ -97,7 +98,7 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
     elif isinstance(op, PhaseGate):
         f.write(f"{gate_var} = PhaseGate(target_qubit={op.target_qubits[0]}, angle={op.parameter})\n")
     elif isinstance(op, ParametricGate):
-        f.write(f"{gate_var} = ParametricGate(type_name='{op.type_name}', target_qubits={op.target_qubits}, parameter={op.parameter})\n")
+        f.write(f"{gate_var} = ParametricGate(type_name='{_escape_python_string(op.type_name)}', target_qubits={op.target_qubits}, parameter={op.parameter})\n")
         
     # === Frequency Gates ===
     elif isinstance(op, QFTGate):
@@ -108,21 +109,21 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
     # === Arithmetic Gates ===
     elif isinstance(op, ArithmeticGate):
         input_qubits_str = f", input_qubits={op.input_qubits}" if op.input_qubits else ""
-        f.write(f"{gate_var} = ArithmeticGate(operation='{op.operation_type}', target_qubits={op.target_qubits}{input_qubits_str})\n")
+        f.write(f"{gate_var} = ArithmeticGate(operation='{_escape_python_string(op.operation_type)}', target_qubits={op.target_qubits}{input_qubits_str})\n")
     elif isinstance(op, ModularArithmeticGate):
         input_qubits_str = f", input_qubits={op.input_qubits}" if op.input_qubits else ""
-        f.write(f"{gate_var} = ModularArithmeticGate(operation='{op.operation_type}', target_qubits={op.target_qubits}, modulo={op.modulo}{input_qubits_str})\n")
+        f.write(f"{gate_var} = ModularArithmeticGate(operation='{_escape_python_string(op.operation_type)}', target_qubits={op.target_qubits}, modulo={op.modulo}{input_qubits_str})\n")
     elif isinstance(op, ComparisonGate):
         input_qubits_str = f", input_qubits={op.input_qubits}" if op.input_qubits else ""
-        f.write(f"{gate_var} = ComparisonGate(operation='{op.operation}', target_qubits={op.target_qubits}{input_qubits_str})\n")
+        f.write(f"{gate_var} = ComparisonGate(operation='{_escape_python_string(op.operation)}', target_qubits={op.target_qubits}{input_qubits_str})\n")
         
     # === Order Gates ===
     elif isinstance(op, OrderGate):
-        f.write(f"{gate_var} = OrderGate(order_type='{op.order_type}', target_qubits={op.target_qubits})\n")
+        f.write(f"{gate_var} = OrderGate(order_type='{_escape_python_string(op.order_type)}', target_qubits={op.target_qubits})\n")
         
     # === Scalar Gates ===
     elif isinstance(op, ScalarGate):
-        f.write(f"{gate_var} = ScalarGate(scalar_type='{op.scalar_type}')\n")
+        f.write(f"{gate_var} = ScalarGate(scalar_type='{_escape_python_string(op.scalar_type)}')\n")
         if target_list:
             f.write(f"{target_list}.append({gate_var})\n")
         else:
@@ -131,7 +132,7 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
         
     # === Time-Dependent Gates ===
     elif isinstance(op, TimeDependentGate):
-        f.write(f"{gate_var} = TimeDependentGate(type_name='{op.type_name}', target_qubits={op.target_qubits}, parameter_expr='{op.parameter_expr}')\n")
+        f.write(f"{gate_var} = TimeDependentGate(type_name='{_escape_python_string(op.type_name)}', target_qubits={op.target_qubits}, parameter_expr='{_escape_python_string(op.parameter_expr)}')\n")
         
     # === Spacer Gate ===
     elif isinstance(op, SpacerGate):
@@ -139,24 +140,24 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
         
     # === Measurement ===
     elif isinstance(op, Measurement):
-        f.write(f"{gate_var} = Measurement(target_qubit={op.target_qubits[0]}, output_bit={op.output_bit}, basis='{op.basis}')\n")
+        f.write(f"{gate_var} = Measurement(target_qubit={op.target_qubits[0]}, output_bit={op.output_bit}, basis='{_escape_python_string(op.basis)}')\n")
         
     # === Post-Selection ===
     elif isinstance(op, PostSelection):
-        f.write(f"{gate_var} = PostSelection(target_qubit={op.target_qubits[0]}, value={op.value}, basis='{op.basis}')\n")
+        f.write(f"{gate_var} = PostSelection(target_qubit={op.target_qubits[0]}, value={op.value}, basis='{_escape_python_string(op.basis)}')\n")
         
     # === Display Operations ===
     elif isinstance(op, DisplayOperation):
-        f.write(f"{gate_var} = DisplayOperation(display_type='{op.display_type}', target_qubits={op.target_qubits})\n")
+        f.write(f"{gate_var} = DisplayOperation(display_type='{_escape_python_string(op.display_type)}', target_qubits={op.target_qubits})\n")
         
     # === Input Gates ===
     elif isinstance(op, InputGate):
         value_str = f", value={op.value}" if op.value is not None else ""
-        f.write(f"{gate_var} = InputGate(input_type='{op.input_type}', target_qubits={op.target_qubits}{value_str})\n")
+        f.write(f"{gate_var} = InputGate(input_type='{_escape_python_string(op.input_type)}', target_qubits={op.target_qubits}{value_str})\n")
         
     # === Custom/User-Defined Gates ===
     elif isinstance(op, CustomGate):
-        f.write(f"{gate_var} = CustomGate(name='{op.name}', target_qubits={op.target_qubits})\n")
+        f.write(f"{gate_var} = CustomGate(name='{_escape_python_string(op.name)}', target_qubits={op.target_qubits})\n")
         
     elif isinstance(op, FunctionGate):
         # Handle nested circuit definition
@@ -167,9 +168,9 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
             
             # Create GateDefinition
             def_var = f"def_{op.name}_{id(op)}"
-            f.write(f"{def_var} = GateDefinition(name='{op.name}', circuit={nested_qc_var})\n")
-            
-            f.write(f"{gate_var} = FunctionGate(name='{op.name}', target_qubits={op.target_qubits}, definition={def_var})\n")
+            f.write(f"{def_var} = GateDefinition(name='{_escape_python_string(op.name)}', circuit={nested_qc_var})\n")
+
+            f.write(f"{gate_var} = FunctionGate(name='{_escape_python_string(op.name)}', target_qubits={op.target_qubits}, definition={def_var})\n")
             
         elif op.gates:
             # Handle explicit gates list
@@ -180,13 +181,13 @@ def _write_operation(f, op, qc_var="qc", target_list=None):
             for g in op.gates:
                 _write_operation(f, g, qc_var=None, target_list=gates_list_var)
             
-            f.write(f"{gate_var} = FunctionGate(name='{op.name}', target_qubits={op.target_qubits}, gates={gates_list_var})\n")
+            f.write(f"{gate_var} = FunctionGate(name='{_escape_python_string(op.name)}', target_qubits={op.target_qubits}, gates={gates_list_var})\n")
         else:
-            f.write(f"{gate_var} = FunctionGate(name='{op.name}', target_qubits={op.target_qubits})\n")
+            f.write(f"{gate_var} = FunctionGate(name='{_escape_python_string(op.name)}', target_qubits={op.target_qubits})\n")
         
     # === Generic PrimitiveGate (fallback) ===
     elif isinstance(op, PrimitiveGate):
-        f.write(f"{gate_var} = PrimitiveGate(type_name='{op.type_name}', target_qubits={op.target_qubits})\n")
+        f.write(f"{gate_var} = PrimitiveGate(type_name='{_escape_python_string(op.type_name)}', target_qubits={op.target_qubits})\n")
     
     else:
         # Fallback for generic or unhandled gates

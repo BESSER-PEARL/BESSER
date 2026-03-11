@@ -12,6 +12,7 @@ from besser.BUML.metamodel.structural.structural import DomainModel
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
+from besser.BUML.metamodel.state_machine.state_machine import StateMachine
 from besser.utilities.buml_code_builder.common import _escape_python_string
 from besser.utilities.buml_code_builder.domain_model_builder import (
     domain_model_to_code,
@@ -20,6 +21,7 @@ from besser.utilities.buml_code_builder.domain_model_builder import (
 )
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
+from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -59,7 +61,9 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     Parameters:
         project (Project): The B-UML project containing multiple models
         file_path (str): The path where the generated code will be saved
-        sm (str): Optional state machine code to include
+        sm (str): Deprecated. Legacy state machine code string (kept for backward
+                  compatibility). StateMachine objects in the project's model list
+                  are now handled automatically.
 
     Outputs:
         - A Python file containing all models in the project
@@ -80,6 +84,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     agent_models = []
     gui_models = []
     quantum_models = []
+    state_machine_models = []   # StateMachine models
 
     # Import GUIModel locally to avoid circular imports
     try:
@@ -106,6 +111,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 object_models.append(model)
         elif isinstance(model, Agent):
             agent_models.append(model)
+        elif isinstance(model, StateMachine):
+            state_machine_models.append(model)
         elif GUIModel and isinstance(model, GUIModel):
             gui_models.append(model)
         elif QuantumCircuit and isinstance(model, QuantumCircuit):
@@ -147,6 +154,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     n_agent = len(agent_models)
     n_gui = len(gui_models)
     n_quantum = len(quantum_models)
+    n_sm = len(state_machine_models)
 
     # Variable names collected for the final Project(...) definition
     model_vars = []
@@ -308,9 +316,27 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 model_vars.append(var_name)
 
             # ---------------------------------------------------------- #
-            # STATE MACHINE (raw code string, kept as-is)                #
+            # STATE MACHINE MODELS                                       #
             # ---------------------------------------------------------- #
-            if sm != "":
+            for idx, smm in enumerate(state_machine_models, start=1):
+                var_name = _suffixed_name("sm", idx, n_sm)
+
+                section = ""
+                if n_sm > 1:
+                    label = getattr(smm, "name", f"State Machine {idx}")
+                    section = f"# STATE MACHINE MODEL {idx}: \"{label}\" #\n\n"
+
+                tmp_path = os.path.join(temp_dir, f"state_machine_{idx}.py")
+                state_machine_to_code(
+                    model=smm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
+            # Legacy: if a raw code string was passed, include it as-is
+            if sm != "" and not state_machine_models:
                 f.write(sm)
                 model_vars.append("sm")
                 f.write("\n\n")

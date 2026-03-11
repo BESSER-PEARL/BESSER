@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master, development]
+  push:
+    branches: [master, development]
+
+jobs:
+  backend-tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest
+      - name: Run tests
+        run: |
+          python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x
+
+  backend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+      - name: Check formatting
+        run: ruff check besser/ --select E,W,F --ignore E501
+
+  frontend-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        working-directory: besser/utilities/web_modeling_editor/frontend
+        run: npm ci
+      - name: Lint
+        working-directory: besser/utilities/web_modeling_editor/frontend/packages/webapp2
+        run: npm run lint
+      - name: Build
+        working-directory: besser/utilities/web_modeling_editor/frontend/packages/webapp2
+        run: npm run build

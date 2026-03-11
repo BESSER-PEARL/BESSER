@@ -3,7 +3,6 @@ Method parsing utilities for converting JSON to BUML format.
 """
 
 import logging
-import re
 
 from besser.BUML.metamodel.structural import Enumeration, Class
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
@@ -33,17 +32,18 @@ def parse_method(method_str, domain_model=None):
     method_str = method_str.strip()
     if method_str.startswith(tuple(VISIBILITY_MAP.keys())):
         visibility = VISIBILITY_MAP.get(method_str[0], "public")
-        method_str = method_str[2:].strip()
+        method_str = method_str[1:].lstrip()
 
-    # Parse method using regex
-    pattern = r"([^(]+)\((.*?)\)(?:\s*:\s*(.+))?"
-    match = re.match(pattern, method_str)
-
-    if not match:
-        return visibility, method_str.replace("()", ""), parameters, return_type
-
-    method_name, params_str, return_type = match.groups()
-    method_name = method_name.strip()
+    # Parse method by finding the first '(' and the last ')' to handle
+    # parenthesized default values like method(x: str = "a(b)")
+    first_paren = method_str.index('(')
+    last_paren = method_str.rindex(')')
+    method_name = method_str[:first_paren].strip()
+    params_str = method_str[first_paren + 1:last_paren].strip()
+    rest = method_str[last_paren + 1:].strip()
+    return_type = None
+    if rest.startswith(':'):
+        return_type = rest[1:].strip() or None
 
     # Parse parameters if present
     if params_str:

@@ -37,6 +37,29 @@ PRIMITIVE_TYPE_MAPPING = {
 RESERVED_NAMES = ['Class', 'Property', 'Method', 'Parameter', 'Enumeration']
 
 
+def safe_var_name(name: str) -> str:
+    """
+    Convert a name to a safe Python variable name.
+
+    Args:
+        name: Original name
+
+    Returns:
+        Safe variable name
+    """
+    if not name:
+        return "unnamed"
+    # Replace spaces and special characters with underscores
+    safe_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in name)
+    # Remove leading digits
+    if safe_name and safe_name[0].isdigit():
+        safe_name = f"_{safe_name}"
+    # Remove consecutive underscores
+    while '__' in safe_name:
+        safe_name = safe_name.replace('__', '_')
+    return safe_name.strip('_').lower() or "unnamed"
+
+
 def safe_class_name(name):
     """
     Add a suffix to class names that match reserved keywords or BUML metaclass names.

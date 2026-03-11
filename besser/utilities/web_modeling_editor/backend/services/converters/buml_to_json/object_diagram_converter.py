@@ -8,6 +8,8 @@ import logging
 import uuid
 from typing import Dict, Any, Optional
 
+logger = logging.getLogger(__name__)
+
 from besser.BUML.metamodel.object import ObjectModel, Object, Link
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
@@ -178,7 +180,7 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                                                     try:
                                                         om_comment = ast.literal_eval(meta_kw.value)
                                                     except (ValueError, TypeError) as e:
-                                                        logging.getLogger(__name__).warning(
+                                                        logger.warning(
                                                             "Could not evaluate ObjectModel metadata description: %s", e
                                                         )
                 
@@ -194,7 +196,7 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                                     try:
                                         object_comments[obj_var] = ast.literal_eval(kw.value)
                                     except (ValueError, TypeError) as e:
-                                        logging.getLogger(__name__).warning(
+                                        logger.warning(
                                             "Could not evaluate object metadata description for '%s': %s",
                                             obj_var, e
                                         )
@@ -450,5 +452,5 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
         }
   
     except Exception as e:
-        logging.getLogger(__name__).error(f"Error parsing object BUML content: {str(e)}", exc_info=True)
+        logger.error("Error parsing object BUML content: %s", e, exc_info=True)
         raise ValueError(f"Failed to convert object BUML to JSON: {str(e)}") from e

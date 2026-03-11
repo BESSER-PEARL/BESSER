@@ -259,11 +259,11 @@ def domain_model_to_code(
 
             # Write assignments
             if sort(cls.attributes):
-                attrs_str = ", ".join([f"{cls_var_name}_{attr.name}" for attr in cls.attributes])
+                attrs_str = ", ".join(sorted([f"{cls_var_name}_{attr.name}" for attr in cls.attributes]))
                 f.write(f"{cls_var_name}.attributes={{{attrs_str}}}\n")
             if sort(cls.methods):
                 # Extract just method names for variable references
-                methods_str = ", ".join([f"{cls_var_name}_m_{method.name.split('(')[0] if '(' in method.name else method.name}" for method in cls.methods])
+                methods_str = ", ".join(sorted([f"{cls_var_name}_m_{method.name.split('(')[0] if '(' in method.name else method.name}" for method in cls.methods]))
                 f.write(f"{cls_var_name}.methods={{{methods_str}}}\n")
             f.write("\n")
 
@@ -395,14 +395,14 @@ def domain_model_to_code(
                 # Create attributes set string if attributes exist
                 attributes_str = ""
                 if sort(ac.attributes):
-                    attrs_str = ", ".join([f"{ac_var_name}_{attr.name}" for attr in ac.attributes])
+                    attrs_str = ", ".join(sorted([f"{ac_var_name}_{attr.name}" for attr in ac.attributes]))
                     attributes_str = f"attributes={{{attrs_str}}}, "
 
                 # Create methods set string if methods exist
                 methods_str = ""
                 if sort(ac.methods):
                     # Extract just method names for variable references
-                    methods_list = ", ".join([f"{ac_var_name}_m_{method.name.split('(')[0] if '(' in method.name else method.name}" for method in ac.methods])
+                    methods_list = ", ".join(sorted([f"{ac_var_name}_m_{method.name.split('(')[0] if '(' in method.name else method.name}" for method in ac.methods]))
                     methods_str = f", methods={{{methods_list}}}"
 
                 # Now create the association class

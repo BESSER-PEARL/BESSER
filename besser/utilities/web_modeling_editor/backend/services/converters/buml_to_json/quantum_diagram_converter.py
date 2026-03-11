@@ -487,7 +487,7 @@ def quantum_buml_to_json(content: str) -> Dict[str, Any]:
             "True": True,
             "False": False,
             "None": None,
-            "print": print,
+            "print": lambda *a, **kw: None,  # no-op to prevent info leakage
         },
     }
     # Expose all quantum module members for exec
@@ -495,9 +495,26 @@ def quantum_buml_to_json(content: str) -> Dict[str, Any]:
         if not name.startswith("_"):
             safe_globals[name] = getattr(quantum_module, name)
 
+    # Strip import lines -- all required types are in safe_globals already.
+    # Handle multi-line imports (e.g. from ... import (\n    ...\n))
+    cleaned_lines = []
+    in_import_block = False
+    for line in content.splitlines():
+        stripped = line.lstrip()
+        if in_import_block:
+            if ")" in line:
+                in_import_block = False
+            continue
+        if stripped.startswith(("import ", "from ")):
+            if "(" in line and ")" not in line:
+                in_import_block = True
+            continue
+        cleaned_lines.append(line)
+    cleaned_content = "\n".join(cleaned_lines)
+
     local_vars = {}
     try:
-        exec(content, safe_globals, local_vars)
+        exec(cleaned_content, safe_globals, local_vars)
     except Exception as exc:
         raise ValueError(f"Failed to execute quantum BUML content: {exc}") from exc
 

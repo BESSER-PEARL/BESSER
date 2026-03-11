@@ -221,7 +221,7 @@ async def deploy_webapp_to_github(
                     topics=["besser", "low-code", "model-driven", "generated-app", "react", "fastapi", "web-app"]
                 )
             except Exception:
-                pass  # Non-critical — don't fail the deploy for metadata
+                logger.debug("Non-critical: failed to update repository metadata", exc_info=True)
 
         repo_url = f"https://github.com/{username}/{repo_name}"
 
@@ -276,9 +276,10 @@ async def deploy_webapp_to_github(
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        logger.exception("Unexpected error in deploy_webapp_to_github")
         raise HTTPException(
             status_code=500,
-            detail=f"Failed to deploy to GitHub: {str(e)}"
+            detail="An internal error occurred during GitHub deployment."
         )
     finally:
         if temp_dir and os.path.exists(temp_dir):
@@ -562,7 +563,8 @@ async def get_user_repositories(
             repositories=[GitHubRepoResponse(**r) for r in repos]
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch repositories: {str(e)}")
+        logger.exception("Unexpected error fetching GitHub repositories")
+        raise HTTPException(status_code=500, detail="An internal error occurred while fetching repositories.")
 
 
 class GitHubBranchesListResponse(BaseModel):
@@ -592,7 +594,8 @@ async def get_repository_branches(
         
         return GitHubBranchesListResponse(branches=branches)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch branches: {str(e)}")
+        logger.exception("Unexpected error fetching GitHub branches")
+        raise HTTPException(status_code=500, detail="An internal error occurred while fetching branches.")
 
 
 class FileExistsResponse(BaseModel):
@@ -625,7 +628,8 @@ async def check_file_exists(
         
         return FileExistsResponse(exists=exists, path=file_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to check file existence: {str(e)}")
+        logger.exception("Unexpected error checking file existence on GitHub")
+        raise HTTPException(status_code=500, detail="An internal error occurred while checking file existence.")
 
 
 
@@ -678,7 +682,8 @@ async def get_repository_contents(
             ]
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch contents: {str(e)}")
+        logger.exception("Unexpected error fetching GitHub repository contents")
+        raise HTTPException(status_code=500, detail="An internal error occurred while fetching repository contents.")
 
 
 @router.get("/commits", response_model=GitHubCommitsListResponse)
@@ -706,7 +711,8 @@ async def get_repository_commits(
             commits=[GitHubCommitResponse(**c) for c in commits]
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch commits: {str(e)}")
+        logger.exception("Unexpected error fetching GitHub commits")
+        raise HTTPException(status_code=500, detail="An internal error occurred while fetching commits.")
 
 
 @router.post("/project/save", response_model=SaveProjectResponse)
@@ -748,7 +754,8 @@ async def save_project_to_github(
             message=f"Project saved successfully"
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save project: {str(e)}")
+        logger.exception("Unexpected error saving project to GitHub")
+        raise HTTPException(status_code=500, detail="An internal error occurred while saving the project.")
 
 
 @router.get("/project/load", response_model=LoadProjectResponse)
@@ -794,7 +801,8 @@ async def load_project_from_github(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load project: {str(e)}")
+        logger.exception("Unexpected error loading project from GitHub")
+        raise HTTPException(status_code=500, detail="An internal error occurred while loading the project.")
 
 
 @router.get("/project/load-commit", response_model=LoadProjectFromCommitResponse)
@@ -848,7 +856,8 @@ async def load_project_from_commit(
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to load project from commit: {str(e)}")
+        logger.exception("Unexpected error loading project from GitHub commit")
+        raise HTTPException(status_code=500, detail="An internal error occurred while loading the project from commit.")
 
 
 @router.post("/project/create-repo", response_model=CreateRepoForProjectResponse)
@@ -945,7 +954,8 @@ This repository contains a [BESSER](https://github.com/BESSER-PEARL/BESSER) proj
             message=f"Repository '{repo_name}' created with project"
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create repository: {str(e)}")
+        logger.exception("Unexpected error creating GitHub repository for project")
+        raise HTTPException(status_code=500, detail="An internal error occurred while creating the repository.")
 
 
 # ============================================================================
@@ -1018,5 +1028,6 @@ async def create_gist_from_project(
             detail = f"GitHub API error while creating Gist: {str(e)}"
         raise HTTPException(status_code=status_code, detail=detail)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create Gist: {str(e)}")
+        logger.exception("Unexpected error creating GitHub Gist")
+        raise HTTPException(status_code=500, detail="An internal error occurred while creating the Gist.")
 

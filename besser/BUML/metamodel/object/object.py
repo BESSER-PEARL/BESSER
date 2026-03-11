@@ -165,17 +165,26 @@ class Object(Instance):
 
     def __getattr__(self, item):
         """Get the value of an attribute or link end by its name."""
-        for attr in self.__slots:
+        # Use object.__getattribute__ for internal access to avoid recursive
+        # __getattr__ calls when the mangled attributes don't exist yet.
+        try:
+            slots = object.__getattribute__(self, "_Object__slots")
+        except AttributeError:
+            raise AttributeError(item)
+
+        for attr in slots:
             if attr.attribute.name == item:
                 return attr.value.value
 
         if item == "name":
-            return self.name_
+            return object.__getattribute__(self, "_name")
 
         matches = [le.object for le in self.link_ends() if le.name == item]
         if not matches:
+            obj_name = object.__getattribute__(self, "_name")
+            classifier = object.__getattribute__(self, "_Instance__classifier")
             raise AttributeError(
-                f"'{self.name_}' object, instance of the '{self.classifier.name}' class, "
+                f"'{obj_name}' object, instance of the '{classifier.name}' class, "
                 f"has no attribute or link '{item}'"
             )
 

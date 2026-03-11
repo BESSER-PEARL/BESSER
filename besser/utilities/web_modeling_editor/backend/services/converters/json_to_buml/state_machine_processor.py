@@ -48,8 +48,8 @@ def process_state_machine(json_data):
     model_data = json_data.get('model')
     if not model_data:
         raise ConversionError("State machine JSON is missing the 'model' key.")
-    elements = model_data.get('elements', {})
-    relationships = model_data.get('relationships', {})
+    elements = model_data.get('elements') or {}
+    relationships = model_data.get('relationships') or {}
 
     # Track states by element ID for later reference
     states_by_id = {}  # element_id -> State object

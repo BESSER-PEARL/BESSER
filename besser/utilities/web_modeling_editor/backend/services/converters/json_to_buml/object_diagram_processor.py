@@ -126,7 +126,10 @@ def process_object_diagram(json_data, domain_model):
 
     # Track objects by their ID for link creation
     objects_by_id = {}
-    
+
+    # Build a class name lookup for O(1) attribute property resolution
+    # (get_all_attributes already traverses generalizations, so we just need fast class lookups)
+
     # Store comments for later processing
     comment_elements = {}  # {comment_id: comment_text}
     comment_links = {}  # {comment_id: [linked_element_ids]}
@@ -328,8 +331,7 @@ def process_object_diagram(json_data, domain_model):
             if not association_obj:
                 for assoc in domain_model.associations:
                     # Check if this association connects the right classes
-                    end_types = [end.type for end in assoc.ends]
-                    end_type_names = [end_type.name for end_type in end_types]
+                    end_types = {end.type for end in assoc.ends}
                     if (source_obj.classifier in end_types and target_obj.classifier in end_types):
                         association_obj = assoc
                         break

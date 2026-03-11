@@ -194,8 +194,8 @@ def generate_agent_files(
         return zip_buffer, AGENT_OUTPUT_FILENAME
 
     except Exception as e:
-        logger.error("Error generating agent files: %s", str(e))
-        raise e
+        logger.exception("Error generating agent files")
+        raise
     finally:
         # Clean up resources
         cleanup_temp_resources(temp_dir)
@@ -278,7 +278,8 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     except (ConversionError, ValidationError):
         raise  # Let app-level handler return 400
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Unexpected error in generate_code_output_from_project")
+        raise HTTPException(status_code=500, detail="An internal error occurred during project code generation.")
 
 
 @router.post("/generate-output")
@@ -350,7 +351,8 @@ async def generate_code_output(input_data: DiagramInput):
         raise  # Let app-level handler return 400
     except Exception as e:
         cleanup_temp_resources(temp_dir)
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+        logger.exception("Unexpected error in generate_code_output")
+        raise HTTPException(status_code=500, detail="An internal error occurred during code generation.")
 
 
 async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):
@@ -415,7 +417,8 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
     except (ConversionError, ValidationError):
         raise  # Let app-level handler return 400
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Web App generation failed: {str(e)}")
+        logger.exception("Unexpected error in Web App generation")
+        raise HTTPException(status_code=500, detail="An internal error occurred during Web App generation.")
     finally:
         if temp_dir:
             cleanup_temp_resources(temp_dir)
@@ -484,9 +487,10 @@ async def _handle_agent_generation(json_data: dict):
     except (ConversionError, ValidationError):
         raise  # Let app-level handler return 400
     except Exception as e:
+        logger.exception("Unexpected error in agent diagram generation")
         raise HTTPException(
             status_code=500,
-            detail=f"Error processing agent diagram: {str(e)}"
+            detail="An internal error occurred during agent diagram processing."
         )
 
 
@@ -552,9 +556,10 @@ async def _handle_user_diagram_generation(
     try:
         object_model = process_object_diagram(json_data, user_reference_domain_model)
     except Exception as conversion_error:
+        logger.exception("Failed to convert user diagram to BUML")
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to convert user diagram to BUML: {conversion_error}",
+            detail="Failed to convert user diagram to BUML. Please check the diagram data.",
         ) from conversion_error
 
     generator_class = generator_info.generator_class
@@ -610,7 +615,8 @@ def _generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Failed to convert user profile model: {exc}") from exc
+        logger.exception("Failed to convert user profile model")
+        raise HTTPException(status_code=400, detail="Failed to convert user profile model. Please check the input data.") from exc
     finally:
         cleanup_temp_resources(temp_dir)
 
@@ -960,7 +966,8 @@ async def _generate_standard(buml_model, generator_class, generator_type: str, g
     except (ConversionError, ValidationError):
         raise  # Let app-level handler return 400
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Code generation failed: {str(e)}")
+        logger.exception("Unexpected error in standard code generation")
+        raise HTTPException(status_code=500, detail="An internal error occurred during code generation.")
 
     # Return ZIP or single file based on generator info
     if generator_info.output_type == "zip":

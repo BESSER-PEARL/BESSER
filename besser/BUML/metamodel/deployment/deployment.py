@@ -35,7 +35,7 @@ class Processor(Enum):
     '''
 
     x64 = "x64"
-    x86 = "x84"
+    x86 = "x86"
     arm = "ARM"
 
 
@@ -105,7 +105,7 @@ class Protocol(Enum):
     http = "HTTP"
     https = "HTTPS"
     tcp = "TCP"
-    udp = "UPD"
+    udp = "UDP"
     all = "ALL"
 
 

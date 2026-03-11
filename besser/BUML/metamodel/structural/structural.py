@@ -2,6 +2,8 @@ from abc import ABC
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Union, List, TYPE_CHECKING
+import keyword
+import logging
 import time
 
 if TYPE_CHECKING:
@@ -173,14 +175,20 @@ class NamedElement(Element):
     def name(self, name: str):
         """
         str: Set the name of the named element.
-        
+
         Raises:
-            ValueError: If the name is empty or contains invalid characters (spaces, hyphens, etc.).
+            ValueError: If the name is None, empty, whitespace-only, or contains invalid characters (spaces, hyphens, etc.).
         """
+        if name is None:
+            raise ValueError("Name cannot be None.")
+        if not isinstance(name, str) or name.strip() == "":
+            raise ValueError("Name cannot be empty or whitespace-only.")
         if ' ' in name:
             raise ValueError(f"'{name}' is invalid. Name cannot contain spaces.")
         if '-' in name:
             raise ValueError(f"'{name}' is invalid. Hyphens are not allowed; use '_' instead.")
+        if keyword.iskeyword(name):
+            logging.warning(f"'{name}' is a Python keyword. This may cause issues in generated code.")
         self.__name = name
 
     @property

@@ -109,7 +109,8 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+        logger.exception("Unexpected error in export_project_as_buml")
+        raise HTTPException(status_code=500, detail="An internal error occurred during project export.")
 
 
 @router.post("/export-buml")
@@ -190,7 +191,8 @@ async def export_buml(input_data: DiagramInput):
     except HTTPException as e:
         raise e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+        logger.exception("Unexpected error in export_buml")
+        raise HTTPException(status_code=500, detail="An internal error occurred during BUML export.")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -210,8 +212,8 @@ async def get_project_json_model(buml_file: UploadFile = File(...)):
         }
 
     except Exception as e:
-        logger.error("Error in get_project_json_model: %s", str(e))
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.exception("Unexpected error in get_project_json_model")
+        raise HTTPException(status_code=500, detail="An internal error occurred while processing the project file.")
 
 @router.post("/get-json-model", response_model=DiagramExportResponse)
 async def get_single_json_model(buml_file: UploadFile = File(...)):
@@ -354,8 +356,8 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         # Re-raise HTTP exceptions to preserve status codes
         raise e
     except Exception as e:
-        logger.error("Error in get_single_json_model: %s", str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to process the uploaded file: {str(e)}")
+        logger.exception("Unexpected error in get_single_json_model")
+        raise HTTPException(status_code=500, detail="An internal error occurred while processing the uploaded file.")
 
 @router.post("/csv-to-domain-model", response_model=DiagramExportResponse)
 async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
@@ -391,7 +393,8 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
                 raise ValueError("No types found in domain model")
         except Exception as class_error:
             logger.error("Class diagram parsing failed: %s", str(class_error))
-            raise HTTPException(status_code=500, detail=f"Class diagram parsing failed: {str(class_error)}")
+            logger.exception("Class diagram parsing failed in csv_to_domain_model_endpoint")
+            raise HTTPException(status_code=500, detail="An internal error occurred while parsing the class diagram from CSV.")
 
         # Check if we successfully parsed any diagram
         if diagram_data is None or diagram_type is None:
@@ -412,8 +415,8 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
             "version": API_VERSION
         }
     except Exception as e:
-        logger.error("Error in csv_to_domain_model_endpoint: %s", str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to process CSV files: {str(e)}")
+        logger.exception("Unexpected error in csv_to_domain_model_endpoint")
+        raise HTTPException(status_code=500, detail="An internal error occurred while processing CSV files.")
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -461,9 +464,9 @@ async def get_json_model_from_image(
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error("Error in get_json_model_from_image: %s", str(e))
+        logger.exception("Unexpected error in get_json_model_from_image")
         raise HTTPException(
-            status_code=500, detail=f"Failed to process the uploaded image: {str(e)}"
+            status_code=500, detail="An internal error occurred while processing the uploaded image."
         )
 
 @router.post("/get-json-model-from-kg", response_model=DiagramExportResponse)
@@ -507,9 +510,9 @@ async def get_json_model_from_kg(
     except HTTPException as e:
         raise e
     except Exception as e:
-        logger.error("Error in get-json-model-from-kg: %s", str(e))
+        logger.exception("Unexpected error in get_json_model_from_kg")
         raise HTTPException(
-            status_code=500, detail=f"Failed to process the uploaded KG: {str(e)}"
+            status_code=500, detail="An internal error occurred while processing the uploaded knowledge graph."
         )
 
 
@@ -573,7 +576,8 @@ async def transform_agent_model_json(input_data: DiagramInput):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Transform failed: {str(e)}")
+        logger.exception("Unexpected error in transform_agent_model_json")
+        raise HTTPException(status_code=500, detail="An internal error occurred during agent model transformation.")
     finally:
         cleanup_temp_resources(temp_dir)
 

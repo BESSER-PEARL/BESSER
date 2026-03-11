@@ -159,7 +159,8 @@ async def validate_diagram(input_data: DiagramInput):
             error_msg = str(e)
             validation_errors.append(error_msg)
         except Exception as e:
-            validation_errors.append(f"Validation error: {str(e)}")
+            logger.exception("Unexpected error during diagram conversion/validation")
+            validation_errors.append("An unexpected error occurred during validation.")
 
         # Step 2: If BUML model created successfully AND it's a diagram with OCL support
         ocl_results = None
@@ -175,7 +176,8 @@ async def validate_diagram(input_data: DiagramInput):
                     validation_warnings.extend(buml_model.ocl_warnings)
 
             except Exception as e:
-                validation_warnings.append(f"OCL check warning: {str(e)}")
+                logger.exception("Unexpected error during OCL constraint check")
+                validation_warnings.append("OCL constraint check encountered an unexpected error.")
 
         # Step 3: Build unified response
         is_valid = len(validation_errors) == 0
@@ -196,10 +198,10 @@ async def validate_diagram(input_data: DiagramInput):
         return response
 
     except Exception as e:
-        logger.error("Error in validate_diagram: %s", str(e))
+        logger.exception("Unexpected error in validate_diagram")
         return {
             "isValid": False,
-            "errors": [f"Unexpected error: {str(e)}"],
+            "errors": ["An unexpected internal error occurred during validation."],
             "warnings": [],
             "message": "\u274c Validation failed"
         }

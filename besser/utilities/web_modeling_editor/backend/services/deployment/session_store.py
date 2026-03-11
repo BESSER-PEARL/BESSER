@@ -105,7 +105,7 @@ class SessionStore:
             decrypted = self._fernet.decrypt(encrypted)
             return json.loads(decrypted)
         except Exception:
-            logger.warning("Failed to decrypt session store; starting fresh")
+            logger.warning("Failed to decrypt session store; starting fresh", exc_info=True)
             return {}
 
     def _save(self, data: dict):

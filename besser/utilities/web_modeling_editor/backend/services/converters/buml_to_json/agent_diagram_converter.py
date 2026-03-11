@@ -999,6 +999,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 }
                                 elements[state["id"]]["fallbackBodies"].append(body_id)
                         except Exception as e:
+                            logger.warning("Error processing agent fallback body: %s", e, exc_info=True)
                             continue
             except Exception as e:
                 logger.error("Error processing agent state machine: %s", e, exc_info=True)
@@ -1168,7 +1169,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
         }
 
     except Exception as e:
-        # Return an empty diagram on error
+        logger.exception("Error converting agent BUML to JSON; returning partial diagram")
         return {
             "version": "3.0.0",
             "type": "AgentDiagram",

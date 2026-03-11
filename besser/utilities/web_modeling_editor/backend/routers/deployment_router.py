@@ -123,8 +123,8 @@ async def deploy_app(input_data: DiagramInput):
         raise e
     except Exception as e:
         cleanup_temp_resources(temp_dir)
-        logger.error("Error during file generation or django deployment: %s", str(e))
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+        logger.exception("Unexpected error during file generation or Django deployment")
+        raise HTTPException(status_code=500, detail="An internal error occurred during deployment.")
 
 
 @router.post("/feedback")
@@ -147,7 +147,8 @@ async def feedback_endpoint(feedback: FeedbackSubmission):
     try:
         return submit_feedback(feedback)
     except Exception as e:
+        logger.exception("Unexpected error in feedback submission")
         raise HTTPException(
             status_code=500,
-            detail=str(e)
+            detail="An internal error occurred while processing feedback."
         )

@@ -14,6 +14,20 @@ from besser.generators.json import JSONSchemaGenerator, JSONObjectGenerator
 from besser.generators.agents.baf_generator import BAFGenerator
 from besser.generators.web_app import WebAppGenerator
 from besser.generators.qiskit import QiskitGenerator
+from besser.generators.rdf import RDFGenerator
+from besser.generators.rest_api import RESTAPIGenerator
+from besser.generators.react import ReactGenerator
+from besser.generators.flutter import FlutterGenerator
+from besser.generators.terraform import TerraformGenerator
+try:
+    from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
+except ImportError:
+    PytorchGenerator = None
+
+try:
+    from besser.generators.nn.tf.tf_code_generator import TFGenerator
+except ImportError:
+    TFGenerator = None
 
 
 class GeneratorInfo(NamedTuple):
@@ -124,7 +138,73 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="quantum",
         requires_class_diagram=False
     ),
+
+    # RDF generator (class diagram based)
+    "rdf": GeneratorInfo(
+        generator_class=RDFGenerator,
+        output_type="file",
+        file_extension=".ttl",
+        category="data_format",
+        requires_class_diagram=True
+    ),
+
+    # REST API generator (class diagram based)
+    "rest_api": GeneratorInfo(
+        generator_class=RESTAPIGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="web_framework",
+        requires_class_diagram=True
+    ),
+
+    # React generator (requires class diagram + GUI model)
+    "react": GeneratorInfo(
+        generator_class=ReactGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="frontend",
+        requires_class_diagram=True
+    ),
+
+    # Flutter generator (requires class diagram + GUI model)
+    "flutter": GeneratorInfo(
+        generator_class=FlutterGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="frontend",
+        requires_class_diagram=True
+    ),
+
+    # Terraform generator (deployment model based)
+    "terraform": GeneratorInfo(
+        generator_class=TerraformGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="deployment",
+        requires_class_diagram=False
+    ),
+
 }
+
+# Neural network generators are conditionally registered since they
+# require optional dependencies (torch, tensorflow) that may not be installed.
+if PytorchGenerator is not None:
+    SUPPORTED_GENERATORS["pytorch"] = GeneratorInfo(
+        generator_class=PytorchGenerator,
+        output_type="file",
+        file_extension=".py",
+        category="neural_network",
+        requires_class_diagram=False
+    )
+
+if TFGenerator is not None:
+    SUPPORTED_GENERATORS["tensorflow"] = GeneratorInfo(
+        generator_class=TFGenerator,
+        output_type="file",
+        file_extension=".py",
+        category="neural_network",
+        requires_class_diagram=False
+    )
 
 
 def get_generator_info(generator_type: str) -> GeneratorInfo:
@@ -152,6 +232,20 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "object_model.json"
     elif generator_type == "qiskit":
         return "qiskit_circuit.py"
+    elif generator_type == "rdf":
+        return "vocabulary.ttl"
+    elif generator_type == "rest_api":
+        return "rest_api.zip"
+    elif generator_type == "react":
+        return "react_app.zip"
+    elif generator_type == "flutter":
+        return "flutter_app.zip"
+    elif generator_type == "terraform":
+        return "terraform.zip"
+    elif generator_type == "pytorch":
+        return "pytorch_nn.py"
+    elif generator_type == "tensorflow":
+        return "tf_nn.py"
     else:
         return f"{generator_type}_output{info.file_extension}"
 

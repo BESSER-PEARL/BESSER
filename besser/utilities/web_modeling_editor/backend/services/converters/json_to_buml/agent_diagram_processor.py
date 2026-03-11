@@ -114,14 +114,10 @@ def _build_body_from_messages(body_name, messages):
 
 def process_agent_diagram(json_data):
     # Extract language from config if present
-    config = json_data.get('config', {})
-    lang_value = ""
-    language = None
-    source_language = None
-    if config is not None and config != {}:
-        lang_value = config.get('language')
-        language = lang_value.lower() if isinstance(lang_value, str) and lang_value else None
-        source_language = config.get('source_language')
+    config = json_data.get('config') or {}
+    lang_value = config.get('language', '')
+    language = lang_value.lower() if isinstance(lang_value, str) and lang_value else None
+    source_language = config.get('source_language')
     def translate_text(text, lang, src_lang=None):
         # Use deep-translator's GoogleTranslator for free translation
         if not lang or lang == 'none':
@@ -168,8 +164,9 @@ def process_agent_diagram(json_data):
     agent.add_property(ConfigProperty('nlp', 'nlp.replicate.api_key', 'YOUR-API-KEY'))
 
     # Get elements and relationships from the JSON data
-    elements = json_data.get('model', {}).get('elements', {})
-    relationships = json_data.get('model', {}).get('relationships', {})
+    model_data = json_data.get('model') or {}
+    elements = model_data.get('elements') or {}
+    relationships = model_data.get('relationships') or {}
 
     # Track states and bodies for later reference
     states_by_id = {}
@@ -246,9 +243,14 @@ def process_agent_diagram(json_data):
         if element.get("type") == "AgentState":
             # Check if this is an initial state
             for rel in relationships.values():
-                if ((rel.get("type") == "AgentStateTransition" or rel.get("type") == "AgentStateTransitionInit") and
-                    rel.get("target", {}).get("element") == element_id and
-                    elements.get(rel.get("source", {}).get("element", ""), {}).get("type") == "StateInitialNode"):
+                rel_type = rel.get("type")
+                if rel_type not in ("AgentStateTransition", "AgentStateTransitionInit"):
+                    continue
+                target_el = rel.get("target") or {}
+                source_el = rel.get("source") or {}
+                source_elem_id = source_el.get("element", "")
+                if (target_el.get("element") == element_id and
+                    elements.get(source_elem_id, {}).get("type") == "StateInitialNode"):
                     initial_state_id = element_id
                     break
             if initial_state_id:
@@ -303,6 +305,9 @@ def process_agent_diagram(json_data):
             if fallback_body:
                 agent_state.set_fallback_body(fallback_body)
 
+    # Build intent lookup dict for O(1) resolution during transition processing
+    intent_lookup = {intent.name: intent for intent in agent.intents}
+
     # Third pass: Process transitions and comment links
     transition_count = 0
     for relationship in relationships.values():
@@ -349,12 +354,8 @@ def process_agent_diagram(json_data):
 
                 # Create appropriate transition based on condition
                 if condition_name == "when_intent_matched":
-                    # Find the intent by name
-                    intent_to_match = None
-                    for intent in agent.intents:
-                        if intent.name == condition_value:
-                            intent_to_match = intent
-                            break
+                    # Find the intent by name via O(1) lookup
+                    intent_to_match = intent_lookup.get(condition_value)
 
                     if intent_to_match:
                         source_state.when_intent_matched(intent_to_match).go_to(target_state)
@@ -379,26 +380,46 @@ def process_agent_diagram(json_data):
                         operator_value = condition_value.get("operator")
                         target_value = condition_value.get("targetValue")
 
-                        # Map string operators to actual operator functions
-                        operator_map = {
-                            "<": operator.lt,
-                            "<=": operator.le,
-                            "==": operator.eq,
-                            ">=": operator.ge,
-                            ">": operator.gt,
-                            "!=": operator.ne
-                        }
-
-                        op_func = operator_map.get(operator_value)
-                        if op_func:
-                            source_state.when_variable_matches_operation(
-                                var_name=variable_name,
-                                operation=op_func,
-                                target=target_value
-                            ).go_to(target_state)
+                        if not variable_name or not operator_value:
+                            logger.warning(
+                                "Incomplete variable operation condition (variable=%s, operator=%s) "
+                                "for transition from '%s' to '%s'. Falling back to no_intent_matched.",
+                                variable_name, operator_value,
+                                source_state.name, target_state.name,
+                            )
+                            source_state.when_no_intent_matched().go_to(target_state)
                             transition_count += 1
+                        else:
+                            # Map string operators to actual operator functions
+                            operator_map = {
+                                "<": operator.lt,
+                                "<=": operator.le,
+                                "==": operator.eq,
+                                ">=": operator.ge,
+                                ">": operator.gt,
+                                "!=": operator.ne
+                            }
+
+                            op_func = operator_map.get(operator_value)
+                            if op_func:
+                                source_state.when_variable_matches_operation(
+                                    var_name=variable_name,
+                                    operation=op_func,
+                                    target=target_value
+                                ).go_to(target_state)
+                                transition_count += 1
+                            else:
+                                logger.warning(
+                                    "Unknown operator '%s' for variable operation transition from '%s' to '%s'. Skipping.",
+                                    operator_value, source_state.name, target_state.name,
+                                )
                     else:
                         # If condition_value is not a dictionary, add a simple transition
+                        logger.warning(
+                            "Expected dict for when_variable_operation_matched condition but got %s. "
+                            "Falling back to no_intent_matched for transition from '%s' to '%s'.",
+                            type(condition_value).__name__, source_state.name, target_state.name,
+                        )
                         source_state.when_no_intent_matched().go_to(target_state)
                         transition_count += 1
 
@@ -412,6 +433,11 @@ def process_agent_diagram(json_data):
                     if file_type:
                         source_state.when_file_received(file_type).go_to(target_state)
                         transition_count += 1
+                    else:
+                        logger.warning(
+                            "Unknown file type '%s' for when_file_received transition from '%s' to '%s'. Skipping.",
+                            condition_value, source_state.name, target_state.name,
+                        )
 
                 elif condition_name == "auto":
                     source_state.go_to(target_state)

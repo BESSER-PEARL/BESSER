@@ -20,7 +20,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters.parsers im
 )
 
 
-def parse_method_signature_from_code(method_code, domain_model):
+def parse_method_signature_from_code(method_code, domain_model, type_lookup=None):
     """Extract method signature from code text when diagram name/signature is malformed."""
     if not isinstance(method_code, str) or not method_code.strip():
         return None
@@ -40,15 +40,40 @@ def parse_method_signature_from_code(method_code, domain_model):
         signature_with_return = signature
 
     try:
-        _, parsed_name, parsed_parameters, parsed_return_type = parse_method(signature_with_return, domain_model)
+        _, parsed_name, parsed_parameters, parsed_return_type = parse_method(signature_with_return, domain_model, type_lookup=type_lookup)
     except ValueError:
         # Some BAL snippets use return markers that are not BUML type names (e.g., "nothing").
-        _, parsed_name, parsed_parameters, parsed_return_type = parse_method(signature, domain_model)
+        _, parsed_name, parsed_parameters, parsed_return_type = parse_method(signature, domain_model, type_lookup=type_lookup)
 
     parsed_parameters = [
         param for param in parsed_parameters if param.get("name") not in {"self", "cls", "this"}
     ]
     return parsed_name, parsed_parameters, parsed_return_type
+
+
+def _build_type_lookup(domain_model):
+    """Build a name-to-type lookup dict for O(1) type resolution.
+
+    Only includes Class and Enumeration types (the user-defined types that
+    can appear as attribute types, parameter types, or return types).
+    """
+    return {
+        t.name: t
+        for t in domain_model.types
+        if isinstance(t, (Enumeration, Class))
+    }
+
+
+def _resolve_type(type_name, type_lookup):
+    """Resolve a type name to a metamodel type object.
+
+    Returns the Class/Enumeration from *type_lookup* if found, otherwise
+    returns a new ``PrimitiveDataType``.
+    """
+    resolved = type_lookup.get(type_name)
+    if resolved is not None:
+        return resolved
+    return PrimitiveDataType(type_name)
 
 
 def process_class_diagram(json_data):
@@ -61,7 +86,7 @@ def process_class_diagram(json_data):
     # Get elements and OCL constraints from the JSON data
     elements = (json_data.get('model') or {}).get('elements', {})
     relationships = (json_data.get('model') or {}).get('relationships', {})
-    
+
     # Store comments for later processing
     comment_elements = {}  # {comment_id: comment_text}
     comment_links = {}  # {comment_id: [linked_element_ids]}
@@ -139,6 +164,9 @@ def process_class_diagram(json_data):
             except ValueError as e:
                 raise ConversionError(str(e))
 
+    # Build a name→type lookup dict for O(1) type resolution in the second pass.
+    type_lookup = _build_type_lookup(domain_model)
+
     # SECOND PASS: Now add attributes and methods to classes
     for element_id, element in elements.items():
         if element.get("type") in ["Class", "AbstractClass"]:
@@ -163,7 +191,7 @@ def process_class_diagram(json_data):
                         default_value = attr.get("defaultValue", None)
                     else:
                         # Legacy format - parse from name string
-                        visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
+                        visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model, type_lookup=type_lookup)
                         is_optional = False
                         default_value = None
 
@@ -173,24 +201,16 @@ def process_class_diagram(json_data):
                         raise ConversionError(f"Duplicate attribute name '{name}' found in class '{class_name}'")
                     attribute_names.add(name)
 
-                    # Find the type in the domain model
-                    type_obj = None
-                    for t in domain_model.types:
-                        if isinstance(t, (Enumeration, Class)) and t.name == attr_type:
-                            type_obj = t
-                            break
-
-                    if type_obj:
-                        property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, default_value=default_value)
-                    else:
-                        property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility, is_optional=is_optional, default_value=default_value)
+                    # Resolve the attribute type via O(1) lookup
+                    type_obj = _resolve_type(attr_type, type_lookup)
+                    property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, default_value=default_value)
                     cls.add_attribute(property_)
 
             # Add methods
             for method_id in element.get("methods", []):
                 method = elements.get(method_id)
                 if method:
-                    visibility, name, parameters, return_type = parse_method(method.get("name", ""), domain_model)
+                    visibility, name, parameters, return_type = parse_method(method.get("name", ""), domain_model, type_lookup=type_lookup)
                     
                     # Get the code attribute for the method
                     method_code = method.get("code", "")
@@ -200,7 +220,7 @@ def process_class_diagram(json_data):
                         and name.count("(") != name.count(")")
                     )
                     if method_name_is_malformed or (not parameters and method_code):
-                        parsed_from_code = parse_method_signature_from_code(method_code, domain_model)
+                        parsed_from_code = parse_method_signature_from_code(method_code, domain_model, type_lookup=type_lookup)
                         if parsed_from_code:
                             parsed_name, parsed_parameters, parsed_return_type = parsed_from_code
                             if method_name_is_malformed and parsed_name:
@@ -234,20 +254,20 @@ def process_class_diagram(json_data):
                     # Create method parameters
                     method_params = []
                     for param in parameters:
-                        param_type_obj = None
-                        param_type_name = param['type']
-                        
-                        # Try to find parameter type in domain model
-                        for t in domain_model.types:
-                            if isinstance(t, (Enumeration, Class)) and t.name == param_type_name:
-                                param_type_obj = t
-                                break
-                                
-                        if not param_type_obj:
-                            param_type_obj = PrimitiveDataType(param_type_name)
-                            
+                        param_type_name = param.get('type', 'any')
+                        param_name = param.get('name')
+                        if not param_name:
+                            logger.warning(
+                                "Skipping parameter with missing name in method '%s' of class '%s'.",
+                                name, class_name,
+                            )
+                            continue
+
+                        # Resolve parameter type via O(1) lookup
+                        param_type_obj = _resolve_type(param_type_name, type_lookup)
+
                         param_obj = Parameter(
-                            name=param['name'],
+                            name=param_name,
                             type=param_type_obj
                         )
                         if 'default' in param:
@@ -271,19 +291,9 @@ def process_class_diagram(json_data):
                             "quantumCircuitId": quantum_circuit_id or "",
                         }
                     
-                    # Handle return type
+                    # Handle return type via O(1) lookup
                     if return_type:
-                        return_type_obj = None
-                        # Find return type in domain model
-                        for t in domain_model.types:
-                            if isinstance(t, (Enumeration, Class)) and t.name == return_type:
-                                return_type_obj = t
-                                break
-                                
-                        if return_type_obj:
-                            method_obj.type = return_type_obj
-                        else:
-                            method_obj.type = PrimitiveDataType(return_type)
+                        method_obj.type = _resolve_type(return_type, type_lookup)
                     
                     cls.add_method(method_obj)
 
@@ -419,9 +429,10 @@ def process_class_diagram(json_data):
             association_name = relationship.get("name") or f"{source_class.name}_{target_class.name}"
 
             # Check if association name already exists and add increment if needed
-            if association_name in [assoc.name for assoc in domain_model.associations]:
+            existing_assoc_names = {assoc.name for assoc in domain_model.associations}
+            if association_name in existing_assoc_names:
                 counter = 1
-                while f"{association_name}_{counter}" in [assoc.name for assoc in domain_model.associations]:
+                while f"{association_name}_{counter}" in existing_assoc_names:
                     counter += 1
                 association_name = f"{association_name}_{counter}"
 
@@ -509,19 +520,18 @@ def process_class_diagram(json_data):
                 linked_element = elements.get(linked_element_id)
                 if linked_element:
                     element_name = linked_element.get("name", "").strip()
-                    # Find the class in the domain model
-                    for type_obj in domain_model.types:
-                        if isinstance(type_obj, Class) and type_obj.name == element_name:
-                            # Add comment to class metadata
-                            if not type_obj.metadata:
-                                type_obj.metadata = Metadata(description=comment_text)
+                    # Find the class in the domain model via O(1) lookup
+                    type_obj = type_lookup.get(element_name)
+                    if isinstance(type_obj, Class):
+                        # Add comment to class metadata
+                        if not type_obj.metadata:
+                            type_obj.metadata = Metadata(description=comment_text)
+                        else:
+                            # Append to existing description
+                            if type_obj.metadata.description:
+                                type_obj.metadata.description += f"\n{comment_text}"
                             else:
-                                # Append to existing description
-                                if type_obj.metadata.description:
-                                    type_obj.metadata.description += f"\n{comment_text}"
-                                else:
-                                    type_obj.metadata.description = comment_text
-                            break
+                                type_obj.metadata.description = comment_text
         else:
             # Comment is not linked, add to domain model metadata
             if not domain_model.metadata:

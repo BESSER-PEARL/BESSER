@@ -104,10 +104,10 @@ def check_ocl_constraint(domain_model, object_model = None):
         }
 
     except Exception as e:
-        logger.error("OCL constraint checking failed: %s", e)
+        logger.exception("OCL constraint checking failed")
         return {
             "success": False,
-            "message": f"{str(e)}",
+            "message": "OCL constraint checking encountered an unexpected error.",
             "valid_constraints": [],
             "invalid_constraints": []
         }

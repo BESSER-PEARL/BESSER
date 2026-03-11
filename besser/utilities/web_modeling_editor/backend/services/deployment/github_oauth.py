@@ -6,11 +6,14 @@ Sessions are stored in an encrypted file-based store (with automatic
 fallback to in-memory storage when the cryptography package is absent).
 """
 
+import logging
 import os
 import secrets
 from typing import Optional, Dict, Any
 import requests
 from fastapi import APIRouter, HTTPException, Request, Response
+
+logger = logging.getLogger(__name__)
 from fastapi.responses import RedirectResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -273,7 +276,8 @@ async def star_besser_repo(session_id: str):
         resp.raise_for_status()
         return {"success": True}
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"GitHub API error: {str(e)}")
+        logger.exception("GitHub API request failed")
+        raise HTTPException(status_code=502, detail="GitHub API request failed.")
 
 
 @router.delete("/star")
@@ -295,4 +299,5 @@ async def unstar_besser_repo(session_id: str):
         resp.raise_for_status()
         return {"success": True}
     except requests.RequestException as e:
-        raise HTTPException(status_code=502, detail=f"GitHub API error: {str(e)}")
+        logger.exception("GitHub API request failed")
+        raise HTTPException(status_code=502, detail="GitHub API request failed.")

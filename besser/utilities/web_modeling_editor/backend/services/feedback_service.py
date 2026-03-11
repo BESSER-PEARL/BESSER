@@ -76,8 +76,8 @@ def submit_feedback(feedback: FeedbackSubmission) -> dict:
         }
     
     except Exception as e:
-        logger.error("Failed to process feedback: %s", str(e))
-        raise Exception(f"Failed to process feedback: {str(e)}")
+        logger.exception("Failed to process feedback")
+        raise Exception("Failed to process feedback. Please try again later.") from e
 
 
 def _send_feedback_email(
@@ -163,7 +163,7 @@ def _store_feedback_locally(feedback: FeedbackSubmission) -> None:
         logger.info("Feedback stored locally: %s - %s", feedback.satisfaction, feedback.category)
         
     except Exception as e:
-        logger.error("Error storing feedback locally: %s", str(e))
+        logger.exception("Error storing feedback locally")
         raise
 
 

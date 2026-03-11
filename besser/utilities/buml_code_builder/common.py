@@ -1,6 +1,7 @@
 """
 Common utilities for BUML code builders
 """
+import keyword
 
 
 def _escape_python_string(value: str) -> str:
@@ -57,7 +58,10 @@ def safe_var_name(name: str) -> str:
     # Remove consecutive underscores
     while '__' in safe_name:
         safe_name = safe_name.replace('__', '_')
-    return safe_name.strip('_').lower() or "unnamed"
+    safe_name = safe_name.strip('_').lower() or "unnamed"
+    if keyword.iskeyword(safe_name):
+        safe_name = f"{safe_name}_"
+    return safe_name
 
 
 def safe_class_name(name):
@@ -75,6 +79,8 @@ def safe_class_name(name):
     if not name:
         return "unnamed_class"
         
+    if keyword.iskeyword(name):
+        return f"{name}_"
     if name.endswith('_'):
         base_name = name[:-1]
         if base_name in RESERVED_NAMES:

@@ -10,9 +10,17 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import VIS
 logger = logging.getLogger(__name__)
 
 
-def parse_method(method_str, domain_model=None):
+def parse_method(method_str, domain_model=None, type_lookup=None):
     """
     Parse a method string to extract visibility, name, parameters, and return type.
+
+    Args:
+        method_str: The raw method signature string.
+        domain_model: Optional DomainModel for resolving user-defined types.
+        type_lookup: Optional pre-built ``{name: type_obj}`` dict for O(1)
+            type resolution.  When provided, *domain_model* is still accepted
+            but the lookup dict is preferred.
+
     Examples:
     "+ notify(sms: str = 'message')" -> ("public", "notify", [{"name": "sms", "type": "str", "default": "message"}], None)
     "- findBook(title: str): Book" -> ("private", "findBook", [{"name": "title", "type": "str"}], "Book")
@@ -96,8 +104,14 @@ def parse_method(method_str, domain_model=None):
             elif ':' in param:
                 param_name, param_type = [p.strip() for p in param.split(':')]
 
-                # Handle the type
-                if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == param_type for t in domain_model.types):
+                # Handle the type — use O(1) lookup when available
+                is_user_type = False
+                if type_lookup is not None:
+                    is_user_type = param_type in type_lookup
+                elif domain_model:
+                    is_user_type = any(isinstance(t, (Enumeration, Class)) and t.name == param_type for t in domain_model.types)
+
+                if is_user_type:
                     type_param = param_type
                 else:
                     type_param = VALID_PRIMITIVE_TYPES.get(param_type.lower(), None)
@@ -117,8 +131,14 @@ def parse_method(method_str, domain_model=None):
     type_return = None
     if return_type:
         return_type = return_type.strip()
-        # Keep the original return type if it's not a primitive type
-        if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == return_type for t in domain_model.types):
+        # Keep the original return type if it's not a primitive type — use O(1) lookup when available
+        is_user_return = False
+        if type_lookup is not None:
+            is_user_return = return_type in type_lookup
+        elif domain_model:
+            is_user_return = any(isinstance(t, (Enumeration, Class)) and t.name == return_type for t in domain_model.types)
+
+        if is_user_return:
             type_return = return_type
         else:
             type_return = VALID_PRIMITIVE_TYPES.get(return_type.lower(), None)

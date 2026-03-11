@@ -2,7 +2,10 @@
 Chart component parsers for GUI diagrams.
 """
 
+import logging
 import json
+
+logger = logging.getLogger(__name__)
 from typing import Dict, Any, List
 from besser.BUML.metamodel.gui import (
     Alignment, BarChart, DataBinding, LineChart,
@@ -168,6 +171,7 @@ def parse_line_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Li
         try:
             series_json = json.loads(series_json)
         except Exception:
+            logger.debug("Failed to parse chart series JSON string", exc_info=True)
             series_json = []
     if isinstance(series_json, list):
         for s in series_json:
@@ -260,6 +264,7 @@ def parse_bar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Bar
         try:
             series_json = json.loads(series_json)
         except Exception:
+            logger.debug("Failed to parse chart series JSON string", exc_info=True)
             series_json = []
     if isinstance(series_json, list):
         for s in series_json:
@@ -353,6 +358,7 @@ def parse_pie_chart(view_comp: Dict[str, Any], class_model, domain_model) -> Pie
         try:
             series_json = json.loads(series_json)
         except Exception:
+            logger.debug("Failed to parse chart series JSON string", exc_info=True)
             series_json = []
     if isinstance(series_json, list):
         for s in series_json:
@@ -457,6 +463,7 @@ def parse_radar_chart(view_comp: Dict[str, Any], class_model, domain_model) -> R
         try:
             series_json = json.loads(series_json)
         except Exception:
+            logger.debug("Failed to parse chart series JSON string", exc_info=True)
             series_json = []
     if isinstance(series_json, list):
         for s in series_json:
@@ -540,6 +547,7 @@ def parse_radial_bar_chart(view_comp: Dict[str, Any], class_model, domain_model)
         try:
             series_json = json.loads(series_json)
         except Exception:
+            logger.debug("Failed to parse chart series JSON string", exc_info=True)
             series_json = []
     if isinstance(series_json, list):
         for s in series_json:

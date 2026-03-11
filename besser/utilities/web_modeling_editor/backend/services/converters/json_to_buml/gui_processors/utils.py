@@ -2,7 +2,10 @@
 Utility functions for GUI diagram processing.
 """
 
+import logging
 import re
+
+logger = logging.getLogger(__name__)
 from typing import Any, Dict, Optional
 
 
@@ -55,6 +58,7 @@ def parse_style_string(style_string: str) -> Dict[str, str]:
         try:
             style_string = str(style_string)
         except Exception:
+            logger.debug("Failed to convert style value to string", exc_info=True)
             return properties
 
     for part in style_string.split(";"):

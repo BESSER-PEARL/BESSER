@@ -350,6 +350,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     "source": function_source,
                 }
         custom_code_actions = {}
+        custom_condition_callables = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
                 var_name = node.targets[0].id
@@ -361,6 +362,31 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             callable_name = kw.value.id
                     if callable_name:
                         custom_code_actions[var_name] = callable_name  # e.g., 'CustomCodeAction_initial' -> 'action_name'
+                elif isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == 'Condition':
+                    # Map condition object variable names (e.g., condition_6_1) to their callable function names.
+                    callable_name = None
+                    for kw in node.value.keywords:
+                        if kw.arg == 'callable' and isinstance(kw.value, ast.Name):
+                            callable_name = kw.value.id
+                    if (
+                        callable_name is None
+                        and len(node.value.args) >= 2
+                        and isinstance(node.value.args[1], ast.Name)
+                    ):
+                        callable_name = node.value.args[1].id
+                    if callable_name:
+                        custom_condition_callables[var_name] = callable_name
+
+        def _resolve_condition_source(condition_ref_name: str) -> str:
+            condition_source = functions.get(condition_ref_name, {}).get("source")
+            if condition_source:
+                return condition_source
+            callable_name = custom_condition_callables.get(condition_ref_name)
+            if callable_name:
+                callable_source = functions.get(callable_name, {}).get("source")
+                if callable_source:
+                    return callable_source
+            return condition_ref_name
         
         # Third pass collect all actions
         actions = {}
@@ -619,112 +645,87 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     and isinstance(node.value, ast.Call)
                     and isinstance(node.value.func, ast.Attribute)
                 ):
-                    if (
-                        isinstance(node.value.func.value, ast.Call)
-                        and isinstance(node.value.func.value.func, ast.Attribute)
-                        and node.value.func.value.func.attr
-                        in [
-                            "when_event_go_to",
-                            "when_intent_matched",
-                            "when_no_intent_matched",
-                            "when_variable_matches_operation",
-                            "when_file_received",
-                        ]
-                    ):
-                        source_state = node.value.func.value.func.value.id
+                    if node.value.func.attr == "go_to":
+                        source_state = node.value.func.value.id if isinstance(node.value.func.value, ast.Name) else None
                         rel_id = str(uuid.uuid4())
-
-                        condition_name = node.value.func.value.func.attr
-                        condition_value = ""
-                        if condition_name == "when_intent_matched":
-                            condition_value = node.value.func.value.args[0].id
-                        elif condition_name == "when_file_received":
-                            condition_value = node.value.func.value.args[0].value
-                        elif condition_name == "when_variable_matches_operation":
-                            condition_name = "when_variable_operation_matched"
-                            condition_value = {}
-                            for kw in node.value.func.value.keywords:
-                                if kw.arg == "operation":
-                                    operator = kw.value.attr
-                                    operator_map = {
-                                        "eq": "==",
-                                        "lt": "<",
-                                        "le": "<=",
-                                        "ge": ">=",
-                                        "gt": ">",
-                                        "ne": "!=",
-                                    }
-                                    condition_value["operator"] = operator_map.get(operator, operator)
-                                elif kw.arg == "var_name":
-                                    condition_value["variable"] = kw.value.value
-                                elif kw.arg == "target":
-                                    condition_value["targetValue"] = kw.value.value
-                        event_name = None
-                        target_state = node.value.args[0].id
-                        event_params = None
-
-                        if source_state in states and target_state in states:
-                            source_element = elements[states[source_state]["id"]]
-                            target_element = elements[states[target_state]["id"]]
-
-                            source_dir, target_dir = determine_connection_direction(
-                                source_element["bounds"], target_element["bounds"]
-                            )
-
-                            source_point = calculate_connection_points(
-                                source_element["bounds"], source_dir
-                            )
-                            target_point = calculate_connection_points(
-                                target_element["bounds"], target_dir
-                            )
-
-                            path_points = calculate_path_points(
-                                source_point, target_point, source_dir, target_dir
-                            )
-                            rel_bounds = calculate_relationship_bounds(path_points)
-
-                            relationships[rel_id] = {
-                                "id": rel_id,
-                                "name": event_name,
-                                "type": "AgentStateTransition",
-                                "owner": None,
-                                "bounds": rel_bounds,
-                                "path": path_points,
-                                "source": {
-                                    "direction": source_dir,
-                                    "element": states[source_state]["id"],
-                                    "bounds": {
-                                        "x": source_point["x"],
-                                        "y": source_point["y"],
-                                        "width": 0,
-                                        "height": 0,
-                                    },
-                                },
-                                "target": {
-                                    "direction": target_dir,
-                                    "element": states[target_state]["id"],
-                                    "bounds": {
-                                        "x": target_point["x"],
-                                        "y": target_point["y"],
-                                        "width": 0,
-                                        "height": 0,
-                                    },
-                                },
-                                "isManuallyLayouted": False,
-                                "condition": condition_name,
-                                "conditionValue": condition_value,
-                            }
-
-                            if event_params:
-                                relationships[rel_id]["params"] = str(event_params)
-                
-                    elif node.value.func.attr == "go_to":
-                        source_state = node.value.func.value.id
-                        rel_id = str(uuid.uuid4())
-
                         condition_name = "auto"
-                        condition_value = ""
-                        target_state = node.value.args[0].id
+                        transition_payload = ""
+                        event_name = None
+                        target_state = node.value.args[0].id if node.value.args and isinstance(node.value.args[0], ast.Name) else None
+
+                        call_chain = node.value.func.value
+                        custom_conditions: list[str] = []
+
+                        while isinstance(call_chain, ast.Call) and isinstance(call_chain.func, ast.Attribute):
+                            chain_attr = call_chain.func.attr
+
+                            if chain_attr == "with_condition":
+                                if call_chain.args and isinstance(call_chain.args[0], ast.Name):
+                                    condition_func_name = call_chain.args[0].id
+                                    custom_conditions.insert(0, _resolve_condition_source(condition_func_name))
+                                call_chain = call_chain.func.value
+                                continue
+
+                            if isinstance(call_chain.func.value, ast.Name):
+                                source_state = call_chain.func.value.id
+
+                            if chain_attr == "when_intent_matched":
+                                condition_name = "when_intent_matched"
+                                if call_chain.args and isinstance(call_chain.args[0], ast.Name):
+                                    transition_payload = call_chain.args[0].id
+                            elif chain_attr == "when_no_intent_matched":
+                                condition_name = "when_no_intent_matched"
+                            elif chain_attr == "when_variable_matches_operation":
+                                condition_name = "when_variable_operation_matched"
+                                transition_payload = {}
+                                for kw in call_chain.keywords:
+                                    if kw.arg == "operation" and isinstance(kw.value, ast.Attribute):
+                                        operator_name = kw.value.attr
+                                        operator_map = {
+                                            "eq": "==",
+                                            "lt": "<",
+                                            "le": "<=",
+                                            "ge": ">=",
+                                            "gt": ">",
+                                            "ne": "!=",
+                                        }
+                                        transition_payload["operator"] = operator_map.get(operator_name, operator_name)
+                                    elif kw.arg == "var_name" and isinstance(kw.value, ast.Constant):
+                                        transition_payload["variable"] = kw.value.value
+                                    elif kw.arg == "target" and isinstance(kw.value, ast.Constant):
+                                        transition_payload["targetValue"] = kw.value.value
+                            elif chain_attr == "when_file_received":
+                                condition_name = "when_file_received"
+                                if call_chain.args and isinstance(call_chain.args[0], ast.Constant):
+                                    transition_payload = call_chain.args[0].value
+                            elif chain_attr == "when_event":
+                                condition_name = "custom_transition"
+                                selected_event = "None"
+                                if call_chain.args:
+                                    event_arg = call_chain.args[0]
+                                    if isinstance(event_arg, ast.Call) and isinstance(event_arg.func, ast.Name):
+                                        event_name = event_arg.func.id
+                                        selected_event = event_name
+                                    elif isinstance(event_arg, ast.Name):
+                                        event_name = event_arg.id
+                                        selected_event = event_name
+
+                                transition_payload = {
+                                    "event": selected_event,
+                                    "conditions": custom_conditions,
+                                }
+                            elif chain_attr == "when_condition":
+                                condition_name = "custom_transition"
+                                if call_chain.args and isinstance(call_chain.args[0], ast.Name):
+                                    condition_func_name = call_chain.args[0].id
+                                    custom_conditions.insert(0, _resolve_condition_source(condition_func_name))
+
+                                transition_payload = {
+                                    "event": "None",
+                                    "conditions": custom_conditions,
+                                }
+
+                            break
                         
                         if source_state in states and target_state in states:
                             source_element = elements[states[source_state]["id"]]
@@ -746,9 +747,29 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             )
                             rel_bounds = calculate_relationship_bounds(path_points)
 
+                            transition_type = "custom" if condition_name == "custom_transition" else "predefined"
+                            predefined_block = {
+                                "predefinedType": condition_name if transition_type == "predefined" else "",
+                                "conditionValue": transition_payload if transition_type == "predefined" else "",
+                            }
+                            if transition_type == "predefined" and condition_name == "when_intent_matched":
+                                predefined_block["intentName"] = transition_payload if isinstance(transition_payload, str) else ""
+                                predefined_block.pop("conditionValue", None)
+                            elif transition_type == "predefined" and condition_name == "when_file_received":
+                                predefined_block["fileType"] = transition_payload if isinstance(transition_payload, str) else ""
+                                predefined_block.pop("conditionValue", None)
+                            custom_block = {
+                                "event": (event_name or "None") if transition_type == "custom" else "None",
+                                "condition": (
+                                    transition_payload.get("conditions", [])
+                                    if transition_type == "custom" and isinstance(transition_payload, dict)
+                                    else []
+                                ),
+                            }
+
                             relationships[rel_id] = {
                                 "id": rel_id,
-                                "name": "",
+                                "name": event_name or "",
                                 "type": "AgentStateTransition",
                                 "owner": None,
                                 "bounds": rel_bounds,
@@ -774,8 +795,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     },
                                 },
                                 "isManuallyLayouted": False,
-                                "condition": condition_name,
-                                "conditionValue": condition_value,
+                                "transitionType": transition_type,
+                                "predefined": predefined_block,
+                                "custom": custom_block,
                             }
 
                     

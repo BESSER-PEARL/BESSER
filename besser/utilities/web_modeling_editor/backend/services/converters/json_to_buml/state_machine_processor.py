@@ -144,12 +144,7 @@ def process_state_machine(json_data):
                 params = relationship.get("params")
 
                 if event_name:
-                    event_params = f"event_params={{ {params} }}" if params else "event_params={}"
-                    code_lines.append(f"{source_name}_state.when_event_go_to(")
-                    code_lines.append(f"    event={event_name},")
-                    code_lines.append(f"    dest={target_name}_state,")
-                    code_lines.append(f"    {event_params}")
-                    code_lines.append(")")
+                    code_lines.append(f"{source_name}_state.when_event({event_name}).go_to({target_name}_state)")
 
     # Process comments
     state_id_to_name = {state_id: state_name for state_id, state_name in states_by_id.items()}

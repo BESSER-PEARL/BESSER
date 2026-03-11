@@ -17,8 +17,13 @@ from besser.BUML.metamodel.state_machine.agent import (
     Agent,
     Intent,
     Auto,
+    DummyEvent,
     IntentMatcher,
+    ReceiveFileEvent,
+    ReceiveJSONEvent,
+    ReceiveMessageEvent,
     ReceiveTextEvent,
+    WildcardEvent,
     AgentReply,
     LLMReply,
     RAGReply,
@@ -517,27 +522,81 @@ def process_agent_diagram(json_data):
             target_state = states_by_id.get(target_id)
 
             if source_state and target_state:
-                condition_name = relationship.get("condition", "")
-                condition_value = relationship.get("conditionValue", "")
+                transition_type = relationship.get("transitionType")
+                predefined_block = relationship.get("predefined") or {}
+                custom_block = relationship.get("custom") or {}
+
+                condition_name = ""
+                transition_payload = ""
+
+                is_custom_transition = (
+                    transition_type == "custom"
+                )
+
+                if is_custom_transition:
+                    selected_event = (
+                        custom_block.get("event")
+                        or relationship.get("event")
+                        or relationship.get("customEvent")
+                    )
+                    custom_conditions = (
+                        custom_block.get("condition")
+                        if isinstance(custom_block.get("condition"), list)
+                        else relationship.get("conditions")
+                    )
+                    if not isinstance(custom_conditions, list):
+                        custom_conditions = relationship.get("customConditions")
+                    if not isinstance(custom_conditions, list):
+                        custom_conditions = []
+
+                    normalized_event = "None"
+                    if isinstance(selected_event, str) and selected_event and selected_event != "None":
+                        normalized_event = selected_event
+                    condition_name = "custom_transition"
+                    transition_payload = {
+                        "event": normalized_event,
+                        "conditions": custom_conditions if isinstance(custom_conditions, list) else [],
+                    }
+                else:
+                    condition_name = (
+                        predefined_block.get("predefinedType")
+                        or relationship.get("predefinedType")
+                        or ""
+                    )
+                    if condition_name == "when_intent_matched":
+                        transition_payload = (
+                            predefined_block.get("intentName")
+                            or relationship.get("intentName")
+                        )
+                    elif condition_name == "when_file_received":
+                        transition_payload = (
+                            predefined_block.get("fileType")
+                            or relationship.get("fileType")
+                        )
+                    else:
+                        transition_payload = predefined_block.get("conditionValue")
+
+                    if transition_payload is None:
+                        transition_payload = relationship.get("conditionValue", "")
 
                 # Create appropriate transition based on condition
                 if condition_name == "when_intent_matched":
                     # Find the intent by name
                     intent_to_match = None
                     for intent in agent.intents:
-                        if intent.name == condition_value:
+                        if intent.name == transition_payload:
                             intent_to_match = intent
                             break
 
                     if intent_to_match:
                         source_state.when_intent_matched(intent_to_match).go_to(target_state)
                         transition_count += 1
-                    elif isinstance(condition_value, str) and condition_value.strip():
-                        unresolved_intent = Intent(condition_value.strip())
+                    elif isinstance(transition_payload, str) and transition_payload.strip():
+                        unresolved_intent = Intent(transition_payload.strip())
                         TransitionBuilder(
                             source=source_state,
                             event=ReceiveTextEvent(),
-                            conditions=IntentMatcher(unresolved_intent),
+                            conditions=[IntentMatcher(unresolved_intent)],
                         ).go_to(target_state)
                         transition_count += 1
 
@@ -546,11 +605,11 @@ def process_agent_diagram(json_data):
                     transition_count += 1
 
                 elif condition_name == "when_variable_operation_matched":
-                    # Check if condition_value is a dictionary
-                    if isinstance(condition_value, dict):
-                        variable_name = condition_value.get("variable")
-                        operator_value = condition_value.get("operator")
-                        target_value = condition_value.get("targetValue")
+                    # Check if transition payload is a dictionary
+                    if isinstance(transition_payload, dict):
+                        variable_name = transition_payload.get("variable")
+                        operator_value = transition_payload.get("operator")
+                        target_value = transition_payload.get("targetValue")
 
                         # Map string operators to actual operator functions
                         operator_map = {
@@ -571,8 +630,8 @@ def process_agent_diagram(json_data):
                             ).go_to(target_state)
                             transition_count += 1
                     else:
-                        # If condition_value is not a dictionary, add a simple transition
-                        source_state.when_no_intent_matched().go_to(target_state)
+                        # If payload is not a dictionary, add a simple transition
+                        source_state.go_to(target_state)
                         transition_count += 1
 
                 elif condition_name == "when_file_received":
@@ -581,14 +640,77 @@ def process_agent_diagram(json_data):
                         "TXT": "text/plain",
                         "JSON": "application/json"
                     }
-                    file_type = mime_types.get(condition_value)
+                    if isinstance(transition_payload, str) and "/" in transition_payload:
+                        file_type = transition_payload
+                    else:
+                        file_type = mime_types.get(transition_payload)
                     if file_type:
                         source_state.when_file_received(file_type).go_to(target_state)
                         transition_count += 1
-
+                    else:
+                        source_state.when_file_received().go_to(target_state)
+                        transition_count += 1
                 elif condition_name == "auto":
                     source_state.go_to(target_state)
                     transition_count += 1
+
+                elif condition_name == "custom_transition":
+                    event_instance = None
+                    custom_conditions = []
+
+                    if isinstance(transition_payload, dict):
+                        selected_event = transition_payload.get("event")
+                        # Backward compatibility for older payloads that used "events": [..]
+                        if not selected_event:
+                            raw_events = transition_payload.get("events") or []
+                            if isinstance(raw_events, list) and raw_events:
+                                selected_event = raw_events[0]
+
+                        if selected_event == "ReceiveTextEvent":
+                            event_instance = ReceiveTextEvent()
+                        elif selected_event == "ReceiveMessageEvent":
+                            event_instance = ReceiveMessageEvent("")
+                        elif selected_event == "ReceiveJSONEvent":
+                            event_instance = ReceiveJSONEvent()
+                        elif selected_event == "ReceiveFileEvent":
+                            event_instance = ReceiveFileEvent()
+                        elif selected_event == "DummyEvent":
+                            event_instance = DummyEvent()
+                        elif selected_event == "WildcardEvent":
+                            event_instance = WildcardEvent()
+                        elif selected_event == "None":
+                            event_instance = None
+
+                        raw_conditions = transition_payload.get("conditions") or []
+                        if isinstance(raw_conditions, list):
+                            custom_conditions = [c for c in raw_conditions if isinstance(c, str) and c.strip()]
+
+                    condition_objects = []
+                    for condition_index, custom_condition_code in enumerate(custom_conditions, start=1):
+                        generated_name = f"condition_{transition_count + 1}_{condition_index}"
+                        custom_condition = Condition(name=generated_name, callable=None)
+                        custom_condition.code = custom_condition_code
+                        condition_objects.append(custom_condition)
+
+                    transition_builder = None
+                    if event_instance is not None:
+                        transition_builder = source_state.when_event(event_instance)
+
+                    if condition_objects:
+                        if transition_builder is None:
+                            transition_builder = source_state.when_condition(condition_objects[0])
+                            for extra_condition in condition_objects[1:]:
+                                transition_builder.with_condition(extra_condition)
+                        else:
+                            for custom_condition in condition_objects:
+                                transition_builder.with_condition(custom_condition)
+
+                    if transition_builder is not None:
+                        transition_builder.go_to(target_state)
+                        transition_count += 1
+                    else:
+                        source_state.go_to(target_state)
+                        transition_count += 1
 
                 else:
                     # Default to no_intent_matched if no condition specified

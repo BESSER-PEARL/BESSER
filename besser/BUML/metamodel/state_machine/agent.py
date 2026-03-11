@@ -1177,7 +1177,7 @@ class AgentState(State):
         Args:
             dest (AgentState): the destination state
         """
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=Auto())
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=[Auto()])
         transition_builder.go_to(dest)
 
     def when_intent_matched(self, intent: Intent) -> TransitionBuilder:
@@ -1196,13 +1196,13 @@ class AgentState(State):
         self.intents.append(intent)
         event: ReceiveTextEvent = ReceiveTextEvent()
         condition: Condition = IntentMatcher(intent)
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[condition])
         return transition_builder
 
     def when_no_intent_matched(self) -> TransitionBuilder:
         event: ReceiveTextEvent = ReceiveTextEvent()
         condition: Condition = IntentMatcher(Intent("fallback_intent"))
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[condition])
         return transition_builder
 
     def when_variable_matches_operation(
@@ -1225,7 +1225,7 @@ class AgentState(State):
             TransitionBuilder: the transition builder
         """
         condition: Condition = VariableOperationMatcher(var_name, operation, target)
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, conditions=[condition])
         return transition_builder
 
     def when_file_received(self, allowed_types: list[str] or str = None) -> TransitionBuilder:
@@ -1239,8 +1239,30 @@ class AgentState(State):
             TransitionBuilder: the transition builder
         """
         event = ReceiveFileEvent()
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=FileTypeMatcher(allowed_types))
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[FileTypeMatcher(allowed_types)])
         return transition_builder
+
+    def when_event(self, event: Event) -> TransitionBuilder:
+        """Start the definition of a transition triggered by a custom event.
+
+        Args:
+            event (Event): Event instance used to trigger the transition.
+
+        Returns:
+            TransitionBuilder: the transition builder
+        """
+        return TransitionBuilder(source=self, event=event)
+
+    def when_condition(self, condition: Condition) -> TransitionBuilder:
+        """Start the definition of a transition triggered by a custom condition.
+
+        Args:
+            condition (Condition): Condition instance evaluated by the transition.
+
+        Returns:
+            TransitionBuilder: the transition builder
+        """
+        return TransitionBuilder(source=self, conditions=[condition])
 
 
 class Agent(StateMachine):

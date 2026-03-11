@@ -2,9 +2,13 @@
 Method parsing utilities for converting JSON to BUML format.
 """
 
+import logging
 import re
+
 from besser.BUML.metamodel.structural import Enumeration, Class
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
+
+logger = logging.getLogger(__name__)
 
 
 def parse_method(method_str, domain_model=None):
@@ -66,6 +70,8 @@ def parse_method(method_str, domain_model=None):
                 continue
 
             param_dict = {'name': param, 'type': 'any'}
+            if ':' not in param and '=' not in param:
+                logger.warning("Parameter '%s' in method '%s' has no type annotation, defaulting to 'any'.", param.strip(), method_name)
 
             # Handle parameter with default value
             if '=' in param:
@@ -108,6 +114,7 @@ def parse_method(method_str, domain_model=None):
             parameters.append(param_dict)
 
     # Clean up return type if present
+    type_return = None
     if return_type:
         return_type = return_type.strip()
         # Keep the original return type if it's not a primitive type
@@ -118,4 +125,4 @@ def parse_method(method_str, domain_model=None):
             if type_return is None:
                 raise ValueError(f"Invalid return type '{return_type}' for the method '{method_name}'")
 
-    return visibility, method_name, parameters, return_type
+    return visibility, method_name, parameters, type_return

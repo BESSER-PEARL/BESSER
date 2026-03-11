@@ -10,13 +10,15 @@ from besser.BUML.metamodel.state_machine.agent import Agent, AgentReply, LLMRepl
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 
 
-def agent_model_to_code(model: Agent, file_path: str):
+def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "agent"):
     """
     Generates Python code for a B-UML Agent model and writes it to a specified file.
 
     Parameters:
     model (Agent): The B-UML Agent model object containing states, intents, and transitions.
     file_path (str): The path where the generated code will be saved.
+    model_var_name (str, optional): Name of the Agent variable in the generated code.
+        Defaults to "agent".
 
     Outputs:
     - A Python file containing the code representation of the B-UML agent model.
@@ -49,19 +51,19 @@ def agent_model_to_code(model: Agent, file_path: str):
         # Create agent with metadata if it exists
         if hasattr(model, 'metadata') and model.metadata and model.metadata.description:
             desc = model.metadata.description.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
-            f.write(f"agent = Agent('{model.name}', metadata=Metadata(description=\"{desc}\"))\n\n")
+            f.write(f"{model_var_name} = Agent('{model.name}', metadata=Metadata(description=\"{desc}\"))\n\n")
         else:
-            f.write(f"agent = Agent('{model.name}')\n\n")
-        
+            f.write(f"{model_var_name} = Agent('{model.name}')\n\n")
+
         # Write configuration properties
         for prop in model.properties:
-            f.write(f"agent.add_property(ConfigProperty('{prop.section}', '{prop.name}', {repr(prop.value)}))\n")
+            f.write(f"{model_var_name}.add_property(ConfigProperty('{prop.section}', '{prop.name}', {repr(prop.value)}))\n")
         f.write("\n")
 
         # Write intents
         f.write("# INTENTS\n")
         for intent in model.intents:
-            f.write(f"{intent.name} = agent.new_intent('{intent.name}', [\n")
+            f.write(f"{intent.name} = {model_var_name}.new_intent('{intent.name}', [\n")
             for sentence in intent.training_sentences:
                 # Escape single quotes for Python string literal
                 escaped_sentence = sentence.replace('\\', '\\\\').replace("'", "\\'")
@@ -98,7 +100,7 @@ def agent_model_to_code(model: Agent, file_path: str):
                 f.write(f"    chunk_overlap={splitter.chunk_overlap},\n")
                 f.write(")\n")
 
-                f.write(f"{rag_var} = agent.new_rag(\n")
+                f.write(f"{rag_var} = {model_var_name}.new_rag(\n")
                 f.write(f"    name={repr(rag.name)},\n")
                 f.write(f"    vector_store={vector_var},\n")
                 f.write(f"    splitter={splitter_var},\n")
@@ -122,12 +124,12 @@ def agent_model_to_code(model: Agent, file_path: str):
         if llm_required:
             # Create an LLM instance for use in state bodies
             f.write("# Create LLM instance for use in state bodies\n")
-            f.write("llm = LLMOpenAI(agent=agent, name='gpt-4o-mini', parameters={})\n\n")
+            f.write(f"llm = LLMOpenAI(agent={model_var_name}, name='gpt-4o-mini', parameters={{}})\n\n")
 
         # Write states
         f.write("# STATES\n")
         for state in model.states:
-            f.write(f"{state.name} = agent.new_state('{state.name}'")
+            f.write(f"{state.name} = {model_var_name}.new_state('{state.name}'")
             if state.initial:
                 f.write(", initial=True")
             f.write(")\n")

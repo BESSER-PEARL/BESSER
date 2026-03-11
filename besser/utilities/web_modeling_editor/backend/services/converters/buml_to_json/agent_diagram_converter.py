@@ -3,9 +3,12 @@ Agent converter module for BUML to JSON conversion.
 Handles agent diagram processing and function analysis.
 """
 
+import logging
 import uuid
 import ast
 from typing import Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 from ...utils.layout_calculator import (
     calculate_center_point,
@@ -858,8 +861,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 elements[state["id"]]["bodies"].append(body_id)
                             
                         except Exception as e:
-                            import traceback
-                            traceback.print_exc()
+                            logger.error("Error processing agent body: %s", e, exc_info=True)
                             continue
 
                     # Add handling for fallback bodies
@@ -999,8 +1001,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         except Exception as e:
                             continue
             except Exception as e:
-                import traceback
-                traceback.print_exc()
+                logger.error("Error processing agent state machine: %s", e, exc_info=True)
                 continue
         # Find initial state and create initial transition
         initial_state = None

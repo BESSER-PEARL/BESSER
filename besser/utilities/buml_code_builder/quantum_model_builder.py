@@ -14,13 +14,15 @@ from besser.BUML.metamodel.quantum.quantum import (
 
 
 
-def quantum_model_to_code(model: QuantumCircuit, file_path: str):
+def quantum_model_to_code(model: QuantumCircuit, file_path: str, model_var_name: str = "qc"):
     """
     Generates Python code for a QuantumCircuit model.
-    
+
     Args:
         model (QuantumCircuit): The quantum circuit model.
         file_path (str): The path to save the generated code.
+        model_var_name (str, optional): Name of the QuantumCircuit variable in the generated code.
+            Defaults to "qc".
     """
     with open(file_path, 'w', encoding='utf-8') as f:
         # Imports
@@ -34,8 +36,8 @@ def quantum_model_to_code(model: QuantumCircuit, file_path: str):
         f.write("    PrimitiveGate, ParametricGate, OrderGate, ScalarGate, FunctionGate,\n")
         f.write("    GateDefinition\n")
         f.write(")\n\n")
-        
-        _write_circuit(f, model, "qc")
+
+        _write_circuit(f, model, model_var_name)
 
 def _write_circuit(f, model: QuantumCircuit, var_name: str):
     """Helper to write a circuit definition."""

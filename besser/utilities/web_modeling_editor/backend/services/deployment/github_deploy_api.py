@@ -6,6 +6,7 @@ in the user's account, enabling one-click deployment to platforms like Render.
 """
 
 import io
+import logging
 import os
 import uuid
 import zipfile
@@ -18,6 +19,8 @@ from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service
@@ -156,7 +159,7 @@ async def deploy_webapp_to_github(
             settings = body.get("settings", {}) or {}
             settings_config = settings.get("config") or {}
             agent_config = agent_diagram_data.get("config") or settings_config
-            print(f"[GitHub deploy] resolved agent_config: {json.dumps(agent_config, indent=2, default=str) if agent_config else 'None'}")
+            logger.debug("Resolved agent_config: %s", json.dumps(agent_config, indent=2, default=str) if agent_config else 'None')
 
         # Generate web app
         temp_dir = tempfile.mkdtemp(prefix=f"besser_github_{uuid.uuid4().hex}_")

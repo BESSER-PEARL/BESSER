@@ -2,7 +2,10 @@
 Main GUI diagram processor - orchestrates the conversion of GrapesJS JSON to BUML GUI model.
 """
 
+import logging
 from typing import Any, Dict, List, Optional, Set
+
+logger = logging.getLogger(__name__)
 
 from besser.BUML.metamodel.gui import (
     Button,
@@ -64,8 +67,14 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     Returns:
         GUIModel instance with screens and components
     """
+    if domain_model is None:
+        logger.warning(
+            "GUI diagram processing called without a domain model. "
+            "Class-based bindings and CRUD actions will not be resolved."
+        )
+
     gui_model_json = gui_diagram or {}
-    
+
     # Build style map from GrapesJS styles
     style_map = build_style_map(gui_model_json.get("styles", []))
     

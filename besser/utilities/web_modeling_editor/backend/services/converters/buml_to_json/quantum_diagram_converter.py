@@ -2,6 +2,8 @@
 Quantum diagram conversion from BUML to JSON format.
 """
 
+from typing import Dict, Any
+
 from besser.BUML.metamodel.quantum.quantum import (
     QuantumCircuit, QuantumOperation, PrimitiveGate, ParametricGate,
     ArithmeticGate, ModularArithmeticGate, ComparisonGate, QFTGate,
@@ -137,8 +139,6 @@ def _get_gate_symbol(op: QuantumOperation) -> str:
         return "S"
     if isinstance(op, TGate):
         return "T"
-    if isinstance(op, SwapGate):
-        return "Swap"
     if isinstance(op, SwapGate):
         return "Swap"
     if isinstance(op, SqrtSwapGate):
@@ -455,3 +455,60 @@ def _serialize_gates_to_columns(gates):
         "qubitCount": num_qubits,
         "initialStates": ["|0⟩"] * num_qubits
     }
+
+
+def quantum_buml_to_json(content: str) -> Dict[str, Any]:
+    """
+    Convert quantum model Python code to the editor JSON format.
+
+    Executes the BUML code, finds the QuantumCircuit instance, and converts
+    it to JSON using quantum_circuit_to_editor_json.
+
+    Args:
+        content: Quantum model Python code as string
+
+    Returns:
+        Dictionary representing the quantum circuit diagram in JSON format
+    """
+    import besser.BUML.metamodel.quantum.quantum as quantum_module
+
+    safe_globals: dict = {
+        "__builtins__": {
+            "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
+            "str": str,
+            "int": int,
+            "float": float,
+            "bool": bool,
+            "len": len,
+            "range": range,
+            "True": True,
+            "False": False,
+            "None": None,
+            "print": print,
+        },
+    }
+    # Expose all quantum module members for exec
+    for name in dir(quantum_module):
+        if not name.startswith("_"):
+            safe_globals[name] = getattr(quantum_module, name)
+
+    local_vars = {}
+    try:
+        exec(content, safe_globals, local_vars)
+    except Exception as exc:
+        raise ValueError(f"Failed to execute quantum BUML content: {exc}") from exc
+
+    # Find the QuantumCircuit instance
+    circuit = None
+    for var_value in local_vars.values():
+        if isinstance(var_value, QuantumCircuit):
+            circuit = var_value
+            break
+
+    if circuit is None:
+        raise ValueError("No QuantumCircuit instance found in the quantum BUML content")
+
+    return quantum_circuit_to_editor_json(circuit)

@@ -4,6 +4,7 @@ Handles object diagram processing and attribute mapping.
 """
 
 import ast
+import logging
 import uuid
 from typing import Dict, Any, Optional
 
@@ -87,7 +88,12 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                 class_id_to_attributes[elem_id] = class_attributes
         
         # Parse the Python code to extract object instances
-        tree = ast.parse(content)
+        try:
+            tree = ast.parse(content)
+        except SyntaxError as e:
+            raise ValueError(
+                f"Failed to parse object model Python code: syntax error at line {e.lineno}: {e.msg}"
+            ) from e
         
         # Track objects and their information
         objects_by_name = {}
@@ -169,7 +175,12 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                                         if isinstance(kw.value, ast.Call):
                                             for meta_kw in kw.value.keywords:
                                                 if meta_kw.arg == "description":
-                                                    om_comment = ast.literal_eval(meta_kw.value)
+                                                    try:
+                                                        om_comment = ast.literal_eval(meta_kw.value)
+                                                    except (ValueError, TypeError) as e:
+                                                        logging.getLogger(__name__).warning(
+                                                            "Could not evaluate ObjectModel metadata description: %s", e
+                                                        )
                 
                 # Check for object.classifier.metadata = Metadata(...) patterns
                 target = node.targets[0]
@@ -180,7 +191,13 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
                         if obj_var and isinstance(node.value, ast.Call):
                             for kw in node.value.keywords:
                                 if kw.arg == "description":
-                                    object_comments[obj_var] = ast.literal_eval(kw.value)
+                                    try:
+                                        object_comments[obj_var] = ast.literal_eval(kw.value)
+                                    except (ValueError, TypeError) as e:
+                                        logging.getLogger(__name__).warning(
+                                            "Could not evaluate object metadata description for '%s': %s",
+                                            obj_var, e
+                                        )
         
         # Create object elements in JSON format
         for obj_name, obj_info in objects_by_name.items():
@@ -433,13 +450,5 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
         }
   
     except Exception as e:
-        print(f"Error parsing object BUML content: {str(e)}")
-        return {
-            "version": "3.0.0",
-            "type": "ObjectDiagram", 
-            "size": default_size,
-            "interactive": {"elements": {}, "relationships": {}},
-            "elements": {},
-            "relationships": {},
-            "assessments": {},
-        }
+        logging.getLogger(__name__).error(f"Error parsing object BUML content: {str(e)}", exc_info=True)
+        raise ValueError(f"Failed to convert object BUML to JSON: {str(e)}") from e

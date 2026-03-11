@@ -5,6 +5,7 @@ This module handles user feedback submission, email sending, and local storage.
 Supports multiple recipient emails and graceful error handling.
 """
 
+import logging
 import os
 import json
 import smtplib
@@ -14,6 +15,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 from besser.utilities.web_modeling_editor.backend.models import FeedbackSubmission
+
+logger = logging.getLogger(__name__)
 
 
 def submit_feedback(feedback: FeedbackSubmission) -> dict:
@@ -51,7 +54,7 @@ def submit_feedback(feedback: FeedbackSubmission) -> dict:
         smtp_password = os.getenv("SMTP_PASSWORD")
         
         if not feedback_emails:
-            print("Warning: FEEDBACK_EMAIL not configured. Feedback will only be stored locally.")
+            logger.warning("FEEDBACK_EMAIL not configured. Feedback will only be stored locally.")
         
         # Send email if configured
         if feedback_emails and smtp_password:
@@ -73,7 +76,7 @@ def submit_feedback(feedback: FeedbackSubmission) -> dict:
         }
     
     except Exception as e:
-        print(f"Failed to process feedback: {str(e)}")
+        logger.error("Failed to process feedback: %s", str(e))
         raise Exception(f"Failed to process feedback: {str(e)}")
 
 
@@ -128,14 +131,14 @@ def _send_feedback_email(
             # Send to all configured email addresses
             server.send_message(msg, to_addrs=recipient_emails)
         
-        print(
-            f"Feedback email sent to {', '.join(recipient_emails)}: "
-            f"{feedback.satisfaction} - {feedback.category}"
+        logger.info(
+            "Feedback email sent to %s: %s - %s",
+            ', '.join(recipient_emails), feedback.satisfaction, feedback.category
         )
         
     except Exception as email_error:
-        print(f"Warning: Failed to send feedback email: {str(email_error)}")
-        print(f"  Host: {smtp_host}:{smtp_port}, Recipients: {', '.join(recipient_emails)}")
+        logger.warning("Failed to send feedback email: %s", str(email_error))
+        logger.warning("  Host: %s:%s, Recipients: %s", smtp_host, smtp_port, ', '.join(recipient_emails))
         # Continue anyway - we'll store locally
 
 
@@ -157,10 +160,10 @@ def _store_feedback_locally(feedback: FeedbackSubmission) -> None:
         with open(feedback_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(feedback.dict(), ensure_ascii=False) + "\n")
         
-        print(f"Feedback stored locally: {feedback.satisfaction} - {feedback.category}")
+        logger.info("Feedback stored locally: %s - %s", feedback.satisfaction, feedback.category)
         
     except Exception as e:
-        print(f"Error storing feedback locally: {str(e)}")
+        logger.error("Error storing feedback locally: %s", str(e))
         raise
 
 

@@ -1,6 +1,10 @@
+import logging
+import re
+
 from besser.BUML.notations.ocl.OCLParserWrapper import OCLParserWrapper
 from bocl.OCLWrapper import OCLWrapper
-import re
+
+logger = logging.getLogger(__name__)
 
 def extract_context_class_name(expression):
     """Extract the context class name from an OCL expression"""
@@ -10,7 +14,8 @@ def extract_context_class_name(expression):
         if match:
             return match.group(1)
         return ""
-    except:
+    except Exception as e:
+        logger.warning("Failed to extract context class name from OCL expression: %s", e)
         return ""
 
 def is_basic_ocl_syntax_valid(expression):
@@ -35,7 +40,8 @@ def is_basic_ocl_syntax_valid(expression):
         has_ocl_keywords = any(keyword in expression.lower() for keyword in ocl_keywords)
         
         return has_ocl_keywords
-    except:
+    except Exception as e:
+        logger.warning("Basic OCL syntax validation failed: %s", e)
         return False
 
 def check_ocl_constraint(domain_model, object_model = None):
@@ -87,6 +93,7 @@ def check_ocl_constraint(domain_model, object_model = None):
                     else:
                         valid_constraints.append(f"✅ '{constraint.expression}' - Evaluates to: {result}")
             except Exception as e:
+                logger.error("Error evaluating OCL constraint '%s': %s", constraint.expression, e)
                 invalid_constraints.append(f"❌ '{constraint.expression}' - Error: {str(e)} \n")
 
         return {
@@ -97,6 +104,7 @@ def check_ocl_constraint(domain_model, object_model = None):
         }
 
     except Exception as e:
+        logger.error("OCL constraint checking failed: %s", e)
         return {
             "success": False,
             "message": f"{str(e)}",

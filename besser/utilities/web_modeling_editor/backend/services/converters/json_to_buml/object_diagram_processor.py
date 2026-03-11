@@ -2,14 +2,28 @@
 Object diagram processing for converting JSON to BUML format.
 """
 
-from fastapi import HTTPException
+import logging
+
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 from besser.BUML.metamodel.object import ObjectModel
+
+logger = logging.getLogger(__name__)
 from besser.BUML.metamodel.object.builder import ObjectBuilder
 from besser.BUML.metamodel.object import Link, LinkEnd
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import parse_attribute
 from datetime import datetime, date, time, timedelta
 import re
+
+
+def get_all_attributes(cls, domain_model):
+    """Get all attributes including inherited ones via recursive traversal."""
+    attrs = set(cls.attributes)
+    for gen in domain_model.generalizations:
+        if gen.specific == cls:
+            parent_attrs = get_all_attributes(gen.general, domain_model)
+            attrs.update(parent_attrs)
+    return attrs
 
 
 def parse_datetime_value(value, type_name):
@@ -66,14 +80,32 @@ def parse_datetime_value(value, type_name):
                     hours, minutes, seconds = map(int, time_components)
                     return timedelta(hours=hours, minutes=minutes, seconds=seconds)
     except (ValueError, IndexError) as e:
-        print(f"Warning: Could not parse {type_name} value '{value}': {e}")
+        logger.warning("Could not parse %s value '%s': %s", type_name, value, e)
         return value
     
     return value
 
 
 def process_object_diagram(json_data, domain_model):
-    """Process Object Diagram specific elements and return an ObjectModel."""
+    """Process Object Diagram specific elements and return an ObjectModel.
+
+    Args:
+        json_data: The JSON payload describing the object diagram.
+        domain_model: A ``DomainModel`` instance that provides the class
+            definitions referenced by objects in the diagram.  This parameter
+            is required; passing ``None`` will raise a ``ConversionError``
+            with a clear message.
+
+    Raises:
+        ConversionError: If *domain_model* is ``None`` or does not expose the
+            expected interface.
+    """
+    if domain_model is None:
+        raise ConversionError(
+            "Object diagram processing requires a reference class diagram (domain model). "
+            "Please ensure a ClassDiagram is provided or linked as reference data."
+        )
+
     title = json_data.get('title', 'Generated_Object_Model')
     if ' ' in title:
         title = title.replace(' ', '_')
@@ -131,12 +163,9 @@ def process_object_diagram(json_data, domain_model):
                 class_obj = domain_model.get_class_by_name(object_name)
 
             if not class_obj:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"Could not find class for object '{object_name}' with class ID '{class_id}'. "
-                        "Ensure either reference diagram data or explicit class names are provided."
-                    )
+                raise ConversionError(
+                    f"Could not find class for object '{object_name}' with class ID '{class_id}'. "
+                    "Ensure either reference diagram data or explicit class names are provided."
                 )
 
             # Create object using fluent API
@@ -163,7 +192,7 @@ def process_object_diagram(json_data, domain_model):
                     try:
                         _, attr_name, _ = parse_attribute(attr_string, domain_model)
                     except Exception as e:
-                        print(f"Warning: Could not process attribute '{attr_string}' for object '{object_name}': {e}")
+                        logger.warning("Could not process attribute '%s' for object '%s': %s", attr_string, object_name, e)
                         continue
                 elif attr_type == "UserModelAttribute":
                     operator = attr_element.get("attributeOperator", "==")
@@ -178,25 +207,13 @@ def process_object_diagram(json_data, domain_model):
                     continue
 
                 if attr_name and value is not None:
-                    # Find the corresponding property in the class or its parents
+                    # Find the corresponding property in the class or its ancestors
                     property_obj = None
-
-                    # First check the class itself
-                    for prop in class_obj.attributes:
+                    all_attrs = get_all_attributes(class_obj, domain_model)
+                    for prop in all_attrs:
                         if prop.name == attr_name:
                             property_obj = prop
                             break
-
-                    # If not found, check parent classes (for inheritance)
-                    if not property_obj:
-                        for gen in domain_model.generalizations:
-                            if gen.specific == class_obj:
-                                for prop in gen.general.attributes:
-                                    if prop.name == attr_name:
-                                        property_obj = prop
-                                        break
-                                if property_obj:
-                                    break
 
                     if property_obj:
                         # Convert value to appropriate type
@@ -212,7 +229,7 @@ def process_object_diagram(json_data, domain_model):
                                 else:
                                     converted_value = getattr(property_obj.type, value)
                             except (AttributeError, StopIteration):
-                                print(f"Warning: Enumeration literal '{value}' not found in {property_obj.type.name}")
+                                logger.warning("Enumeration literal '%s' not found in %s", value, property_obj.type.name)
                                 converted_value = value
                         elif hasattr(property_obj.type, 'name'):
                             type_name = property_obj.type.name if hasattr(property_obj.type, 'name') else str(property_obj.type)
@@ -239,7 +256,7 @@ def process_object_diagram(json_data, domain_model):
 
             # Build the object
             obj = builder.build()
-            # print(f"Created object '{object_name}' of class '{class_obj.name}'")
+            logger.debug("Created object '%s' of class '%s'", object_name, class_obj.name)
 
             # Add the object to the model and track it
             object_model.add_object(obj)
@@ -279,9 +296,8 @@ def process_object_diagram(json_data, domain_model):
             target_obj = objects_by_id.get(target_id)
 
             if not source_obj or not target_obj:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Could not find objects for link '{link_name}'. Please ensure all objects in the link exist in the diagram."
+                raise ConversionError(
+                    f"Could not find objects for link '{link_name}'. Please ensure all objects in the link exist in the diagram."
                 )
           # Find the corresponding association in the domain model
             association_obj = None
@@ -347,7 +363,7 @@ def process_object_diagram(json_data, domain_model):
                     if source_matches:
                         link_end = LinkEnd(name=f"{end.name}_end", association_end=end, object=source_obj)
                         link_ends.append(link_end)
-                        # print(f"  -> Created link end for source: {end.name}_end")
+                        logger.debug("Created link end for source: %s_end", end.name)
                     elif target_matches:
                         link_end = LinkEnd(name=f"{end.name}_end", association_end=end, object=target_obj)
                         link_ends.append(link_end)
@@ -358,14 +374,12 @@ def process_object_diagram(json_data, domain_model):
                     link = Link(name=link_display_name, association=association_obj, connections=link_ends)
                     # Links are automatically added to objects via the Link constructor
                 else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Error: Expected 2 link ends but got {len(link_ends)} for link '{link_name}'. There may be an issue with the association structure."
+                    raise ConversionError(
+                        f"Expected 2 link ends but got {len(link_ends)} for link '{link_name}'. There may be an issue with the association structure."
                     )
             else:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Could not find association for link '{link_name}'. Please ensure all links correspond to valid associations in the class diagram."
+                raise ConversionError(
+                    f"Could not find association for link '{link_name}'. Please ensure all links correspond to valid associations in the class diagram."
                 )
     
     for comment_id, comment_text in comment_elements.items():

@@ -3,9 +3,12 @@ GUI Diagram converter module for BUML to JSON conversion.
 Reconstructs GrapesJS-compatible JSON structures from BUML GUI models.
 """
 from __future__ import annotations
+import logging
 import re
 import uuid
 from typing import Any, Dict, Iterable, List, Optional, Sequence
+
+logger = logging.getLogger(__name__)
 from besser.BUML.metamodel.gui import (
     Button,
     ButtonActionType,
@@ -69,7 +72,7 @@ def gui_buml_to_json(buml_content: str) -> Dict[str, Any]:
     try:
         return _serialize_gui_model(gui_model)
     except Exception as exc:  # pragma: no cover - defensive fallback
-        print(f"[gui_buml_to_json] Failed to serialize GUI model: {exc}")
+        logger.error("Failed to serialize GUI model: %s", exc)
         return _empty_gui_project()
 def extract_gui_section(content: str) -> str:
     """
@@ -95,7 +98,7 @@ def parse_gui_buml_content(content: str) -> Optional[Dict[str, Any]]:
     try:
         return gui_buml_to_json(content)
     except Exception as exc:  # pragma: no cover - defensive fallback
-        print(f"[parse_gui_buml_content] Could not parse GUI BUML content: {exc}")
+        logger.error("Could not parse GUI BUML content: %s", exc)
         return None
 # ---------------------------------------------------------------------------
 # Parsing helpers
@@ -103,7 +106,22 @@ def parse_gui_buml_content(content: str) -> Optional[Dict[str, Any]]:
 def _parse_gui_model(content: str) -> Optional[GUIModel]:
     """Execute BUML GUI python content and return the first GUIModel found."""
     safe_globals: Dict[str, Any] = {
-        "__builtins__": __builtins__,
+        "__builtins__": {
+            "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
+            "str": str,
+            "int": int,
+            "float": float,
+            "bool": bool,
+            "len": len,
+            "range": range,
+            "True": True,
+            "False": False,
+            "None": None,
+            "print": print,
+        },
         "GUIModel": GUIModel,
         "Module": Module,
         "Screen": Screen,

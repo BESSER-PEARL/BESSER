@@ -7,7 +7,7 @@ It creates executable Python code that can recreate the GUI model programmatical
 
 import os
 from besser.BUML.metamodel.gui import GUIModel
-from besser.utilities.buml_code_builder.common import safe_class_name
+from besser.utilities.buml_code_builder.common import safe_class_name, _escape_python_string
 from besser.BUML.metamodel.gui.graphical_ui import (
     ViewComponent,
     ViewContainer,
@@ -33,10 +33,10 @@ from besser.utilities.buml_code_builder.domain_model_builder import domain_model
 
 
 def _escape_string(value: str | None) -> str:
-    """Escape double quotes in strings for safe code generation."""
+    """Escape a string for safe interpolation into generated Python source code."""
     if not value:
         return ""
-    return value.replace('"', '\\"')
+    return _escape_python_string(value)
 
 
 def _get_attr_name(element) -> str | None:
@@ -67,7 +67,7 @@ def safe_var_name(name: str) -> str:
     return safe_name.strip('_').lower() or "unnamed"
 
 
-def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
+def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_var_name: str = "gui_model"):
     """
     Generates Python code for a BUML GUI model and writes it to a specified file.
     
@@ -138,8 +138,8 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
                 f.write(f"\n# Screen: {screen.name}\n")
                 
                 # Create screen (view_elements is required, will be set after processing children)
-                screen_params = [f'name="{screen.name}"']
-                screen_params.append(f'description="{screen.description}"' if screen.description else 'description=""')
+                screen_params = [f'name="{_escape_string(screen.name)}"']
+                screen_params.append(f'description="{_escape_string(screen.description)}"' if screen.description else 'description=""')
                 screen_params.append('view_elements=set()')  # Required parameter, will be populated later
                 if hasattr(screen, 'is_main_page') and screen.is_main_page:
                     screen_params.append('is_main_page=True')
@@ -212,20 +212,20 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
             
             screen_vars = [safe_var_name(s.name) for s in sorted(module.screens, key=lambda s: s.name)]
             f.write(f"{module_var} = Module(\n")
-            f.write(f'    name="{module.name}",\n')
+            f.write(f'    name="{_escape_string(module.name)}",\n')
             f.write(f'    screens={{{", ".join(screen_vars)}}}\n')
             f.write(")\n\n")
         
         # Create GUI model
         f.write("# GUI Model\n")
         module_vars = [safe_var_name(m.name) for m in sorted(model.modules, key=lambda m: m.name)]
-        f.write("gui_model = GUIModel(\n")
-        f.write(f'    name="{model.name}",\n')
-        f.write(f'    package="{model.package}",\n')
-        f.write(f'    versionCode="{model.versionCode}",\n')
-        f.write(f'    versionName="{model.versionName}",\n')
+        f.write(f"{model_var_name} = GUIModel(\n")
+        f.write(f'    name="{_escape_string(model.name)}",\n')
+        f.write(f'    package="{_escape_string(model.package)}",\n')
+        f.write(f'    versionCode="{_escape_string(model.versionCode)}",\n')
+        f.write(f'    versionName="{_escape_string(model.versionName)}",\n')
         f.write(f'    modules={{{", ".join(module_vars)}}},\n')
-        f.write(f'    description="{model.description}"\n')
+        f.write(f'    description="{_escape_string(model.description)}"\n')
         f.write(")\n")
     
     print(f"GUI model code saved to {file_path}")
@@ -349,8 +349,8 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
 
 def _write_button(f, var_name, button, created_vars, pending_button_events):
     """Write code for a Button component."""
-    params = [f'name="{button.name}"']
-    params.append(f'description="{button.description}"' if button.description else 'description=""')
+    params = [f'name="{_escape_string(button.name)}"']
+    params.append(f'description="{_escape_string(button.description)}"' if button.description else 'description=""')
     params.append(f'label="{_escape_string(button.label)}"' if hasattr(button, 'label') and button.label else 'label=""')
     
     if hasattr(button, 'buttonType') and button.buttonType:
@@ -417,7 +417,7 @@ def _write_event(f, var_name, event, created_vars):
     # Write event
     event_type = f'EventType.{event.event_type.name}' if hasattr(event, 'event_type') and event.event_type else 'EventType.OnClick'
     actions_str = f'{{{", ".join(action_vars)}}}' if action_vars else '{}'
-    f.write(f'{var_name} = Event(name="{event.name}", event_type={event_type}, actions={actions_str})\n')
+    f.write(f'{var_name} = Event(name="{_escape_string(event.name)}", event_type={event_type}, actions={actions_str})\n')
 
 
 def _write_action(f, var_name, action, created_vars):
@@ -431,7 +431,7 @@ def _write_action(f, var_name, action, created_vars):
         for param_idx, param in enumerate(action.parameters):
             param_var = f"{var_name}_param_{param_idx}"
             created_vars.add(param_var)
-            f.write(f'{param_var} = Parameter(name="{param.name}", value="{param.value if hasattr(param, "value") else ""}")\n')
+            f.write(f'{param_var} = Parameter(name="{_escape_string(param.name)}", value="{_escape_string(param.value if hasattr(param, "value") else "")}")\n')
             param_vars.append(param_var)
         params_code = f', parameters={{{", ".join(param_vars)}}}'
     
@@ -440,42 +440,42 @@ def _write_action(f, var_name, action, created_vars):
         if hasattr(action, 'target_screen') and action.target_screen:
             target_screen_var = safe_var_name(action.target_screen.name)
             target_screen = f'{target_screen_var}'
-        f.write(f'{var_name} = Transition(name="{action.name}", description="{action.description or ""}", target_screen={target_screen}{params_code})\n')
-    
+        f.write(f'{var_name} = Transition(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_screen={target_screen}{params_code})\n')
+
     elif isinstance(action, Create):
         target_class = 'None  # TODO: Set target_class reference'
         if hasattr(action, 'target_class') and action.target_class:
             target_class = f'# {action.target_class.name}'
-        f.write(f'{var_name} = Create(name="{action.name}", description="{action.description or ""}", target_class={target_class}{params_code})\n')
-    
+        f.write(f'{var_name} = Create(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
+
     elif isinstance(action, Read):
         target_class = 'None  # TODO: Set target_class reference'
         if hasattr(action, 'target_class') and action.target_class:
             target_class = f'# {action.target_class.name}'
-        f.write(f'{var_name} = Read(name="{action.name}", description="{action.description or ""}", target_class={target_class}{params_code})\n')
-    
+        f.write(f'{var_name} = Read(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
+
     elif isinstance(action, Update):
         target_class = 'None  # TODO: Set target_class reference'
         if hasattr(action, 'target_class') and action.target_class:
             target_class = f'# {action.target_class.name}'
-        f.write(f'{var_name} = Update(name="{action.name}", description="{action.description or ""}", target_class={target_class}{params_code})\n')
-    
+        f.write(f'{var_name} = Update(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
+
     elif isinstance(action, Delete):
         target_class = 'None  # TODO: Set target_class reference'
         if hasattr(action, 'target_class') and action.target_class:
             target_class = f'# {action.target_class.name}'
-        f.write(f'{var_name} = Delete(name="{action.name}", description="{action.description or ""}", target_class={target_class}{params_code})\n')
+        f.write(f'{var_name} = Delete(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
 
 
 def _write_text(f, var_name, text):
     """Write code for a Text component."""
-    content = text.content.replace('"', '\\"').replace('\n', '\\n') if hasattr(text, 'content') and text.content else ""
-    f.write(f'{var_name} = Text(name="{text.name}", content="{content}", description="{text.description or ""}")\n')
+    content = _escape_string(text.content) if hasattr(text, 'content') and text.content else ""
+    f.write(f'{var_name} = Text(name="{_escape_string(text.name)}", content="{content}", description="{_escape_string(text.description or "")}")\n')
 
 
 def _write_image(f, var_name, image):
     """Write code for an Image component."""
-    params = [f'name="{image.name}"', f'description="{image.description or ""}"']
+    params = [f'name="{_escape_string(image.name)}"', f'description="{_escape_string(image.description or "")}"']
     image_source = getattr(image, "source", None)
     if image_source:
         params.append(f'source="{_escape_string(image_source)}"')
@@ -485,8 +485,8 @@ def _write_image(f, var_name, image):
 def _write_link(f, var_name, link):
     """Write code for a Link component."""
     params = [
-        f'name="{link.name}"',
-        f'description="{link.description or ""}"',
+        f'name="{_escape_string(link.name)}"',
+        f'description="{_escape_string(link.description or "")}"',
         f'label="{_escape_string(getattr(link, "label", ""))}"',
     ]
     if getattr(link, "url", None):
@@ -501,8 +501,8 @@ def _write_link(f, var_name, link):
 def _write_embedded_content(f, var_name, embedded):
     """Write code for embedded content components."""
     params = [
-        f'name="{embedded.name}"',
-        f'description="{embedded.description or ""}"',
+        f'name="{_escape_string(embedded.name)}"',
+        f'description="{_escape_string(embedded.description or "")}"',
     ]
     if getattr(embedded, "source", None):
         params.append(f'source="{_escape_string(embedded.source)}"')
@@ -513,14 +513,14 @@ def _write_embedded_content(f, var_name, embedded):
 
 def _write_input_field(f, var_name, input_field):
     """Write code for an InputField component."""
-    params = [f'name="{input_field.name}"']
-    params.append(f'description="{input_field.description or ""}"')
-    
+    params = [f'name="{_escape_string(input_field.name)}"']
+    params.append(f'description="{_escape_string(input_field.description or "")}"')
+
     if hasattr(input_field, 'field_type') and input_field.field_type:
         params.append(f'field_type=InputFieldType.{input_field.field_type.name}')
-    
+
     if hasattr(input_field, 'validationRules') and input_field.validationRules:
-        params.append(f'validationRules="{input_field.validationRules}"')
+        params.append(f'validationRules="{_escape_string(input_field.validationRules)}"')
     
     f.write(f'{var_name} = InputField({", ".join(params)})\n')
 
@@ -536,7 +536,7 @@ def _write_form(f, var_name, form, created_vars, pending_button_events):
                 field_vars.append(field_var)
     
     fields_str = f'{{{", ".join(field_vars)}}}' if field_vars else '{}'
-    f.write(f'{var_name} = Form(name="{form.name}", description="{form.description or ""}", inputFields={fields_str})\n')
+    f.write(f'{var_name} = Form(name="{_escape_string(form.name)}", description="{_escape_string(form.description or "")}", inputFields={fields_str})\n')
 
 
 def _write_menu(f, var_name, menu, created_vars):
@@ -558,7 +558,7 @@ def _write_menu(f, var_name, menu, created_vars):
             item_vars.append(item_var)
     
     items_str = f'{{{", ".join(item_vars)}}}' if item_vars else '{}'
-    f.write(f'{var_name} = Menu(name="{menu.name}", description="{menu.description or ""}", menuItems={items_str})\n')
+    f.write(f'{var_name} = Menu(name="{_escape_string(menu.name)}", description="{_escape_string(menu.description or "")}", menuItems={items_str})\n')
 
 
 def _write_data_list(f, var_name, data_list, created_vars):
@@ -575,12 +575,12 @@ def _write_data_list(f, var_name, data_list, created_vars):
             source_vars.append(source_var)
     
     sources_str = f'{{{", ".join(source_vars)}}}' if source_vars else '{}'
-    f.write(f'{var_name} = DataList(name="{data_list.name}", description="{data_list.description or ""}", list_sources={sources_str})\n')
+    f.write(f'{var_name} = DataList(name="{_escape_string(data_list.name)}", description="{_escape_string(data_list.description or "")}", list_sources={sources_str})\n')
 
 
 def _write_line_chart(f, var_name, chart):
     """Write code for a LineChart component."""
-    params = [f'name="{chart.name}"']
+    params = [f'name="{_escape_string(chart.name)}"']
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -613,7 +613,7 @@ def _write_line_chart(f, var_name, chart):
 
 def _write_bar_chart(f, var_name, chart):
     """Write code for a BarChart component."""
-    params = [f'name="{chart.name}"']
+    params = [f'name="{_escape_string(chart.name)}"']
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -646,7 +646,7 @@ def _write_bar_chart(f, var_name, chart):
 
 def _write_pie_chart(f, var_name, chart):
     """Write code for a PieChart component."""
-    params = [f'name="{chart.name}"']
+    params = [f'name="{_escape_string(chart.name)}"']
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -677,7 +677,7 @@ def _write_pie_chart(f, var_name, chart):
 
 def _write_radar_chart(f, var_name, chart):
     """Write code for a RadarChart component."""
-    params = [f'name="{chart.name}"']
+    params = [f'name="{_escape_string(chart.name)}"']
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -706,7 +706,7 @@ def _write_radar_chart(f, var_name, chart):
 
 def _write_radial_bar_chart(f, var_name, chart):
     """Write code for a RadialBarChart component."""
-    params = [f'name="{chart.name}"']
+    params = [f'name="{_escape_string(chart.name)}"']
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -733,7 +733,7 @@ def _write_radial_bar_chart(f, var_name, chart):
 
 def _write_table(f, var_name, chart):
     """Write code for a Table component."""
-    params = [f'name="{chart.name}"']
+    params = [f'name="{_escape_string(chart.name)}"']
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:

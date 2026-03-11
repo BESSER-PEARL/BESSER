@@ -2,8 +2,12 @@
 Attribute parsing utilities for converting JSON to BUML format.
 """
 
+import logging
+
 from besser.BUML.metamodel.structural import Enumeration, Class
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
+
+logger = logging.getLogger(__name__)
 
 
 def parse_attribute(attribute_name, domain_model=None):
@@ -16,7 +20,7 @@ def parse_attribute(attribute_name, domain_model=None):
         type_part = name_type_parts[1].strip()
 
         # Check for visibility symbol at start of name
-        if name_part[0] in VISIBILITY_MAP:
+        if name_part and name_part[0] in VISIBILITY_MAP:
             visibility = VISIBILITY_MAP[name_part[0]]
             name = name_part[1:].strip()
         else:
@@ -57,5 +61,6 @@ def parse_attribute(attribute_name, domain_model=None):
             name = parts[1]
             attr_type = "str"
     if not name:  # Skip if name is empty
+        logger.warning("Skipping attribute with empty name from input: '%s'", attribute_name)
         return None, None, None
     return visibility, name, attr_type

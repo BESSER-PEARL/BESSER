@@ -90,9 +90,11 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
     ),
     
     # Data format generators (class diagram based)
+    # Note: "Smart Data Models" in the frontend uses this same generator with mode="smart_data".
+    # There is no separate "smartdata" generator entry; the mode is passed via config.
     "jsonschema": GeneratorInfo(
         generator_class=JSONSchemaGenerator,
-        output_type="file",  # This can be either file or zip depending on mode
+        output_type="file",  # file for regular mode, zip for smart_data mode
         file_extension=".json",
         category="data_format",
         requires_class_diagram=True

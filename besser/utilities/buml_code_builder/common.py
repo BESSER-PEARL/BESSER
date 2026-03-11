@@ -2,6 +2,22 @@
 Common utilities for BUML code builders
 """
 
+
+def _escape_python_string(value: str) -> str:
+    """Escape a string for safe interpolation into generated Python source code.
+
+    Prevents code injection when user-controlled values (names, labels, etc.)
+    are embedded inside string literals in generated Python files that may
+    later be executed with ``exec()``.
+    """
+    return (value
+            .replace('\\', '\\\\')
+            .replace("'", "\\'")
+            .replace('"', '\\"')
+            .replace('\n', '\\n')
+            .replace('\r', '\\r'))
+
+
 PRIMITIVE_TYPE_MAPPING = {
     'str': 'StringType',
     'string': 'StringType',

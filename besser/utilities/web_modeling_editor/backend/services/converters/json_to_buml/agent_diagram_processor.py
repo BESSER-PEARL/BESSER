@@ -2,8 +2,11 @@
 Agent diagram processing for converting JSON to BUML format.
 """
 
+import logging
 import operator
 from deep_translator import GoogleTranslator
+
+logger = logging.getLogger(__name__)
 import json as json_lib
 from besser.BUML.metamodel.state_machine.state_machine import (
     Body,
@@ -30,11 +33,91 @@ from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
 
 
+def _collect_body_messages(body_elements, elements, language, source_language, translate_text):
+    """
+    Collect and classify body messages from body element IDs.
+
+    Args:
+        body_elements: List of body element IDs to process
+        elements: Dict of all elements keyed by ID
+        language: Target translation language (or None)
+        source_language: Source language for translation (or None)
+        translate_text: Translation function
+
+    Returns:
+        List of classified message strings (prefixed with LLM:/RAG:/CODE: or plain text)
+    """
+    messages = []
+    for body_id in body_elements:
+        body_element = elements.get(body_id)
+        if not body_element:
+            continue
+
+        reply_type = body_element.get("replyType")
+        body_content = body_element.get("name", "")
+
+        if reply_type == "text":
+            msg = sanitize_text(body_content)
+            if language:
+                msg = translate_text(msg, language, source_language)
+            messages.append(msg)
+        elif reply_type == "llm":
+            messages.append(f"LLM:{sanitize_text(body_content)}")
+        elif reply_type == "rag":
+            rag_name = sanitize_text(body_element.get("ragDatabaseName", ""))
+            if not rag_name:
+                rag_name = sanitize_text(body_content)
+            if rag_name:
+                messages.append(f"RAG:{rag_name}")
+        elif reply_type == "code":
+            messages.append(f"CODE:{sanitize_text(body_content)}")
+
+    return messages
+
+
+def _build_body_from_messages(body_name, messages):
+    """
+    Build a Body object from classified messages.
+
+    Args:
+        body_name: Name for the Body object
+        messages: List of classified message strings (from _collect_body_messages)
+
+    Returns:
+        A Body object with appropriate actions, or None if messages is empty
+    """
+    if not messages:
+        return None
+
+    has_rag = any(m.startswith("RAG:") for m in messages)
+    has_llm = any(m.startswith("LLM:") for m in messages)
+    has_code = any(m.startswith("CODE:") for m in messages)
+
+    body = Body(body_name)
+
+    if has_rag:
+        rag_names = [m.split(":", 1)[1] for m in messages if m.startswith("RAG:")]
+        for rag_db_name in rag_names:
+            body.add_action(RAGReply(rag_db_name=rag_db_name))
+    elif has_llm:
+        body.add_action(LLMReply())
+    elif has_code:
+        code_contents = [m[5:] for m in messages if m.startswith("CODE:")]
+        for code_content in code_contents:
+            body.add_action(CustomCodeAction(source=code_content))
+    else:
+        for message in messages:
+            body.add_action(AgentReply(message=message))
+
+    return body
+
+
 def process_agent_diagram(json_data):
     # Extract language from config if present
     config = json_data.get('config', {})
     lang_value = ""
     language = None
+    source_language = None
     if config is not None and config != {}:
         lang_value = config.get('language')
         language = lang_value.lower() if isinstance(lang_value, str) and lang_value else None
@@ -60,7 +143,7 @@ def process_agent_diagram(json_data):
             translated = GoogleTranslator(source=src_code, target=target_lang).translate(text)
             return translated
         except Exception as e:
-            print(f"Translation error: {e}")
+            logger.error("Translation error: %s", e)
             return text
     """Process Agent Diagram specific elements and return an Agent model."""
     # Create the agent model
@@ -180,125 +263,19 @@ def process_agent_diagram(json_data):
         states_by_id[initial_state_id] = agent_state
 
         # Process state bodies
-        body_count = 0
-        body_messages = []
-        for body_id in element.get("bodies", []):
-            body_element = elements.get(body_id)
-            if body_element:
-                body_name = f"{state_name}_body"
-                body_type = body_element.get("replyType")
-                body_content = body_element.get("name", "")
-
-                # Collect messages for this body
-                if body_type == "text":
-                    msg = sanitize_text(body_content)
-                    if language:
-                        msg = translate_text(msg, language, source_language)
-                    body_messages.append(msg)
-                elif body_type == "llm":
-                    # For LLM replies, we need to use llm.predict(session.event.message)
-                    body_messages.append(f"LLM:{sanitize_text(body_content)}")
-                elif body_type == "rag":
-                    rag_name = sanitize_text(body_element.get("ragDatabaseName", ""))
-                    if not rag_name:
-                        rag_name = sanitize_text(body_content)
-                    if rag_name:
-                        body_messages.append(f"RAG:{rag_name}")
-                elif body_type == "code":
-                    # For code, store as a special code message
-                    body_messages.append(f"CODE:{sanitize_text(body_content)}")
-
-                body_count += 1
-
-        # Create a single body function that combines all messages
-        if body_messages:
-            # Check if any of the messages are LLM messages
-            has_llm = any(message.startswith("LLM:") for message in body_messages)
-            has_code = any(message.startswith("CODE:") for message in body_messages)
-            rag_replies = [message.split(":", 1)[1] for message in body_messages if message.startswith("RAG:")]
-            has_rag = len(rag_replies) > 0
-            # If we have an LLM message, create a function that uses llm.predict
-            if has_rag:
-                body = Body(f"{state_name}_body")
-                for rag_db_name in rag_replies:
-                    body.add_action(RAGReply(rag_db_name=rag_db_name))
-            elif has_llm:
-                body = Body(f"{state_name}_body")
-                body.add_action(LLMReply())
-            elif has_code:
-                # Use CustomCodeAction for code bodies
-                code_contents = [message[5:] for message in body_messages if message.startswith("CODE:")]
-                body = Body(f"{state_name}_body")
-                for code_content in code_contents:
-                    body.add_action(CustomCodeAction(source=code_content))
-            else:
-                # Otherwise, create a regular function with the messages
-                body = Body(f"{state_name}_body")
-                for message in body_messages:
-                    body.add_action(AgentReply(message=message))
-
-
-            # Store the messages directly in the Body object for easier extraction
+        body_messages = _collect_body_messages(
+            element.get("bodies", []), elements, language, source_language, translate_text
+        )
+        body = _build_body_from_messages(f"{state_name}_body", body_messages)
+        if body:
             agent_state.set_body(body)
 
         # Process fallback bodies
-        fallback_count = 0
-        fallback_messages = []
-        for fallback_id in element.get("fallbackBodies", []):
-            fallback_element = elements.get(fallback_id)
-            if fallback_element:
-                fallback_name = f"{state_name}_fallback_body"
-                fallback_type = fallback_element.get("replyType")
-                fallback_content = fallback_element.get("name", "")
-
-                # Collect messages for this fallback body
-                if fallback_type == "text":
-                    message = sanitize_text(fallback_content)
-                    if language:
-                        message = translate_text(message, language, source_language)
-                    fallback_messages.append(message)
-                elif fallback_type == "llm":
-                    # For LLM replies, store as a special LLM message
-                    fallback_messages.append(f"LLM:{sanitize_text(fallback_content)}")
-                elif fallback_type == "rag":
-                    rag_name = sanitize_text(fallback_element.get("ragDatabaseName", ""))
-                    if not rag_name:
-                        rag_name = sanitize_text(fallback_content)
-                    if rag_name:
-                        fallback_messages.append(f"RAG:{rag_name}")
-                elif fallback_type == "code":
-                    # For code, store as a special code message
-                    fallback_messages.append(f"CODE:{sanitize_text(fallback_content)}")
-
-                fallback_count += 1
-
-        # Create a single fallback body function that combines all messages
-        if fallback_messages:
-            # Check if any of the messages are LLM messages
-            has_llm = any(message.startswith("LLM:") for message in fallback_messages)
-            has_code = any(message.startswith("CODE:") for message in fallback_messages)
-            rag_replies = [message.split(":", 1)[1] for message in fallback_messages if message.startswith("RAG:")]
-            has_rag = len(rag_replies) > 0
-            # If we have an LLM message, create a function that uses llm.predict
-            if has_rag:
-                fallback_body = Body(f"{state_name}_fallback_body")
-                for rag_db_name in rag_replies:
-                    fallback_body.add_action(RAGReply(rag_db_name=rag_db_name))
-            elif has_llm:
-                fallback_body = Body(f"{state_name}_fallback_body")
-                fallback_body.add_action(LLMReply())
-            elif has_code:
-                # Use CustomCodeAction for code bodies
-                code_contents = [message[5:] for message in fallback_messages if message.startswith("CODE:")]
-                fallback_body = Body(f"{state_name}_fallback_body")
-                for code_content in code_contents:
-                    fallback_body.add_action(CustomCodeAction(source=code_content))
-            else:
-                fallback_body = Body(f"{state_name}_fallback_body")
-                for message in fallback_messages:
-                    fallback_body.add_action(AgentReply(message=message))
-
-
+        fallback_messages = _collect_body_messages(
+            element.get("fallbackBodies", []), elements, language, source_language, translate_text
+        )
+        fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages)
+        if fallback_body:
             agent_state.set_fallback_body(fallback_body)
 
     # Now process the rest of the states
@@ -311,124 +288,19 @@ def process_agent_diagram(json_data):
             states_by_id[element_id] = agent_state
 
             # Process state bodies
-            body_count = 0
-            body_messages = []
-            for body_id in element.get("bodies", []):
-                body_element = elements.get(body_id)
-                if body_element:
-                    body_name = f"{state_name}_body"
-                    body_type = body_element.get("replyType")
-                    body_content = body_element.get("name", "")
-                    
-                    # Collect messages for this body
-                    if body_type == "text":
-                        msg = sanitize_text(body_content)
-                        if language:
-                            msg = translate_text(msg, language, source_language)
-                        body_messages.append(msg)
-                    elif body_type == "llm":
-                        # For LLM replies, we need to use llm.predict(session.event.message)
-                        body_messages.append(f"LLM:{sanitize_text(body_content)}")
-                    elif body_type == "rag":
-                        rag_name = sanitize_text(body_element.get("ragDatabaseName", ""))
-                        if not rag_name:
-                            rag_name = sanitize_text(body_content)
-                        if rag_name:
-                            body_messages.append(f"RAG:{rag_name}")
-                    elif body_type == "code":
-                        # For code, store as a special code message
-                        body_messages.append(f"CODE:{sanitize_text(body_content)}")
-
-                    body_count += 1
-
-            # Create a single body function that combines all messages
-            if body_messages:
-                # Check if any of the messages are LLM messages
-                has_llm = any(message.startswith("LLM:") for message in body_messages)
-                has_code = any(message.startswith("CODE:") for message in body_messages)
-                rag_replies = [message.split(":", 1)[1] for message in body_messages if message.startswith("RAG:")]
-                has_rag = len(rag_replies) > 0
-                # If we have an LLM message, create a function that uses llm.predict
-                if has_rag:
-                    body = Body(f"{state_name}_body")
-                    for rag_db_name in rag_replies:
-                        body.add_action(RAGReply(rag_db_name=rag_db_name))
-                elif has_llm:
-                    body = Body(f"{state_name}_body")
-                    body.add_action(LLMReply())
-                elif has_code:
-                    # Use CustomCodeAction for code bodies
-                    code_contents = [message[5:] for message in body_messages if message.startswith("CODE:")]
-                    body = Body(f"{state_name}_body")
-                    for code_content in code_contents:
-                        body.add_action(CustomCodeAction(source=code_content))
-                else:
-                    # Otherwise, create a regular function with the messages
-                    body = Body(f"{state_name}_body")
-                    for message in body_messages:
-                        body.add_action(AgentReply(message=message))
-                
-                    # replace this by using action
+            body_messages = _collect_body_messages(
+                element.get("bodies", []), elements, language, source_language, translate_text
+            )
+            body = _build_body_from_messages(f"{state_name}_body", body_messages)
+            if body:
                 agent_state.set_body(body)
 
             # Process fallback bodies
-            fallback_count = 0
-            fallback_messages = []
-            for fallback_id in element.get("fallbackBodies", []):
-                fallback_element = elements.get(fallback_id)
-                if fallback_element:
-                    fallback_name = f"{state_name}_fallback_body"
-                    fallback_type = fallback_element.get("replyType")
-                    fallback_content = fallback_element.get("name", "")
-
-                    # Collect messages for this fallback body
-                    if fallback_type == "text":
-                        msg = sanitize_text(fallback_content)
-                        if language:
-                            msg = translate_text(msg, language)
-                        fallback_messages.append(msg)
-
-                    elif fallback_type == "llm":
-                        # For LLM replies, store as a special LLM message
-                        fallback_messages.append(f"LLM:{sanitize_text(fallback_content)}")
-                    elif fallback_type == "rag":
-                        rag_name = sanitize_text(fallback_element.get("ragDatabaseName", ""))
-                        if not rag_name:
-                            rag_name = sanitize_text(fallback_content)
-                        if rag_name:
-                            fallback_messages.append(f"RAG:{rag_name}")
-                    elif fallback_type == "code":
-                        # For code, store as a special code message
-                        fallback_messages.append(f"CODE:{sanitize_text(fallback_content)}")
-
-                    fallback_count += 1
-
-            # Create a single fallback body function that combines all messages
-            if fallback_messages:
-                # Check if any of the messages are LLM messages
-                has_llm = any(message.startswith("LLM:") for message in fallback_messages)
-                has_code = any(message.startswith("CODE:") for message in fallback_messages)
-                rag_replies = [message.split(":", 1)[1] for message in fallback_messages if message.startswith("RAG:")]
-                has_rag = len(rag_replies) > 0
-                # If we have an LLM message, create a function that uses llm.predict
-                if has_rag:
-                    fallback_body = Body(f"{state_name}_fallback_body")
-                    for rag_db_name in rag_replies:
-                        fallback_body.add_action(RAGReply(rag_db_name=rag_db_name))
-                elif has_llm:
-                    fallback_body = Body(f"{state_name}_fallback_body")
-                    fallback_body.add_action(LLMReply())
-                elif has_code:
-                    # Use CustomCodeAction for code bodies
-                    code_contents = [message[5:] for message in fallback_messages if message.startswith("CODE:")]
-                    fallback_body = Body(f"{state_name}_fallback_body")
-                    for code_content in code_contents:
-                        fallback_body.add_action(CustomCodeAction(source=code_content))
-                else:
-                    fallback_body = Body(f"{state_name}_fallback_body")
-                    for message in fallback_messages:
-                        fallback_body.add_action(AgentReply(message=message))
-
+            fallback_messages = _collect_body_messages(
+                element.get("fallbackBodies", []), elements, language, source_language, translate_text
+            )
+            fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages)
+            if fallback_body:
                 agent_state.set_fallback_body(fallback_body)
 
     # Third pass: Process transitions and comment links
@@ -463,6 +335,13 @@ def process_agent_diagram(json_data):
 
             source_state = states_by_id.get(source_id)
             target_state = states_by_id.get(target_id)
+
+            if not source_state or not target_state:
+                logger.warning(
+                    "Skipping agent transition: source '%s' or target '%s' state not found.",
+                    source_id, target_id
+                )
+                continue
 
             if source_state and target_state:
                 condition_name = relationship.get("condition", "")

@@ -2,7 +2,28 @@
 State machine processing for converting JSON to BUML format.
 """
 
+import logging
 import re
+
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+
+logger = logging.getLogger(__name__)
+
+
+def _sanitize_identifier(name: str) -> str:
+    """Sanitize a string to be a valid Python identifier.
+
+    Replaces any non-alphanumeric character (except underscore) with underscore,
+    and strips leading digits.
+    """
+    sanitized = re.sub(r'[^a-zA-Z0-9_]', '_', name)
+    sanitized = re.sub(r'^[^a-zA-Z_]+', '', sanitized)
+    return sanitized or 'unnamed'
+
+
+def _safe_string(value: str) -> str:
+    """Escape a value for safe inclusion inside a Python single-quoted string."""
+    return value.replace('\\', '\\\\').replace("'", "\\'").replace('\n', '\\n').replace('\r', '\\r')
 
 
 def process_state_machine(json_data):
@@ -18,10 +39,14 @@ def process_state_machine(json_data):
     sm_name = json_data.get("title", "Generated_State_Machine")
     if ' ' in sm_name:
         sm_name = sm_name.replace(' ', '_')
-    code_lines.append(f"sm = StateMachine(name='{sm_name}')\n")
+    sm_name_safe = _safe_string(sm_name)
+    code_lines.append(f"sm = StateMachine(name='{sm_name_safe}')\n")
 
-    elements = json_data.get('model', {}).get('elements', {})
-    relationships = json_data.get('model', {}).get('relationships', {})
+    model_data = json_data.get('model')
+    if not model_data:
+        raise ConversionError("State machine JSON is missing the 'model' key.")
+    elements = model_data.get('elements', {})
+    relationships = model_data.get('relationships', {})
 
     # Track states by ID for later reference
     states_by_id = {}
@@ -33,10 +58,10 @@ def process_state_machine(json_data):
     comment_links = {}  # {comment_id: [linked_element_ids]}
 
     # Collect all body and event names first
-    for element in elements.values():
+    for element_id, element in elements.items():
         if element.get("type") == "Comments":
             comment_text = element.get("name", "")
-            comment_elements[element.get("id")] = comment_text
+            comment_elements[element_id] = comment_text
             continue
         elif element.get("type") == "StateBody":
             body_names.add(element.get("name"))
@@ -86,15 +111,20 @@ def process_state_machine(json_data):
             code_lines.append(cleaned_code)  # Write the actual function code
             code_lines.append("")  # Add single blank line after function
 
+            safe_name = _sanitize_identifier(name)
             if name in body_names:
-                code_lines.append(f"{name} = Body(name='{name}', callable={name})")
+                code_lines.append(f"{safe_name} = Body(name='{_safe_string(name)}', callable={safe_name})")
             if name in event_names:
-                code_lines.append(f"{name} = Event(name='{name}', callable={name})")
+                code_lines.append(f"{safe_name} = Event(name='{_safe_string(name)}', callable={safe_name})")
             code_lines.append("")  # Add blank line after Body/Event creation
 
     # Create states
     for element_id, element in elements.items():
         if element.get("type") == "State":
+            raw_name = element.get("name", "")
+            if not raw_name.strip():
+                logger.warning("State element '%s' has an empty name, using 'unnamed'.", element_id)
+
             is_initial = False
             for rel in relationships.values():
                 if (rel.get("type") == "StateTransition" and
@@ -103,28 +133,30 @@ def process_state_machine(json_data):
                     is_initial = True
                     break
 
-            state_name = element.get("name", "")
-            code_lines.append(f"{state_name}_state = sm.new_state(name='{state_name}', initial={str(is_initial)})")
+            state_name = _sanitize_identifier(raw_name)
+            code_lines.append(f"{state_name}_state = sm.new_state(name='{_safe_string(raw_name)}', initial={str(is_initial)})")
             states_by_id[element_id] = state_name
     code_lines.append("")
 
     # Assign bodies to states
     for element_id, element in elements.items():
         if element.get("type") == "State":
-            state_name = element.get("name", "")
+            state_name = _sanitize_identifier(element.get("name", ""))
             for body_id in element.get("bodies", []):
                 body_element = elements.get(body_id)
                 if body_element:
                     body_name = body_element.get("name")
                     if body_name in body_names:
-                        code_lines.append(f"{state_name}_state.set_body(body={body_name})")
+                        safe_body = _sanitize_identifier(body_name)
+                        code_lines.append(f"{state_name}_state.set_body(body={safe_body})")
 
             for fallback_id in element.get("fallbackBodies", []):
                 fallback_element = elements.get(fallback_id)
                 if fallback_element:
                     fallback_name = fallback_element.get("name")
                     if fallback_name in body_names:
-                        code_lines.append(f"{state_name}_state.set_fallback_body({fallback_name})")
+                        safe_fallback = _sanitize_identifier(fallback_name)
+                        code_lines.append(f"{state_name}_state.set_fallback_body({safe_fallback})")
     code_lines.append("")
 
     # Write transitions
@@ -139,14 +171,27 @@ def process_state_machine(json_data):
             source_name = states_by_id.get(source_id)
             target_name = states_by_id.get(target_id)
 
+            if not source_name or not target_name:
+                logger.warning(
+                    "Skipping transition: source state '%s' or target state '%s' not found.",
+                    source_id, target_id
+                )
+                continue
+
             if source_name and target_name:
                 event_name = relationship.get("name", "")
                 params = relationship.get("params")
 
                 if event_name:
-                    event_params = f"event_params={{ {params} }}" if params else "event_params={}"
+                    safe_event = _sanitize_identifier(event_name)
+                    if params:
+                        # Sanitize params: only allow safe key=value pairs
+                        safe_params = _safe_string(str(params))
+                        event_params = f"event_params={{ {safe_params} }}"
+                    else:
+                        event_params = "event_params={}"
                     code_lines.append(f"{source_name}_state.when_event_go_to(")
-                    code_lines.append(f"    event={event_name},")
+                    code_lines.append(f"    event={safe_event},")
                     code_lines.append(f"    dest={target_name}_state,")
                     code_lines.append(f"    {event_params}")
                     code_lines.append(")")
@@ -161,11 +206,11 @@ def process_state_machine(json_data):
                 if linked_element_id in state_id_to_name:
                     # Apply comment to state's metadata
                     state_name = state_id_to_name[linked_element_id]
-                    escaped_comment = comment_text.replace("'", "\\'").replace("\n", "\\n")
+                    escaped_comment = _safe_string(comment_text)
                     code_lines.append(f"{state_name}_state.metadata = Metadata(description='{escaped_comment}')")
         else:
             # Unlinked comment - add to StateMachine metadata
-            escaped_comment = comment_text.replace("'", "\\'").replace("\n", "\\n")
+            escaped_comment = _safe_string(comment_text)
             code_lines.append(f"sm.metadata = Metadata(description='{escaped_comment}')")
     
     if comment_elements:

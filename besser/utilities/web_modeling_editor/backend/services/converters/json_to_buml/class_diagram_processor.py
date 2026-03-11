@@ -3,8 +3,12 @@ Class diagram processing for converting JSON to BUML format.
 """
 
 import json
+import logging
 import re
-from fastapi import HTTPException
+
+from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
+
+logger = logging.getLogger(__name__)
 
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Enumeration, Property, Method, BinaryAssociation,
@@ -55,12 +59,16 @@ def process_class_diagram(json_data):
 
     domain_model = DomainModel(title)
     # Get elements and OCL constraints from the JSON data
-    elements = json_data.get('model', {}).get('elements', {})
-    relationships = json_data.get('model', {}).get('relationships', {})
+    elements = (json_data.get('model') or {}).get('elements', {})
+    relationships = (json_data.get('model') or {}).get('relationships', {})
     
     # Store comments for later processing
     comment_elements = {}  # {comment_id: comment_text}
     comment_links = {}  # {comment_id: [linked_element_ids]}
+    all_warnings = []  # Collect non-fatal warnings for the caller
+    # Track diagram references for methods (state machine / quantum circuit IDs).
+    # Keyed by (class_name, method_name) to avoid collisions across classes.
+    method_diagram_refs = {}  # {(class_name, method_name): {"stateMachineId": ..., "quantumCircuitId": ...}}
 
     # FIRST PASS: Process all type declarations (enumerations and classes)
     # 1. First process enumerations
@@ -74,32 +82,45 @@ def process_class_diagram(json_data):
         if element.get("type") == "Enumeration":
             element_name = element.get("name", "").strip()
             if not element_name or any(char.isspace() for char in element_name):
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Invalid enumeration name: '{element_name}'. Names cannot contain whitespace or be empty."
+                raise ConversionError(
+                    f"Invalid enumeration name: '{element_name}'. Names cannot contain whitespace or be empty."
                 )
             
-            literals = set()
+            literals = []
+            seen_literal_names = set()
             for literal_id in element.get("attributes", []):
                 literal = elements.get(literal_id)
                 if literal:
-                    literal_obj = EnumerationLiteral(name=literal.get("name", ""))
-                    literals.add(literal_obj)
-            enum = Enumeration(name=element_name, literals=literals)
+                    literal_name = literal.get("name", "").strip()
+                    if not literal_name:
+                        raise ConversionError(
+                            f"Empty enumeration literal name in '{element_name}'."
+                        )
+                    if literal_name in seen_literal_names:
+                        raise ConversionError(
+                            f"Duplicate enumeration literal '{literal_name}' in '{element_name}'."
+                        )
+                    seen_literal_names.add(literal_name)
+                    literal_obj = EnumerationLiteral(name=literal_name)
+                    literals.append(literal_obj)
+            # Store the ordered list for later use in buml_to_json conversion,
+            # but pass as set to Enumeration (which requires set internally).
+            enum = Enumeration(name=element_name, literals=set(literals))
+            # Preserve insertion order from the JSON for round-trip fidelity.
+            enum._ordered_literals = list(literals)
             # Use add_type() which triggers validation through the setter
             try:
                 domain_model.add_type(enum)
             except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
-    
+                raise ConversionError(str(e))
+
     # 2. Then create all class structures without attributes or methods
     for element_id, element in elements.items():
         if element.get("type") in ["Class", "AbstractClass"]:
             class_name = element.get("name", "").strip()
             if not class_name or any(char.isspace() for char in class_name):
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Invalid class name: '{class_name}'. Names cannot contain whitespace or be empty."
+                raise ConversionError(
+                    f"Invalid class name: '{class_name}'. Names cannot contain whitespace or be empty."
                 )
             
             is_abstract = element.get("type") == "AbstractClass"
@@ -116,7 +137,7 @@ def process_class_diagram(json_data):
                 # Use add_type() which triggers validation through the setter
                 domain_model.add_type(cls)
             except ValueError as e:
-                raise HTTPException(status_code=400, detail=str(e))
+                raise ConversionError(str(e))
 
     # SECOND PASS: Now add attributes and methods to classes
     for element_id, element in elements.items():
@@ -149,7 +170,7 @@ def process_class_diagram(json_data):
                     if not name:  # Skip if no name was returned
                         continue
                     if name in attribute_names:
-                        raise HTTPException(status_code=400, detail=f"Duplicate attribute name '{name}' found in class '{class_name}'")
+                        raise ConversionError(f"Duplicate attribute name '{name}' found in class '{class_name}'")
                     attribute_names.add(name)
 
                     # Find the type in the domain model
@@ -242,12 +263,13 @@ def process_class_diagram(json_data):
                         implementation_type=implementation_type
                     )
                     
-                    # Store diagram references as custom attributes for later resolution
-                    # These will be used by project-level processing to link to actual diagrams
-                    if state_machine_id:
-                        method_obj._state_machine_id = state_machine_id
-                    if quantum_circuit_id:
-                        method_obj._quantum_circuit_id = quantum_circuit_id
+                    # Store diagram references in a separate mapping for later resolution.
+                    # These will be used by project-level processing to link to actual diagrams.
+                    if state_machine_id or quantum_circuit_id:
+                        method_diagram_refs[(class_name, name)] = {
+                            "stateMachineId": state_machine_id or "",
+                            "quantumCircuitId": quantum_circuit_id or "",
+                        }
                     
                     # Handle return type
                     if return_type:
@@ -276,10 +298,14 @@ def process_class_diagram(json_data):
         target = relationship.get("target")
 
         if not rel_type or not source or not target:
-            print(f"Skipping relationship {rel_id} due to missing data.")
+            logger.warning("Skipping relationship %s due to missing data.", rel_id)
+            all_warnings.append(f"Skipped relationship '{rel_id}': missing type, source, or target.")
             continue
 
-        # Skip OCL links
+        # Skip OCL links -- these are visual-only relationships that connect a
+        # ClassOCLConstraint element to the class it constrains.  The constraint
+        # data itself is stored in the ClassOCLConstraint element and processed
+        # separately below; the context class is derived from the OCL expression.
         if rel_type == "ClassOCLLink":
             continue
         
@@ -332,14 +358,16 @@ def process_class_diagram(json_data):
         target_element = elements.get(target.get("element"))
 
         if not source_element or not target_element:
-            print(f"Skipping relationship {rel_id} due to missing elements.")
+            logger.warning("Skipping relationship %s due to missing elements.", rel_id)
+            all_warnings.append(f"Skipped relationship '{rel_id}': source or target element not found.")
             continue
 
         source_class = domain_model.get_class_by_name(source_element.get("name", ""))
         target_class = domain_model.get_class_by_name(target_element.get("name", ""))
 
         if not source_class or not target_class:
-            print(f"Skipping relationship {rel_id} because classes are missing in the domain model.")
+            logger.warning("Skipping relationship %s: classes not found in domain model.", rel_id)
+            all_warnings.append(f"Skipped relationship '{rel_id}': source or target class not in domain model.")
             continue
 
         # Handle each type of relationship
@@ -424,7 +452,9 @@ def process_class_diagram(json_data):
 
         # An association class should only be linked to one association
         if len(association_ids) > 1:
-            print(f"Warning: Class '{class_name}' is linked to multiple associations. Only using the first one.")
+            msg = f"Class '{class_name}' is linked to multiple associations. Only using the first one."
+            logger.warning(msg)
+            all_warnings.append(msg)
 
         # Get the first association
         association_id = next(iter(association_ids))
@@ -454,7 +484,6 @@ def process_class_diagram(json_data):
 
     # Process OCL constraints
     all_constraints = set()
-    all_warnings = []
     constraint_counter = 0
     for element_id, element in elements.items():
         if element.get("type") in ["ClassOCLConstraint"]:
@@ -506,5 +535,9 @@ def process_class_diagram(json_data):
 
     # Store the association_by_id mapping for object diagram processing
     domain_model.association_by_id = association_by_id
+
+    # Store method diagram references for buml_to_json round-trip fidelity.
+    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
+    domain_model.method_diagram_refs = method_diagram_refs
 
     return domain_model

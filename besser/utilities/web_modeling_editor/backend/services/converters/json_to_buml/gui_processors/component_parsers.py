@@ -2,7 +2,10 @@
 Basic component parsers for GUI elements (Button, Text, Image, InputField, etc.).
 """
 
+import logging
 from typing import Any, Dict, List
+
+logger = logging.getLogger(__name__)
 
 from besser.BUML.metamodel.gui import (
     Button,
@@ -139,7 +142,7 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
     confirmation_message = component.get("confirmation-message") or component.get("data-confirmation-message")
     is_instance_str = component.get("instance-method") or component.get("data-instance-method")
     
-    print(f"DEBUG PARSER: is_instance_str from component level = {is_instance_str}")
+    logger.debug("is_instance_str from component level = %s", is_instance_str)
 
     # Parse confirmation_required flag
     if confirmation_required_str:
@@ -155,7 +158,7 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
     if not is_instance_method and is_run_method and instance_source:
         is_instance_method = True
 
-    print(f"DEBUG PARSER: is_instance_method parsed = {is_instance_method}")
+    logger.debug("is_instance_method parsed = %s", is_instance_method)
 
     # Also check attributes object as fallback
     if isinstance(attributes, dict):
@@ -168,12 +171,12 @@ def parse_button(component: Dict[str, Any], styling, name: str, meta: Dict) -> B
         instance_source = instance_source or attributes.get("instance-source") or attributes.get("data-instance-source")
         is_instance_str = is_instance_str or attributes.get("instance-method") or attributes.get("data-instance-method")
         
-        print(f"DEBUG PARSER: is_instance_str from attributes = {is_instance_str}")
+        logger.debug("is_instance_str from attributes = %s", is_instance_str)
         
         # Re-parse instance_method flag if found in attributes
         if is_instance_str and not is_instance_method:
             is_instance_method = is_instance_str.lower() in ('true', '1', 'yes')
-            print(f"DEBUG PARSER: is_instance_method re-parsed from attributes = {is_instance_method}")
+            logger.debug("is_instance_method re-parsed from attributes = %s", is_instance_method)
         
         # Legacy naming support
         entity_class = entity_class or attributes.get("crud-entity") or attributes.get("data-crud-entity")

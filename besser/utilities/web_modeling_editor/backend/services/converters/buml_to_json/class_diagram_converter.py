@@ -2,6 +2,7 @@
 Domain model conversion from BUML to JSON format.
 """
 
+import logging
 import uuid
 import ast
 from besser.BUML.metamodel.structural import (
@@ -10,6 +11,8 @@ from besser.BUML.metamodel.structural import (
     UNLIMITED_MAX_MULTIPLICITY, Constraint, AssociationClass, Metadata,
     MethodImplementationType
 )
+
+logger = logging.getLogger(__name__)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     VISIBILITY_MAP, RELATIONSHIP_TYPES
 )
@@ -28,6 +31,22 @@ def parse_buml_content(content: str) -> DomainModel:
 
         # Create a safe environment for eval without any generators
         safe_globals = {
+            "__builtins__": {
+                "set": set,
+                "list": list,
+                "dict": dict,
+                "tuple": tuple,
+                "str": str,
+                "int": int,
+                "float": float,
+                "bool": bool,
+                "len": len,
+                "range": range,
+                "True": True,
+                "False": False,
+                "None": None,
+                "print": print,
+            },
             "Class": Class,
             "Property": Property,
             "Method": Method,
@@ -85,7 +104,7 @@ def parse_buml_content(content: str) -> DomainModel:
         return domain_model
 
     except Exception as e:
-        print(f"Error parsing B-UML content: {e}")
+        logger.error("Error parsing B-UML content: %s", e)
         raise ValueError(f"Failed to parse B-UML content: {str(e)}")
 
 
@@ -93,6 +112,9 @@ def class_buml_to_json(domain_model):
     """Convert a B-UML DomainModel object to JSON format matching the frontend structure."""
     elements = {}
     relationships = {}
+    # Retrieve method diagram reference mapping (populated by json_to_buml round-trip).
+    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
+    method_diagram_refs = getattr(domain_model, 'method_diagram_refs', {})
     # Default diagram size
     default_size = {
         "width": 1200,
@@ -251,20 +273,19 @@ def class_buml_to_json(domain_model):
                         else:
                             method_element["implementationType"] = impl_type_map.get(impl_type, "none")
 
-                    # Add state machine reference if present
-                    state_machine_id = None
-                    if hasattr(method, "_state_machine_id") and method._state_machine_id:
-                        state_machine_id = method._state_machine_id
-                    elif hasattr(method, "state_machine") and method.state_machine:
+                    # Add state machine reference if present.
+                    # First check the method_diagram_refs mapping (populated during
+                    # json_to_buml conversion), then fall back to actual object references.
+                    refs = method_diagram_refs.get((type_obj.name, method.name), {})
+                    state_machine_id = refs.get("stateMachineId") or None
+                    if not state_machine_id and hasattr(method, "state_machine") and method.state_machine:
                         # If we have an actual state machine object, use its name as ID
                         state_machine_id = method.state_machine.name
                     if state_machine_id:
                         method_element["stateMachineId"] = state_machine_id
 
-                    quantum_circuit_id = None
-                    if hasattr(method, "_quantum_circuit_id") and method._quantum_circuit_id:
-                        quantum_circuit_id = method._quantum_circuit_id
-                    elif hasattr(method, "quantum_circuit") and method.quantum_circuit:
+                    quantum_circuit_id = refs.get("quantumCircuitId") or None
+                    if not quantum_circuit_id and hasattr(method, "quantum_circuit") and method.quantum_circuit:
                         # If we have an actual quantum circuit object, use its name as ID
                         quantum_circuit_id = method.quantum_circuit.name
                     if quantum_circuit_id:
@@ -275,8 +296,14 @@ def class_buml_to_json(domain_model):
                     y_offset += 30
 
             elif isinstance(type_obj, Enumeration):
-                # Handle enumeration literals
-                for literal in type_obj.literals:
+                # Use preserved insertion order if available (from JSON round-trip),
+                # otherwise fall back to alphabetical sort for deterministic output.
+                ordered_literals = getattr(type_obj, '_ordered_literals', None)
+                if ordered_literals is not None:
+                    literals_iter = ordered_literals
+                else:
+                    literals_iter = sorted(type_obj.literals, key=lambda l: l.name)
+                for literal in literals_iter:
                     literal_id = str(uuid.uuid4())
                     elements[literal_id] = {
                         "id": literal_id,
@@ -357,7 +384,7 @@ def class_buml_to_json(domain_model):
                     elif source_prop.is_navigable and not target_prop.is_navigable:
                         source_prop, target_prop = target_prop, source_prop
                     elif not source_prop.is_navigable and not target_prop.is_navigable:
-                        print(f"Warning: Both ends of association {name} are not navigable. Skipping this association.")
+                        logger.warning("Both ends of association %s are not navigable. Skipping this association.", name)
                         continue
 
                 source_class = source_prop.type
@@ -388,7 +415,10 @@ def class_buml_to_json(domain_model):
                     # Calculate bounds
                     rel_bounds = calculate_relationship_bounds(path_points)
 
-                    # Determine relationship type
+                    # Determine relationship type.
+                    # NOTE: ClassAggregation cannot be reconstructed here because the
+                    # B-UML metamodel does not carry an aggregation flag on Property.
+                    # Aggregation associations are round-tripped as ClassBidirectional.
                     rel_type = (
                         RELATIONSHIP_TYPES["composition"]
                         if target_prop.is_composite
@@ -432,7 +462,7 @@ def class_buml_to_json(domain_model):
                         "isManuallyLayouted": False,
                     }
         except Exception as e:
-            print(f"Error creating relationship: {e}")
+            logger.error("Error converting relationship to JSON: %s", e, exc_info=True)
             continue
 
     # Handle generalizations
@@ -492,7 +522,13 @@ def class_buml_to_json(domain_model):
                     "isManuallyLayouted": False,
                 }
 
-    # Handle OCL constraint links
+    # Handle OCL constraint links (visual-only relationships).
+    # NOTE: The constraint DATA is stored in ClassOCLConstraint elements (created above
+    # from domain_model.constraints). The ClassOCLLink relationships created here are
+    # purely for the frontend to draw a visual link between the constraint box and the
+    # class it applies to. On the json_to_buml side, ClassOCLLink relationships are
+    # intentionally skipped (the context class is derived from the OCL expression text).
+    # Both are needed: the element for data, the link for visual layout.
     for type_obj in domain_model.constraints:
         if isinstance(type_obj, Constraint) and type_obj.context in class_id_map:
             rel_id = str(uuid.uuid4())

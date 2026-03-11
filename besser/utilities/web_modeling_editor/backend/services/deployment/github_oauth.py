@@ -10,7 +10,7 @@ import logging
 import os
 import secrets
 from typing import Optional, Dict, Any
-import requests
+import httpx
 from fastapi import APIRouter, HTTPException, Request, Response
 
 logger = logging.getLogger(__name__)
@@ -109,45 +109,46 @@ async def github_callback(code: str, state: str):
     _oauth_sessions.delete(state)
 
     try:
-        # Exchange code for access token
-        token_response = requests.post(
-            "https://github.com/login/oauth/access_token",
-            headers={"Accept": "application/json"},
-            data={
-                "client_id": GITHUB_CLIENT_ID,
-                "client_secret": GITHUB_CLIENT_SECRET,
-                "code": code,
-                "redirect_uri": GITHUB_REDIRECT_URI
-            },
-            timeout=10
-        )
-        token_response.raise_for_status()
-        token_data = token_response.json()
-
-        if "error" in token_data:
-            return RedirectResponse(
-                url=f"{DEPLOYMENT_URL}?error={token_data['error']}",
-                status_code=302
+        async with httpx.AsyncClient() as client:
+            # Exchange code for access token
+            token_response = await client.post(
+                "https://github.com/login/oauth/access_token",
+                headers={"Accept": "application/json"},
+                data={
+                    "client_id": GITHUB_CLIENT_ID,
+                    "client_secret": GITHUB_CLIENT_SECRET,
+                    "code": code,
+                    "redirect_uri": GITHUB_REDIRECT_URI
+                },
+                timeout=10
             )
+            token_response.raise_for_status()
+            token_data = token_response.json()
 
-        access_token = token_data.get("access_token")
-        if not access_token:
-            return RedirectResponse(
-                url=f"{DEPLOYMENT_URL}?error=no_access_token",
-                status_code=302
+            if "error" in token_data:
+                return RedirectResponse(
+                    url=f"{DEPLOYMENT_URL}?error={token_data['error']}",
+                    status_code=302
+                )
+
+            access_token = token_data.get("access_token")
+            if not access_token:
+                return RedirectResponse(
+                    url=f"{DEPLOYMENT_URL}?error=no_access_token",
+                    status_code=302
+                )
+
+            # Get user info
+            user_response = await client.get(
+                "https://api.github.com/user",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Accept": "application/vnd.github+json"
+                },
+                timeout=10
             )
-
-        # Get user info
-        user_response = requests.get(
-            "https://api.github.com/user",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/vnd.github+json"
-            },
-            timeout=10
-        )
-        user_response.raise_for_status()
-        user_data = user_response.json()
+            user_response.raise_for_status()
+            user_data = user_response.json()
 
         username = user_data.get("login")
 
@@ -165,7 +166,7 @@ async def github_callback(code: str, state: str):
             status_code=302
         )
 
-    except requests.RequestException as e:
+    except httpx.HTTPError as e:
         return RedirectResponse(
             url=f"{DEPLOYMENT_URL}?error=github_api_error",
             status_code=302
@@ -244,16 +245,17 @@ async def get_star_status(session_id: str):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     try:
-        resp = requests.get(
-            f"https://api.github.com/user/starred/{BESSER_REPO_OWNER}/{BESSER_REPO_NAME}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-            },
-            timeout=10,
-        )
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"https://api.github.com/user/starred/{BESSER_REPO_OWNER}/{BESSER_REPO_NAME}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                timeout=10,
+            )
         return {"starred": resp.status_code == 204}
-    except requests.RequestException:
+    except httpx.HTTPError:
         return {"starred": False}
 
 
@@ -265,17 +267,18 @@ async def star_besser_repo(session_id: str):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     try:
-        resp = requests.put(
-            f"https://api.github.com/user/starred/{BESSER_REPO_OWNER}/{BESSER_REPO_NAME}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
+        async with httpx.AsyncClient() as client:
+            resp = await client.put(
+                f"https://api.github.com/user/starred/{BESSER_REPO_OWNER}/{BESSER_REPO_NAME}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
         return {"success": True}
-    except requests.RequestException as e:
+    except httpx.HTTPError as e:
         logger.exception("GitHub API request failed")
         raise HTTPException(status_code=502, detail="GitHub API request failed.")
 
@@ -288,16 +291,17 @@ async def unstar_besser_repo(session_id: str):
         raise HTTPException(status_code=401, detail="Not authenticated")
 
     try:
-        resp = requests.delete(
-            f"https://api.github.com/user/starred/{BESSER_REPO_OWNER}/{BESSER_REPO_NAME}",
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/vnd.github+json",
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
+        async with httpx.AsyncClient() as client:
+            resp = await client.delete(
+                f"https://api.github.com/user/starred/{BESSER_REPO_OWNER}/{BESSER_REPO_NAME}",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/vnd.github+json",
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
         return {"success": True}
-    except requests.RequestException as e:
+    except httpx.HTTPError as e:
         logger.exception("GitHub API request failed")
         raise HTTPException(status_code=502, detail="GitHub API request failed.")

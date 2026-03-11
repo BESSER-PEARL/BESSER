@@ -142,6 +142,9 @@ def class_buml_to_json(domain_model):
     # Retrieve method diagram reference mapping (populated by json_to_buml round-trip).
     # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
     method_diagram_refs = getattr(domain_model, 'method_diagram_refs', {})
+    # Retrieve saved layout positions for round-trip fidelity (populated by json_to_buml).
+    # Keyed by element name (classes/enums) or composite key (relationships).
+    layout_positions = getattr(domain_model, '_layout_positions', {})
     # Default diagram size
     default_size = {
         "width": 1200,
@@ -187,8 +190,17 @@ def class_buml_to_json(domain_model):
             element_id = str(uuid.uuid4())
             class_id_map[type_obj] = element_id
 
-            # Get position for this element
-            x, y = get_position()
+            # Use saved layout position if available, otherwise fall back to grid layout
+            saved_bounds = layout_positions.get(type_obj.name)
+            if saved_bounds:
+                x = saved_bounds["x"]
+                y = saved_bounds["y"]
+                saved_width = saved_bounds.get("width", 160)
+                saved_height = saved_bounds.get("height", 100)
+            else:
+                x, y = get_position()
+                saved_width = None
+                saved_height = None
 
             # Initialize lists for attributes and methods IDs
             attribute_ids = []
@@ -351,6 +363,7 @@ def class_buml_to_json(domain_model):
                     y_offset += 30
 
             # Create the element
+            computed_height = max(100, 30 * (len(attribute_ids) + len(method_ids) + 1))
             element_data = {
                 "id": element_id,
                 "name": type_obj.name,
@@ -367,8 +380,8 @@ def class_buml_to_json(domain_model):
                 "bounds": {
                     "x": x,
                     "y": y,
-                    "width": 160,
-                    "height": max(100, 30 * (len(attribute_ids) + len(method_ids) + 1)),
+                    "width": saved_width if saved_width is not None else 160,
+                    "height": saved_height if saved_height is not None else computed_height,
                 },
                 **(
                     {
@@ -423,30 +436,6 @@ def class_buml_to_json(domain_model):
                 target_class = target_prop.type
 
                 if source_class in class_id_map and target_class in class_id_map:
-                    # Get source and target elements
-                    source_element = elements[class_id_map[source_class]]
-                    target_element = elements[class_id_map[target_class]]
-
-                    # Calculate connection directions and points
-                    source_dir, target_dir = determine_connection_direction(
-                        source_element["bounds"], target_element["bounds"]
-                    )
-
-                    source_point = calculate_connection_points(
-                        source_element["bounds"], source_dir
-                    )
-                    target_point = calculate_connection_points(
-                        target_element["bounds"], target_dir
-                    )
-
-                    # Calculate path points
-                    path_points = calculate_path_points(
-                        source_point, target_point, source_dir, target_dir
-                    )
-
-                    # Calculate bounds
-                    rel_bounds = calculate_relationship_bounds(path_points)
-
                     # Determine relationship type.
                     # NOTE: ClassAggregation cannot be reconstructed here because the
                     # B-UML metamodel does not carry an aggregation flag on Property.
@@ -461,6 +450,49 @@ def class_buml_to_json(domain_model):
                         )
                     )
 
+                    # Check for saved layout positions from a previous round-trip
+                    saved_rel = layout_positions.get(f"rel_{name}")
+                    if saved_rel:
+                        # Restore saved layout
+                        rel_bounds = saved_rel.get("bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
+                        path_points = saved_rel.get("path", [{"x": 0, "y": 0}, {"x": 0, "y": 0}])
+                        is_manually_layouted = saved_rel.get("isManuallyLayouted", False)
+                        source_bounds = saved_rel.get("source_bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
+                        source_dir = saved_rel.get("source_direction", "Right")
+                        target_bounds = saved_rel.get("target_bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
+                        target_dir = saved_rel.get("target_direction", "Left")
+                    else:
+                        # Fall back to computing layout from element positions
+                        source_element = elements[class_id_map[source_class]]
+                        target_element = elements[class_id_map[target_class]]
+
+                        source_dir, target_dir = determine_connection_direction(
+                            source_element["bounds"], target_element["bounds"]
+                        )
+                        source_point = calculate_connection_points(
+                            source_element["bounds"], source_dir
+                        )
+                        target_point = calculate_connection_points(
+                            target_element["bounds"], target_dir
+                        )
+                        path_points = calculate_path_points(
+                            source_point, target_point, source_dir, target_dir
+                        )
+                        rel_bounds = calculate_relationship_bounds(path_points)
+                        is_manually_layouted = False
+                        source_bounds = {
+                            "x": source_point["x"],
+                            "y": source_point["y"],
+                            "width": 0,
+                            "height": 0,
+                        }
+                        target_bounds = {
+                            "x": target_point["x"],
+                            "y": target_point["y"],
+                            "width": 0,
+                            "height": 0,
+                        }
+
                     relationships[rel_id] = {
                         "id": rel_id,
                         "name": name,
@@ -470,28 +502,18 @@ def class_buml_to_json(domain_model):
                             "multiplicity": f"{source_prop.multiplicity.min}..{'*' if source_prop.multiplicity.max == 9999 else source_prop.multiplicity.max}",
                             "role": source_prop.name,
                             "direction": source_dir,
-                            "bounds": {
-                                "x": source_point["x"],
-                                "y": source_point["y"],
-                                "width": 0,
-                                "height": 0,
-                            },
+                            "bounds": source_bounds,
                         },
                         "target": {
                             "element": class_id_map[target_class],
                             "multiplicity": f"{target_prop.multiplicity.min}..{'*' if target_prop.multiplicity.max == 9999 else target_prop.multiplicity.max}",
                             "role": target_prop.name,
                             "direction": target_dir,
-                            "bounds": {
-                                "x": target_point["x"],
-                                "y": target_point["y"],
-                                "width": 0,
-                                "height": 0,
-                            },
+                            "bounds": target_bounds,
                         },
                         "bounds": rel_bounds,
                         "path": path_points,
-                        "isManuallyLayouted": False,
+                        "isManuallyLayouted": is_manually_layouted,
                     }
         except Exception as e:
             logger.error("Error converting relationship to JSON: %s", e, exc_info=True)
@@ -504,23 +526,36 @@ def class_buml_to_json(domain_model):
             generalization.general in class_id_map
             and generalization.specific in class_id_map
         ):
+            # Check for saved layout positions from a previous round-trip
+            gen_key = f"gen_{generalization.specific.name}_{generalization.general.name}"
+            saved_gen = layout_positions.get(gen_key)
+            if saved_gen:
+                gen_path = saved_gen.get("path", [
+                    {"x": 0, "y": 0}, {"x": 50, "y": 0},
+                    {"x": 50, "y": 50}, {"x": 100, "y": 50},
+                ])
+                gen_source_bounds = saved_gen.get("source_bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
+                gen_target_bounds = saved_gen.get("target_bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
+            else:
+                gen_path = [
+                    {"x": 0, "y": 0}, {"x": 50, "y": 0},
+                    {"x": 50, "y": 50}, {"x": 100, "y": 50},
+                ]
+                gen_source_bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
+                gen_target_bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
+
             relationships[rel_id] = {
                 "id": rel_id,
                 "type": "ClassInheritance",
                 "source": {
                     "element": class_id_map[generalization.specific],
-                    "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
+                    "bounds": gen_source_bounds,
                 },
                 "target": {
                     "element": class_id_map[generalization.general],
-                    "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
+                    "bounds": gen_target_bounds,
                 },
-                "path": [
-                    {"x": 0, "y": 0},
-                    {"x": 50, "y": 0},
-                    {"x": 50, "y": 50},
-                    {"x": 100, "y": 50},
-                ],
+                "path": gen_path,
             }
 
     # Handle association classes

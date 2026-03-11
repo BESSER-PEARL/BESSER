@@ -4,9 +4,9 @@ Conversion Router
 Handles all conversion, export, and import endpoints for the BESSER web modeling editor backend.
 """
 
+import asyncio
 import logging
 import os
-import shutil
 import tempfile
 import uuid
 import importlib.util
@@ -57,9 +57,6 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 )
 
 # Backend services - Other services
-from besser.utilities.web_modeling_editor.backend.services.utils import (
-    cleanup_temp_resources,
-)
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     extract_openai_api_key,
 )
@@ -84,6 +81,73 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# File upload size limits
+# ---------------------------------------------------------------------------
+MAX_CSV_SIZE = 5 * 1024 * 1024       # 5 MB
+MAX_IMAGE_SIZE = 10 * 1024 * 1024     # 10 MB
+MAX_BUML_SIZE = 2 * 1024 * 1024       # 2 MB
+
+# ---------------------------------------------------------------------------
+# Allowed MIME / extension sets per upload type
+# ---------------------------------------------------------------------------
+ALLOWED_CSV_EXTENSIONS = {".csv"}
+ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
+ALLOWED_BUML_EXTENSIONS = {".py"}
+ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}
+
+
+def _validate_upload(file: UploadFile, *, max_size: int, allowed_extensions: set[str], content: bytes) -> None:
+    """Validate an uploaded file's size and extension.
+
+    Raises ``HTTPException`` with status 413 (payload too large) or 415
+    (unsupported media type) when the check fails.
+    """
+    # --- size check ---
+    if len(content) > max_size:
+        max_mb = max_size / (1024 * 1024)
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum allowed size is {max_mb:.0f} MB.",
+        )
+
+    # --- extension check ---
+    filename = file.filename or ""
+    _, ext = os.path.splitext(filename)
+    if ext.lower() not in allowed_extensions:
+        raise HTTPException(
+            status_code=415,
+            detail=(
+                f"Unsupported file type '{ext}'. "
+                f"Allowed extensions: {', '.join(sorted(allowed_extensions))}."
+            ),
+        )
+
+
+async def _read_file(path: str, mode: str = "r", **kwargs) -> str | bytes:
+    """Read a file without blocking the event loop."""
+    def _do_read():
+        with open(path, mode, **kwargs) as fh:
+            return fh.read()
+    return await asyncio.to_thread(_do_read)
+
+
+async def _write_file(path: str, data: bytes | str, mode: str = "wb") -> None:
+    """Write data to a file without blocking the event loop."""
+    def _do_write():
+        with open(path, mode) as fh:
+            fh.write(data)
+    await asyncio.to_thread(_do_write)
+
+
+async def _read_json_file(path: str) -> dict:
+    """Read and parse a JSON file without blocking the event loop."""
+    def _do_read():
+        with open(path, "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    return await asyncio.to_thread(_do_read)
+
+
 router = APIRouter(prefix="/besser_api", tags=["conversion"])
 
 
@@ -92,19 +156,15 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     try:
         buml_project = json_to_buml_project(input_data)
 
-        temp_dir = tempfile.mkdtemp(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_")
-        try:
+        with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
             output_file_path = os.path.join(temp_dir, "project.py")
             project_to_code(project=buml_project, file_path=output_file_path)
-            with open(output_file_path, "r", encoding="utf-8") as f:
-                file_content = f.read()
+            file_content = await _read_file(output_file_path, "r", encoding="utf-8")
             return Response(
                 content=file_content,
                 media_type="text/plain",
                 headers={"Content-Disposition": 'attachment; filename="project.py"'},
             )
-        finally:
-            shutil.rmtree(temp_dir, ignore_errors=True)
 
     except HTTPException as e:
         raise e
@@ -116,91 +176,86 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
 @router.post("/export-buml")
 async def export_buml(input_data: DiagramInput):
     # Create unique temporary directory for this request
-    temp_dir = tempfile.mkdtemp(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_")
     try:
-        json_data = input_data.model_dump()
-        elements_data = input_data.model
-        if elements_data.get("type") == "StateMachineDiagram":
-            state_machine = process_state_machine(json_data)
-            output_file_path = os.path.join(temp_dir, "state_machine.py")
-            state_machine_to_code(model=state_machine, file_path=output_file_path)
-            with open(output_file_path, "rb") as f:
-                file_content = f.read()
-            return Response(
-                content=file_content,
-                media_type="text/plain",
-                headers={
-                    "Content-Disposition": 'attachment; filename="state_machine.py"'
-                },
-            )
+        with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
+            json_data = input_data.model_dump()
+            elements_data = input_data.model
+            if elements_data.get("type") == "StateMachineDiagram":
+                state_machine = process_state_machine(json_data)
+                output_file_path = os.path.join(temp_dir, "state_machine.py")
+                state_machine_to_code(model=state_machine, file_path=output_file_path)
+                file_content = await _read_file(output_file_path, "rb")
+                return Response(
+                    content=file_content,
+                    media_type="text/plain",
+                    headers={
+                        "Content-Disposition": 'attachment; filename="state_machine.py"'
+                    },
+                )
 
-        elif elements_data.get("type") == "ClassDiagram":
-            buml_model = process_class_diagram(json_data)
-            output_file_path = os.path.join(temp_dir, "domain_model.py")
-            domain_model_to_code(model=buml_model, file_path=output_file_path)
-            with open(output_file_path, "rb") as f:
-                file_content = f.read()
-            return Response(
-                content=file_content,
-                media_type="text/plain",
-                headers={"Content-Disposition": 'attachment; filename="domain_model.py"'},
-            )
+            elif elements_data.get("type") == "ClassDiagram":
+                buml_model = process_class_diagram(json_data)
+                output_file_path = os.path.join(temp_dir, "domain_model.py")
+                domain_model_to_code(model=buml_model, file_path=output_file_path)
+                file_content = await _read_file(output_file_path, "rb")
+                return Response(
+                    content=file_content,
+                    media_type="text/plain",
+                    headers={"Content-Disposition": 'attachment; filename="domain_model.py"'},
+                )
 
-        elif elements_data.get("type") == "ObjectDiagram":
-            # Build the reference class diagram model from referenceDiagramData
-            reference_data = input_data.referenceDiagramData or elements_data.get("referenceDiagramData", {})
-            if not reference_data:
-                raise ValueError("Object diagram requires reference class diagram data")
+            elif elements_data.get("type") == "ObjectDiagram":
+                # Build the reference class diagram model from referenceDiagramData
+                reference_data = input_data.referenceDiagramData or elements_data.get("referenceDiagramData", {})
+                if not reference_data:
+                    raise ValueError("Object diagram requires reference class diagram data")
 
-            reference_json = {"title": "Reference Classes", "model": reference_data}
-            buml_model = process_class_diagram(reference_json)
+                reference_json = {"title": "Reference Classes", "model": reference_data}
+                buml_model = process_class_diagram(reference_json)
 
-            # Process the object diagram with the domain model
-            object_model = process_object_diagram(json_data, buml_model)
+                # Process the object diagram with the domain model
+                object_model = process_object_diagram(json_data, buml_model)
 
-            # Generate a single file with both domain model and object model
-            output_file_path = os.path.join(temp_dir, "complete_model.py")
-            domain_model_to_code(model=buml_model, file_path=output_file_path, objectmodel=object_model)
-            with open(output_file_path, "rb") as f:
-                file_content = f.read()
-            return Response(
-                content=file_content,
-                media_type="text/plain",
-                headers={"Content-Disposition": 'attachment; filename="complete_model.py"'},
-            )
+                # Generate a single file with both domain model and object model
+                output_file_path = os.path.join(temp_dir, "complete_model.py")
+                domain_model_to_code(model=buml_model, file_path=output_file_path, objectmodel=object_model)
+                file_content = await _read_file(output_file_path, "rb")
+                return Response(
+                    content=file_content,
+                    media_type="text/plain",
+                    headers={"Content-Disposition": 'attachment; filename="complete_model.py"'},
+                )
 
-        elif elements_data.get("type") == "AgentDiagram":
-            agent_model = process_agent_diagram(json_data)
-            output_file_path = os.path.join(temp_dir, "agent_buml.py")
-            agent_model_to_code(agent_model, output_file_path)
-            with open(output_file_path, "rb") as f:
-                file_content = f.read()
-            return Response(
-                content=file_content,
-                media_type="text/plain",
-                headers={
-                    "Content-Disposition": 'attachment; filename="agent_buml.py"'
-                },
-            )
+            elif elements_data.get("type") == "AgentDiagram":
+                agent_model = process_agent_diagram(json_data)
+                output_file_path = os.path.join(temp_dir, "agent_buml.py")
+                agent_model_to_code(agent_model, output_file_path)
+                file_content = await _read_file(output_file_path, "rb")
+                return Response(
+                    content=file_content,
+                    media_type="text/plain",
+                    headers={
+                        "Content-Disposition": 'attachment; filename="agent_buml.py"'
+                    },
+                )
 
-        else:
-            raise ValueError(
-                f"Unsupported or missing diagram type: {elements_data.get('type')}"
-            )
+            else:
+                raise ValueError(
+                    f"Unsupported or missing diagram type: {elements_data.get('type')}"
+                )
 
     except HTTPException as e:
         raise e
     except Exception as e:
         logger.exception("Unexpected error in export_buml")
         raise HTTPException(status_code=500, detail="An internal error occurred during BUML export.")
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @router.post("/get-project-json-model", response_model=ProjectExportResponse)
 async def get_project_json_model(buml_file: UploadFile = File(...)):
     try:
         content = await buml_file.read()
+        _validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
         buml_content = content.decode("utf-8")
 
         parsed_project = project_to_json(buml_content)
@@ -211,6 +266,8 @@ async def get_project_json_model(buml_file: UploadFile = File(...)):
             "version": API_VERSION
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unexpected error in get_project_json_model")
         raise HTTPException(status_code=500, detail="An internal error occurred while processing the project file.")
@@ -223,6 +280,7 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
     """
     try:
         content = await buml_file.read()
+        _validate_upload(buml_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_BUML_EXTENSIONS, content=content)
         buml_content = content.decode("utf-8")
 
         # First, try to detect what type of file this is by analyzing the content
@@ -364,61 +422,62 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
     """
     Accepts one or more CSV files and returns a B-UML domain model as JSON.
     """
-    temp_dir = tempfile.mkdtemp(prefix=CSV_TEMP_DIR_PREFIX)
     file_paths = []
     try:
-        # Save uploaded files to temp dir
-        for file in files:
-            safe_filename = os.path.basename(file.filename)
-            file_path = os.path.join(temp_dir, safe_filename)
-            with open(file_path, "wb") as f:
-                f.write(await file.read())
-            file_paths.append(file_path)
+        with tempfile.TemporaryDirectory(prefix=CSV_TEMP_DIR_PREFIX) as temp_dir:
+            # Save uploaded files to temp dir
+            for file in files:
+                file_content = await file.read()
+                _validate_upload(file, max_size=MAX_CSV_SIZE, allowed_extensions=ALLOWED_CSV_EXTENSIONS, content=file_content)
+                safe_filename = os.path.basename(file.filename)
+                file_path = os.path.join(temp_dir, safe_filename)
+                await _write_file(file_path, file_content)
+                file_paths.append(file_path)
 
-        # Generate DomainModel from CSVs
-        domain_model = csv_to_domain_model(file_paths, model_name="ClassDiagram")
+            # Generate DomainModel from CSVs
+            domain_model = csv_to_domain_model(file_paths, model_name="ClassDiagram")
 
-        # Parse domain model to JSON using the same logic as get_single_json_model
-        diagram_title = "ClassDiagram"
-        diagram_type = "ClassDiagram"
-        try:
-            # If not, parse_buml_content can be used if needed
-            if domain_model and hasattr(domain_model, "types") and len(domain_model.types) > 0:
-                diagram_json = class_buml_to_json(domain_model)
-                diagram_data = {
-                    "title": diagram_title,
-                    "model": diagram_json
-                }
-            else:
-                raise ValueError("No types found in domain model")
-        except Exception as class_error:
-            logger.error("Class diagram parsing failed: %s", str(class_error))
-            logger.exception("Class diagram parsing failed in csv_to_domain_model_endpoint")
-            raise HTTPException(status_code=500, detail="An internal error occurred while parsing the class diagram from CSV.")
+            # Parse domain model to JSON using the same logic as get_single_json_model
+            diagram_title = "ClassDiagram"
+            diagram_type = "ClassDiagram"
+            try:
+                # If not, parse_buml_content can be used if needed
+                if domain_model and hasattr(domain_model, "types") and len(domain_model.types) > 0:
+                    diagram_json = class_buml_to_json(domain_model)
+                    diagram_data = {
+                        "title": diagram_title,
+                        "model": diagram_json
+                    }
+                else:
+                    raise ValueError("No types found in domain model")
+            except Exception as class_error:
+                logger.error("Class diagram parsing failed: %s", str(class_error))
+                logger.exception("Class diagram parsing failed in csv_to_domain_model_endpoint")
+                raise HTTPException(status_code=500, detail="An internal error occurred while parsing the class diagram from CSV.")
 
-        # Check if we successfully parsed any diagram
-        if diagram_data is None or diagram_type is None:
-            raise ValueError(
-                "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
-                "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, or Project."
-            )
+            # Check if we successfully parsed any diagram
+            if diagram_data is None or diagram_type is None:
+                raise ValueError(
+                    "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
+                    "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, or Project."
+                )
 
-        # Return the diagram in the format expected by the frontend
-        return {
-            "title": diagram_title,
-            "model": {
-                **diagram_data.get("model", {}),
-                "type": diagram_type
-            },
-            "diagramType": diagram_type,
-            "exportedAt": datetime.now(timezone.utc).isoformat(),
-            "version": API_VERSION
-        }
+            # Return the diagram in the format expected by the frontend
+            return {
+                "title": diagram_title,
+                "model": {
+                    **diagram_data.get("model", {}),
+                    "type": diagram_type
+                },
+                "diagramType": diagram_type,
+                "exportedAt": datetime.now(timezone.utc).isoformat(),
+                "version": API_VERSION
+            }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Unexpected error in csv_to_domain_model_endpoint")
         raise HTTPException(status_code=500, detail="An internal error occurred while processing CSV files.")
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
 
 @router.post("/get-json-model-from-image", response_model=DiagramExportResponse)
 async def get_json_model_from_image(
@@ -430,11 +489,13 @@ async def get_json_model_from_image(
     """
     try:
         # Save uploaded image to a temp folder
+        image_content = await image_file.read()
+        _validate_upload(image_file, max_size=MAX_IMAGE_SIZE, allowed_extensions=ALLOWED_IMAGE_EXTENSIONS, content=image_content)
+
         with tempfile.TemporaryDirectory() as temp_dir:
             safe_filename = os.path.basename(image_file.filename)
             image_path = os.path.join(temp_dir, safe_filename)
-            with open(image_path, "wb") as f:
-                f.write(await image_file.read())
+            await _write_file(image_path, image_content)
 
             # Create a folder for the image as expected by mockup_to_buml
             image_folder = os.path.join(temp_dir, "images")
@@ -478,12 +539,14 @@ async def get_json_model_from_kg(
     Accepts an .TTL, .RDF, or .JSON knowledge graphs and an OpenAI API key, uses BESSER's kgtouml feature to transform the kg into a BUML class diagram in JSON.
     """
     try:
-        # Save uploaded kg to a temp folder
+        # Save uploaded KG to a temp folder
+        kg_content = await kg_file.read()
+        _validate_upload(kg_file, max_size=MAX_BUML_SIZE, allowed_extensions=ALLOWED_KG_EXTENSIONS, content=kg_content)
+
         with tempfile.TemporaryDirectory() as temp_dir:
             safe_filename = os.path.basename(kg_file.filename)
             kg_path = os.path.join(temp_dir, safe_filename)
-            with open(kg_path, "wb") as f:
-                f.write(await kg_file.read())
+            await _write_file(kg_path, kg_content)
             # Create a folder for the kg as expected by mockup_to_buml
             kg_folder = os.path.join(temp_dir, "kgs")
             os.makedirs(kg_folder, exist_ok=True)
@@ -519,67 +582,63 @@ async def get_json_model_from_kg(
 @router.post("/transform_agent_model_json")
 async def transform_agent_model_json(input_data: DiagramInput):
     """Transform an agent JSON model using the generator and return personalized_agent_model as JSON."""
-    temp_dir = tempfile.mkdtemp(prefix=f"{AGENT_TEMP_DIR_PREFIX}{uuid.uuid4().hex}_")
-
     try:
-        json_data = input_data.model_dump()
-        raw_config = json_data.get("config") if isinstance(json_data.get("config"), dict) else None
-        fallback_config = input_data.config if isinstance(input_data.config, dict) else None
-        base_config = raw_config if raw_config is not None else fallback_config
-        if base_config is None:
-            raise HTTPException(status_code=400, detail="Config is required for transformation")
+        with tempfile.TemporaryDirectory(prefix=f"{AGENT_TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
+            json_data = input_data.model_dump()
+            raw_config = json_data.get("config") if isinstance(json_data.get("config"), dict) else None
+            fallback_config = input_data.config if isinstance(input_data.config, dict) else None
+            base_config = raw_config if raw_config is not None else fallback_config
+            if base_config is None:
+                raise HTTPException(status_code=400, detail="Config is required for transformation")
 
-        logger.debug("[Agent transform] config: %s", json.dumps(base_config, indent=2, default=str))
-        config = deepcopy(base_config)
-        user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
-        if isinstance(user_profile_payload, dict):
-            config["userProfileModel"] = _generate_user_profile_document(user_profile_payload)
-        elif isinstance(config, dict) and "userProfileModel" in config:
-            config.pop("userProfileModel", None)
+            logger.debug("[Agent transform] config: %s", json.dumps(base_config, indent=2, default=str))
+            config = deepcopy(base_config)
+            user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
+            if isinstance(user_profile_payload, dict):
+                config["userProfileModel"] = _generate_user_profile_document(user_profile_payload)
+            elif isinstance(config, dict) and "userProfileModel" in config:
+                config.pop("userProfileModel", None)
 
-        json_data["config"] = config
-        # Convert to BUML model
-        agent_model = process_agent_diagram(json_data)
+            json_data["config"] = config
+            # Convert to BUML model
+            agent_model = process_agent_diagram(json_data)
 
-        # Persist BUML to file for generator import
-        agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
-        agent_model_to_code(agent_model, agent_file)
+            # Persist BUML to file for generator import
+            agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
+            agent_model_to_code(agent_model, agent_file)
 
-        # Import the generated module (spec_from_file_location uses absolute path, no sys.path needed)
-        spec = importlib.util.spec_from_file_location("agent_model", agent_file)
-        agent_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(agent_module)
+            # Import the generated module (spec_from_file_location uses absolute path, no sys.path needed)
+            spec = importlib.util.spec_from_file_location("agent_model", agent_file)
+            agent_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(agent_module)
 
-        generator_info = get_generator_info("agent")
-        generator_class = generator_info.generator_class
-        generator_instance = generator_class(
-            getattr(agent_module, "agent", agent_model),
-            config=config,
-            openai_api_key=extract_openai_api_key(config),
-            output_dir=temp_dir,
-        )
-        generator_instance.generate()
+            generator_info = get_generator_info("agent")
+            generator_class = generator_info.generator_class
+            generator_instance = generator_class(
+                getattr(agent_module, "agent", agent_model),
+                config=config,
+                openai_api_key=extract_openai_api_key(config),
+                output_dir=temp_dir,
+            )
+            generator_instance.generate()
 
-        personalized_json_path = os.path.join(temp_dir, OUTPUT_DIR_NAME, "personalized_agent_model.json")
-        if not os.path.isfile(personalized_json_path):
-            raise HTTPException(status_code=500, detail="personalized_agent_model.json not found after generation")
+            personalized_json_path = os.path.join(temp_dir, OUTPUT_DIR_NAME, "personalized_agent_model.json")
+            if not os.path.isfile(personalized_json_path):
+                raise HTTPException(status_code=500, detail="personalized_agent_model.json not found after generation")
 
-        with open(personalized_json_path, "r", encoding="utf-8") as f:
-            personalized_json = json.load(f)
+            personalized_json = await _read_json_file(personalized_json_path)
 
-        return {
-            "model": personalized_json,
-            "diagramType": "AgentDiagram",
-            "exportedAt": datetime.now(timezone.utc).isoformat(),
-            "version": API_VERSION,
-        }
+            return {
+                "model": personalized_json,
+                "diagramType": "AgentDiagram",
+                "exportedAt": datetime.now(timezone.utc).isoformat(),
+                "version": API_VERSION,
+            }
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Unexpected error in transform_agent_model_json")
         raise HTTPException(status_code=500, detail="An internal error occurred during agent model transformation.")
-    finally:
-        cleanup_temp_resources(temp_dir)
 
 
 def _generate_user_profile_document(user_profile_model: dict) -> dict:

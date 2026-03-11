@@ -8,7 +8,7 @@ import logging
 import re
 
 from besser.BUML.metamodel.state_machine.state_machine import (
-    StateMachine, State, Body, Event, Transition, CustomCodeAction,
+    StateMachine, State, Body, Event, Transition, Condition, CustomCodeAction,
 )
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
@@ -71,10 +71,17 @@ def process_state_machine(json_data):
         elif element.get("type") == "StateFallbackBody":
             body_names.add(element.get("name"))
 
+    # Collect guard condition names from transitions (for code-block backed guards)
+    guard_names = set()
+
     # Collect event names from transitions
     for rel in relationships.values():
         if rel.get("type") == "StateTransition" and rel.get("name"):
             event_names.add(rel.get("name"))
+        if rel.get("type") == "StateTransition" and rel.get("guard"):
+            guard_value = rel["guard"]
+            # If the guard matches a code-block function name, record it
+            guard_names.add(guard_value)
         elif rel.get("type") == "Link":
             # Handle comment links
             source_element_id = rel.get("source", {}).get("element")
@@ -95,9 +102,10 @@ def process_state_machine(json_data):
                     comment_links[comment_id] = []
                 comment_links[comment_id].append(target_id)
 
-    # Build Body and Event objects from code blocks
+    # Build Body, Event, and Condition objects from code blocks
     body_objects = {}  # function name -> Body instance
     event_objects = {}  # function name -> Event instance
+    condition_objects = {}  # function/guard name -> Condition instance
 
     for element in elements.values():
         if element.get("type") == "StateCodeBlock":
@@ -132,6 +140,11 @@ def process_state_machine(json_data):
                 # Event's formal metamodel, but needed for BUML export).
                 event._source_code = cleaned_code
                 event_objects[name] = event
+
+            if name in guard_names:
+                # Guard references a code block: create a Condition with source code
+                condition = Condition(name=name, source=cleaned_code)
+                condition_objects[name] = condition
 
     # Determine which element IDs are initial states (targets of transitions from StateInitialNode)
     initial_state_ids = set()
@@ -211,6 +224,20 @@ def process_state_machine(json_data):
 
             event_name = relationship.get("name", "")
             params = relationship.get("params")
+            guard_expr = relationship.get("guard", "")
+
+            # Resolve guard into a Condition object if present
+            guard_condition = None
+            if guard_expr:
+                guard_condition = condition_objects.get(guard_expr)
+                if not guard_condition:
+                    # Guard is a plain expression string (not a code-block reference).
+                    # Create a Condition from the expression source directly.
+                    guard_condition = Condition(
+                        name=_sanitize_identifier(guard_expr),
+                        source=guard_expr,
+                    )
+                    condition_objects[guard_expr] = guard_condition
 
             if event_name:
                 event = event_objects.get(event_name)
@@ -219,9 +246,12 @@ def process_state_machine(json_data):
                     event = Event(name=event_name)
                     event_objects[event_name] = event
 
-                # Use the TransitionBuilder API: state.when_event(event).go_to(dest)
+                # Build the transition, optionally attaching a guard condition
                 try:
-                    source_state.when_event(event).go_to(target_state)
+                    builder = source_state.when_event(event)
+                    if guard_condition:
+                        builder = builder.with_condition(guard_condition)
+                    builder.go_to(target_state)
                 except ValueError as e:
                     logger.warning(
                         "Could not create transition from '%s' to '%s': %s",
@@ -234,6 +264,16 @@ def process_state_machine(json_data):
                 if params and source_state.transitions:
                     last_transition = source_state.transitions[-1]
                     last_transition._event_params = params
+
+            elif guard_condition:
+                # Transition with guard only (no event) -- use when_condition API
+                try:
+                    source_state.when_condition(guard_condition).go_to(target_state)
+                except ValueError as e:
+                    logger.warning(
+                        "Could not create guard-only transition from '%s' to '%s': %s",
+                        source_state.name, target_state.name, e
+                    )
 
     # Process comments - apply as metadata
     for comment_id, comment_text in comment_elements.items():

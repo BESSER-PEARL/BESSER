@@ -37,13 +37,13 @@ class SQLGenerator(GeneratorInterface):
             dialect = self.sql_dialect
 
             # Append DDL dump logic
-            content += f"""
+            ddl_dump_code = '''
 
 from sqlalchemy.schema import CreateTable
 import os
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
-sql_file_path = os.path.join(current_directory, f"tables_{dialect}.sql")
+sql_file_path = os.path.join(current_directory, "tables_DIALECT_PLACEHOLDER.sql")
 
 ddl_statements = []
 
@@ -51,17 +51,18 @@ ddl_statements = []
 for table in Base.metadata.tables.values():
     for col in table.columns:
         if isinstance(col.type, Enum):
-            enum_name = col.type.name or f"{{col.name}}_enum"
+            enum_name = col.type.name or f"{col.name}_enum"
             enum_values = [repr(e.value) for e in col.type.enum_class]
-            ddl_statements.append(f"CREATE TYPE {{enum_name}} AS ENUM ({{', '.join(enum_values)}});")
+            ddl_statements.append(f"CREATE TYPE {enum_name} AS ENUM ({', '.join(enum_values)})")
 
 for table in Base.metadata.sorted_tables:
     ddl_statements.append(str(CreateTable(table).compile(engine)))
 
 with open(sql_file_path, "w") as f:
     for stmt in ddl_statements:
-        f.write(f"{{stmt}};\\n\\n")
-"""
+        f.write(f"{stmt};\\n\\n")
+'''
+            content += ddl_dump_code.replace("DIALECT_PLACEHOLDER", dialect)
 
             # Write back modified file
             with open(temp_py_path, "w", encoding="utf-8") as f:

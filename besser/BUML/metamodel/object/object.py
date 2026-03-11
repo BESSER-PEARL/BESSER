@@ -293,7 +293,7 @@ class DataValue(Instance):
     """
 
     def __init__(self, classifier: Type, value, name=""):
-        super().__init__(name, classifier)
+        super().__init__(name or f"_datavalue_{id(value)}", classifier)
         self.value = value
 
     @property

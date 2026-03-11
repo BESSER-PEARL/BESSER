@@ -108,6 +108,49 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
+# ---------------------------------------------------------------------------
+# Startup: environment variable validation
+# ---------------------------------------------------------------------------
+
+_REQUIRED_ENV_VARS = [
+    "GITHUB_CLIENT_ID",
+    "GITHUB_CLIENT_SECRET",
+]
+
+_OPTIONAL_ENV_VARS = [
+    "SMTP_PASSWORD",
+    "OPENAI_API_KEY",
+]
+
+
+def _validate_env_vars() -> None:
+    """Check that expected environment variables are set and log diagnostics.
+
+    Required variables trigger ``logger.error`` when absent; optional ones
+    trigger ``logger.warning``.  The application is **not** terminated so
+    that services which do not depend on the missing variables can still
+    operate (graceful degradation).
+    """
+    for var in _REQUIRED_ENV_VARS:
+        if not os.environ.get(var):
+            logger.error(
+                "Required environment variable %s is not set. "
+                "Features depending on it will not work.", var,
+            )
+
+    for var in _OPTIONAL_ENV_VARS:
+        if not os.environ.get(var):
+            logger.warning(
+                "Optional environment variable %s is not set. "
+                "Related functionality will be unavailable.", var,
+            )
+
+
+@app.on_event("startup")
+async def _startup_validate_env() -> None:
+    _validate_env_vars()
+
+
 # Include GitHub OAuth and deployment routers
 app.include_router(github_oauth_router, prefix="/besser_api")
 app.include_router(github_deploy_router, prefix="/besser_api")
@@ -139,6 +182,7 @@ async def generation_error_handler(request, exc):
 @app.get("/health")
 async def health_check():
     """Simple health check for load balancers and monitoring."""
+    logger.info("Health check requested")
     return {"status": "ok"}
 
 
@@ -157,13 +201,19 @@ def get_api_root():
         "supported_generators": list(SUPPORTED_GENERATORS.keys()),
         "endpoints": {
             "generate": "/besser_api/generate-output",
+            "generate_from_project": "/besser_api/generate-output-from-project",
             "deploy": "/besser_api/deploy-app",
             "export_buml": "/besser_api/export-buml",
-            "export_project": "/besser_api/export-project_as_buml",
+            "export_project": "/besser_api/export-project-as-buml",
             "get_project_json_model": "/besser_api/get-project-json-model",
-            "get_single_json_model": "/besser_api/get-single-json-model",
+            "get_json_model": "/besser_api/get-json-model",
             "validate_diagram": "/besser_api/validate-diagram",
-            "check_ocl": "/besser_api/check-ocl (deprecated, use validate_diagram)"
+            "csv_to_domain_model": "/besser_api/csv-to-domain-model",
+            "get_json_model_from_image": "/besser_api/get-json-model-from-image",
+            "get_json_model_from_kg": "/besser_api/get-json-model-from-kg",
+            "transform_agent_model": "/besser_api/transform-agent-model-json",
+            "feedback": "/besser_api/feedback",
+            "check_ocl": "/besser_api/check-ocl (deprecated, use validate-diagram)"
         }
     }
 

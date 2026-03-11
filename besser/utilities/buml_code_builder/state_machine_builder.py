@@ -7,7 +7,7 @@ The generated code can be exec()'d to recreate the StateMachine.
 
 import re
 from besser.BUML.metamodel.state_machine.state_machine import (
-    StateMachine, State, Body, Event, Transition, CustomCodeAction,
+    StateMachine, State, Body, Event, Transition, Condition, CustomCodeAction,
 )
 from besser.utilities.buml_code_builder.common import _escape_python_string
 
@@ -38,15 +38,16 @@ def state_machine_to_code(model: StateMachine, file_path: str = None,
     code_lines.append("#######################")
     code_lines.append("")
     code_lines.append("import datetime")
-    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event")
+    code_lines.append("from besser.BUML.metamodel.state_machine.state_machine import StateMachine, Session, Body, Event, Condition")
     code_lines.append("from besser.BUML.metamodel.structural import Metadata\n")
 
     sm_name_safe = _escape_python_string(model.name)
     code_lines.append(f"{model_var_name} = StateMachine(name='{sm_name_safe}')\n")
 
-    # Collect all unique Body and Event objects across all states
+    # Collect all unique Body, Event, and Condition objects across all states
     all_bodies = {}  # name -> Body
     all_events = {}  # name -> Event
+    all_conditions = {}  # name -> Condition
 
     for state in model.states:
         if state.body and state.body.name not in all_bodies:
@@ -56,6 +57,9 @@ def state_machine_to_code(model: StateMachine, file_path: str = None,
         for transition in state.transitions:
             if transition.event and transition.event.name not in all_events:
                 all_events[transition.event.name] = transition.event
+            for condition in transition.conditions:
+                if condition.name not in all_conditions:
+                    all_conditions[condition.name] = condition
 
     # Write function definitions and Body/Event objects
     written_code_blocks = set()
@@ -95,6 +99,20 @@ def state_machine_to_code(model: StateMachine, file_path: str = None,
             code_lines.append(f"{safe_name} = Event(name='{_escape_python_string(name)}')")
         code_lines.append("")
 
+    for name, condition in all_conditions.items():
+        safe_name = _sanitize_identifier(name)
+        source_code = getattr(condition, 'code', "") or ""
+
+        if source_code and name not in written_code_blocks:
+            cleaned_code = "\n".join(line for line in source_code.splitlines() if line.strip())
+            code_lines.append(cleaned_code)
+            code_lines.append("")
+            written_code_blocks.add(name)
+            code_lines.append(f"{safe_name} = Condition(name='{_escape_python_string(name)}', callable={safe_name})")
+        else:
+            code_lines.append(f"{safe_name} = Condition(name='{_escape_python_string(name)}', source='{_escape_python_string(source_code)}')")
+        code_lines.append("")
+
     # Create states
     for state in model.states:
         safe_state = _sanitize_identifier(state.name)
@@ -120,9 +138,11 @@ def state_machine_to_code(model: StateMachine, file_path: str = None,
     for state in model.states:
         safe_source = _sanitize_identifier(state.name)
         for transition in state.transitions:
-            if transition.event:
+            safe_dest = _sanitize_identifier(transition.dest.name)
+
+            if transition.event and not transition.conditions:
+                # Event-only transition (legacy when_event_go_to style)
                 safe_event = _sanitize_identifier(transition.event.name)
-                safe_dest = _sanitize_identifier(transition.dest.name)
 
                 # Check for event_params (informal attribute from round-trip)
                 event_params = getattr(transition, '_event_params', None)
@@ -137,6 +157,27 @@ def state_machine_to_code(model: StateMachine, file_path: str = None,
                 code_lines.append(f"    dest={safe_dest}_state,")
                 code_lines.append(f"    {params_str}")
                 code_lines.append(")")
+
+            elif transition.event and transition.conditions:
+                # Event + guard(s) transition: use fluent API
+                safe_event = _sanitize_identifier(transition.event.name)
+                builder_expr = f"{safe_source}_state.when_event({safe_event})"
+                for cond in transition.conditions:
+                    safe_cond = _sanitize_identifier(cond.name)
+                    builder_expr += f".with_condition({safe_cond})"
+                builder_expr += f".go_to({safe_dest}_state)"
+                code_lines.append(builder_expr)
+
+            elif transition.conditions and not transition.event:
+                # Guard-only transition (no event)
+                first_cond = transition.conditions[0]
+                safe_cond = _sanitize_identifier(first_cond.name)
+                builder_expr = f"{safe_source}_state.when_condition({safe_cond})"
+                for cond in transition.conditions[1:]:
+                    safe_extra = _sanitize_identifier(cond.name)
+                    builder_expr += f".with_condition({safe_extra})"
+                builder_expr += f".go_to({safe_dest}_state)"
+                code_lines.append(builder_expr)
 
     # Process metadata/comments
     for state in model.states:

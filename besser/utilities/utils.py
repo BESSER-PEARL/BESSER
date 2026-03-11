@@ -56,7 +56,7 @@ class ModelSerializer():
             pickle.dump(model, f)
             f.close()
 
-    def load(self, model_path= str):
+    def load(self, model_path: str):
         """Deserialize and load a model from a serialized file using pickle.
 
         Args:

@@ -11,9 +11,8 @@ import os
 import uuid
 import zipfile
 import tempfile
-import shutil
 import json
-import requests
+import httpx
 from typing import Optional, List
 from datetime import datetime
 
@@ -88,8 +87,6 @@ async def deploy_webapp_to_github(
     
     The user can then deploy to Render with one click.
     """
-    temp_dir = None
-    
     try:
         # Verify GitHub authentication
         if not github_session:
@@ -97,7 +94,7 @@ async def deploy_webapp_to_github(
                 status_code=401,
                 detail="GitHub authentication required. Please sign in with GitHub first."
             )
-        
+
         access_token = get_user_token(github_session)
         if not access_token:
             raise HTTPException(
@@ -107,9 +104,9 @@ async def deploy_webapp_to_github(
         
         # Create GitHub service
         github = create_github_service(access_token)
-        
+
         # Get authenticated user info
-        user_info = github.get_authenticated_user()
+        user_info = await github.get_authenticated_user()
         username = user_info.get("login")
         
         # Extract deploy config
@@ -162,115 +159,114 @@ async def deploy_webapp_to_github(
             logger.debug("Resolved agent_config: %s", json.dumps(agent_config, indent=2, default=str) if agent_config else 'None')
 
         # Generate web app
-        temp_dir = tempfile.mkdtemp(prefix=f"besser_github_{uuid.uuid4().hex}_")
-
-        generator_info = get_generator_info("web_app")
-        generator_class = generator_info.generator_class
-        generator = generator_class(
-            buml_model,
-            gui_model,
-            output_dir=temp_dir,
-            agent_model=agent_model,
-            agent_config=agent_config
-        )
-        generator.generate()
-        
-        # Add deployment configuration files
-        _add_deployment_configs(
-            temp_dir,
-            repo_name,
-            has_agent=agent_model is not None,
-            agent_entrypoint=agent_model.name if agent_model is not None else None,
-            agent_config=agent_config
-        )
-        
-        # Determine whether to reuse an existing repo or create a new one
-        reused_repo = False
-        default_branch = "main"
-
-        if use_existing:
-            try:
-                branches = github.get_branches(username, repo_name)
-                # Repo exists and is accessible — reuse it
-                reused_repo = True
-                if branches:
-                    default_branch = branches[0]
-            except requests.HTTPError as e:
-                if e.response is not None and e.response.status_code == 404:
-                    # Repo was deleted — fall back to creating a new one
-                    use_existing = False
-                else:
-                    raise
-
-        if not use_existing:
-            repo_info = github.create_repository(
-                repo_name=repo_name,
-                description=description,
-                is_private=is_private,
-                auto_init=True
+        with tempfile.TemporaryDirectory(prefix=f"besser_github_{uuid.uuid4().hex}_") as temp_dir:
+            generator_info = get_generator_info("web_app")
+            generator_class = generator_info.generator_class
+            generator = generator_class(
+                buml_model,
+                gui_model,
+                output_dir=temp_dir,
+                agent_model=agent_model,
+                agent_config=agent_config
             )
-            default_branch = repo_info.get("default_branch", "main")
+            generator.generate()
 
-            # Set repo metadata: homepage, topics, description
-            try:
-                github.update_repository(
-                    owner=username,
+            # Add deployment configuration files
+            _add_deployment_configs(
+                temp_dir,
+                repo_name,
+                has_agent=agent_model is not None,
+                agent_entrypoint=agent_model.name if agent_model is not None else None,
+                agent_config=agent_config
+            )
+
+            # Determine whether to reuse an existing repo or create a new one
+            reused_repo = False
+            default_branch = "main"
+
+            if use_existing:
+                try:
+                    branches = await github.get_branches(username, repo_name)
+                    # Repo exists and is accessible — reuse it
+                    reused_repo = True
+                    if branches:
+                        default_branch = branches[0]
+                except httpx.HTTPStatusError as e:
+                    if e.response is not None and e.response.status_code == 404:
+                        # Repo was deleted — fall back to creating a new one
+                        use_existing = False
+                    else:
+                        raise
+
+            if not use_existing:
+                repo_info = await github.create_repository(
                     repo_name=repo_name,
-                    description=f"{description} — Generated by BESSER",
-                    homepage="https://editor.besser-pearl.org",
-                    topics=["besser", "low-code", "model-driven", "generated-app", "react", "fastapi", "web-app"]
+                    description=description,
+                    is_private=is_private,
+                    auto_init=True
                 )
-            except Exception:
-                logger.debug("Non-critical: failed to update repository metadata", exc_info=True)
+                default_branch = repo_info.get("default_branch", "main")
 
-        repo_url = f"https://github.com/{username}/{repo_name}"
+                # Set repo metadata: homepage, topics, description
+                try:
+                    await github.update_repository(
+                        owner=username,
+                        repo_name=repo_name,
+                        description=f"{description} — Generated by BESSER",
+                        homepage="https://editor.besser-pearl.org",
+                        topics=["besser", "low-code", "model-driven", "generated-app", "react", "fastapi", "web-app"]
+                    )
+                except Exception:
+                    logger.debug("Non-critical: failed to update repository metadata", exc_info=True)
 
-        # Add README before push so everything lands in one commit
-        readme_path = os.path.join(temp_dir, "README.md")
-        with open(readme_path, "w", encoding="utf-8") as f:
-            f.write(github.generate_readme_content(
-                body.get("name", repo_name),
-                deploy_instructions=True,
+            repo_url = f"https://github.com/{username}/{repo_name}"
+
+            # Add README before push so everything lands in one commit
+            readme_path = os.path.join(temp_dir, "README.md")
+            with open(readme_path, "w", encoding="utf-8") as f:
+                f.write(github.generate_readme_content(
+                    body.get("name", repo_name),
+                    deploy_instructions=True,
+                    owner=username,
+                    repo_name=repo_name
+                ))
+
+            # Push code to repository
+            if custom_commit_message:
+                commit_message = custom_commit_message
+            elif reused_repo:
+                commit_message = "Update app - Generated by BESSER Web Editor"
+            else:
+                commit_message = "Initial commit - Generated by BESSER Web Editor"
+
+            push_results = await github.push_directory_to_repo(
                 owner=username,
-                repo_name=repo_name
-            ))
+                repo_name=repo_name,
+                directory_path=temp_dir,
+                commit_message=commit_message,
+                branch=default_branch,
+                preserve_existing_files=reused_repo
+            )
+            if not push_results.get("commit_sha"):
+                raise HTTPException(
+                    status_code=500,
+                    detail="Failed to create GitHub commit for generated files."
+                )
 
-        # Push code to repository
-        if custom_commit_message:
-            commit_message = custom_commit_message
-        elif reused_repo:
-            commit_message = "Update app - Generated by BESSER Web Editor"
-        else:
-            commit_message = "Initial commit - Generated by BESSER Web Editor"
+            # Get deployment URLs
+            deployment_urls = github.get_deployment_urls(username, repo_name)
 
-        push_results = github.push_directory_to_repo(
-            owner=username,
-            repo_name=repo_name,
-            directory_path=temp_dir,
-            commit_message=commit_message,
-            branch=default_branch,
-            preserve_existing_files=reused_repo
-        )
-        if not push_results.get("commit_sha"):
-            raise HTTPException(
-                status_code=500,
-                detail="Failed to create GitHub commit for generated files."
+            action = "updated" if reused_repo else "created"
+            return DeployToGitHubResponse(
+                success=True,
+                repo_url=repo_url,
+                repo_name=repo_name,
+                owner=username,
+                deployment_urls=deployment_urls,
+                files_uploaded=push_results["total_files"],
+                message=f"Successfully {action} repository and pushed {push_results['total_files']} files"
             )
 
-        # Get deployment URLs
-        deployment_urls = github.get_deployment_urls(username, repo_name)
-
-        action = "updated" if reused_repo else "created"
-        return DeployToGitHubResponse(
-            success=True,
-            repo_url=repo_url,
-            repo_name=repo_name,
-            owner=username,
-            deployment_urls=deployment_urls,
-            files_uploaded=push_results["total_files"],
-            message=f"Successfully {action} repository and pushed {push_results['total_files']} files"
-        )
-        
     except HTTPException:
         raise
     except ValueError as e:
@@ -281,9 +277,6 @@ async def deploy_webapp_to_github(
             status_code=500,
             detail="An internal error occurred during GitHub deployment."
         )
-    finally:
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def _sanitize_repo_name(name: str) -> str:
@@ -557,7 +550,7 @@ async def get_user_repositories(
     
     try:
         github = create_github_service(access_token)
-        repos = github.get_user_repositories()
+        repos = await github.get_user_repositories()
         
         return GitHubReposListResponse(
             repositories=[GitHubRepoResponse(**r) for r in repos]
@@ -590,7 +583,7 @@ async def get_repository_branches(
     
     try:
         github = create_github_service(access_token)
-        branches = github.get_branches(owner, repo)
+        branches = await github.get_branches(owner, repo)
         
         return GitHubBranchesListResponse(branches=branches)
     except Exception as e:
@@ -624,7 +617,7 @@ async def check_file_exists(
     
     try:
         github = create_github_service(access_token)
-        exists = github.file_exists(owner, repo, file_path, branch)
+        exists = await github.file_exists(owner, repo, file_path, branch)
         
         return FileExistsResponse(exists=exists, path=file_path)
     except Exception as e:
@@ -667,7 +660,7 @@ async def get_repository_contents(
     
     try:
         github = create_github_service(access_token)
-        contents = github.get_repository_contents(owner, repo, path, branch)
+        contents = await github.get_repository_contents(owner, repo, path, branch)
         
         return GitHubContentsResponse(
             contents=[
@@ -705,7 +698,7 @@ async def get_repository_commits(
     
     try:
         github = create_github_service(access_token)
-        commits = github.get_commits(owner, repo, path)
+        commits = await github.get_commits(owner, repo, path)
         
         return GitHubCommitsListResponse(
             commits=[GitHubCommitResponse(**c) for c in commits]
@@ -734,12 +727,12 @@ async def save_project_to_github(
     
     try:
         github = create_github_service(access_token)
-        
+
         # Convert project data to JSON string
         project_json = json.dumps(request.project_data, indent=2)
-        
+
         # Save to GitHub
-        result = github.create_or_update_file(
+        result = await github.create_or_update_file(
             owner=request.owner,
             repo_name=request.repo,
             file_path=request.file_path,
@@ -778,9 +771,9 @@ async def load_project_from_github(
     
     try:
         github = create_github_service(access_token)
-        
+
         # Get file content
-        file_data = github.get_file_content(owner, repo, file_path, branch)
+        file_data = await github.get_file_content(owner, repo, file_path, branch)
         
         if not file_data:
             raise HTTPException(
@@ -827,9 +820,9 @@ async def load_project_from_commit(
     
     try:
         github = create_github_service(access_token)
-        
+
         # Get file content at specific commit
-        file_data = github.get_file_content(owner, repo, file_path, ref=commit_sha)
+        file_data = await github.get_file_content(owner, repo, file_path, ref=commit_sha)
         
         if not file_data:
             raise HTTPException(
@@ -841,7 +834,7 @@ async def load_project_from_commit(
         project = json.loads(file_data.get("content", "{}"))
         
         # Get commit info for display
-        commits = github.get_commits(owner, repo, file_path, per_page=100)
+        commits = await github.get_commits(owner, repo, file_path, per_page=100)
         commit_info = next((c for c in commits if c["sha"] == commit_sha), None)
         
         return LoadProjectFromCommitResponse(
@@ -882,16 +875,16 @@ async def create_repository_for_project(
     
     try:
         github = create_github_service(access_token)
-        
+
         # Get user info
-        user_info = github.get_authenticated_user()
+        user_info = await github.get_authenticated_user()
         username = user_info.get("login")
         
         # Sanitize repo name
         repo_name = _sanitize_repo_name(request.repo_name)
         
         # Create repository
-        repo_info = github.create_repository(
+        repo_info = await github.create_repository(
             repo_name=repo_name,
             description=request.description or "BESSER project repository",
             is_private=request.is_private
@@ -900,7 +893,7 @@ async def create_repository_for_project(
         # Save project to repo
         project_json = json.dumps(request.project_data, indent=2)
         file_path = request.file_path if hasattr(request, 'file_path') and request.file_path else "besser-project.json"
-        save_result = github.create_or_update_file(
+        save_result = await github.create_or_update_file(
             owner=username,
             repo_name=repo_name,
             file_path=file_path,
@@ -937,7 +930,7 @@ This repository contains a [BESSER](https://github.com/BESSER-PEARL/BESSER) proj
 ---
 *Generated by BESSER Web Modeling Editor*
 """
-        github.create_or_update_file(
+        await github.create_or_update_file(
             owner=username,
             repo_name=repo_name,
             file_path="README.md",
@@ -997,16 +990,16 @@ async def create_gist_from_project(
     
     try:
         github = create_github_service(access_token)
-        
+
         # Convert project to JSON
         project_json = json.dumps(request.project_data, indent=2)
-        
+
         # Get project name for filename
         project_name = request.project_data.get("name", "besser-project")
         filename = f"{project_name.lower().replace(' ', '-')}.json"
-        
+
         # Create gist
-        result = github.create_gist(
+        result = await github.create_gist(
             content=project_json,
             filename=filename,
             description=request.description or f"BESSER Project: {project_name}",
@@ -1019,7 +1012,7 @@ async def create_gist_from_project(
             gist_id=result.get("gist_id", ""),
             message=f"Gist created successfully"
         )
-    except requests.HTTPError as e:
+    except httpx.HTTPStatusError as e:
         status_code = e.response.status_code if e.response is not None else 500
         # GitHub returns 404/403 when the token lacks the "gist" scope or gists are disabled
         if status_code in (403, 404):

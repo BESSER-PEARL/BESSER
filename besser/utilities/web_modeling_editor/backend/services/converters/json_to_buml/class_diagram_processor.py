@@ -5,6 +5,7 @@ Class diagram processing for converting JSON to BUML format.
 import json
 import logging
 import re
+from typing import Any, Optional, Union
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
 
@@ -13,14 +14,18 @@ logger = logging.getLogger(__name__)
 from besser.BUML.metamodel.structural import (
     DomainModel, Class, Enumeration, Property, Method, BinaryAssociation,
     Generalization, PrimitiveDataType, EnumerationLiteral, AssociationClass,
-    Metadata, Parameter, MethodImplementationType
+    Metadata, Parameter, MethodImplementationType, Type
 )
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import (
     parse_attribute, parse_method, parse_multiplicity, process_ocl_constraints
 )
 
 
-def parse_method_signature_from_code(method_code, domain_model, type_lookup=None):
+def parse_method_signature_from_code(
+    method_code: str,
+    domain_model: DomainModel,
+    type_lookup: Optional[dict[str, Type]] = None,
+) -> Optional[tuple[str, list[dict[str, str]], Optional[str]]]:
     """Extract method signature from code text when diagram name/signature is malformed."""
     if not isinstance(method_code, str) or not method_code.strip():
         return None
@@ -51,7 +56,7 @@ def parse_method_signature_from_code(method_code, domain_model, type_lookup=None
     return parsed_name, parsed_parameters, parsed_return_type
 
 
-def _build_type_lookup(domain_model):
+def _build_type_lookup(domain_model: DomainModel) -> dict[str, Union[Class, Enumeration]]:
     """Build a name-to-type lookup dict for O(1) type resolution.
 
     Only includes Class and Enumeration types (the user-defined types that
@@ -64,7 +69,7 @@ def _build_type_lookup(domain_model):
     }
 
 
-def _resolve_type(type_name, type_lookup):
+def _resolve_type(type_name: str, type_lookup: dict[str, Union[Class, Enumeration]]) -> Type:
     """Resolve a type name to a metamodel type object.
 
     Returns the Class/Enumeration from *type_lookup* if found, otherwise
@@ -76,7 +81,7 @@ def _resolve_type(type_name, type_lookup):
     return PrimitiveDataType(type_name)
 
 
-def process_class_diagram(json_data):
+def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
     """Process Class Diagram specific elements."""
     title = json_data.get('title', '')
     if ' ' in title:
@@ -86,6 +91,10 @@ def process_class_diagram(json_data):
     # Get elements and OCL constraints from the JSON data
     elements = (json_data.get('model') or {}).get('elements', {})
     relationships = (json_data.get('model') or {}).get('relationships', {})
+
+    # Collect layout positions from the original JSON for round-trip fidelity.
+    # Keyed by element name (for classes/enums) or composite key (for relationships).
+    layout_positions: dict[str, Any] = {}
 
     # Store comments for later processing
     comment_elements = {}  # {comment_id: comment_text}
@@ -139,6 +148,10 @@ def process_class_diagram(json_data):
             except ValueError as e:
                 raise ConversionError(str(e))
 
+            # Capture layout bounds for round-trip fidelity
+            if "bounds" in element:
+                layout_positions[element_name] = element["bounds"]
+
     # 2. Then create all class structures without attributes or methods
     for element_id, element in elements.items():
         if element.get("type") in ["Class", "AbstractClass"]:
@@ -163,6 +176,10 @@ def process_class_diagram(json_data):
                 domain_model.add_type(cls)
             except ValueError as e:
                 raise ConversionError(str(e))
+
+            # Capture layout bounds for round-trip fidelity
+            if "bounds" in element:
+                layout_positions[class_name] = element["bounds"]
 
     # Build a name→type lookup dict for O(1) type resolution in the second pass.
     type_lookup = _build_type_lookup(domain_model)
@@ -445,9 +462,42 @@ def process_class_diagram(json_data):
             # Store the association for association class processing
             association_by_id[rel_id] = association
 
+            # Capture layout bounds for the relationship and its endpoints
+            rel_layout: dict[str, Any] = {}
+            if "bounds" in relationship:
+                rel_layout["bounds"] = relationship["bounds"]
+            if "path" in relationship:
+                rel_layout["path"] = relationship["path"]
+            if "isManuallyLayouted" in relationship:
+                rel_layout["isManuallyLayouted"] = relationship["isManuallyLayouted"]
+            # Capture source/target endpoint bounds and directions
+            if source.get("bounds"):
+                rel_layout["source_bounds"] = source["bounds"]
+            if source.get("direction"):
+                rel_layout["source_direction"] = source["direction"]
+            if target.get("bounds"):
+                rel_layout["target_bounds"] = target["bounds"]
+            if target.get("direction"):
+                rel_layout["target_direction"] = target["direction"]
+            if rel_layout:
+                layout_positions[f"rel_{association_name}"] = rel_layout
+
         elif rel_type == "ClassInheritance":
             generalization = Generalization(general=target_class, specific=source_class)
             domain_model.generalizations.add(generalization)
+
+            # Capture layout bounds for the generalization
+            gen_layout: dict[str, Any] = {}
+            if "bounds" in relationship:
+                gen_layout["bounds"] = relationship["bounds"]
+            if "path" in relationship:
+                gen_layout["path"] = relationship["path"]
+            if source.get("bounds"):
+                gen_layout["source_bounds"] = source["bounds"]
+            if target.get("bounds"):
+                gen_layout["target_bounds"] = target["bounds"]
+            if gen_layout:
+                layout_positions[f"gen_{source_class.name}_{target_class.name}"] = gen_layout
 
     # THIRD PASS: Process association classes
     for class_id, association_ids in association_class_candidates.items():
@@ -549,5 +599,9 @@ def process_class_diagram(json_data):
     # Store method diagram references for buml_to_json round-trip fidelity.
     # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
     domain_model.method_diagram_refs = method_diagram_refs
+
+    # Store layout positions for buml_to_json round-trip fidelity.
+    # Keyed by element name (classes/enums) or composite key (relationships).
+    domain_model._layout_positions = layout_positions
 
     return domain_model

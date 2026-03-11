@@ -46,9 +46,6 @@ from besser.utilities.web_modeling_editor.backend.constants.user_buml_model impo
 )
 
 # Backend services - Other services
-from besser.utilities.web_modeling_editor.backend.services.utils import (
-    cleanup_temp_resources,
-)
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     extract_openai_api_key,
     normalize_personalization_mapping,
@@ -91,6 +88,14 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
 
 logger = logging.getLogger(__name__)
 
+SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'apikey', 'api-key'}
+
+
+def sanitize_config(config: dict) -> dict:
+    """Return a shallow copy of config with sensitive values masked."""
+    return {k: '***' if any(s in k.lower() for s in SENSITIVE_KEYS) else v for k, v in config.items()}
+
+
 router = APIRouter(prefix="/besser_api", tags=["generation"])
 
 
@@ -113,92 +118,86 @@ def generate_agent_files(
     Raises:
         Exception: If agent file generation fails
     """
-    temp_dir = None
     try:
-        # Create a temporary directory
-        temp_dir = tempfile.mkdtemp(prefix=f"{AGENT_TEMP_DIR_PREFIX}{uuid.uuid4().hex}_")
+        with tempfile.TemporaryDirectory(prefix=f"{AGENT_TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
+            # Generate the agent model to a file
+            agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
+            agent_model_to_code(agent_model, agent_file)
 
-        # Generate the agent model to a file
-        agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
-        agent_model_to_code(agent_model, agent_file)
+            # Import the generated module (spec_from_file_location uses absolute path, no sys.path needed)
+            spec = importlib.util.spec_from_file_location("agent_model", agent_file)
+            agent_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(agent_module)
 
-        # Import the generated module (spec_from_file_location uses absolute path, no sys.path needed)
-        spec = importlib.util.spec_from_file_location("agent_model", agent_file)
-        agent_module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(agent_module)
+            # Get the BAFGenerator from the supported generators
+            generator_info = get_generator_info("agent")
+            generator_class = generator_info.generator_class
+            openai_api_key = extract_openai_api_key(config)
 
-        # Get the BAFGenerator from the supported generators
-        generator_info = get_generator_info("agent")
-        generator_class = generator_info.generator_class
-        openai_api_key = extract_openai_api_key(config)
+            # Use the BAFGenerator with the agent model from the module
+            if hasattr(agent_module, 'agent'):
+                generator = generator_class(
+                    agent_module.agent,
+                    config=config,
+                    openai_api_key=openai_api_key,
+                    generation_mode=generation_mode,
+                )
+            else:
+                # Fall back to the original agent model
+                generator = generator_class(
+                    agent_model,
+                    config=config,
+                    openai_api_key=openai_api_key,
+                    generation_mode=generation_mode,
+                )
 
-        # Use the BAFGenerator with the agent model from the module
-        if hasattr(agent_module, 'agent'):
-            generator = generator_class(
-                agent_module.agent,
-                config=config,
-                openai_api_key=openai_api_key,
-                generation_mode=generation_mode,
-            )
-        else:
-            # Fall back to the original agent model
-            generator = generator_class(
-                agent_model,
-                config=config,
-                openai_api_key=openai_api_key,
-                generation_mode=generation_mode,
-            )
+            generator.generate()
 
-        generator.generate()
+            # Prepare user profile bundle when personalization mappings are provided
+            user_profiles_path = None
+            if isinstance(config, dict) and isinstance(config.get('personalizationMapping'), list):
+                user_profiles = []
+                for idx, entry in enumerate(config.get('personalizationMapping')):
+                    if not isinstance(entry, dict):
+                        continue
+                    profile_data = entry.get('user_profile')
+                    profile_name = entry.get('name') or f"variant_{idx + 1}"
+                    if profile_data is not None:
+                        user_profiles.append({
+                            "name": profile_name,
+                            "user_profile": profile_data,
+                        })
 
-        # Prepare user profile bundle when personalization mappings are provided
-        user_profiles_path = None
-        if isinstance(config, dict) and isinstance(config.get('personalizationMapping'), list):
-            user_profiles = []
-            for idx, entry in enumerate(config.get('personalizationMapping')):
-                if not isinstance(entry, dict):
-                    continue
-                profile_data = entry.get('user_profile')
-                profile_name = entry.get('name') or f"variant_{idx + 1}"
-                if profile_data is not None:
-                    user_profiles.append({
-                        "name": profile_name,
-                        "user_profile": profile_data,
-                    })
+                if user_profiles:
+                    user_profiles_path = os.path.join(temp_dir, "user_profiles.json")
+                    with open(user_profiles_path, "w", encoding="utf-8") as profiles_file:
+                        json.dump(user_profiles, profiles_file, indent=2)
 
-            if user_profiles:
-                user_profiles_path = os.path.join(temp_dir, "user_profiles.json")
-                with open(user_profiles_path, "w", encoding="utf-8") as profiles_file:
-                    json.dump(user_profiles, profiles_file, indent=2)
+            # Create a zip file with all the generated files
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                # Add the agent model file
+                zip_file.write(agent_file, os.path.basename(agent_file))
 
-        # Create a zip file with all the generated files
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            # Add the agent model file
-            zip_file.write(agent_file, os.path.basename(agent_file))
+                # Add user profiles if generated
+                if user_profiles_path and os.path.exists(user_profiles_path):
+                    zip_file.write(user_profiles_path, os.path.basename(user_profiles_path))
 
-            # Add user profiles if generated
-            if user_profiles_path and os.path.exists(user_profiles_path):
-                zip_file.write(user_profiles_path, os.path.basename(user_profiles_path))
+                # Add all files from the output directory
+                output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
+                if os.path.exists(output_dir):
+                    for root, _, files in os.walk(output_dir):
+                        for file_name in files:
+                            file_path = os.path.join(root, file_name)
+                            arcname = os.path.relpath(file_path, output_dir)
+                            zip_file.write(file_path, arcname)
 
-            # Add all files from the output directory
-            output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
-            if os.path.exists(output_dir):
-                for root, _, files in os.walk(output_dir):
-                    for file_name in files:
-                        file_path = os.path.join(root, file_name)
-                        arcname = os.path.relpath(file_path, output_dir)
-                        zip_file.write(file_path, arcname)
-
-        zip_buffer.seek(0)
-        return zip_buffer, AGENT_OUTPUT_FILENAME
+            zip_buffer.seek(0)
+            return zip_buffer, AGENT_OUTPUT_FILENAME
 
     except Exception as e:
         logger.exception("Error generating agent files")
         raise
-    finally:
-        # Clean up resources
-        cleanup_temp_resources(temp_dir)
 
 
 @router.post("/generate-output-from-project")
@@ -296,33 +295,40 @@ async def generate_code_output(input_data: DiagramInput):
     Raises:
         HTTPException: If generator is not supported or generation fails
     """
-    temp_dir = tempfile.mkdtemp(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_")
-
     try:
-        json_data = input_data.model_dump()
-        generator_type = input_data.generator
+        with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
+            json_data = input_data.model_dump()
+            generator_type = input_data.generator
 
-        # Validate generator type
-        if not is_generator_supported(generator_type):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
-            )
+            # Validate generator type
+            if not is_generator_supported(generator_type):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
+                )
 
-        generator_info = get_generator_info(generator_type)
+            generator_info = get_generator_info(generator_type)
 
-        # Handle agent generators (different diagram type)
-        if generator_info.category == "ai_agent":
-            return await _handle_agent_generation(json_data)
+            # Handle agent generators (different diagram type)
+            if generator_info.category == "ai_agent":
+                return await _handle_agent_generation(json_data)
 
-        # Handle quantum generators
-        if generator_info.category == "quantum":
-            return await _generate_qiskit(json_data, generator_info.generator_class, input_data.config, temp_dir)
+            # Handle quantum generators
+            if generator_info.category == "quantum":
+                return await _generate_qiskit(json_data, generator_info.generator_class, input_data.config, temp_dir)
 
-        if generator_info.category == "object_model":
-            diagram_type = _get_diagram_type(json_data)
-            if diagram_type == "UserDiagram":
-                return await _handle_user_diagram_generation(
+            if generator_info.category == "object_model":
+                diagram_type = _get_diagram_type(json_data)
+                if diagram_type == "UserDiagram":
+                    return await _handle_user_diagram_generation(
+                        json_data,
+                        generator_type,
+                        generator_info,
+                        input_data.config,
+                        temp_dir,
+                    )
+
+                return await _handle_object_diagram_generation(
                     json_data,
                     generator_type,
                     generator_info,
@@ -330,27 +336,16 @@ async def generate_code_output(input_data: DiagramInput):
                     temp_dir,
                 )
 
-            return await _handle_object_diagram_generation(
-                json_data,
-                generator_type,
-                generator_info,
-                input_data.config,
-                temp_dir,
+            # Handle class diagram based generators
+            return await _handle_class_diagram_generation(
+                json_data, generator_type, generator_info, input_data.config, temp_dir
             )
 
-        # Handle class diagram based generators
-        return await _handle_class_diagram_generation(
-            json_data, generator_type, generator_info, input_data.config, temp_dir
-        )
-
     except HTTPException as e:
-        cleanup_temp_resources(temp_dir)
         raise e
     except (ConversionError, ValidationError):
-        cleanup_temp_resources(temp_dir)
         raise  # Let app-level handler return 400
     except Exception as e:
-        cleanup_temp_resources(temp_dir)
         logger.exception("Unexpected error in generate_code_output")
         raise HTTPException(status_code=500, detail="An internal error occurred during code generation.")
 
@@ -358,7 +353,6 @@ async def generate_code_output(input_data: DiagramInput):
 async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):
     """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram.
     Optionally includes AgentDiagram if agent components are present in the GUI."""
-    temp_dir = None
     try:
         # Extract active GUINoCodeDiagram first — it drives which other diagrams are used
         gui_diagram = input_data.get_active_diagram("GUINoCodeDiagram")
@@ -376,41 +370,40 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
                 detail="ClassDiagram is required for Web App generator"
             )
 
-        temp_dir = tempfile.mkdtemp(prefix=TEMP_DIR_PREFIX)
+        with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
+            # Process class diagram to BUML
+            buml_model = process_class_diagram(class_diagram.model_dump())
 
-        # Process class diagram to BUML
-        buml_model = process_class_diagram(class_diagram.model_dump())
+            gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
 
-        gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
+            # Check if GUI model contains agent components
+            agent_diagram = None
+            agent_model = None
+            has_agent_components = _check_for_agent_components(gui_model)
 
-        # Check if GUI model contains agent components
-        agent_diagram = None
-        agent_model = None
-        has_agent_components = _check_for_agent_components(gui_model)
-
-        agent_config = None
-        if has_agent_components:
-            # Use the GUI diagram's per-diagram reference for AgentDiagram
-            agent_diagram = input_data.get_referenced_diagram(gui_diagram, "AgentDiagram")
-            if agent_diagram and agent_diagram.model:
-                # Process agent diagram to BUML
-                # process_agent_diagram expects the full diagram structure with title, config, and model
-                agent_diagram_dict = agent_diagram.model_dump()
-                if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
-                    agent_model = process_agent_diagram(agent_diagram_dict)
-                    # Try diagram-level config first, then project-level agentConfig, then project config
-                    project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
-                    agent_config = agent_diagram_dict.get('config') or agent_diagram.config or project_agent_config or config
-                    logger.debug("[WebApp agent] resolved agent_config: %s", json.dumps(agent_config, indent=2, default=str) if agent_config else 'None')
+            agent_config = None
+            if has_agent_components:
+                # Use the GUI diagram's per-diagram reference for AgentDiagram
+                agent_diagram = input_data.get_referenced_diagram(gui_diagram, "AgentDiagram")
+                if agent_diagram and agent_diagram.model:
+                    # Process agent diagram to BUML
+                    # process_agent_diagram expects the full diagram structure with title, config, and model
+                    agent_diagram_dict = agent_diagram.model_dump()
+                    if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
+                        agent_model = process_agent_diagram(agent_diagram_dict)
+                        # Try diagram-level config first, then project-level agentConfig, then project config
+                        project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
+                        agent_config = agent_diagram_dict.get('config') or agent_diagram.config or project_agent_config or config
+                        logger.debug("[WebApp agent] resolved agent_config: %s", json.dumps(sanitize_config(agent_config), indent=2, default=str) if agent_config else 'None')
+                    else:
+                        logger.warning("AgentDiagram data is invalid. Agent components will not be functional.")
                 else:
-                    logger.warning("AgentDiagram data is invalid. Agent components will not be functional.")
-            else:
-                logger.warning("GUI contains agent components but no AgentDiagram found. Agent components will not be functional.")
+                    logger.warning("GUI contains agent components but no AgentDiagram found. Agent components will not be functional.")
 
-        # Generate Web App TypeScript project
-        generator_class = generator_info.generator_class
+            # Generate Web App TypeScript project
+            generator_class = generator_info.generator_class
 
-        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir, agent_model, agent_config)
+            return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir, agent_model, agent_config)
 
     except HTTPException:
         raise
@@ -419,9 +412,6 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
     except Exception as e:
         logger.exception("Unexpected error in Web App generation")
         raise HTTPException(status_code=500, detail="An internal error occurred during Web App generation.")
-    finally:
-        if temp_dir:
-            cleanup_temp_resources(temp_dir)
 
 
 def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
@@ -437,7 +427,7 @@ async def _handle_agent_generation(json_data: dict):
     """Handle agent diagram generation by dispatching to specialized helpers."""
     try:
         config = json_data.get('config', {})
-        logger.debug("[Agent generation] config: %s", json.dumps(config, indent=2, default=str) if config else 'None')
+        logger.debug("[Agent generation] config: %s", json.dumps(sanitize_config(config), indent=2, default=str) if config else 'None')
 
         if config is None:
             agent_model = process_agent_diagram(json_data)
@@ -593,32 +583,30 @@ def _generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[
     if isinstance(model_section, dict):
         model_section.setdefault("type", "UserDiagram")
 
-    temp_dir = tempfile.mkdtemp(prefix=f"user_profile_{uuid.uuid4().hex}_")
     try:
-        object_model = process_object_diagram(prepared_payload, user_reference_domain_model)
-        generator_info = get_generator_info("jsonobject")
-        if not generator_info:
-            raise HTTPException(status_code=500, detail="JSONObject generator is not configured")
-        generator_class = generator_info.generator_class
-        generator_instance = generator_class(object_model, output_dir=temp_dir)
-        generator_instance.generate()
+        with tempfile.TemporaryDirectory(prefix=f"user_profile_{uuid.uuid4().hex}_") as temp_dir:
+            object_model = process_object_diagram(prepared_payload, user_reference_domain_model)
+            generator_info = get_generator_info("jsonobject")
+            if not generator_info:
+                raise HTTPException(status_code=500, detail="JSONObject generator is not configured")
+            generator_class = generator_info.generator_class
+            generator_instance = generator_class(object_model, output_dir=temp_dir)
+            generator_instance.generate()
 
-        _normalize_user_model_output(object_model, temp_dir)
+            _normalize_user_model_output(object_model, temp_dir)
 
-        file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
-        json_path = os.path.join(temp_dir, f"{file_name}.json")
-        if not os.path.isfile(json_path):
-            raise HTTPException(status_code=500, detail="Failed to render user profile JSON document")
+            file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
+            json_path = os.path.join(temp_dir, f"{file_name}.json")
+            if not os.path.isfile(json_path):
+                raise HTTPException(status_code=500, detail="Failed to render user profile JSON document")
 
-        with open(json_path, "r", encoding="utf-8") as handle:
-            return json.load(handle)
+            with open(json_path, "r", encoding="utf-8") as handle:
+                return json.load(handle)
     except HTTPException:
         raise
     except Exception as exc:
         logger.exception("Failed to convert user profile model")
         raise HTTPException(status_code=400, detail="Failed to convert user profile model. Please check the input data.") from exc
-    finally:
-        cleanup_temp_resources(temp_dir)
 
 
 def _normalize_user_model_output(object_model, temp_dir: str) -> None:
@@ -792,39 +780,36 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
 
     os.makedirs(temp_dir, exist_ok=True)
 
-    try:
-        generator_instance = generator_class(
-            model=buml_model,
-            project_name=project_name,
-            app_name=app_name,
-            containerization=containerization,
-            output_dir=temp_dir,
-        )
-        await asyncio.to_thread(generator_instance.generate)
+    generator_instance = generator_class(
+        model=buml_model,
+        project_name=project_name,
+        app_name=app_name,
+        containerization=containerization,
+        output_dir=temp_dir,
+    )
+    await asyncio.to_thread(generator_instance.generate)
 
-        # Validate generation
-        if not os.path.exists(project_dir) or not os.listdir(project_dir):
-            raise ValueError("Django project generation failed: Output directory is empty")
+    # Validate generation
+    if not os.path.exists(project_dir) or not os.listdir(project_dir):
+        raise ValueError("Django project generation failed: Output directory is empty")
 
-        # Create ZIP file
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for root, _, files in os.walk(project_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arc_name = os.path.relpath(file_path, project_dir)
-                    zip_file.write(file_path, arc_name)
+    # Create ZIP file
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        for root, _, files in os.walk(project_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                arc_name = os.path.relpath(file_path, project_dir)
+                zip_file.write(file_path, arc_name)
 
-        zip_buffer.seek(0)
-        file_name = get_filename_for_generator("django")
+    zip_buffer.seek(0)
+    file_name = get_filename_for_generator("django")
 
-        return StreamingResponse(
-            zip_buffer,
-            media_type="application/zip",
-            headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
-        )
-    finally:
-        cleanup_temp_resources(temp_dir)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )
 
 
 async def _generate_sql(buml_model, generator_class, config: dict, temp_dir: str):
@@ -873,7 +858,6 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
                     zip_file.write(file_path, arc_name)
 
         zip_buffer.seek(0)
-        cleanup_temp_resources(temp_dir)
 
         return StreamingResponse(
             zip_buffer,
@@ -988,7 +972,6 @@ def _create_zip_response(temp_dir: str, generator_type: str):
 
     zip_buffer.seek(0)
     file_name = get_filename_for_generator(generator_type)
-    cleanup_temp_resources(temp_dir)
 
     return StreamingResponse(
         zip_buffer,
@@ -1020,7 +1003,6 @@ def _create_file_response(temp_dir: str, generator_type: str):
 
     # Use the proper filename from config
     proper_filename = get_filename_for_generator(generator_type)
-    cleanup_temp_resources(temp_dir)
 
     return Response(
         content=file_content,

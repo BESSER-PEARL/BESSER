@@ -1,65 +1,21 @@
 import os
 import pytest
 from besser.generators.java_classes import JavaGenerator
-from besser.BUML.metamodel.structural import (
-    Class, DomainModel, Property, BinaryAssociation, Multiplicity,
-    StringType, IntegerType
-)
+
+
+# Use shared fixtures from tests/conftest.py
 
 
 @pytest.fixture
-def library_model():
-    """Standard model with normal associations."""
-    Book = Class(name="Book")
-    Library = Class(name="Library")
-
-    Book_title: Property = Property(name="title", type=StringType)
-    Book_pages: Property = Property(name="pages", type=IntegerType)
-    Book.attributes = {Book_title, Book_pages}
-
-    Library_name: Property = Property(name="name", type=StringType)
-    Library.attributes = {Library_name}
-
-    has: BinaryAssociation = BinaryAssociation(
-        name="Has",
-        ends={
-            Property(name="books", type=Book, multiplicity=Multiplicity(0, "*")),
-            Property(name="library", type=Library, multiplicity=Multiplicity(1, 1))
-        }
-    )
-
-    model = DomainModel(
-        name="Library_Model",
-        types={Book, Library},
-        associations={has},
-        generalizations={}
-    )
-    return model
+def library_model(simple_library_book_model):
+    """Alias the shared simple Library-Book fixture."""
+    return simple_library_book_model
 
 
 @pytest.fixture
-def self_assoc_model():
-    """Model with a self-association (Employee manages Employee)."""
-    Employee = Class(name="Employee")
-
-    Employee_name: Property = Property(name="name", type=StringType)
-    Employee.attributes = {Employee_name}
-
-    manages: BinaryAssociation = BinaryAssociation(
-        name="Manages",
-        ends={
-            Property(name="manager", type=Employee, multiplicity=Multiplicity(0, 1)),
-            Property(name="subordinates", type=Employee, multiplicity=Multiplicity(0, "*"))
-        }
-    )
-
-    model = DomainModel(
-        name="Employee_Model",
-        types={Employee},
-        associations={manages},
-        generalizations={}
-    )
-    return model
+def self_assoc_model(employee_self_assoc_model):
+    """Alias the shared Employee self-association fixture."""
+    return employee_self_assoc_model
 
 
 def test_normal_association(library_model, tmpdir):

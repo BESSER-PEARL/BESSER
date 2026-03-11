@@ -10,7 +10,7 @@ import uuid
 import re
 import ast
 from besser.BUML.metamodel.state_machine.state_machine import (
-    StateMachine, State, Body, Event, CustomCodeAction,
+    StateMachine, State, Body, Event, Condition, CustomCodeAction,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
@@ -58,9 +58,10 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
         "bounds": {"x": states_x - 300, "y": states_y + 20, "width": 45, "height": 45},
     }
 
-    # Collect all unique Body and Event objects for code blocks
+    # Collect all unique Body, Event, and Condition objects for code blocks
     all_bodies = {}  # name -> Body
     all_events = {}  # name -> Event
+    all_conditions = {}  # name -> Condition
     state_id_map = {}  # State object -> element_id
     state_var_map = {}  # State object -> variable name (sanitized)
 
@@ -72,6 +73,9 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
         for transition in state.transitions:
             if transition.event and transition.event.name not in all_events:
                 all_events[transition.event.name] = transition.event
+            for condition in transition.conditions:
+                if condition.name not in all_conditions:
+                    all_conditions[condition.name] = condition
 
     # Create code block elements for functions
     created_code_blocks = {}  # function name -> {"id": ..., "source": ...}
@@ -116,6 +120,36 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             continue
         source_code = getattr(event, '_source_code', "")
         if source_code:
+            code_block_id = str(uuid.uuid4())
+            cleaned_source = "\n".join(
+                line.rstrip() for line in source_code.splitlines() if line.strip()
+            )
+            elements[code_block_id] = {
+                "id": code_block_id,
+                "name": name,
+                "type": "StateCodeBlock",
+                "owner": None,
+                "bounds": {
+                    "x": code_blocks_x,
+                    "y": code_blocks_y,
+                    "width": 580,
+                    "height": 200,
+                },
+                "code": cleaned_source,
+                "language": "python",
+            }
+            created_code_blocks[name] = {"id": code_block_id, "source": cleaned_source}
+            code_blocks_x += 610
+
+    # Process conditions (guard expressions backed by code blocks).
+    # Only create code blocks for function-backed conditions (code starts with "def ").
+    # Inline expression guards (e.g. "x > 10") are stored directly in the
+    # transition's "guard" field without a separate code block.
+    for name, condition in all_conditions.items():
+        if name in created_code_blocks:
+            continue
+        source_code = getattr(condition, 'code', "") or ""
+        if source_code and source_code.lstrip().startswith("def "):
             code_block_id = str(uuid.uuid4())
             cleaned_source = "\n".join(
                 line.rstrip() for line in source_code.splitlines() if line.strip()
@@ -255,7 +289,9 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
     for state in sm.states:
         source_id = state_id_map[state]
         for transition in state.transitions:
-            if not transition.event:
+            # Skip transitions that have neither event nor conditions (auto transitions
+            # without guards are not representable in the JSON format)
+            if not transition.event and not transition.conditions:
                 continue
 
             dest_id = state_id_map.get(transition.dest)
@@ -274,7 +310,7 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             path_points = calculate_path_points(source_point, target_point, source_dir, target_dir)
             rel_bounds = calculate_relationship_bounds(path_points)
 
-            event_var = _sanitize_identifier(transition.event.name)
+            event_var = _sanitize_identifier(transition.event.name) if transition.event else ""
 
             relationships[rel_id] = {
                 "id": rel_id,
@@ -310,6 +346,20 @@ def state_machine_object_to_json(sm: StateMachine) -> dict:
             event_params = getattr(transition, '_event_params', None)
             if event_params:
                 relationships[rel_id]["params"] = str(event_params)
+
+            # Add guard expression if conditions are present.
+            # If the condition name matches a created code block, use the name
+            # so the round-trip can re-associate it.  Otherwise, use the code
+            # text directly (inline guard expression).
+            if transition.conditions:
+                cond = transition.conditions[0]  # primary guard
+                if cond.name in created_code_blocks:
+                    guard_value = cond.name
+                elif cond.code:
+                    guard_value = cond.code
+                else:
+                    guard_value = cond.name
+                relationships[rel_id]["guard"] = guard_value
 
     # Position for comments
     comment_x = -970

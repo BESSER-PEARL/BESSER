@@ -1,8 +1,11 @@
+import logging
 import os
 from besser.BUML.metamodel.gui import *
 from besser.BUML.metamodel.structural import *
 from jinja2 import Template, Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -55,7 +58,7 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
 
         for cls in copy_model.get_classes():
             for atr in cls.attributes:
-              print(cls.name + " ::  "+ atr.name)
+              logger.debug(cls.name + " ::  "+ atr.name)
 
 
         file_path = self.build_generation_path(file_name="sql_helper.dart")
@@ -66,7 +69,7 @@ class FlutterSQLHelperGenerator(GeneratorInterface):
         with open(file_path, mode="w") as f:
             generated_code = template.render(BUMLClasses= copy_model.get_classes(), model=copy_model, types=self.TYPES)
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.debug("Code generated in the location: " + file_path)
 
 
 
@@ -166,7 +169,7 @@ class FlutterMainDartGenerator(GeneratorInterface):
         screens = self.module.screens
         screens.remove(self.main_page)
         for scr in screens:
-              print(scr.name + " ::  ")
+              logger.debug(scr.name + " ::  ")
 
         with open(file_path, mode="w") as f:
             generated_code = template.render(
@@ -178,7 +181,7 @@ class FlutterMainDartGenerator(GeneratorInterface):
                 associations=self.model.associations
             )
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.debug("Code generated in the location: " + file_path)
 
 
 ##############################
@@ -233,7 +236,7 @@ class FlutterPubspecGenerator(GeneratorInterface):
                 app=self.gui_model
             )
             f.write(generated_code)
-            print("Code generated in the location: " + file_path)
+            logger.debug("Code generated in the location: " + file_path)
 
 
 

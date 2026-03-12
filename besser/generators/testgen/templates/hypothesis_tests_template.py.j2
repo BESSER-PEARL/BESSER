@@ -76,7 +76,7 @@ safe_text = st.text(
         {%- elif attr.type.name == "int" %}
         st.integers()
         {%- elif attr.type.name == "float" %}
-        st.floats(min_value=0,max_value=1000,allow_nan=False, allow_infinity=False)
+        st.floats(min_value=0, max_value=1000,allow_nan=False, allow_infinity=False)
         {%- elif attr.type.name == "bool" %}
         st.booleans()
         {%- elif attr.type.name.lower() in ["date", "datetime"] %}

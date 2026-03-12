@@ -10,6 +10,7 @@ The editor is available at: https://editor.besser-pearl.org
 # Standard library imports
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -85,29 +86,6 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
-# Initialize FastAPI application
-app = FastAPI(
-    title="BESSER Backend API",
-    description="Backend services for web modeling editor",
-    version=API_VERSION,
-)
-
-# Security middlewares (applied before CORS so headers are set on all responses)
-app.add_middleware(SecurityHeadersMiddleware)
-app.add_middleware(RequestSizeLimitMiddleware)
-
-# Configure CORS middleware
-_cors_env = os.environ.get("CORS_ORIGINS", "")
-ALLOWED_ORIGINS = [origin.strip() for origin in _cors_env.split(",") if origin.strip()] if _cors_env else DEFAULT_CORS_ORIGINS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition", "Authorization"],
-    expose_headers=["Content-Disposition"],
-)
-
 # ---------------------------------------------------------------------------
 # Startup: environment variable validation
 # ---------------------------------------------------------------------------
@@ -146,9 +124,35 @@ def _validate_env_vars() -> None:
             )
 
 
-@app.on_event("startup")
-async def _startup_validate_env() -> None:
+@asynccontextmanager
+async def lifespan(_: FastAPI):
     _validate_env_vars()
+    yield
+
+
+# Initialize FastAPI application
+app = FastAPI(
+    title="BESSER Backend API",
+    description="Backend services for web modeling editor",
+    version=API_VERSION,
+    lifespan=lifespan,
+)
+
+# Security middlewares (applied before CORS so headers are set on all responses)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestSizeLimitMiddleware)
+
+# Configure CORS middleware
+_cors_env = os.environ.get("CORS_ORIGINS", "")
+ALLOWED_ORIGINS = [origin.strip() for origin in _cors_env.split(",") if origin.strip()] if _cors_env else DEFAULT_CORS_ORIGINS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition", "Authorization"],
+    expose_headers=["Content-Disposition"],
+)
 
 
 # Include GitHub OAuth and deployment routers

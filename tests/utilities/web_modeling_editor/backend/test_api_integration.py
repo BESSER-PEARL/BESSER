@@ -29,15 +29,8 @@ BASE_URL = "http://testserver"
 
 
 def _run(coro):
-    """Run an async coroutine synchronously (reuses or creates an event loop)."""
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_closed():
-            raise RuntimeError
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    return loop.run_until_complete(coro)
+    """Run an async coroutine synchronously for plain pytest tests."""
+    return asyncio.run(coro)
 
 
 class _Client:
@@ -63,6 +56,12 @@ client = _Client()
 # ---------------------------------------------------------------------------
 # Fixtures -- minimal valid diagram payloads
 # ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def isolate_backend_test_artifacts(tmp_path, monkeypatch):
+    """Keep generated test artifacts out of the repository root."""
+    monkeypatch.chdir(tmp_path)
+
 
 @pytest.fixture
 def class_diagram_model():

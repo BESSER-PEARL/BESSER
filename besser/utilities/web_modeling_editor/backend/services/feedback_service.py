@@ -158,7 +158,7 @@ def _store_feedback_locally(feedback: FeedbackSubmission) -> None:
         feedback_file = feedback_dir / f"feedback_{datetime.now().strftime('%Y%m%d')}.jsonl"
         
         with open(feedback_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(feedback.dict(), ensure_ascii=False) + "\n")
+            f.write(json.dumps(feedback.model_dump(), ensure_ascii=False) + "\n")
         
         logger.info("Feedback stored locally: %s - %s", feedback.satisfaction, feedback.category)
         

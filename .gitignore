@@ -47,3 +47,6 @@ skills-lock.json
 /tests/web_app_output
 /tests/generators/Junit
 /besser/generators/junit_tests
+tests/generators/test-gen/table_generator.py
+/tests/generators/test-gen/mutants
+/tests/generators/test-gen/mutants

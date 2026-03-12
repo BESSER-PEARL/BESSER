@@ -34,11 +34,19 @@ class TestGenerator(GeneratorInterface):
         templates_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "templates"
         )
+        import re
+        from jinja2 import Environment, FileSystemLoader
         env = Environment(loader=FileSystemLoader(templates_path))
 
+        def regex_findall(value, pattern):
+            return re.findall(pattern, value)
+
+        def regex_replace(s, find, replace):
+            return re.sub(find, replace, s)
         # Custom filter: maps B-UML primitive type names → Hypothesis strategies
         env.filters["to_strategy"] = buml_type_to_hypothesis_strategy
-
+        env.filters["regex_findall"] = regex_findall
+        env.filters['regex_replace'] = regex_replace
         template = env.get_template("hypothesis_tests_template.py.j2")
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(

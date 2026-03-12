@@ -3,6 +3,7 @@ import pytest
 from hypothesis import given, assume, settings
 import hypothesis.strategies as st
 import copy
+from datetime import date
 
 from classes import (
 {%- for class in domain.classes_sorted_by_inheritance() %}
@@ -20,10 +21,6 @@ from classes import (
 # =============================================================================
 
 {%- for class in domain.classes_sorted_by_inheritance() %}
-
-def test_{{ class.name | lower }}_class_exists():
-    assert isinstance({{ class.name }}, type)
-
 
 def test_{{ class.name | lower }}_is_not_abstract():
     assert not inspect.isabstract({{ class.name }})
@@ -70,7 +67,6 @@ safe_text = st.text(
 
 
 {%- for class in domain.classes_sorted_by_inheritance() %}
-
 {{ class.name }}_strategy = st.builds(
     {{ class.name }},
     {%- for attr in class.all_attributes() %}
@@ -80,9 +76,11 @@ safe_text = st.text(
         {%- elif attr.type.name == "int" %}
         st.integers()
         {%- elif attr.type.name == "float" %}
-        st.floats(allow_nan=False, allow_infinity=False)
+        st.floats(min_value=0,max_value=1000,allow_nan=False, allow_infinity=False)
         {%- elif attr.type.name == "bool" %}
         st.booleans()
+        {%- elif attr.type.name.lower() in ["date", "datetime"] %}
+        st.dates()
         {%- else %}
         st.none()
         {%- endif %}
@@ -92,9 +90,6 @@ safe_text = st.text(
 
 {%- endfor %}
 
-# =============================================================================
-# SECTION 2 — PROPERTY-BASED & STATE-BASED TESTS
-# =============================================================================
 
 {%- for class in domain.classes_sorted_by_inheritance() %}
 
@@ -120,10 +115,6 @@ def test_{{ class.name | lower }}_{{ attr.name }}_setter(instance):
 {%- endfor %}
 
 
-# -------------------------------------------------------------------------
-# ASSOCIATION TESTS
-# -------------------------------------------------------------------------
-
 {%- for assoc in class.association_ends() %}
 {%- if assoc.multiplicity in ["0..*", "*", "0..1", "1"] %}
 
@@ -143,18 +134,14 @@ def test_{{ class.name | lower }}_{{ assoc.name }}_multiplicity(instance):
 {%- endfor %}
 
 
-# -------------------------------------------------------------------------
-# STATE-BASED OPERATION TESTS
-# -------------------------------------------------------------------------
-
 {%- for operation in class.methods %}
 
 @given(instance={{ class.name }}_strategy)
 @settings(max_examples=30)
 def test_{{ class.name | lower }}_{{ operation.name | lower }}_changes_state(instance):
-    before = copy.deepcopy(instance)
+        before = copy.deepcopy(instance)
 
-    try:
+
         {%- if operation.parameters %}
         instance.{{ operation.name }}(
             {%- for param in operation.parameters %}
@@ -172,37 +159,47 @@ def test_{{ class.name | lower }}_{{ operation.name | lower }}_changes_state(ins
             {%- if not loop.last %}, {% endif %}
             {%- endfor %}
         )
-        {%- else %}
-        instance.{{ operation.name }}()
         {%- endif %}
 
         assert instance.__dict__ != before.__dict__
 
-    except (AttributeError, NotImplementedError, TypeError):
-        pass
 
 {%- endfor %}
-
-
-# -------------------------------------------------------------------------
-# OCL CONSTRAINT TESTS
-# -------------------------------------------------------------------------
+{%- endfor %}
 
 {%- for constraint in domain.constraints %}
-{%- if constraint.context.name == class.name %}
 
-@given(instance={{ class.name }}_strategy)
-def test_{{ class.name | lower }}_ocl_{{ constraint.name | lower }}(instance):
-    before = copy.deepcopy(instance)
-    try:
-        assert eval(
-            {{ constraint.expression | tojson }},
-            {"self": instance, "self_pre": before}
-        )
-    except (AssertionError, NotImplementedError, AttributeError):
-        pass
+@given(instance={{ constraint.context.name }}_strategy)
+def test_{{ constraint.context.name | lower }}_ocl_{{ constraint.name | lower }}(instance):
+     {# --- extract attributes used with @pre --- #}
+    {# ---- get expression without the OCL header ---- #}
+    {%- set expr = constraint.expression.split(':')[-1].strip() %}
 
-{%- endif %}
-{%- endfor %}
+    {# ---- detect @pre attributes ---- #}
+    {%- set pres = expr | regex_findall('self\\.([a-zA-Z_][a-zA-Z0-9_]*)@pre') %}
+
+    {%- for attr in pres %}
+    before_{{ attr }} = instance.{{ attr }}
+    {%- endfor %}
+
+    {# ---- extract operation name ---- #}
+    {%- set ctx = constraint.expression|string %}
+    {%- set op_name = ctx.split('::')[1].split('(')[0] %}
+
+    {# ---- declare parameter ---- #}
+    amount = 1
+
+    # Call the operation
+    instance.{{ op_name }}(amount)
+    {# --- replace all @pre references with before_ variables ---#}
+    {%- for attr in pres %}
+    {%- set expr = expr | replace('self.' ~ attr ~ '@pre', 'before_' ~ attr) %}
+
+    {%- endfor %}
+    {%- set expr =expr | regex_replace('self.(\\w+)@pre', 'before_\\1') %}
+    {%- set expr =expr | regex_replace('self.', 'instance.') %}
+    {%- set expr =expr | regex_replace('=', '==') %}
+
+    assert {{ expr }}
 
 {%- endfor %}

@@ -81,45 +81,33 @@ def _resolve_type(type_name: str, type_lookup: dict[str, Union[Class, Enumeratio
     return PrimitiveDataType(type_name)
 
 
-def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
-    """Process Class Diagram specific elements."""
-    title = json_data.get('title', '')
-    if ' ' in title:
-        title = title.replace(' ', '_')
+def _process_enumerations(
+    elements: dict[str, Any],
+    domain_model: DomainModel,
+    layout_positions: dict[str, Any],
+    comment_elements: dict[str, str],
+) -> None:
+    """Process enumeration elements and collect comments from the element map.
 
-    domain_model = DomainModel(title)
-    # Get elements and OCL constraints from the JSON data
-    elements = (json_data.get('model') or {}).get('elements', {})
-    relationships = (json_data.get('model') or {}).get('relationships', {})
-
-    # Collect layout positions from the original JSON for round-trip fidelity.
-    # Keyed by element name (for classes/enums) or composite key (for relationships).
-    layout_positions: dict[str, Any] = {}
-
-    # Store comments for later processing
-    comment_elements = {}  # {comment_id: comment_text}
-    comment_links = {}  # {comment_id: [linked_element_ids]}
-    all_warnings = []  # Collect non-fatal warnings for the caller
-    # Track diagram references for methods (state machine / quantum circuit IDs).
-    # Keyed by (class_name, method_name) to avoid collisions across classes.
-    method_diagram_refs = {}  # {(class_name, method_name): {"stateMachineId": ..., "quantumCircuitId": ...}}
-
-    # FIRST PASS: Process all type declarations (enumerations and classes)
-    # 1. First process enumerations
+    Iterates over *elements*, creates ``Enumeration`` instances for each
+    enumeration element, adds them to *domain_model*, and records their
+    layout bounds in *layout_positions*.  Comment elements encountered
+    during iteration are stored in *comment_elements* for later processing.
+    """
     for element_id, element in elements.items():
         # Collect comments
         if element.get("type") == "Comments":
             comment_text = element.get("name", "").strip()
             comment_elements[element_id] = comment_text
             continue
-            
+
         if element.get("type") == "Enumeration":
             element_name = element.get("name", "").strip()
             if not element_name or any(char.isspace() for char in element_name):
                 raise ConversionError(
                     f"Invalid enumeration name: '{element_name}'. Names cannot contain whitespace or be empty."
                 )
-            
+
             literals = []
             seen_literal_names = set()
             for literal_id in element.get("attributes", []):
@@ -152,7 +140,21 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
             if "bounds" in element:
                 layout_positions[element_name] = element["bounds"]
 
-    # 2. Then create all class structures without attributes or methods
+
+def _process_classes(
+    elements: dict[str, Any],
+    domain_model: DomainModel,
+    type_lookup: dict[str, Union[Class, Enumeration]],
+    layout_positions: dict[str, Any],
+    method_diagram_refs: dict[tuple[str, str], dict[str, str]],
+) -> None:
+    """Create classes with their attributes and methods.
+
+    First creates all class shells (without attributes/methods) so that
+    cross-references between classes resolve correctly, then populates
+    each class with its attributes and methods in a second pass.
+    """
+    # First create all class structures without attributes or methods
     for element_id, element in elements.items():
         if element.get("type") in ["Class", "AbstractClass"]:
             class_name = element.get("name", "").strip()
@@ -160,7 +162,7 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
                 raise ConversionError(
                     f"Invalid class name: '{class_name}'. Names cannot contain whitespace or be empty."
                 )
-            
+
             is_abstract = element.get("type") == "AbstractClass"
               # Handle metadata with description and URI
             metadata = None
@@ -181,18 +183,19 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
             if "bounds" in element:
                 layout_positions[class_name] = element["bounds"]
 
-    # Build a name→type lookup dict for O(1) type resolution in the second pass.
+    # Rebuild the type lookup now that all class shells have been added,
+    # so that cross-class references in attributes/methods resolve correctly.
     type_lookup = _build_type_lookup(domain_model)
 
-    # SECOND PASS: Now add attributes and methods to classes
+    # Now add attributes and methods to classes
     for element_id, element in elements.items():
         if element.get("type") in ["Class", "AbstractClass"]:
             class_name = element.get("name", "").strip()
             cls = domain_model.get_class_by_name(class_name)
-            
+
             if not cls:
                 continue  # Skip if class wasn't created successfully in first pass
-                
+
             # Add attributes
             attribute_names = set()
             for attr_id in element.get("attributes", []):
@@ -228,7 +231,7 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
                 method = elements.get(method_id)
                 if method:
                     visibility, name, parameters, return_type = parse_method(method.get("name", ""), domain_model, type_lookup=type_lookup)
-                    
+
                     # Get the code attribute for the method
                     method_code = method.get("code", "")
 
@@ -246,14 +249,14 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
                                 parameters = parsed_parameters
                             if not return_type and parsed_return_type:
                                 return_type = parsed_return_type
-                    
+
                     # Get implementation type and diagram references
                     impl_type_str = method.get("implementationType", "none")
                     if isinstance(impl_type_str, str):
                         impl_type_str = impl_type_str.strip().lower()
                     state_machine_id = method.get("stateMachineId", "")
                     quantum_circuit_id = method.get("quantumCircuitId", "")
-                    
+
                     # Map string to MethodImplementationType enum
                     impl_type_map = {
                         "none": MethodImplementationType.NONE,
@@ -263,7 +266,7 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
                         "quantum_circuit": MethodImplementationType.QUANTUM_CIRCUIT,
                     }
                     implementation_type = impl_type_map.get(impl_type_str, MethodImplementationType.NONE)
-                    
+
                     # Auto-detect implementation type if not set but code exists
                     if implementation_type == MethodImplementationType.NONE and method_code:
                         implementation_type = MethodImplementationType.CODE
@@ -299,7 +302,7 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
                         code=method_code,
                         implementation_type=implementation_type
                     )
-                    
+
                     # Store diagram references in a separate mapping for later resolution.
                     # These will be used by project-level processing to link to actual diagrams.
                     if state_machine_id or quantum_circuit_id:
@@ -307,17 +310,31 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
                             "stateMachineId": state_machine_id or "",
                             "quantumCircuitId": quantum_circuit_id or "",
                         }
-                    
+
                     # Handle return type via O(1) lookup
                     if return_type:
                         method_obj.type = _resolve_type(return_type, type_lookup)
-                    
+
                     cls.add_method(method_obj)
 
-    # Processing relationships (Associations, Generalizations, and Compositions)
+
+def _process_relationships(
+    relationships: dict[str, Any],
+    elements: dict[str, Any],
+    domain_model: DomainModel,
+    layout_positions: dict[str, Any],
+    comment_elements: dict[str, str],
+    comment_links: dict[str, list[str]],
+    all_warnings: list[str],
+) -> tuple[dict[str, set[str]], dict[str, BinaryAssociation]]:
+    """Process associations, generalizations, and link relationships.
+
+    Returns a tuple of (*association_class_candidates*, *association_by_id*)
+    for downstream association-class processing.
+    """
     # Store association classes candidates and their links for third pass processing
-    association_class_candidates = {}  # {class_id: {association_id}}
-    association_by_id = {}  # {association_id: association_object}
+    association_class_candidates: dict[str, set[str]] = {}
+    association_by_id: dict[str, BinaryAssociation] = {}
 
     for rel_id, relationship in relationships.items():
         rel_type = relationship.get("type")
@@ -335,49 +352,49 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
         # separately below; the context class is derived from the OCL expression.
         if rel_type == "ClassOCLLink":
             continue
-        
+
         # Handle Link (comment links)
         if rel_type == "Link":
             source_element_id = source.get("element")
             target_element_id = target.get("element")
-            
+
             # Determine which is the comment and which is the target
             comment_id = None
             target_id = None
-            
+
             if source_element_id in comment_elements:
                 comment_id = source_element_id
                 target_id = target_element_id
             elif target_element_id in comment_elements:
                 comment_id = target_element_id
                 target_id = source_element_id
-            
+
             if comment_id and target_id:
                 if comment_id not in comment_links:
                     comment_links[comment_id] = []
                 comment_links[comment_id].append(target_id)
-            
+
             continue
 
         # Handle ClassLinkRel (association class links) later
         if rel_type == "ClassLinkRel":
             source_element_id = source.get("element")
             target_element_id = target.get("element")
-            
+
             # Check if source is a class and target is a relationship
             if source_element_id in elements and target_element_id in relationships:
                 # Source is a class, target is an association
                 if source_element_id not in association_class_candidates:
                     association_class_candidates[source_element_id] = set()
                 association_class_candidates[source_element_id].add(target_element_id)
-            
+
             # Check if target is a class and source is a relationship
             elif target_element_id in elements and source_element_id in relationships:
                 # Target is a class, source is an association
                 if target_element_id not in association_class_candidates:
                     association_class_candidates[target_element_id] = set()
                 association_class_candidates[target_element_id].add(source_element_id)
-                
+
             continue
 
         # Retrieve source and target elements
@@ -499,7 +516,23 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
             if gen_layout:
                 layout_positions[f"gen_{source_class.name}_{target_class.name}"] = gen_layout
 
-    # THIRD PASS: Process association classes
+    return association_class_candidates, association_by_id
+
+
+def _process_association_classes(
+    association_class_candidates: dict[str, set[str]],
+    association_by_id: dict[str, BinaryAssociation],
+    elements: dict[str, Any],
+    domain_model: DomainModel,
+    all_warnings: list[str],
+) -> None:
+    """Promote regular classes to association classes where linked.
+
+    For each class that was linked to an association via a ``ClassLinkRel``,
+    create an ``AssociationClass`` that wraps the original class's attributes
+    and methods together with the association, then replace the plain class
+    in *domain_model*.
+    """
     for class_id, association_ids in association_class_candidates.items():
         class_element = elements.get(class_id)
         if not class_element:
@@ -543,7 +576,13 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
         domain_model.types.discard(class_obj)
         domain_model.types.add(association_class)
 
-    # Process OCL constraints
+
+def _process_constraints(
+    elements: dict[str, Any],
+    domain_model: DomainModel,
+    all_warnings: list[str],
+) -> None:
+    """Process OCL constraint elements and attach them to the domain model."""
     all_constraints = set()
     constraint_counter = 0
     for element_id, element in elements.items():
@@ -561,6 +600,59 @@ def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
                     continue    # Attach warnings to domain model for later use
     domain_model.ocl_warnings = all_warnings
     domain_model.constraints = all_constraints
+
+
+def process_class_diagram(json_data: dict[str, Any]) -> DomainModel:
+    """Process Class Diagram specific elements."""
+    title = json_data.get('title', '')
+    if ' ' in title:
+        title = title.replace(' ', '_')
+
+    domain_model = DomainModel(title)
+    # Get elements and OCL constraints from the JSON data
+    elements = (json_data.get('model') or {}).get('elements', {})
+    relationships = (json_data.get('model') or {}).get('relationships', {})
+
+    # Collect layout positions from the original JSON for round-trip fidelity.
+    # Keyed by element name (for classes/enums) or composite key (for relationships).
+    layout_positions: dict[str, Any] = {}
+
+    # Store comments for later processing
+    comment_elements: dict[str, str] = {}  # {comment_id: comment_text}
+    comment_links: dict[str, list[str]] = {}  # {comment_id: [linked_element_ids]}
+    all_warnings: list[str] = []  # Collect non-fatal warnings for the caller
+    # Track diagram references for methods (state machine / quantum circuit IDs).
+    # Keyed by (class_name, method_name) to avoid collisions across classes.
+    method_diagram_refs: dict[tuple[str, str], dict[str, str]] = {}
+
+    # FIRST PASS: Process all type declarations (enumerations and classes)
+    _process_enumerations(elements, domain_model, layout_positions, comment_elements)
+
+    # Build a name->type lookup dict for O(1) type resolution in the second pass.
+    # Must happen after enumerations are registered but before classes need
+    # cross-referencing (the lookup is rebuilt after class shells are added).
+    type_lookup = _build_type_lookup(domain_model)
+
+    _process_classes(elements, domain_model, type_lookup, layout_positions, method_diagram_refs)
+
+    # Rebuild lookup after classes have been added so that subsequent helpers
+    # (e.g., comment processing) can resolve class names.
+    type_lookup = _build_type_lookup(domain_model)
+
+    # Process relationships (Associations, Generalizations, and Compositions)
+    association_class_candidates, association_by_id = _process_relationships(
+        relationships, elements, domain_model, layout_positions,
+        comment_elements, comment_links, all_warnings,
+    )
+
+    # THIRD PASS: Process association classes
+    _process_association_classes(
+        association_class_candidates, association_by_id,
+        elements, domain_model, all_warnings,
+    )
+
+    # Process OCL constraints
+    _process_constraints(elements, domain_model, all_warnings)
 
     # Process comments and apply them to class or domain model metadata
     for comment_id, comment_text in comment_elements.items():

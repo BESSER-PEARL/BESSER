@@ -13,6 +13,13 @@ from besser.BUML.metamodel.structural import (
     MethodImplementationType
 )
 
+# Layout constants for auto-grid positioning
+LAYOUT_GRID_WIDTH = 1200
+LAYOUT_GRID_HEIGHT = 800
+LAYOUT_X_SPACING = 300
+LAYOUT_Y_SPACING = 200
+LAYOUT_MAX_COLUMNS = 3
+
 logger = logging.getLogger(__name__)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     VISIBILITY_MAP, RELATIONSHIP_TYPES
@@ -147,15 +154,15 @@ def class_buml_to_json(domain_model):
     layout_positions = getattr(domain_model, '_layout_positions', {})
     # Default diagram size
     default_size = {
-        "width": 1200,
-        "height": 800,
+        "width": LAYOUT_GRID_WIDTH,
+        "height": LAYOUT_GRID_HEIGHT,
     }
 
     # Grid layout configuration
     grid_size = {
-        "x_spacing": 300,
-        "y_spacing": 200,
-        "max_columns": 3,
+        "x_spacing": LAYOUT_X_SPACING,
+        "y_spacing": LAYOUT_Y_SPACING,
+        "max_columns": LAYOUT_MAX_COLUMNS,
     }
 
     # Track position
@@ -499,14 +506,14 @@ def class_buml_to_json(domain_model):
                         "type": rel_type,
                         "source": {
                             "element": class_id_map[source_class],
-                            "multiplicity": f"{source_prop.multiplicity.min}..{'*' if source_prop.multiplicity.max == 9999 else source_prop.multiplicity.max}",
+                            "multiplicity": f"{source_prop.multiplicity.min}..{'*' if source_prop.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else source_prop.multiplicity.max}",
                             "role": source_prop.name,
                             "direction": source_dir,
                             "bounds": source_bounds,
                         },
                         "target": {
                             "element": class_id_map[target_class],
-                            "multiplicity": f"{target_prop.multiplicity.min}..{'*' if target_prop.multiplicity.max == 9999 else target_prop.multiplicity.max}",
+                            "multiplicity": f"{target_prop.multiplicity.min}..{'*' if target_prop.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else target_prop.multiplicity.max}",
                             "role": target_prop.name,
                             "direction": target_dir,
                             "bounds": target_bounds,

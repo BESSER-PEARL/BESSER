@@ -8,7 +8,6 @@ services:
       - "9000:9000"
     volumes:
       - ./:/app
-      - /var/run/docker.sock:/var/run/docker.sock
     working_dir: /app/besser
     env_file:
       - ./.env

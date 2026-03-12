@@ -35,4 +35,9 @@ def parse_multiplicity(multiplicity_str):
         logger.warning("Could not parse multiplicity '%s', defaulting to 1..1.", multiplicity_str)
         return Multiplicity(min_multiplicity=1, max_multiplicity=1)
 
+    if min_multiplicity > max_multiplicity:
+        raise ValueError(
+            f"Invalid multiplicity: min ({min_multiplicity}) cannot be greater than max ({max_multiplicity})"
+        )
+
     return Multiplicity(min_multiplicity=min_multiplicity, max_multiplicity=max_multiplicity)

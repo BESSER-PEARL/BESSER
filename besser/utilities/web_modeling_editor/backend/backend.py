@@ -8,6 +8,7 @@ The editor is available at: https://editor.besser-pearl.org
 """
 
 # Standard library imports
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -18,6 +19,8 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response as StarletteResponse
+
+from besser.utilities.web_modeling_editor.backend.middleware import setup_middleware
 
 # Backend constants (no circular dependency risk)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
@@ -44,6 +47,12 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ConversionError,
     ValidationError,
     GenerationError,
+)
+
+# Temporary file cleanup
+from besser.utilities.web_modeling_editor.backend.services.cleanup import (
+    cleanup_old_temp_files,
+    schedule_cleanup,
 )
 
 # Deployment routers (already separate files)
@@ -73,16 +82,35 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "font-src 'self' https://fonts.gstatic.com; "
+            "img-src 'self' data: blob:; "
+            "connect-src 'self' https://api.github.com https://github.com; "
+            "frame-ancestors 'none'"
+        )
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
         return response
 
 
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    """Reject requests whose Content-Length exceeds MAX_REQUEST_SIZE."""
+    """Reject requests that exceed MAX_REQUEST_SIZE."""
 
     async def dispatch(self, request: Request, call_next):
         content_length = request.headers.get("content-length")
         if content_length and int(content_length) > MAX_REQUEST_SIZE:
             return StarletteResponse("Request too large", status_code=413)
+
+        # For requests without content-length or to prevent spoofing,
+        # wrap the body stream to enforce the limit
+        if request.method in ("POST", "PUT", "PATCH"):
+            body = await request.body()
+            if len(body) > MAX_REQUEST_SIZE:
+                return StarletteResponse("Request too large", status_code=413)
+
         return await call_next(request)
 
 
@@ -127,7 +155,20 @@ def _validate_env_vars() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     _validate_env_vars()
+
+    # Run an immediate cleanup of stale temp files left from previous runs,
+    # then schedule a background task that repeats every hour.
+    cleanup_old_temp_files()
+    cleanup_task = schedule_cleanup()
+
     yield
+
+    # Cancel the periodic cleanup task on shutdown.
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
 
 
 # Initialize FastAPI application
@@ -153,6 +194,9 @@ app.add_middleware(
     allow_headers=["Content-Type", "X-GitHub-Session", "Content-Disposition", "Authorization"],
     expose_headers=["Content-Disposition"],
 )
+
+# Request logging middleware (outermost – added last so it wraps everything)
+setup_middleware(app)
 
 
 # Include GitHub OAuth and deployment routers

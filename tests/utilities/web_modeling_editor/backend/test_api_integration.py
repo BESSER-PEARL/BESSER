@@ -727,9 +727,9 @@ class TestGetJsonModel:
         assert data["model"]["type"] == "ClassDiagram"
 
     def test_upload_invalid_content(self):
-        """Upload non-BUML content returns 500."""
+        """Upload non-BUML content returns 400 (invalid Python syntax)."""
         response = self._upload_buml_content("this is not valid python code }{}{", "bad.py")
-        assert response.status_code == 500
+        assert response.status_code == 400
 
     def test_upload_empty_file(self):
         """Upload an empty file returns 500."""

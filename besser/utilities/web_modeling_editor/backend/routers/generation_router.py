@@ -4,6 +4,7 @@ Generation Router
 Handles all code generation endpoints for the BESSER web modeling editor backend.
 """
 
+import ast
 import logging
 import os
 import io
@@ -86,6 +87,11 @@ from besser.utilities.web_modeling_editor.backend.services.exceptions import (
     ValidationError,
 )
 
+# Centralized error handling
+from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
+    handle_endpoint_errors,
+)
+
 logger = logging.getLogger(__name__)
 
 SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'apikey', 'api-key'}
@@ -123,6 +129,18 @@ def generate_agent_files(
             # Generate the agent model to a file
             agent_file = os.path.join(temp_dir, AGENT_MODEL_FILENAME)
             agent_model_to_code(agent_model, agent_file)
+
+            # Validate generated code with ast.parse() before executing
+            with open(agent_file, "r", encoding="utf-8") as f:
+                agent_file_content = f.read()
+            try:
+                ast.parse(agent_file_content, filename=agent_file)
+            except SyntaxError as syntax_err:
+                logger.error("Generated agent code contains syntax errors: %s", syntax_err)
+                raise HTTPException(
+                    status_code=400,
+                    detail="Generated code contains syntax errors"
+                ) from syntax_err
 
             # Import the generated module (spec_from_file_location uses absolute path, no sys.path needed)
             spec = importlib.util.spec_from_file_location("agent_model", agent_file)
@@ -201,87 +219,80 @@ def generate_agent_files(
 
 
 @router.post("/generate-output-from-project")
+@handle_endpoint_errors("generate_code_output_from_project")
 async def generate_code_output_from_project(input_data: ProjectInput):
     """
     Generate code output from a complete project.
     This endpoint handles generators that require multiple diagrams (e.g., Web App).
     """
-    try:
-        generator_type = input_data.settings.get("generator") if input_data.settings else None
+    generator_type = input_data.settings.get("generator") if input_data.settings else None
 
-        if not generator_type:
-            raise HTTPException(
-                status_code=400,
-                detail="Generator type is required in project settings"
-            )
-
-        # Validate generator
-        if not is_generator_supported(generator_type):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
-            )
-
-        generator_info = get_generator_info(generator_type)
-
-        # Get configuration from project settings
-        config = input_data.settings.get("config", {}) if input_data.settings else {}
-
-        # Handle Web App generator (requires both ClassDiagram and GUINoCodeDiagram)
-        if generator_type == "web_app":
-            return await _handle_web_app_project_generation(input_data, generator_info, config)
-
-        # Handle Qiskit generator (requires QuantumCircuitDiagram)
-        if generator_type == "qiskit":
-            quantum_diagram = input_data.get_active_diagram("QuantumCircuitDiagram")
-            if not quantum_diagram:
-                raise HTTPException(
-                    status_code=400,
-                    detail="QuantumCircuitDiagram is required for Qiskit generator"
-                )
-            # Convert to DiagramInput with the quantum diagram data
-            diagram_input = DiagramInput(
-                id=quantum_diagram.id,
-                title=quantum_diagram.title,
-                model=quantum_diagram.model,
-                lastUpdate=quantum_diagram.lastUpdate,
-                generator=generator_type,
-                config=config,
-                referenceDiagramData=quantum_diagram.referenceDiagramData if hasattr(quantum_diagram, 'referenceDiagramData') else None
-            )
-            return await generate_code_output(diagram_input)
-
-        # For other generators, use the current diagram
-        current_diagram = input_data.get_active_diagram(input_data.currentDiagramType)
-        if not current_diagram:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No diagram found for type: {input_data.currentDiagramType}"
-            )
-
-        # Convert to DiagramInput and use existing logic
-        diagram_input = DiagramInput(
-            id=current_diagram.id,
-            title=current_diagram.title,
-            model=current_diagram.model,
-            lastUpdate=current_diagram.lastUpdate,
-            generator=generator_type,
-            config=config,
-            referenceDiagramData=current_diagram.referenceDiagramData
+    if not generator_type:
+        raise HTTPException(
+            status_code=400,
+            detail="Generator type is required in project settings"
         )
 
+    # Validate generator
+    if not is_generator_supported(generator_type):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
+        )
+
+    generator_info = get_generator_info(generator_type)
+
+    # Get configuration from project settings
+    config = input_data.settings.get("config", {}) if input_data.settings else {}
+
+    # Handle Web App generator (requires both ClassDiagram and GUINoCodeDiagram)
+    if generator_type == "web_app":
+        return await _handle_web_app_project_generation(input_data, generator_info, config)
+
+    # Handle Qiskit generator (requires QuantumCircuitDiagram)
+    if generator_type == "qiskit":
+        quantum_diagram = input_data.get_active_diagram("QuantumCircuitDiagram")
+        if not quantum_diagram:
+            raise HTTPException(
+                status_code=400,
+                detail="QuantumCircuitDiagram is required for Qiskit generator"
+            )
+        # Convert to DiagramInput with the quantum diagram data
+        diagram_input = DiagramInput(
+            id=quantum_diagram.id,
+            title=quantum_diagram.title,
+            model=quantum_diagram.model,
+            lastUpdate=quantum_diagram.lastUpdate,
+            generator=generator_type,
+            config=config,
+            referenceDiagramData=quantum_diagram.referenceDiagramData if hasattr(quantum_diagram, 'referenceDiagramData') else None
+        )
         return await generate_code_output(diagram_input)
 
-    except HTTPException:
-        raise
-    except (ConversionError, ValidationError):
-        raise  # Let app-level handler return 400
-    except Exception as e:
-        logger.exception("Unexpected error in generate_code_output_from_project")
-        raise HTTPException(status_code=500, detail="An internal error occurred during project code generation.")
+    # For other generators, use the current diagram
+    current_diagram = input_data.get_active_diagram(input_data.currentDiagramType)
+    if not current_diagram:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No diagram found for type: {input_data.currentDiagramType}"
+        )
+
+    # Convert to DiagramInput and use existing logic
+    diagram_input = DiagramInput(
+        id=current_diagram.id,
+        title=current_diagram.title,
+        model=current_diagram.model,
+        lastUpdate=current_diagram.lastUpdate,
+        generator=generator_type,
+        config=config,
+        referenceDiagramData=current_diagram.referenceDiagramData
+    )
+
+    return await generate_code_output(diagram_input)
 
 
 @router.post("/generate-output")
+@handle_endpoint_errors("generate_code_output")
 async def generate_code_output(input_data: DiagramInput):
     """
     Generate code from UML diagram data using specified generator.
@@ -295,40 +306,31 @@ async def generate_code_output(input_data: DiagramInput):
     Raises:
         HTTPException: If generator is not supported or generation fails
     """
-    try:
-        with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
-            json_data = input_data.model_dump()
-            generator_type = input_data.generator
+    with tempfile.TemporaryDirectory(prefix=f"{TEMP_DIR_PREFIX}{uuid.uuid4().hex}_") as temp_dir:
+        json_data = input_data.model_dump()
+        generator_type = input_data.generator
 
-            # Validate generator type
-            if not is_generator_supported(generator_type):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
-                )
+        # Validate generator type
+        if not is_generator_supported(generator_type):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid generator type: {generator_type}. Supported types: {list(SUPPORTED_GENERATORS.keys())}"
+            )
 
-            generator_info = get_generator_info(generator_type)
+        generator_info = get_generator_info(generator_type)
 
-            # Handle agent generators (different diagram type)
-            if generator_info.category == "ai_agent":
-                return await _handle_agent_generation(json_data)
+        # Handle agent generators (different diagram type)
+        if generator_info.category == "ai_agent":
+            return await _handle_agent_generation(json_data)
 
-            # Handle quantum generators
-            if generator_info.category == "quantum":
-                return await _generate_qiskit(json_data, generator_info.generator_class, input_data.config, temp_dir)
+        # Handle quantum generators
+        if generator_info.category == "quantum":
+            return await _generate_qiskit(json_data, generator_info.generator_class, input_data.config, temp_dir)
 
-            if generator_info.category == "object_model":
-                diagram_type = _get_diagram_type(json_data)
-                if diagram_type == "UserDiagram":
-                    return await _handle_user_diagram_generation(
-                        json_data,
-                        generator_type,
-                        generator_info,
-                        input_data.config,
-                        temp_dir,
-                    )
-
-                return await _handle_object_diagram_generation(
+        if generator_info.category == "object_model":
+            diagram_type = _get_diagram_type(json_data)
+            if diagram_type == "UserDiagram":
+                return await _handle_user_diagram_generation(
                     json_data,
                     generator_type,
                     generator_info,
@@ -336,82 +338,74 @@ async def generate_code_output(input_data: DiagramInput):
                     temp_dir,
                 )
 
-            # Handle class diagram based generators
-            return await _handle_class_diagram_generation(
-                json_data, generator_type, generator_info, input_data.config, temp_dir
+            return await _handle_object_diagram_generation(
+                json_data,
+                generator_type,
+                generator_info,
+                input_data.config,
+                temp_dir,
             )
 
-    except HTTPException as e:
-        raise e
-    except (ConversionError, ValidationError):
-        raise  # Let app-level handler return 400
-    except Exception as e:
-        logger.exception("Unexpected error in generate_code_output")
-        raise HTTPException(status_code=500, detail="An internal error occurred during code generation.")
+        # Handle class diagram based generators
+        return await _handle_class_diagram_generation(
+            json_data, generator_type, generator_info, input_data.config, temp_dir
+        )
 
 
+@handle_endpoint_errors("_handle_web_app_project_generation")
 async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):
     """Handle Web App generation from a complete project with both ClassDiagram and GUINoCodeDiagram.
     Optionally includes AgentDiagram if agent components are present in the GUI."""
-    try:
-        # Extract active GUINoCodeDiagram first — it drives which other diagrams are used
-        gui_diagram = input_data.get_active_diagram("GUINoCodeDiagram")
-        if not gui_diagram:
-            raise HTTPException(
-                status_code=400,
-                detail="GUINoCodeDiagram is required for Web App generator"
-            )
+    # Extract active GUINoCodeDiagram first — it drives which other diagrams are used
+    gui_diagram = input_data.get_active_diagram("GUINoCodeDiagram")
+    if not gui_diagram:
+        raise HTTPException(
+            status_code=400,
+            detail="GUINoCodeDiagram is required for Web App generator"
+        )
 
-        # Use the GUI diagram's per-diagram references to find the correct ClassDiagram
-        class_diagram = input_data.get_referenced_diagram(gui_diagram, "ClassDiagram")
-        if not class_diagram:
-            raise HTTPException(
-                status_code=400,
-                detail="ClassDiagram is required for Web App generator"
-            )
+    # Use the GUI diagram's per-diagram references to find the correct ClassDiagram
+    class_diagram = input_data.get_referenced_diagram(gui_diagram, "ClassDiagram")
+    if not class_diagram:
+        raise HTTPException(
+            status_code=400,
+            detail="ClassDiagram is required for Web App generator"
+        )
 
-        with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
-            # Process class diagram to BUML
-            buml_model = process_class_diagram(class_diagram.model_dump())
+    with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
+        # Process class diagram to BUML
+        buml_model = process_class_diagram(class_diagram.model_dump())
 
-            gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
+        gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
 
-            # Check if GUI model contains agent components
-            agent_diagram = None
-            agent_model = None
-            has_agent_components = _check_for_agent_components(gui_model)
+        # Check if GUI model contains agent components
+        agent_diagram = None
+        agent_model = None
+        has_agent_components = _check_for_agent_components(gui_model)
 
-            agent_config = None
-            if has_agent_components:
-                # Use the GUI diagram's per-diagram reference for AgentDiagram
-                agent_diagram = input_data.get_referenced_diagram(gui_diagram, "AgentDiagram")
-                if agent_diagram and agent_diagram.model:
-                    # Process agent diagram to BUML
-                    # process_agent_diagram expects the full diagram structure with title, config, and model
-                    agent_diagram_dict = agent_diagram.model_dump()
-                    if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
-                        agent_model = process_agent_diagram(agent_diagram_dict)
-                        # Try diagram-level config first, then project-level agentConfig, then project config
-                        project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
-                        agent_config = agent_diagram_dict.get('config') or agent_diagram.config or project_agent_config or config
-                        logger.debug("[WebApp agent] resolved agent_config: %s", json.dumps(sanitize_config(agent_config), indent=2, default=str) if agent_config else 'None')
-                    else:
-                        logger.warning("AgentDiagram data is invalid. Agent components will not be functional.")
+        agent_config = None
+        if has_agent_components:
+            # Use the GUI diagram's per-diagram reference for AgentDiagram
+            agent_diagram = input_data.get_referenced_diagram(gui_diagram, "AgentDiagram")
+            if agent_diagram and agent_diagram.model:
+                # Process agent diagram to BUML
+                # process_agent_diagram expects the full diagram structure with title, config, and model
+                agent_diagram_dict = agent_diagram.model_dump()
+                if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
+                    agent_model = process_agent_diagram(agent_diagram_dict)
+                    # Try diagram-level config first, then project-level agentConfig, then project config
+                    project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
+                    agent_config = agent_diagram_dict.get('config') or agent_diagram.config or project_agent_config or config
+                    logger.debug("[WebApp agent] resolved agent_config: %s", json.dumps(sanitize_config(agent_config), indent=2, default=str) if agent_config else 'None')
                 else:
-                    logger.warning("GUI contains agent components but no AgentDiagram found. Agent components will not be functional.")
+                    logger.warning("AgentDiagram data is invalid. Agent components will not be functional.")
+            else:
+                logger.warning("GUI contains agent components but no AgentDiagram found. Agent components will not be functional.")
 
-            # Generate Web App TypeScript project
-            generator_class = generator_info.generator_class
+        # Generate Web App TypeScript project
+        generator_class = generator_info.generator_class
 
-            return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir, agent_model, agent_config)
-
-    except HTTPException:
-        raise
-    except (ConversionError, ValidationError):
-        raise  # Let app-level handler return 400
-    except Exception as e:
-        logger.exception("Unexpected error in Web App generation")
-        raise HTTPException(status_code=500, detail="An internal error occurred during Web App generation.")
+        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir, agent_model, agent_config)
 
 
 def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
@@ -423,65 +417,54 @@ def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
     )
 
 
+@handle_endpoint_errors("_handle_agent_generation")
 async def _handle_agent_generation(json_data: dict):
     """Handle agent diagram generation by dispatching to specialized helpers."""
-    try:
-        config = json_data.get('config', {})
-        logger.debug("[Agent generation] config: %s", json.dumps(sanitize_config(config), indent=2, default=str) if config else 'None')
+    config = json_data.get('config', {})
+    logger.debug("[Agent generation] config: %s", json.dumps(sanitize_config(config), indent=2, default=str) if config else 'None')
 
-        if config is None:
-            agent_model = process_agent_diagram(json_data)
-            zip_buffer, file_name = await asyncio.to_thread(generate_agent_files, agent_model, config)
-            return _streaming_zip(zip_buffer, file_name)
-
-        is_config_dict = isinstance(config, dict)
-
-        # Normalize personalization mappings in-place
-        if is_config_dict and isinstance(config.get('personalizationMapping'), list):
-            normalize_personalization_mapping(config, json_data, _generate_user_profile_document)
-
-        languages = config.get('languages') if is_config_dict else None
-        configuration_variants = config.get('configurations') if is_config_dict else None
-        base_model_snapshot = config.get('baseModel') if is_config_dict else None
-        variation_entries = config.get('variations') if is_config_dict else None
-
-        if languages and isinstance(languages, dict):
-            buf, name = await handle_multi_language_generation(
-                json_data, config, languages, generate_agent_files, output_dir=OUTPUT_DIR_NAME,
-            )
-            return _streaming_zip(buf, name)
-
-        if base_model_snapshot is not None and isinstance(variation_entries, list):
-            buf, name = handle_variation_generation(
-                json_data, config, base_model_snapshot, variation_entries, generate_agent_files,
-            )
-            return _streaming_zip(buf, name)
-
-        if configuration_variants and isinstance(configuration_variants, list):
-            buf, name = handle_configuration_variants(
-                json_data, configuration_variants, generate_agent_files,
-            )
-            return _streaming_zip(buf, name)
-
-        if is_config_dict and 'personalizationMapping' in config:
-            buf, name = handle_personalized_agent(json_data, config, generate_agent_files)
-            return _streaming_zip(buf, name)
-
-        # Single agent fallback
+    if config is None:
         agent_model = process_agent_diagram(json_data)
         zip_buffer, file_name = await asyncio.to_thread(generate_agent_files, agent_model, config)
         return _streaming_zip(zip_buffer, file_name)
 
-    except HTTPException:
-        raise
-    except (ConversionError, ValidationError):
-        raise  # Let app-level handler return 400
-    except Exception as e:
-        logger.exception("Unexpected error in agent diagram generation")
-        raise HTTPException(
-            status_code=500,
-            detail="An internal error occurred during agent diagram processing."
+    is_config_dict = isinstance(config, dict)
+
+    # Normalize personalization mappings in-place
+    if is_config_dict and isinstance(config.get('personalizationMapping'), list):
+        normalize_personalization_mapping(config, json_data, _generate_user_profile_document)
+
+    languages = config.get('languages') if is_config_dict else None
+    configuration_variants = config.get('configurations') if is_config_dict else None
+    base_model_snapshot = config.get('baseModel') if is_config_dict else None
+    variation_entries = config.get('variations') if is_config_dict else None
+
+    if languages and isinstance(languages, dict):
+        buf, name = await handle_multi_language_generation(
+            json_data, config, languages, generate_agent_files, output_dir=OUTPUT_DIR_NAME,
         )
+        return _streaming_zip(buf, name)
+
+    if base_model_snapshot is not None and isinstance(variation_entries, list):
+        buf, name = handle_variation_generation(
+            json_data, config, base_model_snapshot, variation_entries, generate_agent_files,
+        )
+        return _streaming_zip(buf, name)
+
+    if configuration_variants and isinstance(configuration_variants, list):
+        buf, name = handle_configuration_variants(
+            json_data, configuration_variants, generate_agent_files,
+        )
+        return _streaming_zip(buf, name)
+
+    if is_config_dict and 'personalizationMapping' in config:
+        buf, name = handle_personalized_agent(json_data, config, generate_agent_files)
+        return _streaming_zip(buf, name)
+
+    # Single agent fallback
+    agent_model = process_agent_diagram(json_data)
+    zip_buffer, file_name = await asyncio.to_thread(generate_agent_files, agent_model, config)
+    return _streaming_zip(zip_buffer, file_name)
 
 
 async def _handle_class_diagram_generation(
@@ -941,17 +924,11 @@ async def _generate_web_app(buml_model, gui_model, generator_class, config: dict
     await asyncio.to_thread(generator_instance.generate)
     return _create_zip_response(temp_dir, "web_app")
 
+@handle_endpoint_errors("_generate_standard")
 async def _generate_standard(buml_model, generator_class, generator_type: str, generator_info, temp_dir: str):
     """Generate standard files (non-Django, non-SQL)."""
     generator_instance = generator_class(buml_model, output_dir=temp_dir)
-
-    try:
-        await asyncio.to_thread(generator_instance.generate)
-    except (ConversionError, ValidationError):
-        raise  # Let app-level handler return 400
-    except Exception as e:
-        logger.exception("Unexpected error in standard code generation")
-        raise HTTPException(status_code=500, detail="An internal error occurred during code generation.")
+    await asyncio.to_thread(generator_instance.generate)
 
     # Return ZIP or single file based on generator info
     if generator_info.output_type == "zip":

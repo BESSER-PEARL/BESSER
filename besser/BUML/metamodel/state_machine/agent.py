@@ -188,7 +188,7 @@ class LLMIntentClassifierConfiguration(IntentClassifierConfiguration):
     def __init__(
             self,
             llm_suite: LLMSuite,
-            parameters: dict = {},
+            parameters: dict = None,
             use_intent_descriptions: bool = False,
             use_training_sentences: bool = False,
             use_entity_descriptions: bool = False,
@@ -196,7 +196,7 @@ class LLMIntentClassifierConfiguration(IntentClassifierConfiguration):
     ):
         super().__init__()
         self.llm_suite: str = llm_suite.value
-        self.parameters: dict = parameters
+        self.parameters: dict = parameters if parameters is not None else {}
         self.use_intent_descriptions: bool = use_intent_descriptions
         self.use_training_sentences: bool = use_training_sentences
         self.use_entity_descriptions: bool = use_entity_descriptions
@@ -1102,7 +1102,7 @@ class AgentState(State):
         Args:
             dest (AgentState): the destination state
         """
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=Auto())
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=[Auto()])
         transition_builder.go_to(dest)
 
     def when_intent_matched(self, intent: Intent) -> TransitionBuilder:
@@ -1121,13 +1121,13 @@ class AgentState(State):
         self.intents.append(intent)
         event: ReceiveTextEvent = ReceiveTextEvent()
         condition: Condition = IntentMatcher(intent)
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[condition])
         return transition_builder
 
     def when_no_intent_matched(self) -> TransitionBuilder:
         event: ReceiveTextEvent = ReceiveTextEvent()
         condition: Condition = IntentMatcher(Intent("fallback_intent"))
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[condition])
         return transition_builder
 
     def when_variable_matches_operation(
@@ -1150,7 +1150,7 @@ class AgentState(State):
             TransitionBuilder: the transition builder
         """
         condition: Condition = VariableOperationMatcher(var_name, operation, target)
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, conditions=[condition])
         return transition_builder
 
     def when_file_received(self, allowed_types: list[str] or str = None) -> TransitionBuilder:
@@ -1164,7 +1164,7 @@ class AgentState(State):
             TransitionBuilder: the transition builder
         """
         event = ReceiveFileEvent()
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=FileTypeMatcher(allowed_types))
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[FileTypeMatcher(allowed_types)])
         return transition_builder
 
 

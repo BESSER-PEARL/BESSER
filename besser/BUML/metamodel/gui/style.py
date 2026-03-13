@@ -7,7 +7,7 @@ class LayoutType(Enum):
     """
     GRID = "grid"          # Grid-based layout
     FLEX = "flex"          # Flexible layout
-    SRACK = "stack"        # Stack elements vertically
+    STACK = "stack"         # Stack elements vertically
     ROW = "row"            # Elements in a horizontal row
     COLUMN = "column"      # Elements in a vertical column
     ABSOLUTE = "absolute"  # Free positioning

@@ -321,7 +321,8 @@ class Transition(NamedElement):
         return not self.event and not self.conditions
 
     def __repr__(self):
-        return f"Transition(name='{self.name}', source='{self.source.name}', dest='{self.dest.name}', event='{self.event.name}', conditions='{[condition.name for condition in self.conditions]}')"
+        event_name = self.event.name if self.event else 'None'
+        return f"Transition(name='{self.name}', source='{self.source.name}', dest='{self.dest.name}', event='{event_name}', conditions='{[condition.name for condition in self.conditions]}')"
 
 
 class State(NamedElement):

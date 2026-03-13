@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 # Keep this in sync with constants.py and any ad-hoc prefixes in routers.
 _BESSER_TEMP_PREFIXES = (
     "besser_",
+    "besser_agent_",
+    "besser_csv_",
     "user_profile_",
 )
 

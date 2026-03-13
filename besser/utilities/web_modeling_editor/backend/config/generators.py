@@ -207,7 +207,7 @@ if TFGenerator is not None:
     )
 
 
-def get_generator_info(generator_type: str) -> GeneratorInfo:
+def get_generator_info(generator_type: str) -> GeneratorInfo | None:
     """Get generator information by type."""
     return SUPPORTED_GENERATORS.get(generator_type)
 

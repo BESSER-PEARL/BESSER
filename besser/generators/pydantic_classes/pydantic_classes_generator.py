@@ -42,7 +42,7 @@ class PydanticGenerator(GeneratorInterface):
         def ascii_identifier(name: str) -> str:
             normalized = unicodedata.normalize("NFKD", name)
             ascii_name = normalized.encode("ascii", "ignore").decode("ascii")
-            ascii_name = re.sub(r"\\W", "_", ascii_name)
+            ascii_name = re.sub(r"\W", "_", ascii_name)
             if ascii_name and ascii_name[0].isdigit():
                 ascii_name = f"_{ascii_name}"
             return ascii_name

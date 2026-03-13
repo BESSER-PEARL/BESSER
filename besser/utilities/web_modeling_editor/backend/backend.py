@@ -230,7 +230,7 @@ async def generation_error_handler(request, exc):
 @app.get("/health")
 async def health_check():
     """Simple health check for load balancers and monitoring."""
-    logger.info("Health check requested")
+    logger.debug("Health check requested")
     return {"status": "ok"}
 
 

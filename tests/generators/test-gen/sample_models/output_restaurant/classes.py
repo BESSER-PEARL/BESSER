@@ -27,12 +27,12 @@ class DineOrder:
         self.items = items if items is not None else set()
         
     @property
-    def totalAmount(self) -> float:
-        return self.__totalAmount
+    def status(self) -> str:
+        return self.__status
 
-    @totalAmount.setter
-    def totalAmount(self, totalAmount: float):
-        self.__totalAmount = totalAmount
+    @status.setter
+    def status(self, status: str):
+        self.__status = status
 
     @property
     def orderTime(self) -> str:
@@ -43,12 +43,12 @@ class DineOrder:
         self.__orderTime = orderTime
 
     @property
-    def status(self) -> str:
-        return self.__status
+    def totalAmount(self) -> float:
+        return self.__totalAmount
 
-    @status.setter
-    def status(self, status: str):
-        self.__status = status
+    @totalAmount.setter
+    def totalAmount(self, totalAmount: float):
+        self.__totalAmount = totalAmount
 
     @property
     def orderId(self) -> str:
@@ -146,14 +146,6 @@ class Table:
         self.orders = orders if orders is not None else set()
         
     @property
-    def tableNumber(self) -> str:
-        return self.__tableNumber
-
-    @tableNumber.setter
-    def tableNumber(self, tableNumber: str):
-        self.__tableNumber = tableNumber
-
-    @property
     def location(self) -> str:
         return self.__location
 
@@ -162,20 +154,28 @@ class Table:
         self.__location = location
 
     @property
-    def occupied(self) -> bool:
-        return self.__occupied
-
-    @occupied.setter
-    def occupied(self, occupied: bool):
-        self.__occupied = occupied
-
-    @property
     def capacity(self) -> int:
         return self.__capacity
 
     @capacity.setter
     def capacity(self, capacity: int):
         self.__capacity = capacity
+
+    @property
+    def tableNumber(self) -> str:
+        return self.__tableNumber
+
+    @tableNumber.setter
+    def tableNumber(self, tableNumber: str):
+        self.__tableNumber = tableNumber
+
+    @property
+    def occupied(self) -> bool:
+        return self.__occupied
+
+    @occupied.setter
+    def occupied(self, occupied: bool):
+        self.__occupied = occupied
 
     @property
     def orders(self):
@@ -241,22 +241,6 @@ class MenuItem:
         self.orders = orders if orders is not None else set()
         
     @property
-    def name(self) -> str:
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        self.__name = name
-
-    @property
-    def itemId(self) -> str:
-        return self.__itemId
-
-    @itemId.setter
-    def itemId(self, itemId: str):
-        self.__itemId = itemId
-
-    @property
     def price(self) -> float:
         return self.__price
 
@@ -271,6 +255,22 @@ class MenuItem:
     @available.setter
     def available(self, available: bool):
         self.__available = available
+
+    @property
+    def itemId(self) -> str:
+        return self.__itemId
+
+    @itemId.setter
+    def itemId(self, itemId: str):
+        self.__itemId = itemId
+
+    @property
+    def name(self) -> str:
+        return self.__name
+
+    @name.setter
+    def name(self, name: str):
+        self.__name = name
 
     @property
     def orders(self):

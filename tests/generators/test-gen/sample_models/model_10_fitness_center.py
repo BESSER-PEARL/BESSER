@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Method, Parameter,
     StringType, IntegerType, FloatType, BooleanType,
     Multiplicity, Enumeration, EnumerationLiteral,
-    BinaryAssociation
+    BinaryAssociation,Constraint
 )
 
 # =============================================================================
@@ -171,6 +171,18 @@ training_session_class = Class(
     attributes={session_id_prop, session_date_prop, duration_prop, session_status_prop},
     methods={schedule_session_method, complete_session_method, calculate_session_cost_method}
 )
+constraint_1: Constraint = Constraint(
+    name="constraint_1",
+    context=trainer_class,
+    expression="context Trainer::updateRate(value:float) post set: self.hourlyRate = value",
+    language="OCL"
+)
+constraint_2: Constraint = Constraint(
+    name="constraint_2",
+    context=fitness_member_class,
+    expression="context FitnessMember::upgradeMembership(value:string) post set: self.membershipType =value",
+    language="OCL"
+)
 
 # =============================================================================
 # 9. Define Associations
@@ -218,6 +230,8 @@ fitness_model = DomainModel(
     name="FitnessCenterSystem",
     types={fitness_member_class, trainer_class, training_session_class, membership_type_enum},
     associations={member_session_assoc, trainer_session_assoc}
+    , constraints={constraint_1, constraint_2}
+
 )
 
 print("✓ Fitness Center Management System BUML Model created successfully!")
@@ -228,3 +242,7 @@ print(f"  Associations: {[a.name for a in fitness_model.associations]}")
 from besser.generators.python_classes.python_classes_generator import PythonGenerator
 python_gen = PythonGenerator(model=fitness_model, output_dir="output_fitness")
 python_gen.generate()
+
+from besser.generators.testgen.test_generator import TestGenerator
+generator = TestGenerator(model=fitness_model, output_dir="output_fitness")
+generator.generate()

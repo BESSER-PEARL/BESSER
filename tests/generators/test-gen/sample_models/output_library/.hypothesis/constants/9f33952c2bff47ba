@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\pydevd_plugins\jinja2_debug.py
+# hypothesis_version: 6.151.9
+
+['<module>', 'BlockReference', 'LoopContext', 'Macro', 'MissingType', 'Template', 'TemplateNotFound', 'TemplateReference', 'TemplateSyntaxError', 'TemplatesNotFound', 'UndefinedError', '_', '_Context__obj', '__jinja_template__', 'block ', 'block_', 'call', 'context', 'event', 'jinja2', 'jinja2-%s', 'jinja2-line', 'jinja2_breakpoints', 'jinja2_stop', 'l_', 'line', 'loop', 'macro', 'render', 'return', 'root', 'self', 'template']

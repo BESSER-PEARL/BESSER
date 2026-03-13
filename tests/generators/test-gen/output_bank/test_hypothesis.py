@@ -3,6 +3,7 @@ import pytest
 from hypothesis import given, assume, settings
 import hypothesis.strategies as st
 import copy
+from datetime import date
 
 from classes import (
     Branch,
@@ -14,10 +15,6 @@ from classes import (
 # =============================================================================
 # SECTION 1 — STRUCTURAL TESTS
 # =============================================================================
-
-def test_branch_class_exists():
-    assert isinstance(Branch, type)
-
 
 def test_branch_is_not_abstract():
     assert not inspect.isabstract(Branch)
@@ -61,10 +58,6 @@ def test_branch_has_branchName():
             break
     assert isinstance(descriptor, property)
 
-def test_customer_class_exists():
-    assert isinstance(Customer, type)
-
-
 def test_customer_is_not_abstract():
     assert not inspect.isabstract(Customer)
 
@@ -77,8 +70,8 @@ def test_customer_constructor_args():
     sig = inspect.signature(Customer.__init__)
     params = list(sig.parameters.keys())
     assert "phoneNumber" in params, "Missing parameter 'phoneNumber'"
-    assert "name" in params, "Missing parameter 'name'"
     assert "email" in params, "Missing parameter 'email'"
+    assert "name" in params, "Missing parameter 'name'"
     assert "customerId" in params, "Missing parameter 'customerId'"
 
 def test_customer_has_phoneNumber():
@@ -87,15 +80,6 @@ def test_customer_has_phoneNumber():
     for klass in Customer.__mro__:
         if "phoneNumber" in klass.__dict__:
             descriptor = klass.__dict__["phoneNumber"]
-            break
-    assert isinstance(descriptor, property)
-
-def test_customer_has_name():
-    assert hasattr(Customer, "name")
-    descriptor = None
-    for klass in Customer.__mro__:
-        if "name" in klass.__dict__:
-            descriptor = klass.__dict__["name"]
             break
     assert isinstance(descriptor, property)
 
@@ -108,6 +92,15 @@ def test_customer_has_email():
             break
     assert isinstance(descriptor, property)
 
+def test_customer_has_name():
+    assert hasattr(Customer, "name")
+    descriptor = None
+    for klass in Customer.__mro__:
+        if "name" in klass.__dict__:
+            descriptor = klass.__dict__["name"]
+            break
+    assert isinstance(descriptor, property)
+
 def test_customer_has_customerId():
     assert hasattr(Customer, "customerId")
     descriptor = None
@@ -116,10 +109,6 @@ def test_customer_has_customerId():
             descriptor = klass.__dict__["customerId"]
             break
     assert isinstance(descriptor, property)
-
-def test_account_class_exists():
-    assert isinstance(Account, type)
-
 
 def test_account_is_not_abstract():
     assert not inspect.isabstract(Account)
@@ -132,9 +121,18 @@ def test_account_constructor_exists():
 def test_account_constructor_args():
     sig = inspect.signature(Account.__init__)
     params = list(sig.parameters.keys())
+    assert "accountNumber" in params, "Missing parameter 'accountNumber'"
     assert "accountType" in params, "Missing parameter 'accountType'"
     assert "balance" in params, "Missing parameter 'balance'"
-    assert "accountNumber" in params, "Missing parameter 'accountNumber'"
+
+def test_account_has_accountNumber():
+    assert hasattr(Account, "accountNumber")
+    descriptor = None
+    for klass in Account.__mro__:
+        if "accountNumber" in klass.__dict__:
+            descriptor = klass.__dict__["accountNumber"]
+            break
+    assert isinstance(descriptor, property)
 
 def test_account_has_accountType():
     assert hasattr(Account, "accountType")
@@ -154,19 +152,6 @@ def test_account_has_balance():
             break
     assert isinstance(descriptor, property)
 
-def test_account_has_accountNumber():
-    assert hasattr(Account, "accountNumber")
-    descriptor = None
-    for klass in Account.__mro__:
-        if "accountNumber" in klass.__dict__:
-            descriptor = klass.__dict__["accountNumber"]
-            break
-    assert isinstance(descriptor, property)
-
-def test_transaction_class_exists():
-    assert isinstance(Transaction, type)
-
-
 def test_transaction_is_not_abstract():
     assert not inspect.isabstract(Transaction)
 
@@ -178,17 +163,17 @@ def test_transaction_constructor_exists():
 def test_transaction_constructor_args():
     sig = inspect.signature(Transaction.__init__)
     params = list(sig.parameters.keys())
-    assert "transactionId" in params, "Missing parameter 'transactionId'"
-    assert "transactionType" in params, "Missing parameter 'transactionType'"
-    assert "transactionDate" in params, "Missing parameter 'transactionDate'"
     assert "amount" in params, "Missing parameter 'amount'"
+    assert "transactionType" in params, "Missing parameter 'transactionType'"
+    assert "transactionId" in params, "Missing parameter 'transactionId'"
+    assert "transactionDate" in params, "Missing parameter 'transactionDate'"
 
-def test_transaction_has_transactionId():
-    assert hasattr(Transaction, "transactionId")
+def test_transaction_has_amount():
+    assert hasattr(Transaction, "amount")
     descriptor = None
     for klass in Transaction.__mro__:
-        if "transactionId" in klass.__dict__:
-            descriptor = klass.__dict__["transactionId"]
+        if "amount" in klass.__dict__:
+            descriptor = klass.__dict__["amount"]
             break
     assert isinstance(descriptor, property)
 
@@ -201,21 +186,21 @@ def test_transaction_has_transactionType():
             break
     assert isinstance(descriptor, property)
 
+def test_transaction_has_transactionId():
+    assert hasattr(Transaction, "transactionId")
+    descriptor = None
+    for klass in Transaction.__mro__:
+        if "transactionId" in klass.__dict__:
+            descriptor = klass.__dict__["transactionId"]
+            break
+    assert isinstance(descriptor, property)
+
 def test_transaction_has_transactionDate():
     assert hasattr(Transaction, "transactionDate")
     descriptor = None
     for klass in Transaction.__mro__:
         if "transactionDate" in klass.__dict__:
             descriptor = klass.__dict__["transactionDate"]
-            break
-    assert isinstance(descriptor, property)
-
-def test_transaction_has_amount():
-    assert hasattr(Transaction, "amount")
-    descriptor = None
-    for klass in Transaction.__mro__:
-        if "amount" in klass.__dict__:
-            descriptor = klass.__dict__["amount"]
             break
     assert isinstance(descriptor, property)
 
@@ -230,7 +215,6 @@ safe_text = st.text(
     ),
     min_size=1,
 ).filter(lambda s: s[0].isalpha())
-
 Branch_strategy = st.builds(
     Branch,
     branchId=
@@ -240,44 +224,37 @@ Branch_strategy = st.builds(
     branchName=
         safe_text
 )
-
 Customer_strategy = st.builds(
     Customer,
     phoneNumber=
         safe_text,
-    name=
-        safe_text,
     email=
+        safe_text,
+    name=
         safe_text,
     customerId=
         safe_text
 )
-
 Account_strategy = st.builds(
     Account,
+    accountNumber=
+        safe_text,
     accountType=
         safe_text,
     balance=
-        st.floats(allow_nan=False, allow_infinity=False),
-    accountNumber=
-        safe_text
+        st.floats(min_value=0, max_value=1000,allow_nan=False, allow_infinity=False)
 )
-
 Transaction_strategy = st.builds(
     Transaction,
-    transactionId=
-        safe_text,
+    amount=
+        st.floats(min_value=0, max_value=1000,allow_nan=False, allow_infinity=False),
     transactionType=
         safe_text,
+    transactionId=
+        safe_text,
     transactionDate=
-        st.none(),
-    amount=
-        st.floats(allow_nan=False, allow_infinity=False)
+        st.dates()
 )
-
-# =============================================================================
-# SECTION 2 — PROPERTY-BASED & STATE-BASED TESTS
-# =============================================================================
 
 @given(instance=Branch_strategy)
 @settings(max_examples=50)
@@ -317,21 +294,6 @@ def test_branch_branchName_setter(instance):
     instance.branchName = original
     assert instance.branchName == original
 
-
-# -------------------------------------------------------------------------
-# ASSOCIATION TESTS
-# -------------------------------------------------------------------------
-
-
-# -------------------------------------------------------------------------
-# STATE-BASED OPERATION TESTS
-# -------------------------------------------------------------------------
-
-
-# -------------------------------------------------------------------------
-# OCL CONSTRAINT TESTS
-# -------------------------------------------------------------------------
-
 @given(instance=Customer_strategy)
 @settings(max_examples=50)
 def test_customer_instantiation(instance):
@@ -349,17 +311,6 @@ def test_customer_phoneNumber_setter(instance):
     assert instance.phoneNumber == original
 
 @given(instance=Customer_strategy)
-def test_customer_name_type(instance):
-    assert isinstance(instance.name, str)
-
-
-@given(instance=Customer_strategy)
-def test_customer_name_setter(instance):
-    original = instance.name
-    instance.name = original
-    assert instance.name == original
-
-@given(instance=Customer_strategy)
 def test_customer_email_type(instance):
     assert isinstance(instance.email, str)
 
@@ -369,6 +320,17 @@ def test_customer_email_setter(instance):
     original = instance.email
     instance.email = original
     assert instance.email == original
+
+@given(instance=Customer_strategy)
+def test_customer_name_type(instance):
+    assert isinstance(instance.name, str)
+
+
+@given(instance=Customer_strategy)
+def test_customer_name_setter(instance):
+    original = instance.name
+    instance.name = original
+    assert instance.name == original
 
 @given(instance=Customer_strategy)
 def test_customer_customerId_type(instance):
@@ -381,25 +343,21 @@ def test_customer_customerId_setter(instance):
     instance.customerId = original
     assert instance.customerId == original
 
-
-# -------------------------------------------------------------------------
-# ASSOCIATION TESTS
-# -------------------------------------------------------------------------
-
-
-# -------------------------------------------------------------------------
-# STATE-BASED OPERATION TESTS
-# -------------------------------------------------------------------------
-
-
-# -------------------------------------------------------------------------
-# OCL CONSTRAINT TESTS
-# -------------------------------------------------------------------------
-
 @given(instance=Account_strategy)
 @settings(max_examples=50)
 def test_account_instantiation(instance):
     assert isinstance(instance, Account)
+
+@given(instance=Account_strategy)
+def test_account_accountNumber_type(instance):
+    assert isinstance(instance.accountNumber, str)
+
+
+@given(instance=Account_strategy)
+def test_account_accountNumber_setter(instance):
+    original = instance.accountNumber
+    instance.accountNumber = original
+    assert instance.accountNumber == original
 
 @given(instance=Account_strategy)
 def test_account_accountType_type(instance):
@@ -424,65 +382,51 @@ def test_account_balance_setter(instance):
     assert instance.balance == original
 
 @given(instance=Account_strategy)
-def test_account_accountNumber_type(instance):
-    assert isinstance(instance.accountNumber, str)
-
-
-@given(instance=Account_strategy)
-def test_account_accountNumber_setter(instance):
-    original = instance.accountNumber
-    instance.accountNumber = original
-    assert instance.accountNumber == original
-
-
-# -------------------------------------------------------------------------
-# ASSOCIATION TESTS
-# -------------------------------------------------------------------------
-
-
-# -------------------------------------------------------------------------
-# STATE-BASED OPERATION TESTS
-# -------------------------------------------------------------------------
-
-@given(instance=Account_strategy)
 @settings(max_examples=30)
 def test_account_deposit_changes_state(instance):
-    before = copy.deepcopy(instance)
-
-    try:
+        before = copy.deepcopy(instance)
         instance.deposit(
             1.0
         )
 
         assert instance.__dict__ != before.__dict__
 
-    except (AttributeError, NotImplementedError, TypeError):
-        pass
-
 @given(instance=Account_strategy)
 @settings(max_examples=30)
 def test_account_withdraw_changes_state(instance):
-    before = copy.deepcopy(instance)
-
-    try:
+        before = copy.deepcopy(instance)
         instance.withdraw(
             1.0
         )
 
         assert instance.__dict__ != before.__dict__
 
-    except (AttributeError, NotImplementedError, TypeError):
-        pass
-
-
-# -------------------------------------------------------------------------
-# OCL CONSTRAINT TESTS
-# -------------------------------------------------------------------------
-
 @given(instance=Transaction_strategy)
 @settings(max_examples=50)
 def test_transaction_instantiation(instance):
     assert isinstance(instance, Transaction)
+
+@given(instance=Transaction_strategy)
+def test_transaction_amount_type(instance):
+    assert isinstance(instance.amount, float)
+
+
+@given(instance=Transaction_strategy)
+def test_transaction_amount_setter(instance):
+    original = instance.amount
+    instance.amount = original
+    assert instance.amount == original
+
+@given(instance=Transaction_strategy)
+def test_transaction_transactionType_type(instance):
+    assert isinstance(instance.transactionType, str)
+
+
+@given(instance=Transaction_strategy)
+def test_transaction_transactionType_setter(instance):
+    original = instance.transactionType
+    instance.transactionType = original
+    assert instance.transactionType == original
 
 @given(instance=Transaction_strategy)
 def test_transaction_transactionId_type(instance):
@@ -496,15 +440,8 @@ def test_transaction_transactionId_setter(instance):
     assert instance.transactionId == original
 
 @given(instance=Transaction_strategy)
-def test_transaction_transactionType_type(instance):
-    assert isinstance(instance.transactionType, str)
-
-
-@given(instance=Transaction_strategy)
-def test_transaction_transactionType_setter(instance):
-    original = instance.transactionType
-    instance.transactionType = original
-    assert instance.transactionType == original
+def test_transaction_transactionDate_type(instance):
+    assert isinstance(instance.transactionDate, date)
 
 
 @given(instance=Transaction_strategy)
@@ -513,28 +450,21 @@ def test_transaction_transactionDate_setter(instance):
     instance.transactionDate = original
     assert instance.transactionDate == original
 
-@given(instance=Transaction_strategy)
-def test_transaction_amount_type(instance):
-    assert isinstance(instance.amount, float)
+@given(instance=Account_strategy)
+def test_account_ocl_constraint_customer_2_1(instance):
+     
+    
 
+    
+    before_balance = instance.balance
 
-@given(instance=Transaction_strategy)
-def test_transaction_amount_setter(instance):
-    original = instance.amount
-    instance.amount = original
-    assert instance.amount == original
+    
 
+    
+    amount = 1
 
-# -------------------------------------------------------------------------
-# ASSOCIATION TESTS
-# -------------------------------------------------------------------------
+    # Call the operation
+    instance.deposit(amount)
+    
 
-
-# -------------------------------------------------------------------------
-# STATE-BASED OPERATION TESTS
-# -------------------------------------------------------------------------
-
-
-# -------------------------------------------------------------------------
-# OCL CONSTRAINT TESTS
-# -------------------------------------------------------------------------
+    assert instance.balance == before_balance + amount

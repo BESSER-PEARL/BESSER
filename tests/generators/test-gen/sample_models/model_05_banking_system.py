@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Method, Parameter,
     StringType, IntegerType, FloatType, BooleanType,
     Multiplicity, Enumeration, EnumerationLiteral,
-    BinaryAssociation
+    BinaryAssociation,Constraint
 )
 
 # =============================================================================
@@ -66,11 +66,7 @@ deposit_method = Method(
     parameters=[Parameter(name="amount", type=FloatType)],
     code="""
 def deposit(self, amount):
-    if amount > 0:
-        self.balance += amount
-        print(f"Deposited ${amount:.2f}. New balance: ${self.balance:.2f}")
-    else:
-        print("Invalid deposit amount")
+    self.balance= self.balance+amount
 """
 )
 
@@ -181,7 +177,18 @@ transaction_class = Class(
     attributes={transaction_id_prop, transaction_type_prop, amount_prop, timestamp_prop},
     methods={process_method, validate_method, get_details_method}
 )
-
+constraint_1: Constraint = Constraint(
+    name="constraint_1",
+    context=customer_class,
+    expression="context Customer::updatePhone(value:string) post phone: self.phone = value",
+    language="OCL"
+)
+constraint_2: Constraint = Constraint(
+    name="constraint_2",
+    context=account_class,
+    expression="context Bank::deposit(value:float) post deposit: self.balance= self.balance@pre+value",
+    language="OCL"
+)
 # =============================================================================
 # 9. Define Associations
 # =============================================================================
@@ -228,6 +235,8 @@ banking_model = DomainModel(
     name="BankingSystem",
     types={account_class, customer_class, transaction_class, transaction_type_enum},
     associations={customer_account_assoc, account_transaction_assoc}
+    , constraints={constraint_1, constraint_2}
+
 )
 
 print("✓ Banking System BUML Model created successfully!")
@@ -236,3 +245,8 @@ print(f"  Associations: {[a.name for a in banking_model.associations]}")
 from besser.generators.python_classes.python_classes_generator import PythonGenerator
 python_gen = PythonGenerator(model=banking_model, output_dir="output_banking")
 python_gen.generate()
+
+
+from besser.generators.testgen.test_generator import TestGenerator
+generator = TestGenerator(model=banking_model, output_dir="output_banking")
+generator.generate()

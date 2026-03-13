@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\_pydevd_bundle\pydevd_collect_try_except_info.py
+# hypothesis_version: 6.151.9
+
+[256, 65536, ' end block ', ' except ', ' raises: %s', ', ', 'END_FINALLY', 'POP_EXCEPT', 'RAISE_VARARGS', 'RETURN_CONST', 'RETURN_VALUE', 'SETUP_EXCEPT', 'SETUP_FINALLY', '_Instruction', 'co_lnotab', '{return: %s}', '{try:', '}']

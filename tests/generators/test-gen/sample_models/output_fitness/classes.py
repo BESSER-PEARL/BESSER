@@ -26,20 +26,12 @@ class TrainingSession:
         self.trainer = trainer
         
     @property
-    def date(self) -> str:
-        return self.__date
+    def duration(self) -> int:
+        return self.__duration
 
-    @date.setter
-    def date(self, date: str):
-        self.__date = date
-
-    @property
-    def status(self) -> str:
-        return self.__status
-
-    @status.setter
-    def status(self, status: str):
-        self.__status = status
+    @duration.setter
+    def duration(self, duration: int):
+        self.__duration = duration
 
     @property
     def sessionId(self) -> str:
@@ -50,12 +42,20 @@ class TrainingSession:
         self.__sessionId = sessionId
 
     @property
-    def duration(self) -> int:
-        return self.__duration
+    def status(self) -> str:
+        return self.__status
 
-    @duration.setter
-    def duration(self, duration: int):
-        self.__duration = duration
+    @status.setter
+    def status(self, status: str):
+        self.__status = status
+
+    @property
+    def date(self) -> str:
+        return self.__date
+
+    @date.setter
+    def date(self, date: str):
+        self.__date = date
 
     @property
     def trainer(self):
@@ -140,22 +140,6 @@ class Trainer:
         self.schedule = schedule if schedule is not None else set()
         
     @property
-    def hourlyRate(self) -> float:
-        return self.__hourlyRate
-
-    @hourlyRate.setter
-    def hourlyRate(self, hourlyRate: float):
-        self.__hourlyRate = hourlyRate
-
-    @property
-    def name(self) -> str:
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        self.__name = name
-
-    @property
     def specialization(self) -> str:
         return self.__specialization
 
@@ -170,6 +154,22 @@ class Trainer:
     @trainerId.setter
     def trainerId(self, trainerId: str):
         self.__trainerId = trainerId
+
+    @property
+    def name(self) -> str:
+        return self.__name
+
+    @name.setter
+    def name(self, name: str):
+        self.__name = name
+
+    @property
+    def hourlyRate(self) -> float:
+        return self.__hourlyRate
+
+    @hourlyRate.setter
+    def hourlyRate(self, hourlyRate: float):
+        self.__hourlyRate = hourlyRate
 
     @property
     def schedule(self):
@@ -200,13 +200,6 @@ class Trainer:
                     
 
     
-    def registerTrainer(self):
-        print(f"Trainer registered: {self.name}")
-        print(f"ID: {self.trainerId}, Specialization: {self.specialization}")
-        print(f"Rate: ${self.hourlyRate:.2f}/hour")
-
-
-    
     def getTrainerInfo(self):
         return f"Trainer: {self.name}\nSpecialization: {self.specialization}\nRate: ${self.hourlyRate:.2f}/hour"
 
@@ -218,6 +211,13 @@ class Trainer:
         print(f"Hourly rate updated for {self.name}: ${old_rate:.2f} -> ${newRate:.2f}")
 
 
+    
+    def registerTrainer(self):
+        print(f"Trainer registered: {self.name}")
+        print(f"ID: {self.trainerId}, Specialization: {self.specialization}")
+        print(f"Rate: ${self.hourlyRate:.2f}/hour")
+
+
 class FitnessMember:
 
     def __init__(self, memberId: str, name: str, membershipType: str, active: bool, sessions: set["TrainingSession"] = None):
@@ -227,6 +227,14 @@ class FitnessMember:
         self.active = active
         self.sessions = sessions if sessions is not None else set()
         
+    @property
+    def memberId(self) -> str:
+        return self.__memberId
+
+    @memberId.setter
+    def memberId(self, memberId: str):
+        self.__memberId = memberId
+
     @property
     def active(self) -> bool:
         return self.__active
@@ -250,14 +258,6 @@ class FitnessMember:
     @membershipType.setter
     def membershipType(self, membershipType: str):
         self.__membershipType = membershipType
-
-    @property
-    def memberId(self) -> str:
-        return self.__memberId
-
-    @memberId.setter
-    def memberId(self, memberId: str):
-        self.__memberId = memberId
 
     @property
     def sessions(self):
@@ -295,14 +295,14 @@ class FitnessMember:
 
 
     
-    def suspendMembership(self):
-        self.active = False
-        print(f"Membership suspended for {self.name}")
-
-
-    
     def upgradeMembership(self, newType):
         old_type = self.membershipType
         self.membershipType = newType
         print(f"Membership upgraded for {self.name}: {old_type} -> {newType}")
+
+
+    
+    def suspendMembership(self):
+        self.active = False
+        print(f"Membership suspended for {self.name}")
 

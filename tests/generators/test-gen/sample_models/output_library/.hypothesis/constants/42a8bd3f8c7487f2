@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\_pydevd_bundle\pydevd_command_line_handling.py
+# hypothesis_version: 6.151.9
+
+['$py.class', '%s', '--%s', '--DEBUG', '--file', '--qt-support', '--qt-support=', '.py', '.pyc', 'Unexpected option: ', 'auto', 'client', 'cmd-line', 'file', 'help', 'module', 'multiproc', 'multiprocess', 'none', 'port', 'pyqt4', 'pyqt5', 'pyqt6', 'pyside', 'pyside2', 'pyside6', 'qt-support', 'save-asyncio', 'save-signatures', 'save-threading', 'server', 'vm_type']

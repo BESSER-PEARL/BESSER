@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Method, Parameter,
     StringType, IntegerType, FloatType, BooleanType,
     Multiplicity, Enumeration, EnumerationLiteral,
-    BinaryAssociation
+    BinaryAssociation,Constraint
 )
 
 # =============================================================================
@@ -135,10 +135,10 @@ def startRental(self):
 
 complete_rental_method = Method(
     name="completeRental",
-    parameters=[],
+    parameters=[Parameter(name="value", type=IntegerType)],
     code="""
-def completeRental(self):
-    self.status = "Completed"
+def completeRental(self,value):
+    self.status = value
     print(f"Rental {self.rentalId} has been completed")
 """
 )
@@ -178,7 +178,18 @@ rental_class = Class(
     attributes={rental_id_prop, start_date_prop, end_date_prop, rental_total_cost_prop, rental_status_prop},
     methods={start_rental_method, complete_rental_method, extend_rental_method}
 )
-
+constraint_1: Constraint = Constraint(
+    name="constraint_1",
+    context=vehicle_class,
+    expression="context Vehicle::setAvailability(value:bool) post set: self.available = value",
+    language="OCL"
+)
+constraint_2: Constraint = Constraint(
+    name="constraint_2",
+    context=rental_class,
+    expression="context Rental::completeRental(value:bool) post set: self.status =value",
+    language="OCL"
+)
 # =============================================================================
 # 9. Define Associations
 # =============================================================================
@@ -225,6 +236,8 @@ car_rental_model = DomainModel(
     name="CarRentalSystem",
     types={vehicle_class, rental_customer_class, rental_class, vehicle_category_enum},
     associations={customer_rental_assoc, vehicle_rental_assoc}
+    , constraints={constraint_1, constraint_2}
+
 )
 
 print("✓ Car Rental System BUML Model created successfully!")
@@ -233,3 +246,7 @@ print(f"  Associations: {[a.name for a in car_rental_model.associations]}")
 from besser.generators.python_classes.python_classes_generator import PythonGenerator
 python_gen = PythonGenerator(model=car_rental_model, output_dir="output_car_rental")
 python_gen.generate()
+
+from besser.generators.testgen.test_generator import TestGenerator
+generator = TestGenerator(model=car_rental_model, output_dir="output_car_rental")
+generator.generate()

@@ -27,14 +27,6 @@ class Appointment:
         self.doctor = doctor
         
     @property
-    def appointmentId(self) -> str:
-        return self.__appointmentId
-
-    @appointmentId.setter
-    def appointmentId(self, appointmentId: str):
-        self.__appointmentId = appointmentId
-
-    @property
     def time(self) -> str:
         return self.__time
 
@@ -43,12 +35,12 @@ class Appointment:
         self.__time = time
 
     @property
-    def date(self) -> str:
-        return self.__date
+    def appointmentId(self) -> str:
+        return self.__appointmentId
 
-    @date.setter
-    def date(self, date: str):
-        self.__date = date
+    @appointmentId.setter
+    def appointmentId(self, appointmentId: str):
+        self.__appointmentId = appointmentId
 
     @property
     def status(self) -> str:
@@ -59,30 +51,12 @@ class Appointment:
         self.__status = status
 
     @property
-    def patient(self):
-        return self.__patient
+    def date(self) -> str:
+        return self.__date
 
-    @patient.setter
-    def patient(self, value):
-        # Bidirectional consistency
-        old_value = getattr(self, f"_Appointment__patient", None)
-        self.__patient = value
-        
-        # Remove self from old opposite end
-        if old_value is not None:
-            if hasattr(old_value, "appointments"):
-                opp_val = getattr(old_value, "appointments", None)
-                if isinstance(opp_val, set):
-                    opp_val.discard(self)
-                
-        # Add self to new opposite end
-        if value is not None:
-            if hasattr(value, "appointments"):
-                opp_val = getattr(value, "appointments", None)
-                if opp_val is None:
-                    setattr(value, "appointments", set([self]))
-                elif isinstance(opp_val, set):
-                    opp_val.add(self)
+    @date.setter
+    def date(self, date: str):
+        self.__date = date
 
     @property
     def doctor(self):
@@ -107,6 +81,32 @@ class Appointment:
                 opp_val = getattr(value, "schedule", None)
                 if opp_val is None:
                     setattr(value, "schedule", set([self]))
+                elif isinstance(opp_val, set):
+                    opp_val.add(self)
+
+    @property
+    def patient(self):
+        return self.__patient
+
+    @patient.setter
+    def patient(self, value):
+        # Bidirectional consistency
+        old_value = getattr(self, f"_Appointment__patient", None)
+        self.__patient = value
+        
+        # Remove self from old opposite end
+        if old_value is not None:
+            if hasattr(old_value, "appointments"):
+                opp_val = getattr(old_value, "appointments", None)
+                if isinstance(opp_val, set):
+                    opp_val.discard(self)
+                
+        # Add self to new opposite end
+        if value is not None:
+            if hasattr(value, "appointments"):
+                opp_val = getattr(value, "appointments", None)
+                if opp_val is None:
+                    setattr(value, "appointments", set([self]))
                 elif isinstance(opp_val, set):
                     opp_val.add(self)
 
@@ -147,20 +147,20 @@ class Doctor:
         self.__specialization = specialization
 
     @property
-    def name(self) -> str:
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        self.__name = name
-
-    @property
     def doctorId(self) -> str:
         return self.__doctorId
 
     @doctorId.setter
     def doctorId(self, doctorId: str):
         self.__doctorId = doctorId
+
+    @property
+    def name(self) -> str:
+        return self.__name
+
+    @name.setter
+    def name(self, name: str):
+        self.__name = name
 
     @property
     def available(self) -> bool:
@@ -199,13 +199,6 @@ class Doctor:
                     
 
     
-    def registerDoctor(self):
-        self.available = True
-        print(f"Doctor registered: Dr. {self.name}")
-        print(f"ID: {self.doctorId}, Specialization: {self.specialization}")
-
-
-    
     def setAvailability(self, status):
         self.available = status
         status_text = "available" if status else "unavailable"
@@ -216,6 +209,13 @@ class Doctor:
     def getDoctorInfo(self):
         availability = "Available" if self.available else "Not Available"
         return f"Dr. {self.name} - {self.specialization} ({availability})"
+
+
+    
+    def registerDoctor(self):
+        self.available = True
+        print(f"Doctor registered: Dr. {self.name}")
+        print(f"ID: {self.doctorId}, Specialization: {self.specialization}")
 
 
 class Patient:
@@ -236,12 +236,12 @@ class Patient:
         self.__patientId = patientId
 
     @property
-    def age(self) -> int:
-        return self.__age
+    def bloodType(self) -> str:
+        return self.__bloodType
 
-    @age.setter
-    def age(self, age: int):
-        self.__age = age
+    @bloodType.setter
+    def bloodType(self, bloodType: str):
+        self.__bloodType = bloodType
 
     @property
     def name(self) -> str:
@@ -252,12 +252,12 @@ class Patient:
         self.__name = name
 
     @property
-    def bloodType(self) -> str:
-        return self.__bloodType
+    def age(self) -> int:
+        return self.__age
 
-    @bloodType.setter
-    def bloodType(self, bloodType: str):
-        self.__bloodType = bloodType
+    @age.setter
+    def age(self, age: int):
+        self.__age = age
 
     @property
     def appointments(self):
@@ -294,16 +294,16 @@ class Patient:
 
 
     
-    def updateAge(self, newAge):
-        self.age = newAge
-        print(f"Patient {self.name}'s age updated to {newAge}")
-
-
-    
     def getMedicalInfo(self):
         info = f"Patient: {self.name}\n"
         info += f"ID: {self.patientId}\n"
         info += f"Age: {self.age}\n"
         info += f"Blood Type: {self.bloodType}"
         return info
+
+
+    
+    def updateAge(self, newAge):
+        self.age = newAge
+        print(f"Patient {self.name}'s age updated to {newAge}")
 

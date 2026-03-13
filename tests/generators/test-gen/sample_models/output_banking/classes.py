@@ -84,13 +84,6 @@ class Transaction:
                     opp_val.add(self)
 
     
-    def process(self):
-        print(f"Processing {self.transactionType} transaction")
-        print(f"ID: {self.transactionId}, Amount: ${self.amount:.2f}")
-        print(f"Timestamp: {self.timestamp}")
-
-
-    
     def getDetails(self):
         return f"Transaction {self.transactionId}: {self.transactionType} - ${self.amount:.2f} at {self.timestamp}"
 
@@ -105,6 +98,13 @@ class Transaction:
             return False
 
 
+    
+    def process(self):
+        print(f"Processing {self.transactionType} transaction")
+        print(f"ID: {self.transactionId}, Amount: ${self.amount:.2f}")
+        print(f"Timestamp: {self.timestamp}")
+
+
 class Customer:
 
     def __init__(self, customerId: str, name: str, phone: str, verified: bool, accounts: set["BankAccount"] = None):
@@ -115,12 +115,12 @@ class Customer:
         self.accounts = accounts if accounts is not None else set()
         
     @property
-    def customerId(self) -> str:
-        return self.__customerId
+    def verified(self) -> bool:
+        return self.__verified
 
-    @customerId.setter
-    def customerId(self, customerId: str):
-        self.__customerId = customerId
+    @verified.setter
+    def verified(self, verified: bool):
+        self.__verified = verified
 
     @property
     def name(self) -> str:
@@ -131,20 +131,20 @@ class Customer:
         self.__name = name
 
     @property
+    def customerId(self) -> str:
+        return self.__customerId
+
+    @customerId.setter
+    def customerId(self, customerId: str):
+        self.__customerId = customerId
+
+    @property
     def phone(self) -> str:
         return self.__phone
 
     @phone.setter
     def phone(self, phone: str):
         self.__phone = phone
-
-    @property
-    def verified(self) -> bool:
-        return self.__verified
-
-    @verified.setter
-    def verified(self, verified: bool):
-        self.__verified = verified
 
     @property
     def accounts(self):
@@ -175,13 +175,6 @@ class Customer:
                     
 
     
-    def registerCustomer(self):
-        self.verified = False
-        print(f"Customer registered: {self.name}")
-        print(f"ID: {self.customerId}, Phone: {self.phone}")
-
-
-    
     def updatePhone(self, newPhone):
         old_phone = self.phone
         self.phone = newPhone
@@ -192,6 +185,13 @@ class Customer:
     def verifyIdentity(self):
         self.verified = True
         print(f"Customer {self.name} has been verified")
+
+
+    
+    def registerCustomer(self):
+        self.verified = False
+        print(f"Customer registered: {self.name}")
+        print(f"ID: {self.customerId}, Phone: {self.phone}")
 
 
 class BankAccount:
@@ -213,12 +213,12 @@ class BankAccount:
         self.__accountType = accountType
 
     @property
-    def balance(self) -> float:
-        return self.__balance
+    def active(self) -> bool:
+        return self.__active
 
-    @balance.setter
-    def balance(self, balance: float):
-        self.__balance = balance
+    @active.setter
+    def active(self, active: bool):
+        self.__active = active
 
     @property
     def accountNumber(self) -> str:
@@ -229,12 +229,38 @@ class BankAccount:
         self.__accountNumber = accountNumber
 
     @property
-    def active(self) -> bool:
-        return self.__active
+    def balance(self) -> float:
+        return self.__balance
 
-    @active.setter
-    def active(self, active: bool):
-        self.__active = active
+    @balance.setter
+    def balance(self, balance: float):
+        self.__balance = balance
+
+    @property
+    def owner(self):
+        return self.__owner
+
+    @owner.setter
+    def owner(self, value):
+        # Bidirectional consistency
+        old_value = getattr(self, f"_BankAccount__owner", None)
+        self.__owner = value
+        
+        # Remove self from old opposite end
+        if old_value is not None:
+            if hasattr(old_value, "accounts"):
+                opp_val = getattr(old_value, "accounts", None)
+                if isinstance(opp_val, set):
+                    opp_val.discard(self)
+                
+        # Add self to new opposite end
+        if value is not None:
+            if hasattr(value, "accounts"):
+                opp_val = getattr(value, "accounts", None)
+                if opp_val is None:
+                    setattr(value, "accounts", set([self]))
+                elif isinstance(opp_val, set):
+                    opp_val.add(self)
 
     @property
     def transactions(self):
@@ -264,39 +290,16 @@ class BankAccount:
                     setattr(item, "account", self)
                     
 
-    @property
-    def owner(self):
-        return self.__owner
-
-    @owner.setter
-    def owner(self, value):
-        # Bidirectional consistency
-        old_value = getattr(self, f"_BankAccount__owner", None)
-        self.__owner = value
-        
-        # Remove self from old opposite end
-        if old_value is not None:
-            if hasattr(old_value, "accounts"):
-                opp_val = getattr(old_value, "accounts", None)
-                if isinstance(opp_val, set):
-                    opp_val.discard(self)
-                
-        # Add self to new opposite end
-        if value is not None:
-            if hasattr(value, "accounts"):
-                opp_val = getattr(value, "accounts", None)
-                if opp_val is None:
-                    setattr(value, "accounts", set([self]))
-                elif isinstance(opp_val, set):
-                    opp_val.add(self)
-
     
     def deposit(self, amount):
-        if amount > 0:
-            self.balance += amount
-            print(f"Deposited ${amount:.2f}. New balance: ${self.balance:.2f}")
-        else:
-            print("Invalid deposit amount")
+        self.balance= self.balance+amount
+
+
+    
+    def openAccount(self, initialDeposit):
+        self.balance = initialDeposit
+        self.active = True
+        print(f"Account {self.accountNumber} opened with balance: ${self.balance:.2f}")
 
 
     
@@ -308,11 +311,4 @@ class BankAccount:
         else:
             print(f"Insufficient funds or invalid amount")
             return False
-
-
-    
-    def openAccount(self, initialDeposit):
-        self.balance = initialDeposit
-        self.active = True
-        print(f"Account {self.accountNumber} opened with balance: ${self.balance:.2f}")
 

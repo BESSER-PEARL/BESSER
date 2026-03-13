@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pycharm\teamcity\messages.py
+# hypothesis_version: 6.151.9
+
+[0.1, 1000, 86400000, '\n{0} != {1}\n', " %s='%s'", "##teamcity[%s '%s']\n", '%03d', '%Y-%m-%dT%H:%M:%S.', "'", '[', ']', ']\n', 'auto', 'blockClosed', 'blockOpened', 'buffer', 'buildProblem', 'buildStatisticValue', 'buildStatus', 'comparisonFailure', 'compilationFinished', 'compilationStarted', 'encoding', 'importData', 'message', 'progressFinish', 'progressMessage', 'progressStart', 'publishArtifacts', 'setParameter', 'testCount', 'testFailed', 'testFinished', 'testIgnored', 'testStarted', 'testStdErr', 'testStdOut', 'testSuiteFinished', 'testSuiteStarted', 'utf-8', '|', "|'", '|[', '|]', '|n', '|r', '||']

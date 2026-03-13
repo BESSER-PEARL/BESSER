@@ -9,7 +9,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Method, Parameter,
     StringType, IntegerType, FloatType, BooleanType,
     Multiplicity, Enumeration, EnumerationLiteral,
-    BinaryAssociation
+    BinaryAssociation,Constraint
 )
 
 # =============================================================================
@@ -61,7 +61,7 @@ def getInfo(self):
 )
 
 check_availability_method = Method(
-    name="checkAvailability",
+    name="getAvailability",
     parameters=[],
     code="""
 def checkAvailability(self):
@@ -86,7 +86,7 @@ register_member_method = Method(
     name="register",
     parameters=[],
     code="""
-def register(self):
+def getregister(self):
     print(f"Member {self.name} registered with ID: {self.memberId}")
     print(f"Email: {self.email}")
 """
@@ -120,10 +120,10 @@ def updateEmail(self, newEmail):
 # =============================================================================
 create_loan_method = Method(
     name="createLoan",
-    parameters=[],
+    parameters=[Parameter(name="val", type=BooleanType)],
     code="""
-def createLoan(self):
-    self.returned = False
+def createLoan(self,val):
+    self.returned =val
     print(f"Loan {self.loanId} created on {self.loanDate}")
     print(f"Due date: {self.dueDate}")
 """
@@ -166,12 +166,26 @@ member_class = Class(
     methods={register_member_method, can_borrow_method, update_email_method}
 )
 
+constraint_updateEmail: Constraint = Constraint(
+    name="constraint_updateEmail",
+    context=member_class,
+    expression="context Member::updateEmail(value:bool) post changeLoan: self.email = value",
+    language="OCL"
+)
+
 loan_class = Class(
     name="Loan",
     attributes={loan_id_prop, loan_date_prop, due_date_prop, returned_prop},
     methods={create_loan_method, return_book_method, is_overdue_method}
 )
 
+
+constraint_create_loan: Constraint = Constraint(
+    name="constraint_create_loan",
+    context=loan_class,
+    expression="context Loan::createLoan(value:bool) post changeLoan: self.returned = value",
+    language="OCL"
+)
 # =============================================================================
 # 9. Define Associations
 # =============================================================================
@@ -217,9 +231,18 @@ book_loan_assoc = BinaryAssociation(
 library_model = DomainModel(
     name="LibraryManagementSystem",
     types={book_class, member_class, loan_class, book_status_enum},
-    associations={member_loan_assoc, book_loan_assoc}
+    associations={member_loan_assoc, book_loan_assoc},
+    constraints={constraint_updateEmail,constraint_create_loan}
 )
 
 print("✓ Library Management System BUML Model created successfully!")
 print(f"  Classes: {[c.name for c in library_model.get_classes()]}")
 print(f"  Associations: {[a.name for a in library_model.associations]}")
+from besser.generators.python_classes.python_classes_generator import PythonGenerator
+python_gen = PythonGenerator(model=library_model, output_dir="output_library")
+# python_gen.generate()
+
+from besser.generators.testgen.test_generator import TestGenerator
+generator = TestGenerator(model=library_model, output_dir="output_library")
+generator.generate()
+

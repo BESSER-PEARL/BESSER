@@ -82,20 +82,20 @@ class Customer:
         self.__phoneNumber = phoneNumber
 
     @property
-    def name(self) -> str:
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        self.__name = name
-
-    @property
     def email(self) -> str:
         return self.__email
 
     @email.setter
     def email(self, email: str):
         self.__email = email
+
+    @property
+    def name(self) -> str:
+        return self.__name
+
+    @name.setter
+    def name(self, name: str):
+        self.__name = name
 
     @property
     def customerId(self) -> str:
@@ -144,6 +144,14 @@ class Account:
         self.records = records if records is not None else set()
         
     @property
+    def accountNumber(self) -> str:
+        return self.__accountNumber
+
+    @accountNumber.setter
+    def accountNumber(self, accountNumber: str):
+        self.__accountNumber = accountNumber
+
+    @property
     def accountType(self) -> str:
         return self.__accountType
 
@@ -158,14 +166,6 @@ class Account:
     @balance.setter
     def balance(self, balance: float):
         self.__balance = balance
-
-    @property
-    def accountNumber(self) -> str:
-        return self.__accountNumber
-
-    @accountNumber.setter
-    def accountNumber(self, accountNumber: str):
-        self.__accountNumber = accountNumber
 
     @property
     def records(self):
@@ -265,12 +265,12 @@ class Transaction:
         self.account = account
         
     @property
-    def transactionId(self) -> str:
-        return self.__transactionId
+    def amount(self) -> float:
+        return self.__amount
 
-    @transactionId.setter
-    def transactionId(self, transactionId: str):
-        self.__transactionId = transactionId
+    @amount.setter
+    def amount(self, amount: float):
+        self.__amount = amount
 
     @property
     def transactionType(self) -> str:
@@ -281,20 +281,20 @@ class Transaction:
         self.__transactionType = transactionType
 
     @property
+    def transactionId(self) -> str:
+        return self.__transactionId
+
+    @transactionId.setter
+    def transactionId(self, transactionId: str):
+        self.__transactionId = transactionId
+
+    @property
     def transactionDate(self) -> date:
         return self.__transactionDate
 
     @transactionDate.setter
     def transactionDate(self, transactionDate: date):
         self.__transactionDate = transactionDate
-
-    @property
-    def amount(self) -> float:
-        return self.__amount
-
-    @amount.setter
-    def amount(self, amount: float):
-        self.__amount = amount
 
     @property
     def account(self):

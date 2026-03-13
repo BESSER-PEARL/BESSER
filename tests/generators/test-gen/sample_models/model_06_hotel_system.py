@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Method, Parameter,
     StringType, IntegerType, FloatType, BooleanType,
     Multiplicity, Enumeration, EnumerationLiteral,
-    BinaryAssociation
+    BinaryAssociation, Constraint
 )
 
 # =============================================================================
@@ -171,7 +171,18 @@ reservation_class = Class(
     attributes={reservation_id_prop, check_in_date_prop, check_out_date_prop, total_cost_prop},
     methods={create_reservation_method, cancel_reservation_method, calculate_nights_method}
 )
-
+constraint_1: Constraint = Constraint(
+    name="constraint_1",
+    context=room_class,
+    expression="context Room::setAvailable(value:bool) post set: self.available = value",
+    language="OCL"
+)
+constraint_2: Constraint = Constraint(
+    name="constraint_2",
+    context=guest_class,
+    expression="context Guest::addLoyaltyPoints(value:int) post deposit: self.loyaltyPoints =self.loyaltyPoints@pre+ value",
+    language="OCL"
+)
 # =============================================================================
 # 9. Define Associations
 # =============================================================================
@@ -218,6 +229,8 @@ hotel_model = DomainModel(
     name="HotelReservationSystem",
     types={guest_class, room_class, reservation_class, room_type_enum},
     associations={guest_reservation_assoc, room_reservation_assoc}
+    , constraints={constraint_1, constraint_2}
+
 )
 
 print("✓ Hotel Reservation System BUML Model created successfully!")
@@ -226,3 +239,8 @@ print(f"  Associations: {[a.name for a in hotel_model.associations]}")
 from besser.generators.python_classes.python_classes_generator import PythonGenerator
 python_gen = PythonGenerator(model=hotel_model, output_dir="output_hotel")
 python_gen.generate()
+
+
+from besser.generators.testgen.test_generator import TestGenerator
+generator = TestGenerator(model=hotel_model, output_dir="output_hotel")
+generator.generate()

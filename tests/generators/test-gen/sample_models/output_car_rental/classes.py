@@ -28,6 +28,22 @@ class Rental:
         self.vehicle = vehicle
         
     @property
+    def startDate(self) -> str:
+        return self.__startDate
+
+    @startDate.setter
+    def startDate(self, startDate: str):
+        self.__startDate = startDate
+
+    @property
+    def status(self) -> str:
+        return self.__status
+
+    @status.setter
+    def status(self, status: str):
+        self.__status = status
+
+    @property
     def endDate(self) -> str:
         return self.__endDate
 
@@ -50,22 +66,6 @@ class Rental:
     @totalCost.setter
     def totalCost(self, totalCost: float):
         self.__totalCost = totalCost
-
-    @property
-    def startDate(self) -> str:
-        return self.__startDate
-
-    @startDate.setter
-    def startDate(self, startDate: str):
-        self.__startDate = startDate
-
-    @property
-    def status(self) -> str:
-        return self.__status
-
-    @status.setter
-    def status(self, status: str):
-        self.__status = status
 
     @property
     def vehicle(self):
@@ -120,9 +120,11 @@ class Rental:
                     opp_val.add(self)
 
     
-    def completeRental(self):
-        self.status = "Completed"
-        print(f"Rental {self.rentalId} has been completed")
+    def extendRental(self, newEndDate, additionalCost):
+        self.endDate = newEndDate
+        self.totalCost += additionalCost
+        print(f"Rental {self.rentalId} extended to {newEndDate}")
+        print(f"New total cost: ${self.totalCost:.2f}")
 
 
     
@@ -133,11 +135,9 @@ class Rental:
 
 
     
-    def extendRental(self, newEndDate, additionalCost):
-        self.endDate = newEndDate
-        self.totalCost += additionalCost
-        print(f"Rental {self.rentalId} extended to {newEndDate}")
-        print(f"New total cost: ${self.totalCost:.2f}")
+    def completeRental(self,value):
+        self.status = value
+        print(f"Rental {self.rentalId} has been completed")
 
 
 class RentalCustomer:
@@ -210,6 +210,12 @@ class RentalCustomer:
                     
 
     
+    def getCustomerInfo(self):
+        status = "Verified" if self.verified else "Not Verified"
+        return f"Customer: {self.name} ({status})\nLicense: {self.licenseNumber}"
+
+
+    
     def verifyLicense(self):
         self.verified = True
         print(f"License verified for customer {self.name}")
@@ -222,22 +228,24 @@ class RentalCustomer:
         print(f"ID: {self.customerId}, License: {self.licenseNumber}")
 
 
-    
-    def getCustomerInfo(self):
-        status = "Verified" if self.verified else "Not Verified"
-        return f"Customer: {self.name} ({status})\nLicense: {self.licenseNumber}"
-
-
 class Vehicle:
 
-    def __init__(self, vehicleId: str, make: str, model: str, available: bool, dailyRate: float, rentalHistory: set["Rental"] = None):
+    def __init__(self, vehicleId: str, make: str, model: str, dailyRate: float, available: bool, rentalHistory: set["Rental"] = None):
         self.vehicleId = vehicleId
         self.make = make
         self.model = model
-        self.available = available
         self.dailyRate = dailyRate
+        self.available = available
         self.rentalHistory = rentalHistory if rentalHistory is not None else set()
         
+    @property
+    def dailyRate(self) -> float:
+        return self.__dailyRate
+
+    @dailyRate.setter
+    def dailyRate(self, dailyRate: float):
+        self.__dailyRate = dailyRate
+
     @property
     def model(self) -> str:
         return self.__model
@@ -269,14 +277,6 @@ class Vehicle:
     @available.setter
     def available(self, available: bool):
         self.__available = available
-
-    @property
-    def dailyRate(self) -> float:
-        return self.__dailyRate
-
-    @dailyRate.setter
-    def dailyRate(self, dailyRate: float):
-        self.__dailyRate = dailyRate
 
     @property
     def rentalHistory(self):
@@ -314,15 +314,15 @@ class Vehicle:
 
 
     
-    def setAvailability(self, status):
-        self.available = status
-        status_text = "available" if status else "rented"
-        print(f"{self.make} {self.model} is now {status_text}")
-
-
-    
     def registerVehicle(self):
         self.available = True
         print(f"Vehicle registered: {self.make} {self.model}")
         print(f"ID: {self.vehicleId}, Daily Rate: ${self.dailyRate:.2f}")
+
+
+    
+    def setAvailability(self, status):
+        self.available = status
+        status_text = "available" if status else "rented"
+        print(f"{self.make} {self.model} is now {status_text}")
 

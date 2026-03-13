@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pycharm\teamcity\pytest_plugin.py
+# hypothesis_version: 6.151.9
+
+[1024, 50000, '%s:%s (%s)', '(', ')', '--jb-swapdiff', '--no-teamcity', '--teamcity', '.', '.PEP8', '.Pylint', '/', ':', '::', '::()::', '::top_level', 'ERROR', 'PEP8-check', '[', '[pylint] ', '\\.pyc?$', '\\.pyc?::', ']', '_', '_ _ _ _ _', '_collect', '_cov', '_teamcityReporting', '_teardown', 'bool', 'call', 'capture', 'code_units', 'collect', 'count', 'data', 'duration', 'false', 'fd', 'find_code_units', 'general', 'help', 'no', 'no_teamcity', 'reporting', 'setup', 'skippassedoutput', 'startswith', 'stderr', 'stdout', 'store_true', 'swapdiff', 'teamcity', 'teardown', 'terminal reporting', 'test ', 'test setup', 'test setup failed', 'top_level', 'true', 'type', 'when']

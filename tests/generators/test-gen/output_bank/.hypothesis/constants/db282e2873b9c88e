@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\pydev_ipython\inputhook.py
+# hypothesis_version: 6.151.9
+
+[0.01, '.', 'GUI_GLUT', 'GUI_GTK', 'GUI_GTK3', 'GUI_NONE', 'GUI_OSX', 'GUI_PYGLET', 'GUI_QT', 'GUI_QT4', 'GUI_QT5', 'GUI_QT6', 'GUI_TK', 'GUI_WX', 'InputHookManager', 'allow_CTRL_C', 'clear_app_refs', 'clear_inputhook', 'current_gui', 'disable_glut', 'disable_gtk', 'disable_gtk3', 'disable_mac', 'disable_pyglet', 'disable_qt4', 'disable_qt5', 'disable_qt6', 'disable_tk', 'disable_wx', 'enable_glut', 'enable_gtk', 'enable_gtk3', 'enable_gui', 'enable_mac', 'enable_pyglet', 'enable_qt', 'enable_qt4', 'enable_qt5', 'enable_qt6', 'enable_tk', 'enable_wx', 'get_inputhook', 'glut', 'gtk', 'gtk3', 'ignore_CTRL_C', 'inputhook_manager', 'matplotlib.pyplot', 'none', 'osx', 'pyglet', 'qt', 'qt4', 'qt5', 'qt6', 'set_inputhook', 'stdin_ready', 'tk', 'wx']

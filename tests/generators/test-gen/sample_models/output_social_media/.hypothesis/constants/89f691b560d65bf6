@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pycharm\_jb_pytest_runner.py
+# hypothesis_version: 6.151.9
+
+['--jb-show-summary', '--no-header', '--no-summary', '-q', '-s', '.', '.py', '.py::', '/', '1', ':', '::', '__main__', 'ignore', 'numprocesses', 'pytest', 'pytest-teamcity', 'pytest11']

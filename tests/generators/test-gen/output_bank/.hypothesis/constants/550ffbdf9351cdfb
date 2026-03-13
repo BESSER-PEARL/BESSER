@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\_pydevd_bundle\pydevd_repr_utils.py
+# hypothesis_version: 6.151.9
+
+[256, 1000, '%s', '%s%s%s', '%s: %s', ')]}', ',', ', ', '...', 'DataFrame', 'Series', '[%s]', '__class__', '__repr__', 'ndarray', '{%s}', '{...}', '{}', '{} {}']

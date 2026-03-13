@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\_pydevd_bundle\pydevd_additional_thread_info_regular.py
+# hypothesis_version: 6.151.9
+
+['.invalid.', '_current_frames', 'additional_info', 'cachedThreadState', 'call_order', 'end_line', 'filename', 'globalThreadStates', 'is_tracing', 'pydev_func_name', 'pydev_message', 'pydev_next_line', 'pydev_notify_kill', 'pydev_state', 'pydev_step_cmd', 'pydev_step_stop', 'smart_step_stop', 'start_line', 'suspend_type', 'trace', 'trace_suspend_type']

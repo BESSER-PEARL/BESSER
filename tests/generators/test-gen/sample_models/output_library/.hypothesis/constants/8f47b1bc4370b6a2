@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\_pydevd_bundle\pydevd_breakpoints.py
+# hypothesis_version: 6.151.9
+
+['.', '@HIT@', 'BaseException', 'Exception', 'NONE', 'additional_info', 'python-%s', 'utf-8']

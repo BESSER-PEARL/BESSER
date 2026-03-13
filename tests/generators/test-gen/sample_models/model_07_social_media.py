@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Method, Parameter,
     StringType, IntegerType, FloatType, BooleanType,
     Multiplicity, Enumeration, EnumerationLiteral,
-    BinaryAssociation
+    BinaryAssociation,Constraint
 )
 
 # =============================================================================
@@ -95,10 +95,10 @@ def publish(self):
 
 like_post_method = Method(
     name="likePost",
-    parameters=[],
+    parameters=[Parameter(name="like", type=IntegerType)],
     code="""
-def likePost(self):
-    self.likesCount += 1
+def likePost(self,like):
+    self.likesCount += like
     print(f"Post {self.postId} liked. Total likes: {self.likesCount}")
 """
 )
@@ -167,6 +167,18 @@ comment_class = Class(
     attributes={comment_id_prop, text_prop, comment_timestamp_prop, upvotes_prop},
     methods={post_comment_method, upvote_method, edit_comment_method}
 )
+constraint_1: Constraint = Constraint(
+    name="constraint_1",
+    context=post_class,
+    expression="context Post::editContent(value:string) post set: self.content = value",
+    language="OCL"
+)
+constraint_2: Constraint = Constraint(
+    name="constraint_2",
+    context=post_class,
+    expression="context Post::likePost(value:int) post set: self.likesCount = self.likesCount@pre+1",
+    language="OCL"
+)
 
 # =============================================================================
 # 9. Define Associations
@@ -232,6 +244,8 @@ social_media_model = DomainModel(
     name="SocialMediaPlatform",
     types={user_class, post_class, comment_class, privacy_enum},
     associations={user_post_assoc, post_comment_assoc, user_comment_assoc}
+    , constraints={constraint_1, constraint_2}
+
 )
 
 print("✓ Social Media Platform BUML Model created successfully!")
@@ -240,3 +254,7 @@ print(f"  Associations: {[a.name for a in social_media_model.associations]}")
 from besser.generators.python_classes.python_classes_generator import PythonGenerator
 python_gen = PythonGenerator(model=social_media_model, output_dir="output_social_media")
 python_gen.generate()
+
+from besser.generators.testgen.test_generator import TestGenerator
+generator = TestGenerator(model=social_media_model, output_dir="output_social_media")
+generator.generate()

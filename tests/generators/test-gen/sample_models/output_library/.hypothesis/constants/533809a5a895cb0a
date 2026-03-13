@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\_pydev_bundle\pydev_monkey.py
+# hypothesis_version: 6.151.9
+
+['"', '""', '"%s"', '#!/usr/bin/env %s', "'", '-', '--file', '--module', '-W', '-X', '-c', '-m', '.', 'CreateProcess', 'Illegal condition', 'New args: %s', 'None', 'Patched args: %s', 'Patching args: %s', 'YES', '\\', '\\"', '__self__', '_execute_child', '_start_new_thread', 'execl', 'execle', 'execlp', 'execlpe', 'executable', 'execv', 'execve', 'execvp', 'execvpe', 'fork', 'fork_exec', 'im_self', 'jython', 'module', 'original_', 'posix_spawn', 'posix_spawnp', 'pydevd', 'pydevd.py', 'pypy', 'python', 'pyz', 'pyzw', 'spawnl', 'spawnle', 'spawnlp', 'spawnlpe', 'spawnv', 'spawnve', 'spawnvp', 'spawnvpe', 'subprocess', 'thread_analyser', 'utf-8', 'win32', 'zip']

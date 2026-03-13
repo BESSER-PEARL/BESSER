@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\pydevd_plugins\django_debug.py
+# hypothesis_version: 6.151.9
+
+['<unknown source>', 'BaseContext', 'Django Template', 'IncludeNode', 'Node', 'NodeList', 'Source is None\n', 'Source name is %s\n', 'Template', 'TemplateDoesNotExist', 'TemplateSyntaxError', 'TextNode', 'Variable', 'VariableDoesNotExist', '_render', '_resolve_lookup', 'call', 'context', 'django', 'django-line', 'django_breakpoints', 'django_stop', 'find_template', 'line', 'lineno', 'name', 'origin', 'r', 'render', 'replace', 'return', 'self', 'source', 'template', 'token', 'utf-8']

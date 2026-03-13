@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Method, Parameter,
     StringType, IntegerType, FloatType, BooleanType,
     Multiplicity, Enumeration, EnumerationLiteral,
-    BinaryAssociation
+    BinaryAssociation,Constraint
 )
 
 # =============================================================================
@@ -172,7 +172,18 @@ appointment_class = Class(
     attributes={appointment_id_prop, date_prop, time_prop, status_prop},
     methods={schedule_method, cancel_method, complete_method}
 )
-
+constraint_1: Constraint = Constraint(
+    name="constraint_1",
+    context=doctor_class,
+    expression="context Doctor::setAvailability(value:string) post availability: self.available = value",
+    language="OCL"
+)
+constraint_2: Constraint = Constraint(
+    name="constraint_2",
+    context=patient_class,
+    expression="context Patient::updateAge(value:int) post status: self.age = value",
+    language="OCL"
+)
 # =============================================================================
 # 9. Define Associations
 # =============================================================================
@@ -218,7 +229,9 @@ doctor_appointment_assoc = BinaryAssociation(
 hospital_model = DomainModel(
     name="HospitalManagementSystem",
     types={patient_class, doctor_class, appointment_class, appointment_status_enum},
-    associations={patient_appointment_assoc, doctor_appointment_assoc}
+    associations={patient_appointment_assoc, doctor_appointment_assoc},
+    constraints = {constraint_1, constraint_2}
+
 )
 
 print("✓ Hospital Management System BUML Model created successfully!")
@@ -227,3 +240,7 @@ print(f"  Associations: {[a.name for a in hospital_model.associations]}")
 from besser.generators.python_classes.python_classes_generator import PythonGenerator
 python_gen = PythonGenerator(model=hospital_model, output_dir="output_hospital")
 python_gen.generate()
+
+from besser.generators.testgen.test_generator import TestGenerator
+generator = TestGenerator(model=hospital_model, output_dir="output_hospital")
+generator.generate()

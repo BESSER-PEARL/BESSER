@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\_pydev_bundle\_pydev_filesystem_encoding.py
+# hypothesis_version: 6.151.9
+
+['ISO-8859-1', 'decode', 'encode', 'mbcs', 'os.name', 'utf-8', 'win', 'win32']

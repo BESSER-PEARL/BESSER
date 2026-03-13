@@ -26,14 +26,6 @@ class Comment:
         self.commenter = commenter
         
     @property
-    def upvotes(self) -> int:
-        return self.__upvotes
-
-    @upvotes.setter
-    def upvotes(self, upvotes: int):
-        self.__upvotes = upvotes
-
-    @property
     def text(self) -> str:
         return self.__text
 
@@ -42,12 +34,12 @@ class Comment:
         self.__text = text
 
     @property
-    def timestamp(self) -> str:
-        return self.__timestamp
+    def upvotes(self) -> int:
+        return self.__upvotes
 
-    @timestamp.setter
-    def timestamp(self, timestamp: str):
-        self.__timestamp = timestamp
+    @upvotes.setter
+    def upvotes(self, upvotes: int):
+        self.__upvotes = upvotes
 
     @property
     def commentId(self) -> str:
@@ -56,6 +48,14 @@ class Comment:
     @commentId.setter
     def commentId(self, commentId: str):
         self.__commentId = commentId
+
+    @property
+    def timestamp(self) -> str:
+        return self.__timestamp
+
+    @timestamp.setter
+    def timestamp(self, timestamp: str):
+        self.__timestamp = timestamp
 
     @property
     def post(self):
@@ -139,22 +139,6 @@ class Post:
         self.comments = comments if comments is not None else set()
         
     @property
-    def content(self) -> str:
-        return self.__content
-
-    @content.setter
-    def content(self, content: str):
-        self.__content = content
-
-    @property
-    def postId(self) -> str:
-        return self.__postId
-
-    @postId.setter
-    def postId(self, postId: str):
-        self.__postId = postId
-
-    @property
     def likesCount(self) -> int:
         return self.__likesCount
 
@@ -163,12 +147,28 @@ class Post:
         self.__likesCount = likesCount
 
     @property
+    def content(self) -> str:
+        return self.__content
+
+    @content.setter
+    def content(self, content: str):
+        self.__content = content
+
+    @property
     def timestamp(self) -> str:
         return self.__timestamp
 
     @timestamp.setter
     def timestamp(self, timestamp: str):
         self.__timestamp = timestamp
+
+    @property
+    def postId(self) -> str:
+        return self.__postId
+
+    @postId.setter
+    def postId(self, postId: str):
+        self.__postId = postId
 
     @property
     def author(self):
@@ -225,9 +225,15 @@ class Post:
                     
 
     
-    def likePost(self):
-        self.likesCount += 1
+    def likePost(self,like):
+        self.likesCount += like
         print(f"Post {self.postId} liked. Total likes: {self.likesCount}")
+
+
+    
+    def editContent(self, newContent):
+        self.content = newContent
+        print(f"Post {self.postId} has been edited")
 
 
     
@@ -237,29 +243,23 @@ class Post:
         print(f"Content: {self.content}")
 
 
-    
-    def editContent(self, newContent):
-        self.content = newContent
-        print(f"Post {self.postId} has been edited")
-
-
 class User:
 
-    def __init__(self, bio: str, followersCount: int, userId: str, username: str, posts: set["Post"] = None, myComments: set["Comment"] = None):
-        self.bio = bio
-        self.followersCount = followersCount
+    def __init__(self, userId: str, username: str, bio: str, followersCount: int, posts: set["Post"] = None, myComments: set["Comment"] = None):
         self.userId = userId
         self.username = username
+        self.bio = bio
+        self.followersCount = followersCount
         self.posts = posts if posts is not None else set()
         self.myComments = myComments if myComments is not None else set()
         
     @property
-    def followersCount(self) -> int:
-        return self.__followersCount
+    def bio(self) -> str:
+        return self.__bio
 
-    @followersCount.setter
-    def followersCount(self, followersCount: int):
-        self.__followersCount = followersCount
+    @bio.setter
+    def bio(self, bio: str):
+        self.__bio = bio
 
     @property
     def userId(self) -> str:
@@ -270,20 +270,20 @@ class User:
         self.__userId = userId
 
     @property
-    def bio(self) -> str:
-        return self.__bio
-
-    @bio.setter
-    def bio(self, bio: str):
-        self.__bio = bio
-
-    @property
     def username(self) -> str:
         return self.__username
 
     @username.setter
     def username(self, username: str):
         self.__username = username
+
+    @property
+    def followersCount(self) -> int:
+        return self.__followersCount
+
+    @followersCount.setter
+    def followersCount(self, followersCount: int):
+        self.__followersCount = followersCount
 
     @property
     def posts(self):

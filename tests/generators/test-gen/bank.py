@@ -71,12 +71,19 @@ records: BinaryAssociation = BinaryAssociation(
     }
 )
 
+constraint_Customer_2_1: Constraint = Constraint(
+    name="constraint_Customer_2_1",
+    context=Account,
+    expression="context Account::deposit(amount: Real) post BalanceIncreased: self.balance = self.balance@pre + amount",
+    language="OCL"
+)
 # Domain Model
 domain_model = DomainModel(
     name="Class_Diagram",
     types={Transaction, Account, Customer, Branch},
     associations={maintains, owns, records},
     generalizations={},
+    constraints= {constraint_Customer_2_1},
     metadata=None
 )
 
@@ -115,7 +122,6 @@ python_gen.generate()
 # Produces: output/classes.py
 
 # =============================================================================
-# 9. Step 2 — Generate Hypothesis + pytest test suite [5]
 # =============================================================================
 test_gen = TestGenerator(model=domain_model, output_dir="output_bank")
 test_gen.generate()

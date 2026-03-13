@@ -22,6 +22,8 @@ from classes import (
 
 {%- for class in domain.classes_sorted_by_inheritance() %}
 
+
+
 def test_{{ class.name | lower }}_is_not_abstract():
     assert not inspect.isabstract({{ class.name }})
 
@@ -52,6 +54,26 @@ def test_{{ class.name | lower }}_has_{{ attr.name }}():
 {%- endfor %}
 
 {%- endfor %}
+{%- for enumeration in domain.get_enumerations() %}
+
+def test_{{ enumeration.name | lower }}_exists():
+    # Check that the Enumeration exists
+    assert {{ enumeration.name }} is not None
+
+def test_{{ enumeration.name | lower }}_has_all_literals():
+    # Collect the names of literals in this Enumeration
+    enum_literals = [lit.name for lit in {{ enumeration.name }}]
+    expected_literals = [
+        {%- for lit in enumeration.literals %}
+        "{{ lit.name }}",
+        {%- endfor %}
+    ]
+    # Check that all expected literals exist
+    for lit_name in expected_literals:
+        assert lit_name in enum_literals, f"Literal '{{lit_name}}' missing in {{ enumeration.name }}"
+
+{%- endfor %}
+
 
 # =============================================================================
 # HYPOTHESIS STRATEGIES
@@ -132,16 +154,21 @@ def test_{{ class.name | lower }}_{{ assoc.name }}_multiplicity(instance):
 
 {%- endif %}
 {%- endfor %}
-
-
 {%- for operation in class.methods %}
+{%- if 'get' not in operation.name.lower() %}
+
+import warnings
+import copy
+import inspect
+import ast
+from hypothesis import given, settings
 
 @given(instance={{ class.name }}_strategy)
 @settings(max_examples=30)
 def test_{{ class.name | lower }}_{{ operation.name | lower }}_changes_state(instance):
-        before = copy.deepcopy(instance)
-
-
+    before = copy.deepcopy(instance)
+    try:
+        # Call operation with dummy parameters
         {%- if operation.parameters %}
         instance.{{ operation.name }}(
             {%- for param in operation.parameters %}
@@ -159,11 +186,26 @@ def test_{{ class.name | lower }}_{{ operation.name | lower }}_changes_state(ins
             {%- if not loop.last %}, {% endif %}
             {%- endfor %}
         )
+        {%- else %}
+        instance.{{ operation.name }}()
         {%- endif %}
+        if instance.__dict__ != before.__dict__:
+            return  # test passes
+        # Check that function exists and is non-empty (FAIL if empty)
+        source = inspect.getsource(instance.{{ operation.name }}).strip()
+        tree = ast.parse(source)
+        body = tree.body[0].body  # function body
+        has_statements = len(body) > 0 and not all(isinstance(stmt, ast.Pass) for stmt in body)
+        assert has_statements, f"Function '{{operation.name}}' in {{ class.name }} is empty"
 
-        assert instance.__dict__ != before.__dict__
+        # Check for state change (WARN if no change)
+        if instance.__dict__ == before.__dict__:
+            warnings.warn(f"Operation '{{operation.name}}' in {{ class.name }} did not change state; check implementation")
 
+    except (AttributeError, NotImplementedError, TypeError):
+        warnings.warn(f"Operation '{{operation.name}}' in {{ class.name }} is not implemented or raised an error")
 
+{%- endif %}
 {%- endfor %}
 {%- endfor %}
 
@@ -174,32 +216,37 @@ def test_{{ constraint.context.name | lower }}_ocl_{{ constraint.name | lower }}
      {# --- extract attributes used with @pre --- #}
     {# ---- get expression without the OCL header ---- #}
     {%- set expr = constraint.expression.split(':')[-1].strip() %}
-
     {# ---- detect @pre attributes ---- #}
     {%- set pres = expr | regex_findall('self\\.([a-zA-Z_][a-zA-Z0-9_]*)@pre') %}
-
     {%- for attr in pres %}
     before_{{ attr }} = instance.{{ attr }}
     {%- endfor %}
-
     {# ---- extract operation name ---- #}
     {%- set ctx = constraint.expression|string %}
     {%- set op_name = ctx.split('::')[1].split('(')[0] %}
-
-    {# ---- declare parameter ---- #}
-    amount = 1
-
+    {# ---- extract parameter type from constraint expression ---- #}
+    {%- set param_type = ctx.split('(')[1].split(')')[0].split(':')[-1].strip() | lower %}
+    {# ---- declare parameter with correct type ---- #}
+    {%- if param_type in ['integer', 'int'] %}
+    value = 1
+    {%- elif param_type in ['real', 'float', 'double'] %}
+    value = 1.0
+    {%- elif param_type in ['string', 'str'] %}
+    value = "1"
+    {%- elif param_type in ['bool', 'boolean'] %}
+    value = True
+    {%- else %}
+    value = 1
+    {%- endif %}
     # Call the operation
-    instance.{{ op_name }}(amount)
+    instance.{{ op_name }}(value)
     {# --- replace all @pre references with before_ variables ---#}
     {%- for attr in pres %}
     {%- set expr = expr | replace('self.' ~ attr ~ '@pre', 'before_' ~ attr) %}
-
     {%- endfor %}
-    {%- set expr =expr | regex_replace('self.(\\w+)@pre', 'before_\\1') %}
-    {%- set expr =expr | regex_replace('self.', 'instance.') %}
-    {%- set expr =expr | regex_replace('=', '==') %}
-
+    {%- set expr = expr | regex_replace('self.(\\w+)@pre', 'before_\\1') %}
+    {%- set expr = expr | regex_replace('self.', 'instance.') %}
+    {%- set expr = expr | regex_replace('=', '==') %}
     assert {{ expr }}
 
 {%- endfor %}

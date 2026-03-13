@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\pydevd_concurrency_analyser\pydevd_concurrency_logger.py
+# hypothesis_version: 6.151.9
+
+[145, 1000000, ' event="%s"', ' file="%s"', ' line="%s"', ' lock_id="%s"', ' name="%s"', ' parent="%s"', ' thread_id="%s"', ' time="%s"', ' type="%s"', '-', '/>_= \t', '<', '</frame>', '</xml>', '<xml>', '>', '></', 'Task', 'Thread', '__enter__', '__exit__', '__init__', '_begin', '_end', '_get', '_put', '_pydev_join_called', '_pydev_run_patched', '_step', '_stop', 'acquire', 'acquire_begin', 'acquire_end', 'asyncio_event', 'attr', 'call_begin', 'call_end', 'code_name', 'decode', 'done', 'f_back', 'file="%s" line="%s">', 'get', 'join', 'lock', 'obj', 'put', 'pydev_after_run_call', 'pydevd.py', 'queue.py', 'release', 'release_end', 'run', 'self', 'send', 'set_result', 'start', 'stop', 'thread', 'threading.py', 'threading_event', 'utf-8']

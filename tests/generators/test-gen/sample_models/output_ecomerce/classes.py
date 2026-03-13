@@ -28,12 +28,12 @@ class Order:
         self.products = products if products is not None else set()
         
     @property
-    def orderDate(self) -> str:
-        return self.__orderDate
+    def orderId(self) -> str:
+        return self.__orderId
 
-    @orderDate.setter
-    def orderDate(self, orderDate: str):
-        self.__orderDate = orderDate
+    @orderId.setter
+    def orderId(self, orderId: str):
+        self.__orderId = orderId
 
     @property
     def status(self) -> str:
@@ -44,12 +44,12 @@ class Order:
         self.__status = status
 
     @property
-    def orderId(self) -> str:
-        return self.__orderId
+    def orderDate(self) -> str:
+        return self.__orderDate
 
-    @orderId.setter
-    def orderId(self, orderId: str):
-        self.__orderId = orderId
+    @orderDate.setter
+    def orderDate(self, orderDate: str):
+        self.__orderDate = orderDate
 
     @property
     def totalAmount(self) -> float:
@@ -58,32 +58,6 @@ class Order:
     @totalAmount.setter
     def totalAmount(self, totalAmount: float):
         self.__totalAmount = totalAmount
-
-    @property
-    def customer(self):
-        return self.__customer
-
-    @customer.setter
-    def customer(self, value):
-        # Bidirectional consistency
-        old_value = getattr(self, f"_Order__customer", None)
-        self.__customer = value
-        
-        # Remove self from old opposite end
-        if old_value is not None:
-            if hasattr(old_value, "orders"):
-                opp_val = getattr(old_value, "orders", None)
-                if isinstance(opp_val, set):
-                    opp_val.discard(self)
-                
-        # Add self to new opposite end
-        if value is not None:
-            if hasattr(value, "orders"):
-                opp_val = getattr(value, "orders", None)
-                if opp_val is None:
-                    setattr(value, "orders", set([self]))
-                elif isinstance(opp_val, set):
-                    opp_val.add(self)
 
     @property
     def products(self):
@@ -116,18 +90,37 @@ class Order:
                         opp_val.add(self)
                     
 
+    @property
+    def customer(self):
+        return self.__customer
+
+    @customer.setter
+    def customer(self, value):
+        # Bidirectional consistency
+        old_value = getattr(self, f"_Order__customer", None)
+        self.__customer = value
+        
+        # Remove self from old opposite end
+        if old_value is not None:
+            if hasattr(old_value, "orders"):
+                opp_val = getattr(old_value, "orders", None)
+                if isinstance(opp_val, set):
+                    opp_val.discard(self)
+                
+        # Add self to new opposite end
+        if value is not None:
+            if hasattr(value, "orders"):
+                opp_val = getattr(value, "orders", None)
+                if opp_val is None:
+                    setattr(value, "orders", set([self]))
+                elif isinstance(opp_val, set):
+                    opp_val.add(self)
+
     
-    def placeOrder(self):
-        self.status = "Pending"
+    def placeOrder(self,value:str):
+        self.status = value
         print(f"Order {self.orderId} placed on {self.orderDate}")
         print(f"Total amount: ${self.totalAmount:.2f}")
-
-
-    
-    def calculateTax(self, taxRate):
-        tax = self.totalAmount * taxRate
-        print(f"Tax for order {self.orderId}: ${tax:.2f}")
-        return tax
 
 
     
@@ -135,6 +128,13 @@ class Order:
         old_status = self.status
         self.status = newStatus
         print(f"Order {self.orderId} status updated: {old_status} -> {newStatus}")
+
+
+    
+    def calculateTax(self, taxRate):
+        tax = self.totalAmount * taxRate
+        print(f"Tax for order {self.orderId}: ${tax:.2f}")
+        return tax
 
 
 class Product:
@@ -155,12 +155,12 @@ class Product:
         self.__name = name
 
     @property
-    def productId(self) -> str:
-        return self.__productId
+    def price(self) -> float:
+        return self.__price
 
-    @productId.setter
-    def productId(self, productId: str):
-        self.__productId = productId
+    @price.setter
+    def price(self, price: float):
+        self.__price = price
 
     @property
     def stock(self) -> int:
@@ -171,12 +171,12 @@ class Product:
         self.__stock = stock
 
     @property
-    def price(self) -> float:
-        return self.__price
+    def productId(self) -> str:
+        return self.__productId
 
-    @price.setter
-    def price(self, price: float):
-        self.__price = price
+    @productId.setter
+    def productId(self, productId: str):
+        self.__productId = productId
 
     @property
     def orders(self):
@@ -220,19 +220,19 @@ class Product:
 
 
     
-    def getTotalValue(self):
-        total = self.price * self.stock
-        print(f"Total inventory value for '{self.name}': ${total:.2f}")
-        return total
-
-
-    
     def reduceStock(self, quantity):
         if self.stock >= quantity:
             self.stock -= quantity
             print(f"Stock reduced by {quantity}. New stock: {self.stock}")
         else:
             print(f"Cannot reduce stock. Current stock: {self.stock}")
+
+
+    
+    def getTotalValue(self):
+        total = self.price * self.stock
+        print(f"Total inventory value for '{self.name}': ${total:.2f}")
+        return total
 
 
 class Customer:
@@ -245,22 +245,6 @@ class Customer:
         self.orders = orders if orders is not None else set()
         
     @property
-    def password(self) -> str:
-        return self.__password
-
-    @password.setter
-    def password(self, password: str):
-        self.__password = password
-
-    @property
-    def customerId(self) -> str:
-        return self.__customerId
-
-    @customerId.setter
-    def customerId(self, customerId: str):
-        self.__customerId = customerId
-
-    @property
     def address(self) -> str:
         return self.__address
 
@@ -269,12 +253,28 @@ class Customer:
         self.__address = address
 
     @property
+    def password(self) -> str:
+        return self.__password
+
+    @password.setter
+    def password(self, password: str):
+        self.__password = password
+
+    @property
     def username(self) -> str:
         return self.__username
 
     @username.setter
     def username(self, username: str):
         self.__username = username
+
+    @property
+    def customerId(self) -> str:
+        return self.__customerId
+
+    @customerId.setter
+    def customerId(self, customerId: str):
+        self.__customerId = customerId
 
     @property
     def orders(self):
@@ -310,13 +310,6 @@ class Customer:
 
 
     
-    def updateAddress(self, newAddress):
-        old_address = self.address
-        self.address = newAddress
-        print(f"Address updated from '{old_address}' to '{newAddress}'")
-
-
-    
     def login(self, inputPassword):
         if self.password == inputPassword:
             print(f"Customer {self.username} logged in successfully")
@@ -324,4 +317,11 @@ class Customer:
         else:
             print("Invalid password")
             return False
+
+
+    
+    def updateAddress(self, newAddress):
+        old_address = self.address
+        self.address = newAddress
+        print(f"Address updated from '{old_address}' to '{newAddress}'")
 

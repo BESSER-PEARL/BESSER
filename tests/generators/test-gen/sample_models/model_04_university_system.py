@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Method, Parameter,
     StringType, IntegerType, FloatType, BooleanType,
     Multiplicity, Enumeration, EnumerationLiteral,
-    BinaryAssociation
+    BinaryAssociation,Constraint
 )
 
 # =============================================================================
@@ -176,6 +176,18 @@ enrollment_class = Class(
     methods={register_method, assign_grade_method, drop_course_method}
 )
 
+constraint_1: Constraint = Constraint(
+    name="constraint_1",
+    context=enrollment_class,
+    expression="context Enrollment::assignGrade(value:string) post availability: self.grade = value",
+    language="OCL"
+)
+constraint_2: Constraint = Constraint(
+    name="constraint_2",
+    context=student_class,
+    expression="context Student::updateGpa(value:float) post gpa: self.gpa = value",
+    language="OCL"
+)
 # =============================================================================
 # 9. Define Associations
 # =============================================================================
@@ -222,6 +234,8 @@ university_model = DomainModel(
     name="UniversitySystem",
     types={student_class, course_class, enrollment_class, enrollment_status_enum},
     associations={student_enrollment_assoc, course_enrollment_assoc}
+    ,    constraints = {constraint_1, constraint_2}
+
 )
 
 print("✓ University System BUML Model created successfully!")
@@ -230,3 +244,7 @@ print(f"  Associations: {[a.name for a in university_model.associations]}")
 from besser.generators.python_classes.python_classes_generator import PythonGenerator
 python_gen = PythonGenerator(model=university_model, output_dir="output_university")
 python_gen.generate()
+
+from besser.generators.testgen.test_generator import TestGenerator
+generator = TestGenerator(model=university_model, output_dir="output_university")
+generator.generate()

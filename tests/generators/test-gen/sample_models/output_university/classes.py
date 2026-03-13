@@ -27,14 +27,6 @@ class Enrollment:
         self.course = course
         
     @property
-    def enrollmentDate(self) -> str:
-        return self.__enrollmentDate
-
-    @enrollmentDate.setter
-    def enrollmentDate(self, enrollmentDate: str):
-        self.__enrollmentDate = enrollmentDate
-
-    @property
     def enrollmentId(self) -> str:
         return self.__enrollmentId
 
@@ -51,38 +43,20 @@ class Enrollment:
         self.__status = status
 
     @property
+    def enrollmentDate(self) -> str:
+        return self.__enrollmentDate
+
+    @enrollmentDate.setter
+    def enrollmentDate(self, enrollmentDate: str):
+        self.__enrollmentDate = enrollmentDate
+
+    @property
     def grade(self) -> str:
         return self.__grade
 
     @grade.setter
     def grade(self, grade: str):
         self.__grade = grade
-
-    @property
-    def student(self):
-        return self.__student
-
-    @student.setter
-    def student(self, value):
-        # Bidirectional consistency
-        old_value = getattr(self, f"_Enrollment__student", None)
-        self.__student = value
-        
-        # Remove self from old opposite end
-        if old_value is not None:
-            if hasattr(old_value, "enrollments"):
-                opp_val = getattr(old_value, "enrollments", None)
-                if isinstance(opp_val, set):
-                    opp_val.discard(self)
-                
-        # Add self to new opposite end
-        if value is not None:
-            if hasattr(value, "enrollments"):
-                opp_val = getattr(value, "enrollments", None)
-                if opp_val is None:
-                    setattr(value, "enrollments", set([self]))
-                elif isinstance(opp_val, set):
-                    opp_val.add(self)
 
     @property
     def course(self):
@@ -110,6 +84,38 @@ class Enrollment:
                 elif isinstance(opp_val, set):
                     opp_val.add(self)
 
+    @property
+    def student(self):
+        return self.__student
+
+    @student.setter
+    def student(self, value):
+        # Bidirectional consistency
+        old_value = getattr(self, f"_Enrollment__student", None)
+        self.__student = value
+        
+        # Remove self from old opposite end
+        if old_value is not None:
+            if hasattr(old_value, "enrollments"):
+                opp_val = getattr(old_value, "enrollments", None)
+                if isinstance(opp_val, set):
+                    opp_val.discard(self)
+                
+        # Add self to new opposite end
+        if value is not None:
+            if hasattr(value, "enrollments"):
+                opp_val = getattr(value, "enrollments", None)
+                if opp_val is None:
+                    setattr(value, "enrollments", set([self]))
+                elif isinstance(opp_val, set):
+                    opp_val.add(self)
+
+    
+    def dropCourse(self):
+        self.status = "Dropped"
+        print(f"Enrollment {self.enrollmentId} has been dropped")
+
+
     
     def assignGrade(self, grade):
         self.grade = grade
@@ -122,12 +128,6 @@ class Enrollment:
         self.status = "Active"
         self.grade = "N/A"
         print(f"Enrollment {self.enrollmentId} registered on {self.enrollmentDate}")
-
-
-    
-    def dropCourse(self):
-        self.status = "Dropped"
-        print(f"Enrollment {self.enrollmentId} has been dropped")
 
 
 class Course:
@@ -148,20 +148,20 @@ class Course:
         self.__courseId = courseId
 
     @property
-    def title(self) -> str:
-        return self.__title
-
-    @title.setter
-    def title(self, title: str):
-        self.__title = title
-
-    @property
     def credits(self) -> int:
         return self.__credits
 
     @credits.setter
     def credits(self, credits: int):
         self.__credits = credits
+
+    @property
+    def title(self) -> str:
+        return self.__title
+
+    @title.setter
+    def title(self, title: str):
+        self.__title = title
 
     @property
     def maxStudents(self) -> int:
@@ -200,9 +200,8 @@ class Course:
                     
 
     
-    def createCourse(self):
-        print(f"Course created: {self.title}")
-        print(f"ID: {self.courseId}, Credits: {self.credits}, Max Students: {self.maxStudents}")
+    def getCourseInfo(self):
+        return f"{self.courseId}: {self.title} ({self.credits} credits)"
 
 
     
@@ -216,8 +215,9 @@ class Course:
 
 
     
-    def getCourseInfo(self):
-        return f"{self.courseId}: {self.title} ({self.credits} credits)"
+    def createCourse(self):
+        print(f"Course created: {self.title}")
+        print(f"ID: {self.courseId}, Credits: {self.credits}, Max Students: {self.maxStudents}")
 
 
 class Student:
@@ -230,12 +230,12 @@ class Student:
         self.enrollments = enrollments if enrollments is not None else set()
         
     @property
-    def major(self) -> str:
-        return self.__major
+    def studentId(self) -> str:
+        return self.__studentId
 
-    @major.setter
-    def major(self, major: str):
-        self.__major = major
+    @studentId.setter
+    def studentId(self, studentId: str):
+        self.__studentId = studentId
 
     @property
     def gpa(self) -> float:
@@ -246,12 +246,12 @@ class Student:
         self.__gpa = gpa
 
     @property
-    def studentId(self) -> str:
-        return self.__studentId
+    def major(self) -> str:
+        return self.__major
 
-    @studentId.setter
-    def studentId(self, studentId: str):
-        self.__studentId = studentId
+    @major.setter
+    def major(self, major: str):
+        self.__major = major
 
     @property
     def name(self) -> str:
@@ -290,16 +290,16 @@ class Student:
                     
 
     
+    def enrollStudent(self):
+        print(f"Student enrolled: {self.name}")
+        print(f"ID: {self.studentId}, Major: {self.major}, GPA: {self.gpa}")
+
+
+    
     def updateGpa(self, newGpa):
         old_gpa = self.gpa
         self.gpa = newGpa
         print(f"GPA updated for {self.name}: {old_gpa:.2f} -> {newGpa:.2f}")
-
-
-    
-    def enrollStudent(self):
-        print(f"Student enrolled: {self.name}")
-        print(f"ID: {self.studentId}, Major: {self.major}, GPA: {self.gpa}")
 
 
     

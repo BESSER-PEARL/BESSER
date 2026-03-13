@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pycharm\_jb_runner_tools.py
+# hypothesis_version: 6.151.9
+
+[1000, 86400000, '(', '--', '--offset', '--path', '--target', '.', '/', 'Error', 'Failure', 'JB_DISABLE_BUFFERING', 'LOCAL', 'PWD', 'PYCHARM_HELPERS_DIR', 'Python target to run', 'Root node offset', 'Skip', '^([^\\s)(]+)(\\(.+\\))$', 'append', 'duration', 'durationStrategy', 'enteredTheMatrix', 'locationHint', 'manual', 'metainfo', 'name', 'nodeId', 'open', 'parentNodeId', 'python<{0}>://{1}', 'setUpClass', 'tearDownClass', 'test setup', 'test teardown', 'testCount', 'testFinished', 'testIgnored', 'testStarted', 'testSuiteFinished', 'testSuiteStarted']

@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\pydevd_concurrency_analyser\pydevd_thread_wrappers.py
+# hypothesis_version: 6.151.9
+
+['__enter__', '__exit__', 'wrapped_object']

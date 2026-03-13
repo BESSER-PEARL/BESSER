@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Method, Parameter,
     StringType, IntegerType, FloatType, BooleanType,
     Multiplicity, Enumeration, EnumerationLiteral,
-    BinaryAssociation
+    BinaryAssociation,Constraint
 )
 
 # =============================================================================
@@ -131,10 +131,10 @@ def getTotalValue(self):
 # =============================================================================
 place_order_method = Method(
     name="placeOrder",
-    parameters=[],
+    parameters=[Parameter(name="value", type=StringType)],
     code="""
-def placeOrder(self):
-    self.status = "Pending"
+def placeOrder(self,value:str):
+    self.status = value
     print(f"Order {self.orderId} placed on {self.orderDate}")
     print(f"Total amount: ${self.totalAmount:.2f}")
 """
@@ -183,6 +183,19 @@ order_class = Class(
     methods={place_order_method, update_status_method, calculate_tax_method}
 )
 
+
+constraint_1: Constraint = Constraint(
+    name="constraint_1",
+    context=order_class,
+    expression="context Order::placeOrder(value:string) post placeOrder: self.status = value",
+    language="OCL"
+)
+constraint_2: Constraint = Constraint(
+    name="constraint_2",
+    context=order_class,
+    expression="context Order::updateStatus(value:string) post status: self.status = value",
+    language="OCL"
+)
 # =============================================================================
 # 9. Define Associations
 # =============================================================================
@@ -221,14 +234,14 @@ order_product_assoc = BinaryAssociation(
     name="Contains",
     ends={order_end, products_end}
 )
-
 # =============================================================================
 # 10. Build the DomainModel
 # =============================================================================
 ecommerce_model = DomainModel(
     name="EcommerceSystem",
     types={customer_class, product_class, order_class, order_status_enum},
-    associations={customer_order_assoc, order_product_assoc}
+    associations={customer_order_assoc, order_product_assoc},
+    constraints={constraint_1,constraint_2}
 )
 
 print("✓ E-commerce System BUML Model created successfully!")
@@ -237,3 +250,7 @@ print(f"  Associations: {[a.name for a in ecommerce_model.associations]}")
 from besser.generators.python_classes.python_classes_generator import PythonGenerator
 python_gen = PythonGenerator(model=ecommerce_model, output_dir="output_ecomerce")
 python_gen.generate()
+
+from besser.generators.testgen.test_generator import TestGenerator
+generator = TestGenerator(model=ecommerce_model, output_dir="output_ecomerce")
+generator.generate()

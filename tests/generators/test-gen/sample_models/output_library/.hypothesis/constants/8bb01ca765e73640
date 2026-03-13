@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\pydevd_tracing.py
+# hypothesis_version: 6.151.9
+
+['%s', '%s\n', 'Call Location:\n', 'Error loading: %s', 'aarch64', 'amd64', 'attach.dylib', 'attach_%s.dll', 'attach_linux_%s.so', 'getswitchinterval', 'pydev_do_not_trace', 'pydevd_tracing.py', 'threading.py', 'x86']

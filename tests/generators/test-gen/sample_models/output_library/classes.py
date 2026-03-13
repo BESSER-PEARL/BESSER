@@ -116,8 +116,8 @@ class Loan:
 
 
     
-    def createLoan(self):
-        self.returned = False
+    def createLoan(self,val):
+        self.returned = val
         print(f"Loan {self.loanId} created on {self.loanDate}")
         print(f"Due date: {self.dueDate}")
 

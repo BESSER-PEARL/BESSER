@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural import (
     DomainModel, Class, Property, Method, Parameter,
     StringType, IntegerType, FloatType, BooleanType,
     Multiplicity, Enumeration, EnumerationLiteral,
-    BinaryAssociation
+    BinaryAssociation,Constraint
 )
 
 # =============================================================================
@@ -180,7 +180,18 @@ dine_order_class = Class(
     attributes={dine_order_id_prop, order_time_prop, order_total_amount_prop, dine_order_status_prop},
     methods={place_dine_order_method, update_dine_order_status_method, calculate_tip_method}
 )
-
+constraint_1: Constraint = Constraint(
+    name="constraint_1",
+    context=menu_item_class,
+    expression="context Menuitem::setAvailability(value:bool) post set: self.available = value",
+    language="OCL"
+)
+constraint_2: Constraint = Constraint(
+    name="constraint_2",
+    context=menu_item_class,
+    expression="context Menuitem::updatePrice(value:float) post set: self.price =value",
+    language="OCL"
+)
 # =============================================================================
 # 9. Define Associations
 # =============================================================================
@@ -227,6 +238,8 @@ restaurant_model = DomainModel(
     name="RestaurantManagementSystem",
     types={menu_item_class, table_class, dine_order_class, menu_category_enum},
     associations={table_order_assoc, order_menuitem_assoc}
+    , constraints={constraint_1, constraint_2}
+
 )
 
 print("✓ Restaurant Management System BUML Model created successfully!")
@@ -236,3 +249,7 @@ print(f"  Associations: {[a.name for a in restaurant_model.associations]}")
 from besser.generators.python_classes.python_classes_generator import PythonGenerator
 python_gen = PythonGenerator(model=restaurant_model, output_dir="output_restaurant")
 python_gen.generate()
+
+from besser.generators.testgen.test_generator import TestGenerator
+generator = TestGenerator(model=restaurant_model, output_dir="output_restaurant")
+generator.generate()

@@ -27,12 +27,12 @@ class Reservation:
         self.room = room
         
     @property
-    def reservationId(self) -> str:
-        return self.__reservationId
+    def checkInDate(self) -> str:
+        return self.__checkInDate
 
-    @reservationId.setter
-    def reservationId(self, reservationId: str):
-        self.__reservationId = reservationId
+    @checkInDate.setter
+    def checkInDate(self, checkInDate: str):
+        self.__checkInDate = checkInDate
 
     @property
     def totalCost(self) -> float:
@@ -43,12 +43,12 @@ class Reservation:
         self.__totalCost = totalCost
 
     @property
-    def checkInDate(self) -> str:
-        return self.__checkInDate
+    def reservationId(self) -> str:
+        return self.__reservationId
 
-    @checkInDate.setter
-    def checkInDate(self, checkInDate: str):
-        self.__checkInDate = checkInDate
+    @reservationId.setter
+    def reservationId(self, reservationId: str):
+        self.__reservationId = reservationId
 
     @property
     def checkOutDate(self) -> str:
@@ -141,12 +141,12 @@ class Room:
         self.bookings = bookings if bookings is not None else set()
         
     @property
-    def pricePerNight(self) -> float:
-        return self.__pricePerNight
+    def roomType(self) -> str:
+        return self.__roomType
 
-    @pricePerNight.setter
-    def pricePerNight(self, pricePerNight: float):
-        self.__pricePerNight = pricePerNight
+    @roomType.setter
+    def roomType(self, roomType: str):
+        self.__roomType = roomType
 
     @property
     def roomNumber(self) -> str:
@@ -157,20 +157,20 @@ class Room:
         self.__roomNumber = roomNumber
 
     @property
+    def pricePerNight(self) -> float:
+        return self.__pricePerNight
+
+    @pricePerNight.setter
+    def pricePerNight(self, pricePerNight: float):
+        self.__pricePerNight = pricePerNight
+
+    @property
     def available(self) -> bool:
         return self.__available
 
     @available.setter
     def available(self, available: bool):
         self.__available = available
-
-    @property
-    def roomType(self) -> str:
-        return self.__roomType
-
-    @roomType.setter
-    def roomType(self, roomType: str):
-        self.__roomType = roomType
 
     @property
     def bookings(self):
@@ -208,16 +208,16 @@ class Room:
 
 
     
-    def getRoomDetails(self):
-        status = "Available" if self.available else "Occupied"
-        return f"Room {self.roomNumber} - {self.roomType} (${self.pricePerNight}/night) - {status}"
-
-
-    
     def setAvailable(self, status):
         self.available = status
         status_text = "available" if status else "occupied"
         print(f"Room {self.roomNumber} is now {status_text}")
+
+
+    
+    def getRoomDetails(self):
+        status = "Available" if self.available else "Occupied"
+        return f"Room {self.roomNumber} - {self.roomType} (${self.pricePerNight}/night) - {status}"
 
 
 class Guest:
@@ -229,6 +229,22 @@ class Guest:
         self.loyaltyPoints = loyaltyPoints
         self.reservations = reservations if reservations is not None else set()
         
+    @property
+    def guestId(self) -> str:
+        return self.__guestId
+
+    @guestId.setter
+    def guestId(self, guestId: str):
+        self.__guestId = guestId
+
+    @property
+    def name(self) -> str:
+        return self.__name
+
+    @name.setter
+    def name(self, name: str):
+        self.__name = name
+
     @property
     def loyaltyPoints(self) -> int:
         return self.__loyaltyPoints
@@ -244,22 +260,6 @@ class Guest:
     @email.setter
     def email(self, email: str):
         self.__email = email
-
-    @property
-    def name(self) -> str:
-        return self.__name
-
-    @name.setter
-    def name(self, name: str):
-        self.__name = name
-
-    @property
-    def guestId(self) -> str:
-        return self.__guestId
-
-    @guestId.setter
-    def guestId(self, guestId: str):
-        self.__guestId = guestId
 
     @property
     def reservations(self):
@@ -290,13 +290,6 @@ class Guest:
                     
 
     
-    def addLoyaltyPoints(self, points):
-        self.loyaltyPoints += points
-        print(f"{points} loyalty points added to {self.name}")
-        print(f"Total loyalty points: {self.loyaltyPoints}")
-
-
-    
     def getGuestInfo(self):
         return f"Guest: {self.name} (ID: {self.guestId})\nLoyalty Points: {self.loyaltyPoints}"
 
@@ -305,4 +298,11 @@ class Guest:
     def checkIn(self):
         print(f"Guest {self.name} checked in")
         print(f"ID: {self.guestId}, Email: {self.email}")
+
+
+    
+    def addLoyaltyPoints(self, points):
+        self.loyaltyPoints += points
+        print(f"{points} loyalty points added to {self.name}")
+        print(f"Total loyalty points: {self.loyaltyPoints}")
 

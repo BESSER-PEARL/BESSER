@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\_pydevd_bundle\pydevd_constants.py
+# hypothesis_version: 6.151.9
+
+[1000, '000001', '<Null>', '@', 'ASYNCIO_DEBUGGER_ENV', 'ASYNCIO_REPL', 'BaseHTTPServer', 'CPython', 'DISPLAY', 'False', 'GEVENT_SUPPORT', 'Null', 'PYCHARM_ATTACH', 'PYCHARM_DEBUG', 'PYDEV_DEBUG', 'Queue', 'SimpleXMLRPCServer', 'SocketServer', 'True', '_', '__', '__builtin__', '__main__', '__pydev_val__', '__pydevd_id__', '__pydevd_value_async', '_thread', 'aarch64', 'arm64', 'biufc', 'builtins', 'cli', 'console_main', 'darwin', 'fc', 'here\n', 'http.server', 'linux', 'os.name', 'pid_%s_id_%s', 'pydevd', 'queue', 'select', 'socket', 'socketserver', 'stackless', 'thread', 'threading', 'time', 'win32', 'windows', 'xmlrpc.client', 'xmlrpc.server', 'xmlrpclib']

@@ -1,0 +1,4 @@
+# file: C:\Program Files\JetBrains\PyCharm Community Edition 2023.3.2\plugins\python-ce\helpers\pydev\_pydevd_bundle\pydevd_vars.py
+# hypothesis_version: 6.151.9
+
+[100, '  -  ', '%', '%s\n', '%s=%s', '*', '.', '.5f', '/', '</headerdata>\n', '<custom_operation>', '<row index="%s"/>\n', '<string>', '<xml>%s</xml>', '@LINE@', '@_@TAB_CHAR@_@', 'BY_ID', 'C_CONTIGUOUS', 'DataFrame', 'EXECFILE', 'EXPRESSION', 'GLOBAL', 'GeoDataFrame', 'GeoSeries', 'Globals', 'O', 'Series', '[', '[0:%s, 0:%s]', '[0:%s]', '[0]', ']', '_%s%s', '__', '__file__', '__name__', 'd', 'dumping frames\n', 'eval', 'f', 'i', 'inf', 'ndarray', 's', 'u']

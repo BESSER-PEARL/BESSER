@@ -591,7 +591,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         raw_config = json_data.get("config") if isinstance(json_data.get("config"), dict) else None
         fallback_config = input_data.config if isinstance(input_data.config, dict) else None
         base_config = raw_config if raw_config is not None else fallback_config
-        if not base_config:
+        if base_config is None:
             raise HTTPException(status_code=400, detail="Config is required for transformation")
 
         print(f"[Agent transform] config: {json.dumps(base_config, indent=2, default=str)}")

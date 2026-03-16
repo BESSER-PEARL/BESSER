@@ -41,22 +41,56 @@ class SQLGenerator(GeneratorInterface):
 
 from sqlalchemy.schema import CreateTable
 import os
+import re
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
 sql_file_path = os.path.join(current_directory, f"tables_{dialect}.sql")
 
 ddl_statements = []
 
+
 # --- Emit ENUM types ---
-for table in Base.metadata.tables.values():
-    for col in table.columns:
-        if isinstance(col.type, Enum):
-            enum_name = col.type.name or f"{{col.name}}_enum"
-            enum_values = [repr(e.value) for e in col.type.enum_class]
-            ddl_statements.append(f"CREATE TYPE {{enum_name}} AS ENUM ({{', '.join(enum_values)}});")
+if '{dialect}'.lower() != 'oracle':
+    for table in Base.metadata.tables.values():
+        for col in table.columns:
+            if isinstance(col.type, Enum):
+                enum_name = getattr(col.type, 'name', None) or (getattr(col, 'name', 'unknown_enum') + '_enum')
+                enum_class = getattr(col.type, 'enum_class', None)
+                enum_values = [repr(e.value) for e in enum_class] if enum_class else []
+                ddl_statements.append(f"CREATE TYPE {{enum_name}} AS ENUM ({{', '.join(enum_values)}});")
 
 for table in Base.metadata.sorted_tables:
-    ddl_statements.append(str(CreateTable(table).compile(engine)))
+    ddl = str(CreateTable(table).compile(engine))
+    # For Oracle, add CHECK constraint for enum columns
+    if '{dialect}'.lower() == 'oracle':
+        for col in table.columns:
+            enum_class = getattr(col.type, 'enum_class', None)
+            if enum_class:
+                enum_values = [repr(e.value) for e in enum_class]
+                col_name = col.name
+                # Try both quoted and unquoted column names
+                quoted_col = f'"{{col_name}}"'
+                unquoted_col = col_name
+                
+                # Search for column definition (quoted or unquoted)
+                search_patterns = [
+                    (f'{{quoted_col}} VARCHAR', quoted_col),  # Column is quoted in DDL
+                    (f'{{unquoted_col}} VARCHAR', unquoted_col)  # Column is unquoted in DDL
+                ]
+                
+                for search_str, check_col_ref in search_patterns:
+                    if search_str in ddl:
+                        # Use the same column reference style (quoted/unquoted) in CHECK
+                        check_constraint = f' CHECK ({{check_col_ref}} IN ({{", ".join(enum_values)}}))'
+                        # Find the end of this column's NOT NULL clause
+                        idx = ddl.find(search_str)
+                        not_null_idx = ddl.find('NOT NULL', idx)
+                        if not_null_idx > 0:
+                            end_idx = not_null_idx + len('NOT NULL')
+                            # Insert the CHECK constraint
+                            ddl = ddl[:end_idx] + check_constraint + ddl[end_idx:]
+                            break
+    ddl_statements.append(ddl)
 
 with open(sql_file_path, "w") as f:
     for stmt in ddl_statements:

@@ -67,7 +67,7 @@ Here is the active user profile (JSON):
 # Create the bot
 agent = Agent('{{ agent.name }}'{% if personalization_mapping is defined and personalization_mapping %}, user_profiles_path='user_profiles.json', persist_sessions=True{% endif %})
 # Load bot properties stored in a dedicated file
-agent.load_properties('config.ini')
+agent.load_properties('config.yaml')
 
 # Define the platform your chatbot will use
 {% for platform in agent.platforms %}

@@ -79,16 +79,28 @@ for table in Base.metadata.sorted_tables:
                 
                 for search_str, check_col_ref in search_patterns:
                     if search_str in ddl:
-                        # Use the same column reference style (quoted/unquoted) in CHECK
-                        check_constraint = f' CHECK ({{check_col_ref}} IN ({{", ".join(enum_values)}}))'
-                        # Find the end of this column's NOT NULL clause
-                        idx = ddl.find(search_str)
-                        not_null_idx = ddl.find('NOT NULL', idx)
-                        if not_null_idx > 0:
-                            end_idx = not_null_idx + len('NOT NULL')
-                            # Insert the CHECK constraint
-                            ddl = ddl[:end_idx] + check_constraint + ddl[end_idx:]
-                            break
+                        # Work line-by-line so we only modify the correct column definition
+                        ddl_lines = ddl.splitlines()
+                        for i, line in enumerate(ddl_lines):
+                            if search_str in line:
+                                # Use the same column reference style (quoted/unquoted) in CHECK
+                                check_constraint = f' CHECK ({{check_col_ref}} IN ({{", ".join(enum_values)}}))'
+                                if 'NOT NULL' in line:
+                                    # Insert the CHECK constraint immediately after NOT NULL on this line
+                                    nn_idx = line.index('NOT NULL') + len('NOT NULL')
+                                    new_line = line[:nn_idx] + check_constraint + line[nn_idx:]
+                                else:
+                                    # Nullable column: insert before trailing comma if present, otherwise at end
+                                    comma_idx = line.rfind(',')
+                                    if comma_idx != -1:
+                                        new_line = line[:comma_idx] + check_constraint + line[comma_idx:]
+                                    else:
+                                        new_line = line + check_constraint
+                                ddl_lines[i] = new_line
+                                ddl = "\\n".join(ddl_lines)
+                                break
+                        # Once we've applied the constraint using this pattern, stop trying others
+                        break
     ddl_statements.append(ddl)
 
 with open(sql_file_path, "w") as f:

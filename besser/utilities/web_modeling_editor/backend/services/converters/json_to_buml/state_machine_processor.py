@@ -141,8 +141,6 @@ def process_state_machine(json_data):
 
             if source_name and target_name:
                 event_name = relationship.get("name", "")
-                params = relationship.get("params")
-
                 if event_name:
                     code_lines.append(f"{source_name}_state.when_event({event_name}).go_to({target_name}_state)")
 

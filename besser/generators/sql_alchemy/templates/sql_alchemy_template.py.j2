@@ -5,7 +5,7 @@ from sqlalchemy import (
     create_engine, Column, ForeignKey, Table, Text, Boolean, String, Date, 
     Time, DateTime, Float, Integer, Enum
 )
-{%- if classes | selectattr("is_abstract") | list | length > 0 %}
+{%- if false %}
 from sqlalchemy.ext.declarative import AbstractConcreteBase
 {%- endif %}
 from sqlalchemy.orm import (
@@ -114,21 +114,15 @@ class {{ class.name }}(
     {%- endfor %}
 
     {#- Polymorphic configuration #}
-    {%- if (class.specializations()|length > 0
-       and class.name not in concrete_parents) %}
+    {%- if class.specializations()|length > 0 and class.parents()|length == 0 %}
     type_spec: Mapped[str] = mapped_column(String(50))
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
         "polymorphic_on": "type_spec",
     }
-    {%- elif (class.parents() | rejectattr("name", "in", concrete_parents) | list | length > 0) %}
+    {%- elif class.parents()|length > 0 %}
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
-    }
-    {%- elif class.parents() | selectattr("name", "in", concrete_parents) | list | length > 0 %}
-    __mapper_args__ = {
-        "polymorphic_identity": "{{ class.name.lower() }}",
-        "concrete": True,
     }
     {%- endif %}
 {% endfor %}

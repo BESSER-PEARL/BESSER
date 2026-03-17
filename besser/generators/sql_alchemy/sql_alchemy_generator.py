@@ -77,13 +77,13 @@ class SQLAlchemyGenerator(GeneratorInterface):
         Determines if the model uses concrete table inheritance.
 
         Returns:
-            list: A list of class parents that use concrete table inheritance.
+            list: An empty list. Concrete table inheritance via AbstractConcreteBase
+            is no longer used because it does not support multi-level inheritance
+            (grandchild classes lose inherited attributes). Joined table inheritance
+            is used instead, which correctly propagates attributes through any
+            number of inheritance levels.
         """
-        concrete_parents = []
-        for class_ in self.model.get_classes():
-            if class_.is_abstract and not class_.parents() and not class_.association_ends():
-                concrete_parents.append(class_.name)
-        return concrete_parents
+        return []
 
     def generate(self, dbms: str = "sqlite"):
         """

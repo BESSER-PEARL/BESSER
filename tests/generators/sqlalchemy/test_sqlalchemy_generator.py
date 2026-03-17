@@ -272,6 +272,119 @@ def test_crud_booktype_and_subclasses(generated_sqlalchemy_module):
     # Check reverse relationship
     assert book_db in horror_db.books
 
+
+# --- Multi-level abstract inheritance tests (issue #457) ---
+
+@pytest.fixture
+def multilevel_abstract_model():
+    """Domain model with abstract grandparent -> child -> grandchild hierarchy"""
+    AbstractParent = Class(name="AssessmentElement", is_abstract=True)
+    AbstractParent.attributes = {
+        Property(name="name", type=StringType),
+        Property(name="description", type=StringType),
+    }
+
+    Child = Class(name="Element")
+    Child.attributes = {Property(name="element_info", type=StringType)}
+
+    Grandchild = Class(name="Model")
+    Grandchild.attributes = {Property(name="model_version", type=StringType)}
+
+    gen1 = Generalization(general=AbstractParent, specific=Child)
+    gen2 = Generalization(general=Child, specific=Grandchild)
+
+    return DomainModel(
+        name="MultiLevel",
+        types={AbstractParent, Child, Grandchild},
+        associations=set(),
+        generalizations={gen1, gen2},
+    )
+
+
+@pytest.fixture
+def multilevel_module(multilevel_abstract_model, tmpdir):
+    output_dir = tmpdir.mkdir("output")
+    gen = SQLAlchemyGenerator(model=multilevel_abstract_model, output_dir=str(output_dir))
+    gen.generate(dbms="sqlite")
+    fp = os.path.join(str(output_dir), "sql_alchemy.py")
+
+    with open(fp, "r", encoding="utf-8") as f:
+        code = f.read()
+    code = re.sub(
+        r"# Database connection.*?Base\.metadata\.create_all\(engine, checkfirst=True\)",
+        (
+            "# Database connection (patched for testing)\n"
+            "DATABASE_URL = 'sqlite:///:memory:'\n"
+            "engine = create_engine(DATABASE_URL, echo=False)\n"
+        ),
+        code,
+        flags=re.DOTALL,
+    )
+    patched = os.path.join(str(output_dir), "sql_alchemy_patched.py")
+    with open(patched, "w", encoding="utf-8") as f:
+        f.write(code)
+
+    spec = importlib.util.spec_from_file_location("multilevel_mod", patched)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_multilevel_grandchild_inherits_attributes(multilevel_module):
+    """Issue #457: grandchild class must access abstract grandparent attributes"""
+    engine = create_engine("sqlite:///:memory:")
+    multilevel_module.Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    Model = getattr(multilevel_module, "Model")
+    m = Model(model_version="v1", element_info="info", name="TestModel", description="A test")
+    session.add(m)
+    session.commit()
+
+    result = session.query(Model).first()
+    assert result.name == "TestModel"
+    assert result.description == "A test"
+    assert result.element_info == "info"
+    assert result.model_version == "v1"
+
+
+def test_multilevel_polymorphic_query(multilevel_module):
+    """Polymorphic queries should return correct subtypes across all levels"""
+    engine = create_engine("sqlite:///:memory:")
+    multilevel_module.Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    Element = getattr(multilevel_module, "Element")
+    Model = getattr(multilevel_module, "Model")
+    AssessmentElement = getattr(multilevel_module, "AssessmentElement")
+
+    elem = Element(element_info="direct_child", name="Elem1", description="An element")
+    model = Model(model_version="v1", element_info="grandchild", name="Model1", description="A model")
+    session.add_all([elem, model])
+    session.commit()
+
+    # Query from root should find both
+    all_items = session.query(AssessmentElement).all()
+    type_names = {type(obj).__name__ for obj in all_items}
+    assert "Element" in type_names
+    assert "Model" in type_names
+    assert len(all_items) == 2
+
+
+def test_multilevel_no_abstract_concrete_base(multilevel_module, multilevel_abstract_model, tmpdir):
+    """Abstract classes should use joined table inheritance, not AbstractConcreteBase"""
+    output_dir = tmpdir.mkdir("output2")
+    gen = SQLAlchemyGenerator(model=multilevel_abstract_model, output_dir=str(output_dir))
+    gen.generate(dbms="sqlite")
+    fp = os.path.join(str(output_dir), "sql_alchemy.py")
+    with open(fp, "r", encoding="utf-8") as f:
+        code = f.read()
+    assert "AbstractConcreteBase" not in code
+    assert "strict_attrs" not in code
+
+
 def test_polymorphic_query(generated_sqlalchemy_module):
     engine = create_engine("sqlite:///:memory:")
     generated_sqlalchemy_module.Base.metadata.create_all(engine)

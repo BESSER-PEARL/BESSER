@@ -6,7 +6,7 @@ class Factory:
         self.context = context
 
     def checkInAttributes(self,name,context):
-        for attrib in context.attributes:
+        for attrib in context.all_attributes():
             if name == attrib.name:
                 return attrib
     def checkInAssociation(self,name,context):

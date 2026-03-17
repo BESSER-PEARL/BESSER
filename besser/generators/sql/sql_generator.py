@@ -41,7 +41,6 @@ class SQLGenerator(GeneratorInterface):
 
 from sqlalchemy.schema import CreateTable
 import os
-import re
 
 current_directory = os.path.dirname(os.path.realpath(__file__))
 sql_file_path = os.path.join(current_directory, f"tables_{dialect}.sql")

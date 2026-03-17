@@ -72,19 +72,6 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
         return classes, asso_classes
 
-    def get_concrete_table_inheritance(self):
-        """
-        Determines if the model uses concrete table inheritance.
-
-        Returns:
-            list: An empty list. Concrete table inheritance via AbstractConcreteBase
-            is no longer used because it does not support multi-level inheritance
-            (grandchild classes lose inherited attributes). Joined table inheritance
-            is used instead, which correctly propagates attributes through any
-            number of inheritance levels.
-        """
-        return []
-
     def generate(self, dbms: str = "sqlite"):
         """
         Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified 
@@ -104,7 +91,6 @@ class SQLAlchemyGenerator(GeneratorInterface):
             raise ValueError(f"Invalid DBMS. Valid options are {', '.join(self.VALID_DBMS)}.")
 
         classes, asso_classes = self.separate_classes()
-        concrete_parents = self.get_concrete_table_inheritance()
 
         file_path = self.build_generation_path(file_name="sql_alchemy.py")
         templates_path = os.path.join(os.path.dirname(
@@ -123,7 +109,6 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 ids=self.get_ids(),
                 fkeys=get_foreign_keys(self.model),
                 sort=sort_by_timestamp,
-                concrete_parents=concrete_parents
             )
             f.write(generated_code)
             print("Code generated successfully!")

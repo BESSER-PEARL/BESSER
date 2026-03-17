@@ -47,7 +47,6 @@ sql_file_path = os.path.join(current_directory, f"tables_{dialect}.sql")
 
 ddl_statements = []
 
-
 # --- Emit ENUM types ---
 if '{dialect}'.lower() != 'oracle':
     for table in Base.metadata.tables.values():
@@ -55,8 +54,9 @@ if '{dialect}'.lower() != 'oracle':
             if isinstance(col.type, Enum):
                 enum_name = getattr(col.type, 'name', None) or (getattr(col, 'name', 'unknown_enum') + '_enum')
                 enum_class = getattr(col.type, 'enum_class', None)
-                enum_values = [repr(e.value) for e in enum_class] if enum_class else []
-                ddl_statements.append(f"CREATE TYPE {{enum_name}} AS ENUM ({{', '.join(enum_values)}});")
+                if enum_class:
+                    enum_values = [repr(e.value) for e in enum_class]
+                    ddl_statements.append(f"CREATE TYPE {{enum_name}} AS ENUM ({{', '.join(enum_values)}});")
 
 for table in Base.metadata.sorted_tables:
     ddl = str(CreateTable(table).compile(engine))
@@ -70,13 +70,14 @@ for table in Base.metadata.sorted_tables:
                 # Try both quoted and unquoted column names
                 quoted_col = f'"{{col_name}}"'
                 unquoted_col = col_name
-                
+
                 # Search for column definition (quoted or unquoted)
                 search_patterns = [
                     (f'{{quoted_col}} VARCHAR', quoted_col),  # Column is quoted in DDL
                     (f'{{unquoted_col}} VARCHAR', unquoted_col)  # Column is unquoted in DDL
                 ]
-                
+
+                constraint_applied = False
                 for search_str, check_col_ref in search_patterns:
                     if search_str in ddl:
                         # Work line-by-line so we only modify the correct column definition
@@ -98,9 +99,13 @@ for table in Base.metadata.sorted_tables:
                                         new_line = line + check_constraint
                                 ddl_lines[i] = new_line
                                 ddl = "\\n".join(ddl_lines)
+                                constraint_applied = True
                                 break
                         # Once we've applied the constraint using this pattern, stop trying others
                         break
+                if not constraint_applied:
+                    import sys as _sys
+                    print(f"WARNING: Could not inject CHECK constraint for enum column '{{col_name}}' in table '{{table.name}}'", file=_sys.stderr)
     ddl_statements.append(ddl)
 
 with open(sql_file_path, "w") as f:

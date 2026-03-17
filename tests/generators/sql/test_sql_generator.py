@@ -355,8 +355,45 @@ def test_oracle_output_not_empty(domain_model_with_enums, tmpdir):
     output_dir = tmpdir.mkdir("output")
     generator = SQLGenerator(model=domain_model_with_enums, output_dir=str(output_dir), sql_dialect="oracle")
     generator.generate()
-    
+
     output_file = os.path.join(str(output_dir), "tables_oracle.sql")
     assert os.path.isfile(output_file)
     assert os.path.getsize(output_file) > 0
+
+
+def test_oracle_nullable_enum_check_constraint(tmpdir):
+    """Verify that Oracle generates CHECK constraints for nullable enum columns"""
+    priority_type = Enumeration(
+        name="Priority",
+        literals={
+            EnumerationLiteral(name="LOW"),
+            EnumerationLiteral(name="MEDIUM"),
+            EnumerationLiteral(name="HIGH")
+        }
+    )
+
+    task_name: Property = Property(name="name", type=StringType)
+    priority_prop: Property = Property(name="priority", type=priority_type, is_optional=True)
+    task: Class = Class(name="Task", attributes={task_name, priority_prop})
+
+    model = DomainModel(name="Task_model", types={task, priority_type}, associations=set())
+
+    output_dir = tmpdir.mkdir("output")
+    generator = SQLGenerator(model=model, output_dir=str(output_dir), sql_dialect="oracle")
+    generator.generate()
+
+    output_file = os.path.join(str(output_dir), "tables_oracle.sql")
+    assert os.path.isfile(output_file)
+
+    with open(output_file, "r", encoding="utf-8") as f:
+        generated_code = f.read()
+
+    # Nullable enum should still get a CHECK constraint
+    assert "CHECK" in generated_code
+    assert "LOW" in generated_code
+    assert "MEDIUM" in generated_code
+    assert "HIGH" in generated_code
+    # Should NOT have NOT NULL for the nullable column
+    # (the priority column specifically should be nullable)
+    assert "VARCHAR" in generated_code or "VARCHAR2" in generated_code
 

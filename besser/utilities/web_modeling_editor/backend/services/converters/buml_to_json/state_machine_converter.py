@@ -231,22 +231,26 @@ def state_machine_to_json(content: str):
                             }
                             elements[state["id"]]["bodies"].append(body_id)
 
-                    # Handle when_event_go_to
-                    elif node.value.func.attr == "when_event_go_to":
-                        source_state = node.value.func.value.id
+                    # Handle when_event(...).go_to(...)
+                    elif (
+                        node.value.func.attr == "go_to"
+                        and isinstance(node.value.func.value, ast.Call)
+                        and isinstance(node.value.func.value.func, ast.Attribute)
+                        and node.value.func.value.func.attr == "when_event"
+                    ):
+                        source_state = node.value.func.value.func.value.id
                         rel_id = str(uuid.uuid4())
 
                         event_name = None
-                        target_state = None
+                        target_state = node.value.args[0].id if node.value.args and isinstance(node.value.args[0], ast.Name) else None
                         event_params = None
 
-                        for kw in node.value.keywords:
-                            if kw.arg == "event":
-                                event_name = kw.value.id
-                            elif kw.arg == "dest":
-                                target_state = kw.value.id
-                            elif kw.arg == "event_params":
-                                event_params = ast.literal_eval(kw.value)
+                        if node.value.func.value.args:
+                            event_arg = node.value.func.value.args[0]
+                            if isinstance(event_arg, ast.Name):
+                                event_name = event_arg.id
+                            elif isinstance(event_arg, ast.Call) and isinstance(event_arg.func, ast.Name):
+                                event_name = event_arg.func.id
 
                         if source_state in states and target_state in states:
                             source_element = elements[states[source_state]["id"]]

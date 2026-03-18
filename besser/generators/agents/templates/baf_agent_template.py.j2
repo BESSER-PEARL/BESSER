@@ -549,6 +549,64 @@ router_initial_state.when_variable_matches_operation('user_profile', operator.eq
 {{ state.name }}.set_global({{ intent.name }})
 {% endfor %}
 {% endif %}
+{% macro render_db_reply_actions(actions, speech_enabled) %}
+    {% for action in actions %}
+    {% set db_name = action.db_custom_name if action.db_selection_type == 'custom' and action.db_custom_name else 'db1' %}
+    {% set db_operation = action.db_operation if action.db_operation else 'any' %}
+    {% if db_operation in ['select', 'insert', 'update', 'delete'] %}
+    {% set db_method = db_operation %}
+    {% else %}
+    {% set db_method = 'query' %}
+    {% endif %}
+    {% if action.db_query_mode == 'sql' %}
+    db_query = '{{ (action.db_sql_query or '') | replace('\\', '\\\\') | replace("'", "\\'") }}'
+    if not db_query.strip():
+        db_result = 'No SQL query configured for this database action.'
+    else:
+        db_result = session.db_handler.{{ db_method }}(db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}', query=db_query)
+    if isinstance(db_result, (dict, list)):
+        reply_text = json.dumps(db_result, default=str)
+    else:
+        reply_text = str(db_result)
+    {% else %}
+    {% if has_reply_llm %}
+    db_result = session.db_handler.{{ db_method }}(
+        db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        query=session.event.message,
+        llm=reply_llm
+    )
+    if isinstance(db_result, (dict, list)):
+        retrieved_answer = json.dumps(db_result, default=str)
+    else:
+        retrieved_answer = str(db_result)
+    llm_input = (
+        f"Original user query:\n{session.event.message}\n\n"
+        f"Retrieved database answer:\n{retrieved_answer}"
+    )
+    reply_text = reply_llm.predict(
+        message=llm_input,
+        session=session,
+        system_message='You are a helpful assistant. Generate a concise plain-text answer for the user using the original query and the retrieved database answer. Do not mention internal processing details.'
+    )
+    if reply_text is None:
+        reply_text = retrieved_answer
+    {% else %}
+    db_result = session.db_handler.{{ db_method }}(
+        db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}',
+        query=session.event.message
+    )
+    if isinstance(db_result, (dict, list)):
+        reply_text = json.dumps(db_result, default=str)
+    else:
+        reply_text = str(db_result)
+    {% endif %}
+    {% endif %}
+    session.reply(reply_text)
+    {% if speech_enabled %}
+    platform.reply_speech(session, reply_text)
+    {% endif %}
+    {% endfor %}
+{% endmacro %}
 {% macro render_state_bodies_and_transitions(agent_model, suffix=None, current_profile_name=None, configuration=None) %}
 {% if agent_model and agent_model.states %}
 {% set ns = namespace(bodies=[]) %}
@@ -662,53 +720,7 @@ def {{ body_name }}(session: Session):
     )
     {% endif %}
     {% endif %}
-    {% for action in state.body.actions %}
-    {% set db_name = action.db_custom_name if action.db_selection_type == 'custom' and action.db_custom_name else 'db1' %}
-    {% set db_operation = action.db_operation if action.db_operation else 'any' %}
-    {% if db_operation in ['select', 'insert', 'update', 'delete'] %}
-    {% set db_method = db_operation %}
-    {% else %}
-    {% set db_method = 'query' %}
-    {% endif %}
-    {% if action.db_query_mode == 'sql' %}
-    db_query = '{{ (action.db_sql_query or '') | replace('\\', '\\\\') | replace("'", "\\'") }}'
-    if not db_query.strip():
-        db_result = 'No SQL query configured for this database action.'
-    else:
-        db_result = session.db_handler.{{ db_method }}(db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}', query=db_query)
-    {% else %}
-    db_result = session.db_handler.{{ db_method }}(
-        db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}',
-        query=session.event.message,
-        llm=reply_llm
-    )
-    if isinstance(db_result, (dict, list)):
-        retrieved_answer = json.dumps(db_result, default=str)
-    else:
-        retrieved_answer = str(db_result)
-    llm_input = (
-        f"Original user query:\n{session.event.message}\n\n"
-        f"Retrieved database answer:\n{retrieved_answer}"
-    )
-    reply_text = reply_llm.predict(
-        message=llm_input,
-        session=session,
-        system_message='You are a helpful assistant. Generate a concise plain-text answer for the user using the original query and the retrieved database answer. Do not mention internal processing details.'
-    )
-    if reply_text is None:
-        reply_text = retrieved_answer
-    {% endif %}
-    {% if action.db_query_mode == 'sql' %}
-    if isinstance(db_result, (dict, list)):
-        reply_text = json.dumps(db_result, default=str)
-    else:
-        reply_text = str(db_result)
-    {% endif %}
-    session.reply(reply_text)
-    {% if speech_enabled %}
-    platform.reply_speech(session, reply_text)
-    {% endif %}
-    {% endfor %}
+{{ render_db_reply_actions(state.body.actions, speech_enabled) }}
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.body) | replace(state.body.name, body_name) }}
 {% endif %}
@@ -759,53 +771,7 @@ def {{ fallback_name }}(session: Session):
     {% endfor %}
 {% elif state.fallback_body.actions and is_class(state.fallback_body.actions[0], 'DBReply') %}
 def {{ fallback_name }}(session: Session):
-    {% for action in state.fallback_body.actions %}
-    {% set db_name = action.db_custom_name if action.db_selection_type == 'custom' and action.db_custom_name else 'db1' %}
-    {% set db_operation = action.db_operation if action.db_operation else 'any' %}
-    {% if db_operation in ['select', 'insert', 'update', 'delete'] %}
-    {% set db_method = db_operation %}
-    {% else %}
-    {% set db_method = 'query' %}
-    {% endif %}
-    {% if action.db_query_mode == 'sql' %}
-    db_query = '{{ (action.db_sql_query or '') | replace('\\', '\\\\') | replace("'", "\\'") }}'
-    if not db_query.strip():
-        db_result = 'No SQL query configured for this database action.'
-    else:
-        db_result = session.db_handler.{{ db_method }}(db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}', query=db_query)
-    {% else %}
-    db_result = session.db_handler.{{ db_method }}(
-        db_name='{{ db_name | replace('\\', '\\\\') | replace("'", "\\'") }}',
-        query=session.event.message,
-        llm=reply_llm
-    )
-    if isinstance(db_result, (dict, list)):
-        retrieved_answer = json.dumps(db_result, default=str)
-    else:
-        retrieved_answer = str(db_result)
-    llm_input = (
-        f"Original user query:\n{session.event.message}\n\n"
-        f"Retrieved database answer:\n{retrieved_answer}"
-    )
-    reply_text = reply_llm.predict(
-        message=llm_input,
-        session=session,
-        system_message='You are a helpful assistant. Generate a concise plain-text answer for the user using the original query and the retrieved database answer. Do not mention internal processing details.'
-    )
-    if reply_text is None:
-        reply_text = retrieved_answer
-    {% endif %}
-    {% if action.db_query_mode == 'sql' %}
-    if isinstance(db_result, (dict, list)):
-        reply_text = json.dumps(db_result, default=str)
-    else:
-        reply_text = str(db_result)
-    {% endif %}
-    session.reply(reply_text)
-    {% if speech_enabled %}
-    platform.reply_speech(session, reply_text)
-    {% endif %}
-    {% endfor %}
+{{ render_db_reply_actions(state.fallback_body.actions, speech_enabled) }}
 {% else %}
 {{ replace_bot_session_with_session_in_signature(state.fallback_body) | replace(state.fallback_body.name, fallback_name) }}
 {% endif %}

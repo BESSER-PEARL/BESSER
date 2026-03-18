@@ -144,13 +144,12 @@ class DBReply(Action):
             )
 
         normalized_custom_name = (db_custom_name or "").strip() or None
-        normalized_sql_query = db_sql_query if db_sql_query is not None else None
 
         self.db_selection_type: str = normalized_selection_type
         self.db_custom_name: Optional[str] = normalized_custom_name
         self.db_query_mode: str = normalized_query_mode
         self.db_operation: str = normalized_operation
-        self.db_sql_query: Optional[str] = normalized_sql_query
+        self.db_sql_query: Optional[str] = db_sql_query
 
     def __repr__(self):
         return (

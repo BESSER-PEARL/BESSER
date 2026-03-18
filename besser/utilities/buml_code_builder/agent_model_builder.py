@@ -34,10 +34,14 @@ def agent_model_to_code(model: Agent, file_path: str):
         f.write("###############\n")
         f.write("import datetime\n")
         f.write(
-            "from besser.BUML.metamodel.state_machine.state_machine import *\n"
+            "from besser.BUML.metamodel.state_machine.state_machine import "
+            "Body, Condition, ConfigProperty, CustomCodeAction\n"
         )
         f.write(
-            "from besser.BUML.metamodel.state_machine.agent import *\n"
+            "from besser.BUML.metamodel.state_machine.agent import "
+            "Agent, AgentReply, LLMReply, RAGReply, DBReply, "
+            "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
+            "RAGVectorStore, RAGTextSplitter\n"
         )
         f.write("from besser.BUML.metamodel.structural import Metadata\n")
         f.write("import operator\n\n")

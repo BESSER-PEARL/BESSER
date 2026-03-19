@@ -96,15 +96,26 @@ def process_state_machine(json_data):
     for element_id, element in elements.items():
         if element.get("type") == "State":
             is_initial = False
+            is_final = False
+            
+            # Check if this state has a transition FROM StateInitialNode
             for rel in relationships.values():
                 if (rel.get("type") == "StateTransition" and
                     rel.get("target", {}).get("element") == element_id and
                     elements.get(rel.get("source", {}).get("element", ""), {}).get("type") == "StateInitialNode"):
                     is_initial = True
                     break
+            
+            # Check if this state has a transition TO StateFinalNode
+            for rel in relationships.values():
+                if (rel.get("type") == "StateTransition" and
+                    rel.get("source", {}).get("element") == element_id and
+                    elements.get(rel.get("target", {}).get("element", ""), {}).get("type") == "StateFinalNode"):
+                    is_final = True
+                    break
 
             state_name = element.get("name", "")
-            code_lines.append(f"{state_name}_state = sm.new_state(name='{state_name}', initial={str(is_initial)})")
+            code_lines.append(f"{state_name}_state = sm.new_state(name='{state_name}', initial={str(is_initial)}, final={str(is_final)})")
             states_by_id[element_id] = state_name
     code_lines.append("")
 
@@ -133,7 +144,10 @@ def process_state_machine(json_data):
             source_id = relationship.get("source", {}).get("element")
             target_id = relationship.get("target", {}).get("element")
 
+            # Skip transitions from StateInitialNode or to StateFinalNode
             if elements.get(source_id, {}).get("type") == "StateInitialNode":
+                continue
+            if elements.get(target_id, {}).get("type") == "StateFinalNode":
                 continue
 
             source_name = states_by_id.get(source_id)

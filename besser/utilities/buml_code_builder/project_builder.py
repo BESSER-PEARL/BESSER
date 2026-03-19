@@ -12,12 +12,14 @@ from besser.BUML.metamodel.structural.structural import DomainModel
 from besser.BUML.metamodel.object.object import ObjectModel
 from besser.BUML.metamodel.project import Project
 from besser.BUML.metamodel.state_machine.agent import Agent
+from besser.BUML.metamodel.state_machine.state_machine import StateMachine
 from besser.utilities.buml_code_builder.domain_model_builder import (
     domain_model_to_code,
     contains_user_class,
     is_user_object_model,
 )
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
+from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
 
 try:
@@ -35,7 +37,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     Parameters:
         project (Project): The B-UML project containing multiple models
         file_path (str): The path where the generated code will be saved
-        sm (str): Optional state machine code to include
+        sm (str): Optional state machine code to include (deprecated, use StateMachine object in project.models instead)
         
     Outputs:
         - A Python file containing all models in the project
@@ -49,6 +51,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     domain_model = None
     objectmodel = None
     agent_model = None
+    state_machine_model = None
     user_domain_model = None
     user_objectmodel = None
     gui_model = None
@@ -72,6 +75,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 objectmodel = model
         if isinstance(model, Agent):
             agent_model = model
+        if isinstance(model, StateMachine):
+            state_machine_model = model
         if GUIModel and isinstance(model, GUIModel):
             gui_model = model
             
@@ -160,7 +165,18 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 file_content = m.read()
             content_str = file_content
             f.write(content_str)
+        # Handle state machine model object or legacy string parameter
+        if state_machine_model:
+            output_file_path = os.path.join(temp_dir, "state_machine.py")
+            state_machine_to_code(model=state_machine_model, file_path=output_file_path)
+            with open(output_file_path, "r", encoding='utf-8') as m:
+                file_content = m.read()
+            content_str = file_content
+            f.write(content_str)
             f.write("\n\n")
+            models.append("sm")
+        elif sm != "":
+            # Legacy: accept pre-generated state machine code string"\n\n")
             models.append("quantum_model")
 
         if sm != "":

@@ -1,0 +1,24 @@
+Version 6.5.2
+=============
+
+Final state support for state machines, converter fixes, and initial/final node tooltips.
+
+New Features
+------------
+
+**Final State for State Machines**
+- Added ``final`` parameter to ``State`` and ``StateMachine.new_state()`` in the metamodel.
+- Full round-trip support in JSON-to-BUML and BUML-to-JSON converters: final states are represented as regular ``State`` elements with a separate ``StateFinalNode`` and transition, matching UML semantics.
+- New ``state_machine_builder.py`` for generating Python code from ``StateMachine`` metamodel instances.
+- Updated ``project_builder.py`` to include state machine code generation.
+
+**Frontend: Final State Node** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+- Added ``StateFinalNode`` to the state machine diagram palette.
+- Tooltips on hover for ``StateInitialNode`` ("Initial State") and ``StateFinalNode`` ("Final State").
+
+Bug Fixes
+---------
+
+**State Machine Body Assignment**
+- Fixed JSON-to-BUML processor generating invalid Python when body names shadow imports (e.g., ``set_body(body=Body)``) or contain spaces (e.g., ``set_fallback_body(Fallback Body)``).
+- Body assignments are now only generated when a corresponding code block with a ``Body()`` instance exists.

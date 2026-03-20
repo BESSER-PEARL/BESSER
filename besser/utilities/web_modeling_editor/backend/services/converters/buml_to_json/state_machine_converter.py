@@ -80,22 +80,27 @@ def state_machine_to_json(content: str):
                     state_id = str(uuid.uuid4())
                     state_name = None
                     is_initial = False
+                    is_final = False
 
                     for kw in node.value.keywords:
                         if kw.arg == "name":
                             state_name = ast.literal_eval(kw.value)
                         elif kw.arg == "initial":
                             is_initial = ast.literal_eval(kw.value)
+                        elif kw.arg == "final":
+                            is_final = ast.literal_eval(kw.value)
 
                     if state_name:
                         states[node.targets[0].id] = {
                             "id": state_id,
                             "name": state_name,
                             "is_initial": is_initial,
+                            "is_final": is_final,
                             "bodies": [],
                             "fallback_bodies": [],
                         }
 
+                        # Always create as a regular State element
                         elements[state_id] = {
                             "id": state_id,
                             "name": state_name,
@@ -166,6 +171,76 @@ def state_machine_to_json(content: str):
                 "isManuallyLayouted": False,
             }
             break  # Only one initial state should exist
+
+    # Create final nodes and transitions for final states
+    for state_info in states.values():
+        if state_info["is_final"]:
+            final_node_id = str(uuid.uuid4())
+            state_id = state_info["id"]
+            state_bounds = elements[state_id]["bounds"]
+
+            # Position final node to the right of the state
+            final_node_x = state_bounds["x"] + state_bounds["width"] + 100
+            final_node_y = state_bounds["y"] + (state_bounds["height"] / 2) - 22.5
+
+            elements[final_node_id] = {
+                "id": final_node_id,
+                "name": "",
+                "type": "StateFinalNode",
+                "owner": None,
+                "bounds": {
+                    "x": final_node_x,
+                    "y": final_node_y,
+                    "width": 45,
+                    "height": 45,
+                },
+            }
+
+            # Create transition from state to final node
+            source_point = {
+                "x": state_bounds["x"] + state_bounds["width"],
+                "y": state_bounds["y"] + state_bounds["height"] / 2,
+            }
+            target_point = {
+                "x": final_node_x,
+                "y": final_node_y + 22.5,
+            }
+
+            final_rel_id = str(uuid.uuid4())
+            relationships[final_rel_id] = {
+                "id": final_rel_id,
+                "name": "",
+                "type": "StateTransition",
+                "owner": None,
+                "source": {
+                    "direction": "Right",
+                    "element": state_id,
+                    "bounds": {
+                        "x": source_point["x"],
+                        "y": source_point["y"],
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "target": {
+                    "direction": "Left",
+                    "element": final_node_id,
+                    "bounds": {
+                        "x": target_point["x"],
+                        "y": target_point["y"],
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "bounds": {
+                    "x": source_point["x"],
+                    "y": source_point["y"],
+                    "width": target_point["x"] - source_point["x"],
+                    "height": 1,
+                },
+                "path": [source_point, target_point],
+                "isManuallyLayouted": False,
+            }
 
     # Track created code blocks to avoid duplication
     created_code_blocks = {}

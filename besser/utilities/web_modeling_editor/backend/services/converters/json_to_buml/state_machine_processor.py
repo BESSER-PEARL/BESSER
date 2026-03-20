@@ -67,6 +67,9 @@ def process_state_machine(json_data):
                     comment_links[comment_id] = []
                 comment_links[comment_id].append(target_id)
 
+    # Track which body/event instances are actually created from code blocks
+    created_body_vars = set()
+
     # Write function definitions first
     for element in elements.values():
         if element.get("type") == "StateCodeBlock":
@@ -88,6 +91,7 @@ def process_state_machine(json_data):
 
             if name in body_names:
                 code_lines.append(f"{name} = Body(name='{name}', callable={name})")
+                created_body_vars.add(name)
             if name in event_names:
                 code_lines.append(f"{name} = Event(name='{name}', callable={name})")
             code_lines.append("")  # Add blank line after Body/Event creation
@@ -96,19 +100,30 @@ def process_state_machine(json_data):
     for element_id, element in elements.items():
         if element.get("type") == "State":
             is_initial = False
+            is_final = False
+            
+            # Check if this state has a transition FROM StateInitialNode
             for rel in relationships.values():
                 if (rel.get("type") == "StateTransition" and
                     rel.get("target", {}).get("element") == element_id and
                     elements.get(rel.get("source", {}).get("element", ""), {}).get("type") == "StateInitialNode"):
                     is_initial = True
                     break
+            
+            # Check if this state has a transition TO StateFinalNode
+            for rel in relationships.values():
+                if (rel.get("type") == "StateTransition" and
+                    rel.get("source", {}).get("element") == element_id and
+                    elements.get(rel.get("target", {}).get("element", ""), {}).get("type") == "StateFinalNode"):
+                    is_final = True
+                    break
 
             state_name = element.get("name", "")
-            code_lines.append(f"{state_name}_state = sm.new_state(name='{state_name}', initial={str(is_initial)})")
+            code_lines.append(f"{state_name}_state = sm.new_state(name='{state_name}', initial={str(is_initial)}, final={str(is_final)})")
             states_by_id[element_id] = state_name
     code_lines.append("")
 
-    # Assign bodies to states
+    # Assign bodies to states (only if a Body instance was created from a code block)
     for element_id, element in elements.items():
         if element.get("type") == "State":
             state_name = element.get("name", "")
@@ -116,14 +131,14 @@ def process_state_machine(json_data):
                 body_element = elements.get(body_id)
                 if body_element:
                     body_name = body_element.get("name")
-                    if body_name in body_names:
+                    if body_name in created_body_vars:
                         code_lines.append(f"{state_name}_state.set_body(body={body_name})")
 
             for fallback_id in element.get("fallbackBodies", []):
                 fallback_element = elements.get(fallback_id)
                 if fallback_element:
                     fallback_name = fallback_element.get("name")
-                    if fallback_name in body_names:
+                    if fallback_name in created_body_vars:
                         code_lines.append(f"{state_name}_state.set_fallback_body({fallback_name})")
     code_lines.append("")
 
@@ -133,7 +148,10 @@ def process_state_machine(json_data):
             source_id = relationship.get("source", {}).get("element")
             target_id = relationship.get("target", {}).get("element")
 
+            # Skip transitions from StateInitialNode or to StateFinalNode
             if elements.get(source_id, {}).get("type") == "StateInitialNode":
+                continue
+            if elements.get(target_id, {}).get("type") == "StateFinalNode":
                 continue
 
             source_name = states_by_id.get(source_id)

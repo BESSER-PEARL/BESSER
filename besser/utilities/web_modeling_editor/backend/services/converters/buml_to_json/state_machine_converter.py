@@ -100,35 +100,21 @@ def state_machine_to_json(content: str):
                             "fallback_bodies": [],
                         }
 
-                        if is_final:
-                            # Create a StateFinalNode instead of a State
-                            elements[state_id] = {
-                                "id": state_id,
-                                "name": state_name,
-                                "type": "StateFinalNode",
-                                "owner": None,
-                                "bounds": {
-                                    "x": states_x,
-                                    "y": states_y + 27.5,
-                                    "width": 45,
-                                    "height": 45,
-                                },
-                            }
-                        else:
-                            elements[state_id] = {
-                                "id": state_id,
-                                "name": state_name,
-                                "type": "State",
-                                "owner": None,
-                                "bounds": {
-                                    "x": states_x,
-                                    "y": states_y,
-                                    "width": 160,
-                                    "height": 100,
-                                },
-                                "bodies": [],
-                                "fallbackBodies": [],
-                            }
+                        # Always create as a regular State element
+                        elements[state_id] = {
+                            "id": state_id,
+                            "name": state_name,
+                            "type": "State",
+                            "owner": None,
+                            "bounds": {
+                                "x": states_x,
+                                "y": states_y,
+                                "width": 160,
+                                "height": 100,
+                            },
+                            "bodies": [],
+                            "fallbackBodies": [],
+                        }
 
                         if states_x < 200:
                             states_x += 490
@@ -186,6 +172,76 @@ def state_machine_to_json(content: str):
             }
             break  # Only one initial state should exist
 
+    # Create final nodes and transitions for final states
+    for state_info in states.values():
+        if state_info["is_final"]:
+            final_node_id = str(uuid.uuid4())
+            state_id = state_info["id"]
+            state_bounds = elements[state_id]["bounds"]
+
+            # Position final node to the right of the state
+            final_node_x = state_bounds["x"] + state_bounds["width"] + 100
+            final_node_y = state_bounds["y"] + (state_bounds["height"] / 2) - 22.5
+
+            elements[final_node_id] = {
+                "id": final_node_id,
+                "name": "",
+                "type": "StateFinalNode",
+                "owner": None,
+                "bounds": {
+                    "x": final_node_x,
+                    "y": final_node_y,
+                    "width": 45,
+                    "height": 45,
+                },
+            }
+
+            # Create transition from state to final node
+            source_point = {
+                "x": state_bounds["x"] + state_bounds["width"],
+                "y": state_bounds["y"] + state_bounds["height"] / 2,
+            }
+            target_point = {
+                "x": final_node_x,
+                "y": final_node_y + 22.5,
+            }
+
+            final_rel_id = str(uuid.uuid4())
+            relationships[final_rel_id] = {
+                "id": final_rel_id,
+                "name": "",
+                "type": "StateTransition",
+                "owner": None,
+                "source": {
+                    "direction": "Right",
+                    "element": state_id,
+                    "bounds": {
+                        "x": source_point["x"],
+                        "y": source_point["y"],
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "target": {
+                    "direction": "Left",
+                    "element": final_node_id,
+                    "bounds": {
+                        "x": target_point["x"],
+                        "y": target_point["y"],
+                        "width": 0,
+                        "height": 0,
+                    },
+                },
+                "bounds": {
+                    "x": source_point["x"],
+                    "y": source_point["y"],
+                    "width": target_point["x"] - source_point["x"],
+                    "height": 1,
+                },
+                "path": [source_point, target_point],
+                "isManuallyLayouted": False,
+            }
+
     # Track created code blocks to avoid duplication
     created_code_blocks = {}
 
@@ -235,22 +291,20 @@ def state_machine_to_json(content: str):
                         body_func = node.value.keywords[0].value.id
                         if state_var in states and body_func in created_code_blocks:
                             state = states[state_var]
-                            # Don't add bodies to final states
-                            if not state.get("is_final", False):
-                                body_id = str(uuid.uuid4())
-                                elements[body_id] = {
-                                    "id": body_id,
-                                    "name": body_func,
-                                    "type": "StateBody",
-                                    "owner": state["id"],
-                                    "bounds": {
-                                        "x": elements[state["id"]]["bounds"]["x"] + 0.5,
-                                        "y": elements[state["id"]]["bounds"]["y"] + 40.5,
-                                        "width": 159,
-                                        "height": 30,
-                                    },
-                                }
-                                elements[state["id"]]["bodies"].append(body_id)
+                            body_id = str(uuid.uuid4())
+                            elements[body_id] = {
+                                "id": body_id,
+                                "name": body_func,
+                                "type": "StateBody",
+                                "owner": state["id"],
+                                "bounds": {
+                                    "x": elements[state["id"]]["bounds"]["x"] + 0.5,
+                                    "y": elements[state["id"]]["bounds"]["y"] + 40.5,
+                                    "width": 159,
+                                    "height": 30,
+                                },
+                            }
+                            elements[state["id"]]["bodies"].append(body_id)
 
                     # Handle when_event(...).go_to(...)
                     elif (
@@ -332,22 +386,20 @@ def state_machine_to_json(content: str):
                         fallback_func = node.value.args[0].id
                         if state_var in states and fallback_func in functions:
                             state = states[state_var]
-                            # Don't add fallback bodies to final states
-                            if not state.get("is_final", False):
-                                fallback_id = str(uuid.uuid4())
-                                elements[fallback_id] = {
-                                    "id": fallback_id,
-                                    "name": fallback_func,
-                                    "type": "StateFallbackBody",
-                                    "owner": state["id"],
-                                    "bounds": {
-                                        "x": elements[state["id"]]["bounds"]["x"] + 0.5,
-                                        "y": elements[state["id"]]["bounds"]["y"] + 70.5,
-                                        "width": 159,
-                                        "height": 30,
-                                    },
-                                }
-                                elements[state["id"]]["fallbackBodies"].append(fallback_id)
+                            fallback_id = str(uuid.uuid4())
+                            elements[fallback_id] = {
+                                "id": fallback_id,
+                                "name": fallback_func,
+                                "type": "StateFallbackBody",
+                                "owner": state["id"],
+                                "bounds": {
+                                    "x": elements[state["id"]]["bounds"]["x"] + 0.5,
+                                    "y": elements[state["id"]]["bounds"]["y"] + 70.5,
+                                    "width": 159,
+                                    "height": 30,
+                                },
+                            }
+                            elements[state["id"]]["fallbackBodies"].append(fallback_id)
                     
                     # Handle state metadata
                     elif node.value.func.attr == "metadata":

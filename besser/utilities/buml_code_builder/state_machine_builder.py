@@ -136,16 +136,15 @@ def state_machine_to_code(model: StateMachine, file_path: str = None,
         )
     code_lines.append("")
 
-    # Assign bodies to states (skip for final states as they shouldn't have bodies)
+    # Assign bodies to states
     for state in model.states:
-        if not state.final:  # Don't add bodies to final states
-            safe_state = _sanitize_identifier(state.name)
-            if state.body:
-                safe_body = _sanitize_identifier(state.body.name)
-                code_lines.append(f"{safe_state}_state.set_body(body={safe_body})")
-            if state.fallback_body:
-                safe_fallback = _sanitize_identifier(state.fallback_body.name)
-                code_lines.append(f"{safe_state}_state.set_fallback_body({safe_fallback})")
+        safe_state = _sanitize_identifier(state.name)
+        if state.body:
+            safe_body = _sanitize_identifier(state.body.name)
+            code_lines.append(f"{safe_state}_state.set_body(body={safe_body})")
+        if state.fallback_body:
+            safe_fallback = _sanitize_identifier(state.fallback_body.name)
+            code_lines.append(f"{safe_state}_state.set_fallback_body({safe_fallback})")
     code_lines.append("")
 
     # Write transitions

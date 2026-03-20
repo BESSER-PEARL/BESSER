@@ -139,11 +139,13 @@ def process_class_diagram(json_data):
                         name = attr.get("name", "").strip()
                         attr_type = attr.get("attributeType", "str")
                         is_optional = attr.get("isOptional", False)
+                        is_derived = attr.get("isDerived", False)
                         default_value = attr.get("defaultValue", None)
                     else:
                         # Legacy format - parse from name string
                         visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model)
                         is_optional = False
+                        is_derived = False
                         default_value = None
 
                     if not name:  # Skip if no name was returned
@@ -160,9 +162,9 @@ def process_class_diagram(json_data):
                             break
 
                     if type_obj:
-                        property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, default_value=default_value)
+                        property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, is_derived=is_derived, default_value=default_value)
                     else:
-                        property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility, is_optional=is_optional, default_value=default_value)
+                        property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility, is_optional=is_optional, is_derived=is_derived, default_value=default_value)
                     cls.add_attribute(property_)
 
             # Add methods

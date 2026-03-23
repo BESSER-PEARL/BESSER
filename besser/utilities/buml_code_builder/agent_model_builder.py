@@ -6,7 +6,7 @@ This module generates Python code for BUML agent models.
 
 import os
 from re import search
-from besser.BUML.metamodel.state_machine.agent import Agent, AgentReply, LLMReply, RAGReply
+from besser.BUML.metamodel.state_machine.agent import Agent, AgentReply, LLMReply, RAGReply, DBReply
 from besser.BUML.metamodel.state_machine.state_machine import CustomCodeAction
 from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
 
@@ -42,11 +42,11 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         f.write("import datetime\n")
         f.write(
             "from besser.BUML.metamodel.state_machine.state_machine import "
-            "Body, Condition, Event, ConfigProperty, CustomCodeAction\n"
+            "Body, Condition, ConfigProperty, CustomCodeAction\n"
         )
         f.write(
             "from besser.BUML.metamodel.state_machine.agent import "
-            "Agent, AgentSession, AgentReply, LLMReply, RAGReply, "
+            "Agent, AgentReply, LLMReply, RAGReply, DBReply, "
             "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
             "RAGVectorStore, RAGTextSplitter\n"
         )
@@ -146,6 +146,44 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
         if any(hasattr(state, 'metadata') and state.metadata and state.metadata.description for state in model.states):
             f.write("\n")
 
+        # Write custom conditions so transition chains can reference them.
+        predefined_condition_classes = {
+            "IntentMatcher",
+            "VariableOperationMatcher",
+            "FileTypeMatcher",
+            "Auto",
+        }
+        written_custom_conditions = set()
+        has_custom_conditions = False
+        for state in model.states:
+            for transition in state.transitions:
+                for condition in (transition.conditions or []):
+                    condition_class = condition.__class__.__name__
+                    if condition_class in predefined_condition_classes:
+                        continue
+
+                    condition_name = getattr(condition, "name", None)
+                    if not condition_name or condition_name in written_custom_conditions:
+                        continue
+
+                    condition_code = getattr(condition, "code", None)
+                    callable_name = None
+
+                    if isinstance(condition_code, str) and condition_code.strip():
+                        f.write(f"{condition_code}\n")
+                        function_match = search(r'def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(', condition_code)
+                        callable_name = function_match.group(1) if function_match else None
+
+                    if not callable_name:
+                        callable_name = f"{condition_name}_callable"
+
+                    f.write(f"{condition_name} = Condition('{callable_name}', callable={callable_name})\n\n")
+                    written_custom_conditions.add(condition_name)
+                    has_custom_conditions = True
+
+        if has_custom_conditions:
+            f.write("\n")
+
         # Write bodies for states
         for state in model.states:
             state_var = state_var_names[state.name]
@@ -181,6 +219,24 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 )
                             else:
                                 f.write(f"{state_var}_body.add_action(RAGReply('{rag_name}'))\n")
+                        f.write("\n")
+                        f.write(f"{state_var}.set_body({state_var}_body)\n")
+                    elif isinstance(state.body.actions[0], DBReply):
+                        f.write(f"{state_var}_body = Body('{_escape_python_string(state.name)}_body')\n")
+                        for action in state.body.actions:
+                            db_args = []
+                            if getattr(action, 'db_selection_type', 'default') != 'default':
+                                db_args.append(f"db_selection_type={action.db_selection_type!r}")
+                            if getattr(action, 'db_custom_name', None):
+                                db_args.append(f"db_custom_name={action.db_custom_name!r}")
+                            if getattr(action, 'db_query_mode', 'llm_query') != 'llm_query':
+                                db_args.append(f"db_query_mode={action.db_query_mode!r}")
+                            if getattr(action, 'db_operation', 'any') != 'any':
+                                db_args.append(f"db_operation={action.db_operation!r}")
+                            if getattr(action, 'db_query_mode', 'llm_query') == 'sql' and getattr(action, 'db_sql_query', None):
+                                db_args.append(f"db_sql_query={action.db_sql_query!r}")
+                            args = ", ".join(db_args)
+                            f.write(f"{state_var}_body.add_action(DBReply({args}))\n" if args else f"{state_var}_body.add_action(DBReply())\n")
                         f.write("\n")
                         f.write(f"{state_var}.set_body({state_var}_body)\n")
                     elif isinstance(state.body.actions[0], CustomCodeAction):
@@ -234,6 +290,24 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                                 f.write(f"{state_var}_fallback_body.add_action(RAGReply('{rag_name}'))\n")
                         f.write("\n")
                         f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
+                    elif isinstance(state.fallback_body.actions[0], DBReply):
+                        f.write(f"{state_var}_fallback_body = Body('{_escape_python_string(state.name)}_fallback_body')\n")
+                        for action in state.fallback_body.actions:
+                            db_args = []
+                            if getattr(action, 'db_selection_type', 'default') != 'default':
+                                db_args.append(f"db_selection_type={action.db_selection_type!r}")
+                            if getattr(action, 'db_custom_name', None):
+                                db_args.append(f"db_custom_name={action.db_custom_name!r}")
+                            if getattr(action, 'db_query_mode', 'llm_query') != 'llm_query':
+                                db_args.append(f"db_query_mode={action.db_query_mode!r}")
+                            if getattr(action, 'db_operation', 'any') != 'any':
+                                db_args.append(f"db_operation={action.db_operation!r}")
+                            if getattr(action, 'db_query_mode', 'llm_query') == 'sql' and getattr(action, 'db_sql_query', None):
+                                db_args.append(f"db_sql_query={action.db_sql_query!r}")
+                            args = ", ".join(db_args)
+                            f.write(f"{state_var}_fallback_body.add_action(DBReply({args}))\n" if args else f"{state_var}_fallback_body.add_action(DBReply())\n")
+                        f.write("\n")
+                        f.write(f"{state_var}.set_fallback_body({state_var}_fallback_body)\n")
                     elif isinstance(state.fallback_body.actions[0], CustomCodeAction):
                         action = state.fallback_body.actions[0]
                         f.write(f"{action.to_code()}\n")
@@ -255,44 +329,79 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
                 dest_state = transition.dest
                 dest_var = state_var_names.get(dest_state.name, safe_var_name(dest_state.name))
 
-                # Handle different types of transitions
-                if transition.conditions:
-                    # Check the type of condition
-                    condition_class = transition.conditions.__class__.__name__
+                event = transition.event
+                conditions = transition.conditions or []
+                event_class = event.__class__.__name__ if event else None
 
-                    if condition_class == "IntentMatcher":
-                        intent_name = transition.conditions.intent.name
+                # Predefined transitions are recognized only when there is exactly one condition.
+                if len(conditions) == 1:
+                    condition = conditions[0]
+                    condition_class = condition.__class__.__name__
+
+                    if event_class == "ReceiveTextEvent" and condition_class == "IntentMatcher":
+                        intent_name = condition.intent.name
                         intent_var = intent_var_names.get(intent_name, safe_var_name(intent_name))
                         if intent_name == "fallback_intent":
                             f.write(f"{state_var}.when_no_intent_matched().go_to({dest_var})\n")
                         else:
                             f.write(f"{state_var}.when_intent_matched({intent_var}).go_to({dest_var})\n")
 
-                    elif condition_class == "VariableOperationMatcher":
-                        var_name = transition.conditions.var_name
-                        op_name = transition.conditions.operation.__name__
-                        target = transition.conditions.target
+                    elif event is None and condition_class == "VariableOperationMatcher":
+                        var_name = condition.var_name
+                        op_name = condition.operation.__name__
+                        target = condition.target
                         f.write(f"{state_var}.when_variable_matches_operation(\n")
                         f.write(f"    var_name='{_escape_python_string(var_name)}',\n")
                         f.write(f"    operation=operator.{op_name},\n")
                         f.write(f"    target='{_escape_python_string(str(target))}'\n")
                         f.write(f").go_to({dest_var})\n")
 
-                    elif condition_class == "FileTypeMatcher":
-                        file_type = transition.conditions.allowed_types
-                        f.write(f"{state_var}.when_file_received('{_escape_python_string(str(file_type))}').go_to({dest_var})\n")
+                    elif event_class == "ReceiveFileEvent" and condition_class == "FileTypeMatcher":
+                        file_type = condition.allowed_types
+                        if file_type:
+                            f.write(f"{state_var}.when_file_received('{_escape_python_string(str(file_type))}').go_to({dest_var})\n")
+                        else:
+                            f.write(f"{state_var}.when_file_received().go_to({dest_var})\n")
 
-                    elif condition_class == "Auto":
+                    elif event is None and condition_class == "Auto":
                         f.write(f"{state_var}.go_to({dest_var})\n")
 
                     else:
-                        # Default case for custom conditions
-                        f.write(f"# Custom transition from {state.name} to {dest_state.name}\n")
-                        f.write(f"{state_var}.when_no_intent_matched().go_to({dest_var})\n")
+                        # Custom transition with a single condition.
+                        condition_name = getattr(condition, "name", str(condition))
+                        if event:
+                            transition_chain = f"{state_var}.when_event({event_class}())"
+                            transition_chain += f".with_condition({condition_name})"
+                            transition_chain += f".go_to({dest_var})"
+                            f.write(f"{transition_chain}\n")
+                        else:
+                            transition_chain = f"{state_var}.when_condition({condition_name})"
+                            transition_chain += f".go_to({dest_var})"
+                            f.write(f"{transition_chain}\n")
 
+                elif len(conditions) > 1:
+                    # Custom transition with multiple conditions.
+                    condition_names = [getattr(c, "name", str(c)) for c in conditions]
+                    if event:
+                        transition_chain = f"{state_var}.when_event({event_class}())"
+                        for condition_name in condition_names:
+                            transition_chain += f".with_condition({condition_name})"
+                        transition_chain += f".go_to({dest_var})"
+                        f.write(f"{transition_chain}\n")
+                    else:
+                        transition_chain = f"{state_var}.when_condition({condition_names[0]})"
+                        for condition_name in condition_names[1:]:
+                            transition_chain += f".with_condition({condition_name})"
+                        transition_chain += f".go_to({dest_var})"
+                        f.write(f"{transition_chain}\n")
+
+                elif event:
+                    # Event-only custom transition.
+                    f.write(f"{state_var}.when_event({event_class}()).go_to({dest_var})\n")
                 else:
-                    # If no conditions, create a simple transition
+                    # No event and no conditions -> simple transition.
                     f.write(f"{state_var}.go_to({dest_var})\n")
+
 
                 f.write("\n")
 

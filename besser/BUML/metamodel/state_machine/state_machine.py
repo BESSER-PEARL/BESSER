@@ -332,23 +332,26 @@ class State(NamedElement):
         sm (StateMachine): the state machine the state belongs to
         name (str): the state name
         initial (bool): whether the state is initial or not
+        final (bool): whether the state is final or not
 
     Attributes:
         name (str): Inherited from NamedElement, the state name
         visibility (str): Inherited from NamedElement, determines the kind of visibility of the state (public as default).
         sm (StateMachine): the state machine the state belongs to
         initial (bool): whether the state is initial or not
+        final (bool): whether the state is final or not
         transitions (list[Transition]): The state's transitions to other states
         body (Body): the body of the state
         fallback_body (Body): the fallback body of the state
         _transition_counter (int): Count the number of transitions of this state. Used to name the transitions.
     """
 
-    def __init__(self, sm: 'StateMachine', name: str, initial: bool = False):
+    def __init__(self, sm: 'StateMachine', name: str, initial: bool = False, final: bool = False):
 
         super().__init__(name)
         self.sm: StateMachine = sm
         self.initial: bool = initial
+        self.final: bool = final
         self.transitions: list[Transition] = []
         self.body: Body = None
         self.fallback_body: Body = None
@@ -396,7 +399,7 @@ class State(NamedElement):
         return TransitionBuilder(source=self, conditions=[condition])
 
     def __repr__(self):
-        return f"State(name='{self.name}', initial={self.initial})"
+        return f"State(name='{self.name}', initial={self.initial}, final={self.final})"
 
 
 class StateMachine(Model):
@@ -448,17 +451,18 @@ class StateMachine(Model):
         self.properties.append(new_property)
         return new_property
 
-    def new_state(self, name: str, initial: bool = False, ) -> State:
+    def new_state(self, name: str, initial: bool = False, final: bool = False) -> State:
         """Create a new state in the state machine.
 
         Args:
             name (str): the state name. It must be unique in the state machine.
             initial (bool): whether the state is initial or not. A state machine must have 1 initial state.
+            final (bool): whether the state is final or not. A state machine can have multiple final states.
 
         Returns:
             State: the state
         """
-        new_state = State(self, name, initial)
+        new_state = State(self, name, initial, final)
         if new_state in self.states:
             raise ValueError(f"Duplicated state in StateMachine ({new_state.name})")
         if initial and self.initial_state():

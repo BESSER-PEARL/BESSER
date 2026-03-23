@@ -2111,6 +2111,7 @@ class DomainModel(Model):
         self._validate_associations(errors)
         self._validate_constraints(errors)
         self._validate_circular_inheritance(errors)
+        self._validate_attribute_shadowing(errors)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -2172,6 +2173,17 @@ class DomainModel(Model):
                 if has_cycle(cls, visited, set()):
                     errors.append(
                         f"Circular inheritance detected involving class '{cls.name}'."
+                    )
+
+    def _validate_attribute_shadowing(self, errors: list[str]):
+        """Validate that subclass attributes do not shadow inherited attributes."""
+        for cls in self.get_classes():
+            inherited_names = {attr.name for attr in cls.inherited_attributes()}
+            for attr in cls.attributes:
+                if attr.name in inherited_names:
+                    errors.append(
+                        f"Class '{cls.name}' defines attribute '{attr.name}' "
+                        f"which already exists in a parent class."
                     )
 
     def __repr__(self):

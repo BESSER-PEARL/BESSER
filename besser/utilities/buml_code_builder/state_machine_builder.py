@@ -7,7 +7,7 @@ The generated code can be exec()'d to recreate the StateMachine.
 
 import re
 from besser.BUML.metamodel.state_machine.state_machine import (
-    StateMachine, State, Body, Event, Transition, Condition, CustomCodeAction,
+    StateMachine, CustomCodeAction,
 )
 from besser.utilities.buml_code_builder.common import _escape_python_string
 
@@ -110,16 +110,16 @@ def state_machine_to_code(model: StateMachine, file_path: str = None,
             written_code_blocks.add(name)
             code_lines.append(f"{safe_name} = Condition(name='{_escape_python_string(name)}', callable={safe_name})")
         else:
-            code_lines.append(f"{safe_name} = Condition(name='{_escape_python_string(name)}', source='{_escape_python_string(source_code)}')")
+            code_lines.append(f"{safe_name} = Condition(name='{_escape_python_string(name)}', callable=lambda session, params: True)")
         code_lines.append("")
 
-    # Create states
+    # Create states with initial and final flags
     for state in model.states:
         safe_state = _sanitize_identifier(state.name)
         state_name_safe = _escape_python_string(state.name)
         code_lines.append(
             f"{safe_state}_state = {model_var_name}.new_state("
-            f"name='{state_name_safe}', initial={state.initial})"
+            f"name='{state_name_safe}', initial={state.initial}, final={state.final})"
         )
     code_lines.append("")
 
@@ -141,22 +141,9 @@ def state_machine_to_code(model: StateMachine, file_path: str = None,
             safe_dest = _sanitize_identifier(transition.dest.name)
 
             if transition.event and not transition.conditions:
-                # Event-only transition (legacy when_event_go_to style)
+                # Event-only transition
                 safe_event = _sanitize_identifier(transition.event.name)
-
-                # Check for event_params (informal attribute from round-trip)
-                event_params = getattr(transition, '_event_params', None)
-                if event_params:
-                    safe_params = _escape_python_string(str(event_params))
-                    params_str = f"event_params={{ {safe_params} }}"
-                else:
-                    params_str = "event_params={}"
-
-                code_lines.append(f"{safe_source}_state.when_event_go_to(")
-                code_lines.append(f"    event={safe_event},")
-                code_lines.append(f"    dest={safe_dest}_state,")
-                code_lines.append(f"    {params_str}")
-                code_lines.append(")")
+                code_lines.append(f"{safe_source}_state.when_event({safe_event}).go_to({safe_dest}_state)")
 
             elif transition.event and transition.conditions:
                 # Event + guard(s) transition: use fluent API

@@ -107,6 +107,7 @@ def process_state_machine(json_data):
     event_objects = {}  # function name -> Event instance
     condition_objects = {}  # function/guard name -> Condition instance
 
+
     for element in elements.values():
         if element.get("type") == "StateCodeBlock":
             name = element.get("name", "")
@@ -131,6 +132,7 @@ def process_state_machine(json_data):
                 body = Body(name=name, actions=[CustomCodeAction(source=cleaned_code)])
                 body_objects[name] = body
 
+
             if name in event_names:
                 # The Event metamodel class only takes a name (no callable).
                 # The code content is stored separately on the code block element
@@ -147,13 +149,17 @@ def process_state_machine(json_data):
                 condition_objects[name] = condition
 
     # Determine which element IDs are initial states (targets of transitions from StateInitialNode)
+    # and which are final states (sources of transitions to StateFinalNode)
     initial_state_ids = set()
+    final_state_ids = set()
     for rel in relationships.values():
         if rel.get("type") == "StateTransition":
             source_id = rel.get("source", {}).get("element")
             target_id = rel.get("target", {}).get("element")
             if elements.get(source_id, {}).get("type") == "StateInitialNode":
                 initial_state_ids.add(target_id)
+            if elements.get(target_id, {}).get("type") == "StateFinalNode":
+                final_state_ids.add(source_id)
 
     # Create states - initial state(s) first to satisfy StateMachine ordering constraint
     state_elements = [
@@ -171,9 +177,10 @@ def process_state_machine(json_data):
             raw_name = "unnamed"
 
         is_initial = element_id in initial_state_ids
+        is_final = element_id in final_state_ids
 
         try:
-            state = sm.new_state(name=raw_name, initial=is_initial)
+            state = sm.new_state(name=raw_name, initial=is_initial, final=is_final)
         except ValueError as e:
             # Handle duplicate state names or other validation errors gracefully
             logger.warning("Could not create state '%s': %s", raw_name, e)
@@ -187,6 +194,7 @@ def process_state_machine(json_data):
             state = states_by_id.get(element_id)
             if not state:
                 continue
+
 
             for body_id in element.get("bodies", []):
                 body_element = elements.get(body_id)
@@ -208,8 +216,10 @@ def process_state_machine(json_data):
             source_id = relationship.get("source", {}).get("element")
             target_id = relationship.get("target", {}).get("element")
 
-            # Skip transitions from initial node (already handled by is_initial flag)
+            # Skip transitions from StateInitialNode or to StateFinalNode
             if elements.get(source_id, {}).get("type") == "StateInitialNode":
+                continue
+            if elements.get(target_id, {}).get("type") == "StateFinalNode":
                 continue
 
             source_state = states_by_id.get(source_id)

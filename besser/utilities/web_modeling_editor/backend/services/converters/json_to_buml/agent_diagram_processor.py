@@ -20,11 +20,17 @@ from besser.BUML.metamodel.state_machine.agent import (
     Agent,
     Intent,
     Auto,
+    DummyEvent,
     IntentMatcher,
+    ReceiveFileEvent,
+    ReceiveJSONEvent,
+    ReceiveMessageEvent,
     ReceiveTextEvent,
+    WildcardEvent,
     AgentReply,
     LLMReply,
     RAGReply,
+    DBReply,
     RAG,
     RAGVectorStore,
     RAGTextSplitter,
@@ -33,7 +39,8 @@ from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import sanitize_text
 
 
-def _collect_body_messages(body_elements, elements, language, source_language, translate_text):
+def _collect_body_messages(body_elements, elements, language, source_language, translate_text,
+                           serialize_db_reply_payload=None):
     """
     Collect and classify body messages from body element IDs.
 
@@ -43,9 +50,10 @@ def _collect_body_messages(body_elements, elements, language, source_language, t
         language: Target translation language (or None)
         source_language: Source language for translation (or None)
         translate_text: Translation function
+        serialize_db_reply_payload: Optional function to serialize DB reply payloads
 
     Returns:
-        List of classified message strings (prefixed with LLM:/RAG:/CODE: or plain text)
+        List of classified message strings (prefixed with LLM:/RAG:/DB:/CODE: or plain text)
     """
     messages = []
     for body_id in body_elements:
@@ -69,19 +77,23 @@ def _collect_body_messages(body_elements, elements, language, source_language, t
                 rag_name = sanitize_text(body_content)
             if rag_name:
                 messages.append(f"RAG:{rag_name}")
+        elif reply_type == "db_reply":
+            if serialize_db_reply_payload:
+                messages.append(serialize_db_reply_payload(body_element))
         elif reply_type == "code":
             messages.append(f"CODE:{sanitize_text(body_content)}")
 
     return messages
 
 
-def _build_body_from_messages(body_name, messages):
+def _build_body_from_messages(body_name, messages, build_db_reply_fn=None):
     """
     Build a Body object from classified messages.
 
     Args:
         body_name: Name for the Body object
         messages: List of classified message strings (from _collect_body_messages)
+        build_db_reply_fn: Optional function to build a DBReply from a deserialized payload dict
 
     Returns:
         A Body object with appropriate actions, or None if messages is empty
@@ -89,13 +101,18 @@ def _build_body_from_messages(body_name, messages):
     if not messages:
         return None
 
+    has_db = any(m.startswith("DB:") for m in messages)
     has_rag = any(m.startswith("RAG:") for m in messages)
     has_llm = any(m.startswith("LLM:") for m in messages)
     has_code = any(m.startswith("CODE:") for m in messages)
 
     body = Body(body_name)
 
-    if has_rag:
+    if has_db and build_db_reply_fn:
+        db_replies = [json_lib.loads(m.split(":", 1)[1]) for m in messages if m.startswith("DB:")]
+        for db_reply in db_replies:
+            body.add_action(build_db_reply_fn(db_reply))
+    elif has_rag:
         rag_names = [m.split(":", 1)[1] for m in messages if m.startswith("RAG:")]
         for rag_db_name in rag_names:
             body.add_action(RAGReply(rag_db_name=rag_db_name))
@@ -141,6 +158,25 @@ def process_agent_diagram(json_data):
         except Exception as e:
             logger.error("Translation error: %s", e)
             return text
+
+    def build_db_reply(element: dict) -> DBReply:
+        return DBReply(
+            db_selection_type=sanitize_text(element.get("dbSelectionType", "default")) or "default",
+            db_custom_name=sanitize_text(element.get("dbCustomName", "")) or None,
+            db_query_mode=sanitize_text(element.get("dbQueryMode", "llm_query")) or "llm_query",
+            db_operation=sanitize_text(element.get("dbOperation", "any")) or "any",
+            db_sql_query=element.get("dbSqlQuery") or None,
+        )
+
+    def serialize_db_reply_payload(element: dict) -> str:
+        payload = {
+            "dbSelectionType": element.get("dbSelectionType", "default") or "default",
+            "dbCustomName": element.get("dbCustomName", "") or "",
+            "dbQueryMode": element.get("dbQueryMode", "llm_query") or "llm_query",
+            "dbOperation": element.get("dbOperation", "any") or "any",
+            "dbSqlQuery": element.get("dbSqlQuery", "") or "",
+        }
+        return f"DB:{json_lib.dumps(payload)}"
     """Process Agent Diagram specific elements and return an Agent model."""
     # Create the agent model
     title = json_data.get('title', 'Generated_Agent')
@@ -266,17 +302,19 @@ def process_agent_diagram(json_data):
 
         # Process state bodies
         body_messages = _collect_body_messages(
-            element.get("bodies", []), elements, language, source_language, translate_text
+            element.get("bodies", []), elements, language, source_language, translate_text,
+            serialize_db_reply_payload=serialize_db_reply_payload
         )
-        body = _build_body_from_messages(f"{state_name}_body", body_messages)
+        body = _build_body_from_messages(f"{state_name}_body", body_messages, build_db_reply_fn=build_db_reply)
         if body:
             agent_state.set_body(body)
 
         # Process fallback bodies
         fallback_messages = _collect_body_messages(
-            element.get("fallbackBodies", []), elements, language, source_language, translate_text
+            element.get("fallbackBodies", []), elements, language, source_language, translate_text,
+            serialize_db_reply_payload=serialize_db_reply_payload
         )
-        fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages)
+        fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages, build_db_reply_fn=build_db_reply)
         if fallback_body:
             agent_state.set_fallback_body(fallback_body)
 
@@ -291,17 +329,19 @@ def process_agent_diagram(json_data):
 
             # Process state bodies
             body_messages = _collect_body_messages(
-                element.get("bodies", []), elements, language, source_language, translate_text
+                element.get("bodies", []), elements, language, source_language, translate_text,
+                serialize_db_reply_payload=serialize_db_reply_payload
             )
-            body = _build_body_from_messages(f"{state_name}_body", body_messages)
+            body = _build_body_from_messages(f"{state_name}_body", body_messages, build_db_reply_fn=build_db_reply)
             if body:
                 agent_state.set_body(body)
 
             # Process fallback bodies
             fallback_messages = _collect_body_messages(
-                element.get("fallbackBodies", []), elements, language, source_language, translate_text
+                element.get("fallbackBodies", []), elements, language, source_language, translate_text,
+                serialize_db_reply_payload=serialize_db_reply_payload
             )
-            fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages)
+            fallback_body = _build_body_from_messages(f"{state_name}_fallback_body", fallback_messages, build_db_reply_fn=build_db_reply)
             if fallback_body:
                 agent_state.set_fallback_body(fallback_body)
 
@@ -349,23 +389,77 @@ def process_agent_diagram(json_data):
                 continue
 
             if source_state and target_state:
-                condition_name = relationship.get("condition", "")
-                condition_value = relationship.get("conditionValue", "")
+                transition_type = relationship.get("transitionType")
+                predefined_block = relationship.get("predefined") or {}
+                custom_block = relationship.get("custom") or {}
+
+                condition_name = ""
+                transition_payload = ""
+
+                is_custom_transition = (
+                    transition_type == "custom"
+                )
+
+                if is_custom_transition:
+                    selected_event = (
+                        custom_block.get("event")
+                        or relationship.get("event")
+                        or relationship.get("customEvent")
+                    )
+                    custom_conditions = (
+                        custom_block.get("condition")
+                        if isinstance(custom_block.get("condition"), list)
+                        else relationship.get("conditions")
+                    )
+                    if not isinstance(custom_conditions, list):
+                        custom_conditions = relationship.get("customConditions")
+                    if not isinstance(custom_conditions, list):
+                        custom_conditions = []
+
+                    normalized_event = "None"
+                    if isinstance(selected_event, str) and selected_event and selected_event != "None":
+                        normalized_event = selected_event
+                    condition_name = "custom_transition"
+                    transition_payload = {
+                        "event": normalized_event,
+                        "conditions": custom_conditions if isinstance(custom_conditions, list) else [],
+                    }
+                else:
+                    condition_name = (
+                        predefined_block.get("predefinedType")
+                        or relationship.get("predefinedType")
+                        or ""
+                    )
+                    if condition_name == "when_intent_matched":
+                        transition_payload = (
+                            predefined_block.get("intentName")
+                            or relationship.get("intentName")
+                        )
+                    elif condition_name == "when_file_received":
+                        transition_payload = (
+                            predefined_block.get("fileType")
+                            or relationship.get("fileType")
+                        )
+                    else:
+                        transition_payload = predefined_block.get("conditionValue")
+
+                    if transition_payload is None:
+                        transition_payload = relationship.get("conditionValue", "")
 
                 # Create appropriate transition based on condition
                 if condition_name == "when_intent_matched":
                     # Find the intent by name via O(1) lookup
-                    intent_to_match = intent_lookup.get(condition_value)
+                    intent_to_match = intent_lookup.get(transition_payload)
 
                     if intent_to_match:
                         source_state.when_intent_matched(intent_to_match).go_to(target_state)
                         transition_count += 1
-                    elif isinstance(condition_value, str) and condition_value.strip():
-                        unresolved_intent = Intent(condition_value.strip())
+                    elif isinstance(transition_payload, str) and transition_payload.strip():
+                        unresolved_intent = Intent(transition_payload.strip())
                         TransitionBuilder(
                             source=source_state,
                             event=ReceiveTextEvent(),
-                            conditions=IntentMatcher(unresolved_intent),
+                            conditions=[IntentMatcher(unresolved_intent)],
                         ).go_to(target_state)
                         transition_count += 1
 
@@ -374,11 +468,11 @@ def process_agent_diagram(json_data):
                     transition_count += 1
 
                 elif condition_name == "when_variable_operation_matched":
-                    # Check if condition_value is a dictionary
-                    if isinstance(condition_value, dict):
-                        variable_name = condition_value.get("variable")
-                        operator_value = condition_value.get("operator")
-                        target_value = condition_value.get("targetValue")
+                    # Check if transition payload is a dictionary
+                    if isinstance(transition_payload, dict):
+                        variable_name = transition_payload.get("variable")
+                        operator_value = transition_payload.get("operator")
+                        target_value = transition_payload.get("targetValue")
 
                         if not variable_name or not operator_value:
                             logger.warning(
@@ -414,11 +508,11 @@ def process_agent_diagram(json_data):
                                     operator_value, source_state.name, target_state.name,
                                 )
                     else:
-                        # If condition_value is not a dictionary, add a simple transition
+                        # If transition_payload is not a dictionary, add a simple transition
                         logger.warning(
                             "Expected dict for when_variable_operation_matched condition but got %s. "
                             "Falling back to no_intent_matched for transition from '%s' to '%s'.",
-                            type(condition_value).__name__, source_state.name, target_state.name,
+                            type(transition_payload).__name__, source_state.name, target_state.name,
                         )
                         source_state.when_no_intent_matched().go_to(target_state)
                         transition_count += 1
@@ -429,19 +523,83 @@ def process_agent_diagram(json_data):
                         "TXT": "text/plain",
                         "JSON": "application/json"
                     }
-                    file_type = mime_types.get(condition_value)
+                    if isinstance(transition_payload, str) and "/" in transition_payload:
+                        file_type = transition_payload
+                    else:
+                        file_type = mime_types.get(transition_payload)
                     if file_type:
                         source_state.when_file_received(file_type).go_to(target_state)
                         transition_count += 1
                     else:
                         logger.warning(
-                            "Unknown file type '%s' for when_file_received transition from '%s' to '%s'. Skipping.",
-                            condition_value, source_state.name, target_state.name,
+                            "Unknown file type '%s' for when_file_received transition from '%s' to '%s'. "
+                            "Falling back to when_file_received() without type filter.",
+                            transition_payload, source_state.name, target_state.name,
                         )
+                        source_state.when_file_received().go_to(target_state)
+                        transition_count += 1
 
                 elif condition_name == "auto":
                     source_state.go_to(target_state)
                     transition_count += 1
+
+                elif condition_name == "custom_transition":
+                    event_instance = None
+                    custom_conditions = []
+
+                    if isinstance(transition_payload, dict):
+                        selected_event = transition_payload.get("event")
+                        # Backward compatibility for older payloads that used "events": [..]
+                        if not selected_event:
+                            raw_events = transition_payload.get("events") or []
+                            if isinstance(raw_events, list) and raw_events:
+                                selected_event = raw_events[0]
+
+                        if selected_event == "ReceiveTextEvent":
+                            event_instance = ReceiveTextEvent()
+                        elif selected_event == "ReceiveMessageEvent":
+                            event_instance = ReceiveMessageEvent("")
+                        elif selected_event == "ReceiveJSONEvent":
+                            event_instance = ReceiveJSONEvent()
+                        elif selected_event == "ReceiveFileEvent":
+                            event_instance = ReceiveFileEvent()
+                        elif selected_event == "DummyEvent":
+                            event_instance = DummyEvent()
+                        elif selected_event == "WildcardEvent":
+                            event_instance = WildcardEvent()
+                        elif selected_event == "None":
+                            event_instance = None
+
+                        raw_conditions = transition_payload.get("conditions") or []
+                        if isinstance(raw_conditions, list):
+                            custom_conditions = [c for c in raw_conditions if isinstance(c, str) and c.strip()]
+
+                    condition_objects = []
+                    for condition_index, custom_condition_code in enumerate(custom_conditions, start=1):
+                        generated_name = f"condition_{transition_count + 1}_{condition_index}"
+                        custom_condition = Condition(name=generated_name, callable=None)
+                        custom_condition.code = custom_condition_code
+                        condition_objects.append(custom_condition)
+
+                    transition_builder = None
+                    if event_instance is not None:
+                        transition_builder = source_state.when_event(event_instance)
+
+                    if condition_objects:
+                        if transition_builder is None:
+                            transition_builder = source_state.when_condition(condition_objects[0])
+                            for extra_condition in condition_objects[1:]:
+                                transition_builder.with_condition(extra_condition)
+                        else:
+                            for custom_condition in condition_objects:
+                                transition_builder.with_condition(custom_condition)
+
+                    if transition_builder is not None:
+                        transition_builder.go_to(target_state)
+                        transition_count += 1
+                    else:
+                        source_state.go_to(target_state)
+                        transition_count += 1
 
                 else:
                     # Default to no_intent_matched if no condition specified

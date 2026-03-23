@@ -20,8 +20,8 @@ from besser.utilities.buml_code_builder.domain_model_builder import (
     is_user_object_model,
 )
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
-from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
+from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (

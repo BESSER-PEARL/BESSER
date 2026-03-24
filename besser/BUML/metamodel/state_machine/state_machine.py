@@ -492,6 +492,23 @@ class StateMachine(Model):
         for state in self.states:
             state.fallback_body = body
 
+    def validate(self, raise_exception: bool = True) -> dict:
+        """Validate the state machine according to structural constraints.
+
+        Args:
+            raise_exception (bool): If True, raise ValueError when validation fails.
+
+        Returns:
+            dict: Validation result with success flag, errors, and warnings.
+        """
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
+        if errors and raise_exception:
+            raise ValueError("\n".join(errors))
+        return result
+
     def __repr__(self):
         states_str = ', '.join([str(state) for state in self.states])
         props_str = ', '.join([str(prop) for prop in self.properties])

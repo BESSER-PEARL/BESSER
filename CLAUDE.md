@@ -104,11 +104,11 @@ Parse concrete syntaxes into metamodel instances:
 
 - **`structuralPlantUML/`**: ANTLR-based PlantUML parser for class diagrams
 - **`objectPlantUML/`**: Object diagram notation
-- **`ocl/`**: Object Constraint Language support (`BOCLParser`, `BOCLLexer`)
+- **`ocl/`**: Object Constraint Language support (delegated to the external `bocl` package, B-OCL-Interpreter)
 - **`mockup_to_buml/`**: LLM-assisted UI mockup → GUI model conversion
 - **`nn/`**, **`deployment/`**: Specialized notation parsers
 
-**Pattern**: Grammar-based parsing (ANTLR) + listener pattern for AST traversal.
+**Pattern**: Grammar-based parsing (ANTLR) + visitor pattern for AST traversal. OCL parsing uses the external `bocl` package (B-OCL-Interpreter) which implements a visitor-based ANTLR grammar.
 
 #### 3. Generators (`besser/generators/`)
 

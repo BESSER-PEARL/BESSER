@@ -1,5 +1,5 @@
-from besser.BUML.notations.ocl.OCLParserWrapper import OCLParserWrapper
 from bocl.OCLWrapper import OCLWrapper
+from bocl.error_handling import BOCLSyntaxError
 import re
 
 def extract_context_class_name(expression):
@@ -53,19 +53,16 @@ def check_ocl_constraint(domain_model, object_model = None):
 
         valid_constraints = []
         invalid_constraints = []
-        if object_model is None:
-            parser = OCLParserWrapper(domain_model, None)
-        else:
-            parser = OCLWrapper(domain_model, object_model)
+        parser = OCLWrapper(domain_model, object_model)
 
         for constraint in domain_model.constraints:
             try:
                 if object_model is None:
-                    # Use parse method for OCLParserWrapper (syntax checking only)
-                    result = parser.parse(constraint)
-                    if result is True:  # Parser returns True for valid constraints
+                    # Syntax-check only: try to parse and visit (no evaluation)
+                    try:
+                        parser.evaluate(constraint)
                         valid_constraints.append(f"✅ '{constraint.expression}'")
-                    else:
+                    except BOCLSyntaxError:
                         invalid_constraints.append(f"❌ '{constraint.expression}' - Error: Invalid OCL syntax")
                 else:
                     # Check if there are instances of the context class in the object model

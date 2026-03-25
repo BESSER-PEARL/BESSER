@@ -77,6 +77,7 @@ from besser.utilities.web_modeling_editor.backend.constants.user_buml_model impo
 # Backend services - Other services
 from besser.utilities.web_modeling_editor.backend.services.validators import (
     check_ocl_constraint,
+    validate_user_diagram_specific_rules,
 )
 from besser.utilities.web_modeling_editor.backend.services.feedback_service import (
     submit_feedback,
@@ -1770,16 +1771,20 @@ async def validate_diagram(input_data: DiagramInput):
                     validation_warnings.extend(object_validation.get("warnings", []))
 
             elif diagram_type == "UserDiagram":
-                buml_model = user_reference_domain_model
-                domain_validation = buml_model.validate(raise_exception=False)
-                validation_errors.extend(domain_validation.get("errors", []))
-                validation_warnings.extend(domain_validation.get("warnings", []))
+                user_specific_errors = validate_user_diagram_specific_rules(input_data.model)
+                if user_specific_errors:
+                    validation_errors.extend(user_specific_errors[:1])
+                else:
+                    buml_model = user_reference_domain_model
+                    domain_validation = buml_model.validate(raise_exception=False)
+                    validation_errors.extend(domain_validation.get("errors", []))
+                    validation_warnings.extend(domain_validation.get("warnings", []))
 
-                if domain_validation.get("success", False):
-                    object_model = process_object_diagram(input_data.model_dump(), buml_model)
-                    object_validation = object_model.validate(raise_exception=False)
-                    validation_errors.extend(object_validation.get("errors", []))
-                    validation_warnings.extend(object_validation.get("warnings", []))
+                    if domain_validation.get("success", False):
+                        object_model = process_object_diagram(input_data.model_dump(), buml_model)
+                        object_validation = object_model.validate(raise_exception=False)
+                        validation_errors.extend(object_validation.get("errors", []))
+                        validation_warnings.extend(object_validation.get("warnings", []))
 
             elif diagram_type == "StateMachineDiagram":
                 state_machine = process_state_machine(input_data.model_dump())
@@ -1814,6 +1819,9 @@ async def validate_diagram(input_data: DiagramInput):
             validation_errors.append(error_msg)
         except Exception as e:
             validation_errors.append(f"Validation error: {str(e)}")
+
+        if diagram_type == "UserDiagram" and validation_errors:
+            validation_errors = validation_errors[:1]
 
         # Step 2: If BUML model created successfully AND it's a diagram with OCL support
         ocl_results = None

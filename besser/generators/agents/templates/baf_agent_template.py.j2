@@ -6,22 +6,22 @@ import json
 import logging
 import operator
 
-from besser.agent.core.agent import Agent
-from besser.agent.library.transition.events.base_events import *
-from besser.agent.nlp.llm.llm_huggingface import LLMHuggingFace
-from besser.agent.nlp.llm.llm_huggingface_api import LLMHuggingFaceAPI
-from besser.agent.nlp.llm.llm_openai_api import LLMOpenAI
-from besser.agent.nlp.llm.llm_replicate_api import LLMReplicate
-from besser.agent.core.session import Session
-from besser.agent.nlp.intent_classifier.intent_classifier_configuration import LLMIntentClassifierConfiguration, SimpleIntentClassifierConfiguration
-from besser.agent.nlp.speech2text.openai_speech2text import OpenAISpeech2Text
-from besser.agent.nlp.text2speech.openai_text2speech import OpenAIText2Speech
+from baf.core.agent import Agent
+from baf.library.transition.events.base_events import *
+from baf.nlp.llm.llm_huggingface import LLMHuggingFace
+from baf.nlp.llm.llm_huggingface_api import LLMHuggingFaceAPI
+from baf.nlp.llm.llm_openai_api import LLMOpenAI
+from baf.nlp.llm.llm_replicate_api import LLMReplicate
+from baf.core.session import Session
+from baf.nlp.intent_classifier.intent_classifier_configuration import LLMIntentClassifierConfiguration, SimpleIntentClassifierConfiguration
+from baf.nlp.speech2text.openai_speech2text import OpenAISpeech2Text
+from baf.nlp.text2speech.openai_text2speech import OpenAIText2Speech
 {% if agent.rags and agent.rags|length > 0 %}
 from langchain_community.embeddings import OpenAIEmbeddings
 from langchain_community.vectorstores import Chroma
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from besser.agent import nlp
-from besser.agent.nlp.rag.rag import RAG
+from baf import nlp
+from baf.nlp.rag.rag import RAG
 {% endif %}
 
 # Configure the logging module
@@ -398,7 +398,7 @@ agent.set_default_ic_config(ic_config)
 
 {% for entity in agent.entities %}
 {% if is_class(entity, 'BaseEntity') %}
-from besser.agent.library.entity.base_entities import {{ entity.name }}
+from baf.library.entity.base_entities import {{ entity.name }}
 {% endif %}
 {% endfor %}
 {% for entity in agent.entities %}

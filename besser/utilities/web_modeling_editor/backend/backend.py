@@ -41,6 +41,7 @@ from fastapi.responses import StreamingResponse, Response
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.project_builder import project_to_code
+from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.generators.agents.baf_generator import GenerationMode
 
 # Backend models
@@ -1271,7 +1272,8 @@ async def export_project_as_buml(input_data: ProjectInput = Body(...)):
             and state_machine.model
             and state_machine.model.get("elements")
         ):
-            state_machine_code = process_state_machine(state_machine.model_dump())
+            sm_obj = process_state_machine(state_machine.model_dump())
+            state_machine_code = state_machine_to_code(model=sm_obj)
 
         temp_dir = tempfile.mkdtemp(prefix=f"besser_{uuid.uuid4().hex}_")
         output_file_path = os.path.join(temp_dir, "project.py")
@@ -1299,10 +1301,9 @@ async def export_buml(input_data: DiagramInput):
         json_data = input_data.model_dump()
         elements_data = input_data.elements
         if elements_data.get("type") == "StateMachineDiagram":
-            state_machine_code = process_state_machine(elements_data)
+            sm_obj = process_state_machine(json_data)
             output_file_path = os.path.join(temp_dir, "state_machine.py")
-            with open(output_file_path, "w") as f:
-                f.write(state_machine_code)
+            state_machine_to_code(model=sm_obj, file_path=output_file_path)
             with open(output_file_path, "rb") as f:
                 file_content = f.read()
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1781,13 +1782,10 @@ async def validate_diagram(input_data: DiagramInput):
                     validation_warnings.extend(object_validation.get("warnings", []))
 
             elif diagram_type == "StateMachineDiagram":
-                state_machine_code = process_state_machine(input_data.model_dump())
-                return {
-                    "isValid": True,
-                    "message": "✅ State machine diagram is valid",
-                    "errors": [],
-                    "warnings": []
-                }
+                state_machine = process_state_machine(input_data.model_dump())
+                validation_result = state_machine.validate(raise_exception=False)
+                validation_errors.extend(validation_result.get("errors", []))
+                validation_warnings.extend(validation_result.get("warnings", []))
 
             elif diagram_type == "AgentDiagram":
                 agent_model = process_agent_diagram(input_data.model_dump())

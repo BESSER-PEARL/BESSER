@@ -180,17 +180,9 @@ class Condition(Method):
     """The representation of a condition (i.e., a boolean function) that may cause the transition of state
     in a state machine.
 
-    A Condition can be created from either a callable (whose source will be
-    extracted via ``inspect.getsource``) **or** a raw source-code string.
-    Providing a ``source`` string is useful when the condition originates from
-    serialised data (e.g. JSON round-trip through the web editor) where no
-    live callable is available.
-
     Args:
         name (str): The name of the condition.
-        callable (Callable, optional): The function containing the condition's code.
-        source (str, optional): Raw Python source code for the condition.
-            If both *callable* and *source* are given, *callable* takes precedence.
+        callable (Callable): The function containing the condition's code.
 
     Attributes:
         name (str): Inherited from Method, represents the name of the condition.
@@ -202,11 +194,9 @@ class Condition(Method):
         code (str): Inherited from Method, code of the condition.
     """
 
-    def __init__(self, name: str, callable: Callable = None, source: str = None):
+    def __init__(self, name: str, callable: Callable):
         if callable is not None:
             code = inspect.getsource(callable)
-        elif source is not None:
-            code = textwrap.dedent(source)
         else:
             code = None
         super().__init__(
@@ -490,23 +480,6 @@ class StateMachine(Model):
         """
         for state in self.states:
             state.fallback_body = body
-
-    def validate(self, raise_exception: bool = True) -> dict:
-        """Validate the state machine according to structural constraints.
-
-        Args:
-            raise_exception (bool): If True, raise ValueError when validation fails.
-
-        Returns:
-            dict: Validation result with success flag, errors, and warnings.
-        """
-        errors: list[str] = []
-        warnings: list[str] = []
-
-        result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
-        if errors and raise_exception:
-            raise ValueError("\n".join(errors))
-        return result
 
     def __repr__(self):
         states_str = ', '.join([str(state) for state in self.states])

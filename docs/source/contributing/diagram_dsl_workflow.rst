@@ -145,7 +145,7 @@ Step 6: End-to-End Verification
 
    .. code-block:: bash
 
-      npm run start:webapp
+      npm run dev
 
 3. Create a new project using your diagram type.
 4. Add elements and relationships, edit properties, and save.

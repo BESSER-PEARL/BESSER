@@ -85,15 +85,15 @@ Prerequisites: Node.js 20+ and npm.
 1. Initialize the submodule: ``git submodule update --init --recursive``.
 2. Install dependencies: ``cd besser/utilities/web_modeling_editor/frontend && npm install``.
 3. Start the backend API (from the repo root): ``python besser/utilities/web_modeling_editor/backend/backend.py``.
-4. Start the webapp: ``npm run start:webapp`` (still in the frontend folder).
+4. Start the webapp dev server: ``npm run dev`` (still in the frontend folder).
 
-The webapp runs on http://localhost:8080 and expects the backend at
+The Vite dev server runs on http://localhost:8080 and expects the backend at
 http://localhost:9000/besser_api in development mode.
 
 **Using the standalone WME repo:**
 
 1. Clone `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_.
-2. Run ``npm install`` and ``npm run start:webapp``.
+2. Run ``npm install`` and ``npm run dev``.
 3. Start the BESSER backend as above if you need live API integration.
 
 Development Workflow

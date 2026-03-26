@@ -65,7 +65,7 @@ that repository, then the submodule pointer updated in BESSER.
 
 * Run the WME backend locally (``python besser/utilities/web_modeling_editor/backend/backend.py``; defaults to port
   9000).
-* Run the WME frontend locally (``npm run start:webapp`` in the WME repo or submodule) and confirm the new palette
+* Run the WME frontend locally (``npm run dev`` in the WME repo or submodule) and confirm the new palette
   items, properties, and serialization work against the backend.
 * Run automated checks: ``python -m pytest`` for BESSER; ``npm run lint`` and ``npm run build:webapp`` for WME.
 

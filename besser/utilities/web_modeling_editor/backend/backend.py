@@ -43,6 +43,7 @@ from besser.utilities.buml_code_builder.agent_model_builder import agent_model_t
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.generators.agents.baf_generator import GenerationMode
+from besser.generators.agents.agent_personalization import call_openai_chat
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -102,6 +103,12 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_generatio
     handle_configuration_variants,
     handle_personalized_agent,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_recommendation_utils import (
+    RECOMMENDATION_ALLOWED_VALUES,
+    load_default_agent_recommendation_config,
+    extract_json_object,
+    normalize_recommended_agent_config,
+)
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
 )
@@ -143,6 +150,73 @@ TEMP_DIR_PREFIX = "besser_agent_"
 OUTPUT_DIR = "output"
 AGENT_MODEL_FILENAME = "agent_model.py"
 AGENT_OUTPUT_FILENAME = "agent_output.zip"
+
+
+@app.post("/besser_api/recommend-agent-config-llm")
+async def recommend_agent_config_llm(payload: Dict[str, Any] = Body(...)):
+    """Recommend an agent configuration from a selected user profile using an OpenAI model."""
+    user_profile_model = payload.get("userProfileModel")
+    if not isinstance(user_profile_model, dict):
+        raise HTTPException(status_code=400, detail="userProfileModel is required and must be a JSON object")
+
+    user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
+    current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
+    llm_model = payload.get("model") if isinstance(payload.get("model"), str) and payload.get("model").strip() else "gpt-5"
+
+    profile_document = _generate_user_profile_document(user_profile_model)
+    default_config = load_default_agent_recommendation_config()
+
+    allowed_values_payload = {
+        key: value
+        for key, value in RECOMMENDATION_ALLOWED_VALUES.items()
+        if key not in {"llmProvider", "openaiModels"}
+    }
+
+    system_prompt = (
+        "You are an assistant that recommends a valid agent configuration JSON for a user profile. "
+        "Return ONLY a JSON object with this exact shape: "
+        "{presentation:{...}, modality:{...}, behavior:{...}, content:{...}, system:{...}}. "
+        "Use only allowed values and keep output concise and deterministic. "
+        "Do not include markdown, comments, or explanatory text."
+    )
+    user_prompt = (
+        "Create a recommended configuration adapted to this user profile.\n\n"
+        f"Selected profile name: {user_profile_name or 'N/A'}\n\n"
+        f"Default config baseline:\n{json.dumps(default_config, ensure_ascii=False, indent=2)}\n\n"
+        f"Allowed values:\n{json.dumps(allowed_values_payload, ensure_ascii=False, indent=2)}\n\n"
+        f"Current config context (optional):\n{json.dumps(current_config, ensure_ascii=False, indent=2)}\n\n"
+        f"User profile document:\n{json.dumps(profile_document, ensure_ascii=False, indent=2)}\n\n"
+        "Return only the JSON object."
+    )
+
+    try:
+        recommendation_text = call_openai_chat(
+            system_prompt,
+            user_prompt,
+            model=llm_model,
+            openai_api_key=extract_openai_api_key(payload if isinstance(payload, dict) else {}),
+            config=payload,
+        )
+        parsed_recommendation = extract_json_object(recommendation_text)
+        normalized_config = normalize_recommended_agent_config(parsed_recommendation, user_profile_name)
+
+        return {
+            "config": normalized_config,
+            "source": "openai",
+            "model": llm_model,
+            "generatedAt": datetime.utcnow().isoformat(),
+        }
+    except RuntimeError as runtime_error:
+        raise HTTPException(status_code=400, detail=str(runtime_error)) from runtime_error
+    except ValueError as parse_error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to parse LLM recommendation response: {parse_error}",
+        ) from parse_error
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate LLM recommendation: {exc}") from exc
 
 
 # API Endpoints

@@ -37,7 +37,6 @@ class ReactGenerator(GuiSerializationMixin, PageBuilderMixin, GeneratorInterface
             variable_end_string="]]",
         )
         self._style_map: Dict[Tuple[str, ...], Dict[str, Any]] = {}
-        self._raw_style_entries: List[Dict[str, Any]] = list(getattr(self.gui_model, "_style_entries", []))
 
     def generate(self):
         """

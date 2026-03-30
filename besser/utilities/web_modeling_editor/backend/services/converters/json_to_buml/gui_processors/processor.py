@@ -649,7 +649,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         if normalized_selectors:
             normalized_styles.append(normalized_entry)
     
-    # Store normalized style entries for React generator
-    setattr(gui_model, "_style_entries", normalized_styles)
+    # Store normalized style entries as a proper model attribute
+    gui_model.style_entries = normalized_styles
     
     return gui_model

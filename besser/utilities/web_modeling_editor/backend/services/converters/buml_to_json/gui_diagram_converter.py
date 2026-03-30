@@ -222,7 +222,7 @@ def _serialize_gui_model(gui_model: GUIModel) -> Dict[str, Any]:
             pages.append(page)
     if not pages:
         return _empty_gui_project()
-    styles = _denormalize_styles(getattr(gui_model, "_style_entries", []))
+    styles = _denormalize_styles(getattr(gui_model, "style_entries", None) or [])
     return {
         "pages": pages,
         "styles": styles,

@@ -116,36 +116,115 @@ def merge_styling_with_overrides(styling: Styling, overrides: Dict[str, Any]) ->
         else:
             css_value = str(value).strip()
         lower_key = key.lower()
-        
-        # Standard sizing properties
-        if lower_key in {"width", "min-width"}:
+
+        # ── Size: dimensions ──
+        if lower_key == "width":
             size.width = css_value
             size.unit_size = infer_unit(css_value)
-        elif lower_key in {"height", "min-height"}:
+        elif lower_key == "height":
             size.height = css_value
+        elif lower_key == "min-width":
+            size.min_width = css_value
+        elif lower_key == "max-width":
+            size.max_width = css_value
+        elif lower_key == "min-height":
+            size.min_height = css_value
+        elif lower_key == "max-height":
+            size.max_height = css_value
         elif lower_key == "padding":
             size.padding = css_value
+        elif lower_key == "padding-top":
+            size.padding_top = css_value
+        elif lower_key == "padding-right":
+            size.padding_right = css_value
+        elif lower_key == "padding-bottom":
+            size.padding_bottom = css_value
+        elif lower_key == "padding-left":
+            size.padding_left = css_value
         elif lower_key == "margin":
             size.margin = css_value
+        elif lower_key == "margin-top":
+            size.margin_top = css_value
+        elif lower_key == "margin-right":
+            size.margin_right = css_value
+        elif lower_key == "margin-bottom":
+            size.margin_bottom = css_value
+        elif lower_key == "margin-left":
+            size.margin_left = css_value
         elif lower_key == "font-size":
             size.font_size = css_value
         elif lower_key == "line-height":
             size.line_height = css_value
-        elif lower_key == "background" or lower_key == "background-color" or lower_key == "background-image":
+
+        # ── Size: typography ──
+        elif lower_key == "font-weight":
+            size.font_weight = css_value
+        elif lower_key == "font-family":
+            size.font_family = css_value
+        elif lower_key == "font-style":
+            size.font_style = css_value
+        elif lower_key == "text-decoration":
+            size.text_decoration = css_value
+        elif lower_key == "text-transform":
+            size.text_transform = css_value
+        elif lower_key == "letter-spacing":
+            size.letter_spacing = css_value
+        elif lower_key == "word-spacing":
+            size.word_spacing = css_value
+        elif lower_key == "white-space":
+            size.white_space = css_value
+        elif lower_key == "word-break":
+            size.word_break = css_value
+
+        # ── Color: backgrounds ──
+        elif lower_key in {"background", "background-color"}:
             color.background_color = css_value
+        elif lower_key == "background-image":
+            color.background_image = css_value
+        elif lower_key == "background-size":
+            color.background_size = css_value
+        elif lower_key == "background-position":
+            color.background_position = css_value
+        elif lower_key == "background-repeat":
+            color.background_repeat = css_value
         elif lower_key == "color":
             color.text_color = css_value
-        elif lower_key == "border-color":
-            color.border_color = css_value
         elif lower_key == "opacity":
             color.opacity = css_value
+
+        # ── Color: borders ──
+        elif lower_key == "border":
+            color.border = css_value
+        elif lower_key == "border-color":
+            color.border_color = css_value
+        elif lower_key == "border-radius":
+            color.border_radius = css_value
+        elif lower_key == "border-width":
+            color.border_width = css_value
+        elif lower_key == "border-style":
+            color.border_style = css_value
+        elif lower_key == "border-top":
+            color.border_top = css_value
+        elif lower_key == "border-right":
+            color.border_right = css_value
+        elif lower_key == "border-bottom":
+            color.border_bottom = css_value
+        elif lower_key == "border-left":
+            color.border_left = css_value
+
+        # ── Color: shadows ──
+        elif lower_key == "box-shadow":
+            color.box_shadow = css_value
+        elif lower_key == "text-shadow":
+            color.text_shadow = css_value
+
+        # ── Position: placement ──
         elif lower_key == "text-align":
-            # Map CSS text-align values to Alignment enum
             alignment_map = {
                 'left': Alignment.LEFT,
                 'right': Alignment.RIGHT,
                 'center': Alignment.CENTER,
-                'justify': Alignment.LEFT,  # Map justify to LEFT as fallback
+                'justify': Alignment.LEFT,
             }
             position.alignment = alignment_map.get(css_value.lower(), Alignment.LEFT)
         elif lower_key == "top":
@@ -171,10 +250,36 @@ def merge_styling_with_overrides(styling: Styling, overrides: Dict[str, Any]) ->
                 "inline": PositionType.INLINE,
             }
             position.p_type = mapping.get(css_value.lower(), PositionType.STATIC)
-        
-        # Flexbox properties
+
+        # ── Position: display and box model ──
         elif lower_key == "display":
             layout_props['display'] = css_value
+            # Also store on position for non-flex/grid values (block, inline, none, etc.)
+            position.display = css_value
+        elif lower_key == "overflow":
+            position.overflow = css_value
+        elif lower_key == "overflow-x":
+            position.overflow_x = css_value
+        elif lower_key == "overflow-y":
+            position.overflow_y = css_value
+        elif lower_key == "visibility":
+            position.visibility = css_value
+        elif lower_key == "cursor":
+            position.cursor = css_value
+        elif lower_key == "box-sizing":
+            position.box_sizing = css_value
+
+        # ── Position: effects ──
+        elif lower_key == "transform":
+            position.transform = css_value
+        elif lower_key == "transition":
+            position.transition = css_value
+        elif lower_key == "animation":
+            position.animation = css_value
+        elif lower_key == "filter":
+            position.filter = css_value
+
+        # ── Layout: flex container ──
         elif lower_key == "flex-direction":
             layout_props['flex_direction'] = css_value
         elif lower_key == "justify-content":
@@ -185,8 +290,8 @@ def merge_styling_with_overrides(styling: Styling, overrides: Dict[str, Any]) ->
             layout_props['flex_wrap'] = css_value
         elif lower_key == "gap":
             layout_props['gap'] = css_value
-        
-        # Grid properties
+
+        # ── Layout: grid container ──
         elif lower_key == "grid-template-columns":
             layout_props['grid_template_columns'] = css_value
         elif lower_key == "grid-template-rows":
@@ -195,10 +300,39 @@ def merge_styling_with_overrides(styling: Styling, overrides: Dict[str, Any]) ->
             layout_props['grid_gap'] = css_value
         elif lower_key == "justify-items":
             layout_props['justify_items'] = css_value
-    
-    # Create Layout object if any layout properties are present
-    if any(v is not None for v in layout_props.values() if v != layout_props['display']):
-        layout_type = LayoutType.FLEX if layout_props['display'] == 'flex' else LayoutType.GRID
+
+        # ── Layout: flex item ──
+        elif lower_key == "flex":
+            layout_props['flex'] = css_value
+        elif lower_key == "flex-grow":
+            layout_props['flex_grow'] = css_value
+        elif lower_key == "flex-shrink":
+            layout_props['flex_shrink'] = css_value
+        elif lower_key == "flex-basis":
+            layout_props['flex_basis'] = css_value
+        elif lower_key == "order":
+            layout_props['order'] = css_value
+        elif lower_key == "align-self":
+            layout_props['align_self'] = css_value
+
+    # Separate container properties from item properties
+    container_keys = {'flex_direction', 'justify_content', 'align_items', 'flex_wrap',
+                      'grid_template_columns', 'grid_template_rows', 'grid_gap',
+                      'justify_items', 'gap'}
+    item_keys = {'flex', 'flex_grow', 'flex_shrink', 'flex_basis', 'order', 'align_self'}
+
+    has_container = any(layout_props.get(k) for k in container_keys)
+    has_item = any(layout_props.get(k) for k in item_keys)
+    display_val = layout_props['display']
+    is_flex_or_grid = display_val in ('flex', 'grid')
+
+    # Create Layout if there are container properties OR explicit display:flex/grid
+    if has_container or is_flex_or_grid or has_item:
+        # Only set layout_type (which emits display:flex/grid) for containers
+        layout_type = None
+        if is_flex_or_grid or has_container:
+            layout_type = LayoutType.GRID if display_val == 'grid' else LayoutType.FLEX
+
         styling.layout = Layout(
             layout_type=layout_type,
             flex_direction=layout_props['flex_direction'],
@@ -209,7 +343,13 @@ def merge_styling_with_overrides(styling: Styling, overrides: Dict[str, Any]) ->
             grid_template_rows=layout_props['grid_template_rows'],
             grid_gap=layout_props['grid_gap'],
             justify_items=layout_props['justify_items'],
-            gap=layout_props['gap'] or '16px',
+            gap=layout_props['gap'],
+            flex=layout_props.get('flex'),
+            flex_grow=layout_props.get('flex_grow'),
+            flex_shrink=layout_props.get('flex_shrink'),
+            flex_basis=layout_props.get('flex_basis'),
+            order=layout_props.get('order'),
+            align_self=layout_props.get('align_self'),
         )
 
 

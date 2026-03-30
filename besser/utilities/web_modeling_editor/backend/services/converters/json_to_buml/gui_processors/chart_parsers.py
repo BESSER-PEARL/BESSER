@@ -807,7 +807,7 @@ def apply_chart_colors(element, attributes: Dict[str, Any]) -> None:
     elif isinstance(element, RadialBarChart):
         element.styling.color.bar_color = color_value
     elif isinstance(element, Table):
-        element.styling.color.background_color = color_value
+        element.styling.color.primary_color = color_value
 
 
 def parse_metric_card(view_comp: Dict[str, Any], class_model, domain_model) -> MetricCard:

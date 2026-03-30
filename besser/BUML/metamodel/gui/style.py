@@ -88,8 +88,18 @@ class Size:
         unit_size (UnitSize): The unit of measurement.
     """
 
-    def __init__(self, width: str="auto", height: str="auto", padding: str="0", margin: str="0",
-                 font_size: str=None, line_height: str=None, icon_size:str=None, unit_size: UnitSize=UnitSize.PIXELS):
+    def __init__(self, width: str=None, height: str=None, padding: str=None, margin: str=None,
+                 font_size: str=None, line_height: str=None, icon_size: str=None, unit_size: UnitSize=None,
+                 # Typography
+                 font_weight: str=None, font_family: str=None, font_style: str=None,
+                 text_decoration: str=None, text_transform: str=None, letter_spacing: str=None,
+                 word_spacing: str=None, white_space: str=None, word_break: str=None,
+                 # Min/max dimensions
+                 min_width: str=None, max_width: str=None, min_height: str=None, max_height: str=None,
+                 # Per-side padding
+                 padding_top: str=None, padding_right: str=None, padding_bottom: str=None, padding_left: str=None,
+                 # Per-side margin
+                 margin_top: str=None, margin_right: str=None, margin_bottom: str=None, margin_left: str=None):
 
         self.width: str = width
         self.height: str = height
@@ -99,6 +109,30 @@ class Size:
         self.line_height: str = line_height
         self.icon_size: str = icon_size
         self.unit_size = unit_size
+        # Typography
+        self.font_weight: str = font_weight
+        self.font_family: str = font_family
+        self.font_style: str = font_style
+        self.text_decoration: str = text_decoration
+        self.text_transform: str = text_transform
+        self.letter_spacing: str = letter_spacing
+        self.word_spacing: str = word_spacing
+        self.white_space: str = white_space
+        self.word_break: str = word_break
+        # Min/max dimensions
+        self.min_width: str = min_width
+        self.max_width: str = max_width
+        self.min_height: str = min_height
+        self.max_height: str = max_height
+        # Per-side padding/margin
+        self.padding_top: str = padding_top
+        self.padding_right: str = padding_right
+        self.padding_bottom: str = padding_bottom
+        self.padding_left: str = padding_left
+        self.margin_top: str = margin_top
+        self.margin_right: str = margin_right
+        self.margin_bottom: str = margin_bottom
+        self.margin_left: str = margin_left
 
     @property
     def width(self) -> str:
@@ -182,9 +216,14 @@ class Position:
         z_index (int): Determines the stacking order; higher values appear above lower ones.
     """
 
-    def __init__(self, p_type: PositionType = PositionType.STATIC, top: str = "auto", left: str = "auto",
-                 right: str = "auto", bottom: str = "auto", alignment: Alignment = Alignment.LEFT,
-                 z_index: int = 0):
+    def __init__(self, p_type: PositionType = None, top: str = None, left: str = None,
+                 right: str = None, bottom: str = None, alignment: Alignment = None,
+                 z_index: int = None,
+                 # Display and box model
+                 display: str=None, overflow: str=None, overflow_x: str=None, overflow_y: str=None,
+                 visibility: str=None, cursor: str=None, box_sizing: str=None,
+                 # Effects
+                 transform: str=None, transition: str=None, animation: str=None, filter: str=None):
 
         self.p_type: PositionType = p_type
         self.top: str = top
@@ -193,6 +232,19 @@ class Position:
         self.bottom: str = bottom
         self.alignment: str = alignment
         self.z_index: int = z_index
+        # Display and box model
+        self.display: str = display
+        self.overflow: str = overflow
+        self.overflow_x: str = overflow_x
+        self.overflow_y: str = overflow_y
+        self.visibility: str = visibility
+        self.cursor: str = cursor
+        self.box_sizing: str = box_sizing
+        # Effects
+        self.transform: str = transform
+        self.transition: str = transition
+        self.animation: str = animation
+        self.filter: str = filter
 
     @property
     def p_type(self) -> PositionType:
@@ -262,10 +314,12 @@ class Position:
     @z_index.setter
     def z_index(self, z_index: int):
         """int: Set the z-index value."""
-        if isinstance(z_index, int) and z_index >= 0:
+        if z_index is None:
+            self.__z_index = None
+        elif isinstance(z_index, int):
             self.__z_index = z_index
         else:
-            raise ValueError("z_index must be a non-negative integer.")
+            raise ValueError("z_index must be an integer or None.")
 
     def __repr__(self):
         return (f"Position(p_type={self.p_type}, top={self.top}, left={self.left}, right={self.right}, "
@@ -307,7 +361,16 @@ class Color:
                 grid_color: str = None, axis_color: str = None,
                 bar_color: str = None, label_color: str = None,
                 fill_color: str = None, opacity: str = None, color_palette: str = "default",
-                primary_color: str = None):
+                primary_color: str = None,
+                # Border properties
+                border_radius: str = None, border_width: str = None, border_style: str = None,
+                border: str = None, border_top: str = None, border_right: str = None,
+                border_bottom: str = None, border_left: str = None,
+                # Shadow
+                box_shadow: str = None, text_shadow: str = None,
+                # Background extras
+                background_image: str = None, background_size: str = None,
+                background_position: str = None, background_repeat: str = None):
         self.background_color: str = background_color
         self.text_color: str = text_color
         self.border_color: str = border_color
@@ -320,6 +383,23 @@ class Color:
         self.opacity: str = opacity
         self.color_palette: str = color_palette
         self.primary_color: str = primary_color
+        # Border properties
+        self.border_radius: str = border_radius
+        self.border_width: str = border_width
+        self.border_style: str = border_style
+        self.border: str = border
+        self.border_top: str = border_top
+        self.border_right: str = border_right
+        self.border_bottom: str = border_bottom
+        self.border_left: str = border_left
+        # Shadow
+        self.box_shadow: str = box_shadow
+        self.text_shadow: str = text_shadow
+        # Background extras
+        self.background_image: str = background_image
+        self.background_size: str = background_size
+        self.background_position: str = background_position
+        self.background_repeat: str = background_repeat
 
     @property
     def background_color(self) -> str:
@@ -555,13 +635,16 @@ class Layout:
         justify_items (str): Grid justify items.
     """
 
-    def __init__(self, layout_type=LayoutType.FLEX, orientation: str = "vertical",
-                 padding: str = "10px", margin: str = "10px", gap: str = "5px",
-                 alignment: JustificationType = JustificationType.CENTER, wrap: bool = True,
+    def __init__(self, layout_type=None, orientation: str = None,
+                 padding: str = None, margin: str = None, gap: str = None,
+                 alignment: JustificationType = None, wrap: bool = None,
                  flex_direction: str = None, justify_content: str = None,
                  align_items: str = None, flex_wrap: str = None,
                  grid_template_columns: str = None, grid_template_rows: str = None,
-                 grid_gap: str = None, justify_items: str = None):
+                 grid_gap: str = None, justify_items: str = None,
+                 # Flex item properties
+                 flex: str = None, flex_grow: str = None, flex_shrink: str = None,
+                 flex_basis: str = None, order: str = None, align_self: str = None):
         self.layout_type: LayoutType = layout_type
         self.orientation: str = orientation
         self.padding: str = padding
@@ -577,6 +660,13 @@ class Layout:
         self.grid_template_rows: str = grid_template_rows
         self.grid_gap: str = grid_gap
         self.justify_items: str = justify_items
+        # Flex item properties
+        self.flex: str = flex
+        self.flex_grow: str = flex_grow
+        self.flex_shrink: str = flex_shrink
+        self.flex_basis: str = flex_basis
+        self.order: str = order
+        self.align_self: str = align_self
 
     @property
     def layout_type(self) -> LayoutType:
@@ -596,8 +686,8 @@ class Layout:
     @orientation.setter
     def orientation(self, orientation: str):
         """str: Set the layout orientation ('horizontal' or 'vertical')."""
-        if orientation not in ["horizontal", "vertical"]:
-            raise ValueError("Orientation must be either 'horizontal' or 'vertical'.")
+        if orientation is not None and orientation not in ["horizontal", "vertical"]:
+            raise ValueError("Orientation must be either 'horizontal', 'vertical', or None.")
         self.__orientation = orientation
 
     @property

@@ -96,57 +96,6 @@ class GuiSerializationMixin:
             main_page_id = pages[0]["id"]
             main_page_name = pages[0].get("name")
 
-        # Merge raw style entries from the modelling editor LAST
-        # GrapesJS styles should COMPLETELY override BUML-generated styles
-        for entry in self._raw_style_entries:
-            selectors = entry.get("selectors") or []
-            grapesjs_style = self._convert_style_keys(entry.get("style") or {})
-            
-            # MODERNIZE GRAPESJS GRID SYSTEM: Convert table-based grid to flexbox
-            if ".gjs-row" in selectors or "gjs-row" in selectors:
-                # Convert table display to flex for better responsiveness
-                if grapesjs_style.get("display") == "table":
-                    grapesjs_style["display"] = "flex"
-                    grapesjs_style["flexWrap"] = "wrap"  # Allow wrapping for responsive layout
-            
-            if ".gjs-cell" in selectors or "gjs-cell" in selectors:
-                # Convert table-cell to flex item with proper sizing for 3-column responsive layout
-                if grapesjs_style.get("display") in ("table-cell", "block"):
-                    # Don't force display for cells - let them be flex items
-                    if "display" in grapesjs_style:
-                        del grapesjs_style["display"]
-                
-                # Always use flex-basis for gjs-cell to get proper 3-column layout
-                # GrapesJS uses outdated table widths (8%), modernize to flex
-                grapesjs_style["flex"] = "1 1 calc(33.333% - 20px)"  # 3 columns with gap
-                grapesjs_style["minWidth"] = "250px"  # Min width for responsive wrapping
-                # Remove width if present (table-based sizing)
-                if "width" in grapesjs_style:
-                    del grapesjs_style["width"]
-                # Remove height if present (fixed heights break responsiveness)
-                if "height" in grapesjs_style:
-                    del grapesjs_style["height"]
-            
-            if selectors:
-                # Convert tuple for lookup
-                selector_tuple = tuple(selectors)
-                # Check if entry already exists from BUML
-                existing = self._style_map.get(selector_tuple)
-                if existing:
-                    # GrapesJS style should override existing BUML style completely
-                    # Keep only chart custom properties from BUML, replace everything else
-                    buml_chart_props = {k: v for k, v in existing["style"].items() 
-                                       if k.startswith("--chart-")}
-                    # Start with GrapesJS style, then add back chart props if not overridden
-                    merged = dict(grapesjs_style)
-                    for chart_key, chart_val in buml_chart_props.items():
-                        if chart_key not in merged:
-                            merged[chart_key] = chart_val
-                    existing["style"] = merged
-                else:
-                    # New entry - just add it
-                    self._add_style_entry(selector_tuple, grapesjs_style)
-
         styles_payload = {"styles": list(self._style_map.values())}
         components_payload = {"pages": pages}
         meta = {
@@ -888,6 +837,51 @@ class GuiSerializationMixin:
             style["lineHeight"] = size.line_height
         if getattr(size, "icon_size", None) and "fontSize" not in style:
             style["fontSize"] = size.icon_size
+        # Typography
+        if getattr(size, "font_weight", None):
+            style["fontWeight"] = size.font_weight
+        if getattr(size, "font_family", None):
+            style["fontFamily"] = size.font_family
+        if getattr(size, "font_style", None):
+            style["fontStyle"] = size.font_style
+        if getattr(size, "text_decoration", None):
+            style["textDecoration"] = size.text_decoration
+        if getattr(size, "text_transform", None):
+            style["textTransform"] = size.text_transform
+        if getattr(size, "letter_spacing", None):
+            style["letterSpacing"] = size.letter_spacing
+        if getattr(size, "word_spacing", None):
+            style["wordSpacing"] = size.word_spacing
+        if getattr(size, "white_space", None):
+            style["whiteSpace"] = size.white_space
+        if getattr(size, "word_break", None):
+            style["wordBreak"] = size.word_break
+        # Min/max dimensions
+        if getattr(size, "min_width", None):
+            style["minWidth"] = size.min_width
+        if getattr(size, "max_width", None):
+            style["maxWidth"] = size.max_width
+        if getattr(size, "min_height", None):
+            style["minHeight"] = size.min_height
+        if getattr(size, "max_height", None):
+            style["maxHeight"] = size.max_height
+        # Per-side padding/margin
+        if getattr(size, "padding_top", None):
+            style["paddingTop"] = size.padding_top
+        if getattr(size, "padding_right", None):
+            style["paddingRight"] = size.padding_right
+        if getattr(size, "padding_bottom", None):
+            style["paddingBottom"] = size.padding_bottom
+        if getattr(size, "padding_left", None):
+            style["paddingLeft"] = size.padding_left
+        if getattr(size, "margin_top", None):
+            style["marginTop"] = size.margin_top
+        if getattr(size, "margin_right", None):
+            style["marginRight"] = size.margin_right
+        if getattr(size, "margin_bottom", None):
+            style["marginBottom"] = size.margin_bottom
+        if getattr(size, "margin_left", None):
+            style["marginLeft"] = size.margin_left
         return style
 
     def _extract_position_style(self, position) -> Dict[str, Any]:
@@ -908,26 +902,75 @@ class GuiSerializationMixin:
         if getattr(position, "z_index", None) is not None:
             style["zIndex"] = position.z_index
 
+        # Display and box model
+        if getattr(position, "display", None):
+            style["display"] = position.display
+        if getattr(position, "overflow", None):
+            style["overflow"] = position.overflow
+        if getattr(position, "overflow_x", None):
+            style["overflowX"] = position.overflow_x
+        if getattr(position, "overflow_y", None):
+            style["overflowY"] = position.overflow_y
+        if getattr(position, "visibility", None):
+            style["visibility"] = position.visibility
+        if getattr(position, "cursor", None):
+            style["cursor"] = position.cursor
+        if getattr(position, "box_sizing", None):
+            style["boxSizing"] = position.box_sizing
+        # Effects
+        if getattr(position, "transform", None):
+            style["transform"] = position.transform
+        if getattr(position, "transition", None):
+            style["transition"] = position.transition
+        if getattr(position, "animation", None):
+            style["animation"] = position.animation
+        if getattr(position, "filter", None):
+            style["filter"] = position.filter
+
         return style
 
     def _extract_color_style(self, color) -> Dict[str, Any]:
         style: Dict[str, Any] = {}
         if getattr(color, "background_color", None):
             bg_color = str(color.background_color).replace(" !important", "").replace("!important", "").strip()
-            if "linear-gradient" in bg_color or "radial-gradient" in bg_color:
-                style["backgroundImage"] = bg_color
-            else:
-                style["backgroundColor"] = bg_color
+            style["background"] = bg_color
         if getattr(color, "text_color", None):
             style["color"] = str(color.text_color).replace(" !important", "").replace("!important", "").strip()
         if getattr(color, "border_color", None):
             style["borderColor"] = str(color.border_color).replace(" !important", "").replace("!important", "").strip()
         if getattr(color, "opacity", None) not in (None, ""):
             style["opacity"] = color.opacity
+        # Border properties
+        if getattr(color, "border_radius", None):
+            style["borderRadius"] = color.border_radius
+        if getattr(color, "border_width", None):
+            style["borderWidth"] = color.border_width
+        if getattr(color, "border_style", None):
+            style["borderStyle"] = color.border_style
+        if getattr(color, "border", None):
+            style["border"] = color.border
+        if getattr(color, "border_top", None):
+            style["borderTop"] = color.border_top
+        if getattr(color, "border_right", None):
+            style["borderRight"] = color.border_right
+        if getattr(color, "border_bottom", None):
+            style["borderBottom"] = color.border_bottom
+        if getattr(color, "border_left", None):
+            style["borderLeft"] = color.border_left
+        # Shadow
         if getattr(color, "box_shadow", None):
             style["boxShadow"] = color.box_shadow
-        if getattr(color, "gradient", None):
-            style["backgroundImage"] = color.gradient
+        if getattr(color, "text_shadow", None):
+            style["textShadow"] = color.text_shadow
+        # Background extras
+        if getattr(color, "background_image", None):
+            style["backgroundImage"] = color.background_image
+        if getattr(color, "background_size", None):
+            style["backgroundSize"] = color.background_size
+        if getattr(color, "background_position", None):
+            style["backgroundPosition"] = color.background_position
+        if getattr(color, "background_repeat", None):
+            style["backgroundRepeat"] = color.background_repeat
         # Preserve chart colors as CSS custom properties for styling fallbacks
         if getattr(color, "line_color", None):
             style["--chart-line-color"] = color.line_color
@@ -935,8 +978,6 @@ class GuiSerializationMixin:
             style["--chart-bar-color"] = color.bar_color
         if getattr(color, "color_palette", None):
             style["--chart-color-palette"] = color.color_palette
-        if getattr(color, "radius", None):
-            style["borderRadius"] = color.radius
         return style
 
     def _extract_layout_style(self, layout) -> Dict[str, Any]:
@@ -994,6 +1035,19 @@ class GuiSerializationMixin:
             style.setdefault("padding", layout.padding)
         if getattr(layout, "margin", None):
             style.setdefault("margin", layout.margin)
+        # Flex item properties
+        if getattr(layout, "flex", None):
+            style["flex"] = layout.flex
+        if getattr(layout, "flex_grow", None):
+            style["flexGrow"] = layout.flex_grow
+        if getattr(layout, "flex_shrink", None):
+            style["flexShrink"] = layout.flex_shrink
+        if getattr(layout, "flex_basis", None):
+            style["flexBasis"] = layout.flex_basis
+        if getattr(layout, "order", None):
+            style["order"] = layout.order
+        if getattr(layout, "align_self", None):
+            style["alignSelf"] = layout.align_self
 
         return style
 

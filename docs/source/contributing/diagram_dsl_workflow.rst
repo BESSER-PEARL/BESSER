@@ -9,7 +9,7 @@ that must work across both repositories:
 
 Use this when you need **new elements, new rendering, and new backend processing**.
 If you only need to expose an existing UML diagram type in the webapp, follow the WME
-checklist in ``packages/webapp/src/main/components/project/ADDING_NEW_DIAGRAM_TYPE.md``.
+checklist in ``packages/webapp2/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE.md``.
 
 Decision Tree
 -------------
@@ -82,7 +82,7 @@ Step 3: Wire the Diagram into the Webapp (WME repo)
 Once the editor package can render the diagram, expose it in the webapp.
 Follow the checklist in:
 
-``packages/webapp/src/main/components/project/ADDING_NEW_DIAGRAM_TYPE.md``
+``packages/webapp2/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE.md``
 
 That checklist covers:
 
@@ -94,6 +94,15 @@ That checklist covers:
 Step 4: Add Backend Processing (BESSER repo)
 --------------------------------------------
 
+The BESSER backend uses a **modular router architecture**. The application factory
+(``backend.py``) registers middleware and includes routers from ``backend/routers/``.
+Endpoints are organized by concern:
+
+- ``routers/generation_router.py`` — code generation
+- ``routers/conversion_router.py`` — BUML import/export
+- ``routers/validation_router.py`` — diagram validation
+- ``routers/deployment_router.py`` — deployment integration
+
 The BESSER backend must understand the JSON produced by the editor:
 
 1. **JSON -> BUML**
@@ -104,7 +113,8 @@ The BESSER backend must understand the JSON produced by the editor:
      ``besser/utilities/web_modeling_editor/backend/services/converters/json_to_buml/__init__.py``
      and re-export it from
      ``besser/utilities/web_modeling_editor/backend/services/converters/__init__.py``.
-   * Call it from the relevant ``backend.py`` endpoints (generation, export, validation).
+   * Add or update endpoints in the appropriate router (e.g., ``routers/generation_router.py``
+     for generation, ``routers/conversion_router.py`` for export).
    * If the diagram is part of a project payload, update
      ``besser/utilities/web_modeling_editor/backend/services/converters/json_to_buml/project_converter.py``
      to include the new diagram type.
@@ -121,6 +131,13 @@ The BESSER backend must understand the JSON produced by the editor:
 
    * Update validation logic and OCL checks under
      ``besser/utilities/web_modeling_editor/backend/services/validators`` as needed.
+
+4. **Error handling**
+
+   * Use the ``@handle_endpoint_errors("endpoint_name")`` decorator from
+     ``routers/error_handler.py`` on new endpoints. It maps custom exceptions
+     (``ConversionError``, ``ValidationError`` → 400; ``GenerationError`` → 500) to
+     consistent HTTP responses.
 
 Step 5: Sync Contracts Across Repos
 -----------------------------------

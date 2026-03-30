@@ -63,11 +63,14 @@ Getting Started
 
 1. Fork the repository and clone your fork locally.
 2. Create and activate a Python 3.10+ virtual environment.
-3. Run ``
-     python -m venv venv
-     venv\Scripts\activate
-     pip install -r requirements.txt`` to install dependencies and configure
-   ``PYTHONPATH``.
+3. Install dependencies:
+
+   .. code-block:: bash
+
+      python -m venv venv
+      venv\Scripts\activate          # Windows
+      source venv/bin/activate       # Linux / macOS
+      pip install -r requirements.txt
 4. Install the documentation extras with ``pip install -r docs/requirements.txt``
    if you plan to edit the docs.
 5. Run an example, such as ``python tests/BUML/metamodel/structural/library/library.py``,
@@ -99,7 +102,7 @@ http://localhost:9000/besser_api in development mode.
 Development Workflow
 --------------------
 
-* Create a feature branch from ``main`` for each logical change.
+* Create a feature branch from ``master`` for each logical change.
 * Keep commits focused and descriptive. Favor incremental commits over monolithic
   ones so reviewers can follow the reasoning.
 * Update or add tests alongside code changes.
@@ -128,8 +131,10 @@ Testing and Quality Checks
 * Run the entire test suite with ``python -m pytest`` from the repository root.
 * Use ``python -m pytest <path>`` to target specific directories or modules
   while iterating.
-* Prefer fixtures and example models located under ``tests/`` when extending
-  coverage instead of duplicating assets.
+* Prefer reusing shared fixtures from ``tests/conftest.py`` (e.g.,
+  ``library_book_author_model``, ``employee_self_assoc_model``) instead of
+  duplicating test models. Additional domain-specific fixtures live in
+  ``tests/generators/conftest.py``.
 * Keep assertions focused on observable behavior—avoid over-specifying
   implementation details.
 
@@ -148,7 +153,7 @@ Documentation Workflow
 Submitting Your Change
 ----------------------
 
-* Ensure your branch is rebased on the latest ``main`` before opening a pull
+* Ensure your branch is rebased on the latest ``master`` before opening a pull
   request.
 * Fill in the pull request template, describing the change, tests executed, and
   any additional context reviewers should know.

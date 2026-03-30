@@ -11,6 +11,8 @@ Available entry points
 * ``domain_model_to_code`` - structural (class diagram) models
 * ``agent_model_to_code`` - agent models
 * ``gui_model_to_code`` - GUI models
+* ``state_machine_to_code`` - state machine models
+* ``quantum_model_to_code`` - quantum circuit models
 * ``project_to_code`` - full projects that bundle multiple diagrams
 
 Domain model generation
@@ -35,8 +37,8 @@ The generated code will include:
 * All relationships (associations and generalizations)
 * A complete domain model instance that can be used to recreate the model
 
-Agent / GUI / Project generation
---------------------------------
+Agent / GUI / State Machine / Quantum / Project generation
+-----------------------------------------------------------
 
 Use the specialized helpers in the same way:
 
@@ -46,7 +48,13 @@ Use the specialized helpers in the same way:
 
     buml_code_builder.agent_model_to_code(agent_model, file_path="output/agent.py")
     buml_code_builder.gui_model_to_code(gui_model, file_path="output/gui.py")
+    buml_code_builder.state_machine_to_code(state_machine, file_path="output/state_machine.py")
+    buml_code_builder.quantum_model_to_code(quantum_circuit, file_path="output/quantum.py")
     buml_code_builder.project_to_code(project_model, file_path="output/project.py")
+
+All builder functions accept an optional ``model_var_name`` parameter to customize the variable
+name used in the generated code (defaults vary by builder type, e.g., ``"domain_model"``,
+``"agent"``, ``"gui_model"``, ``"sm"``, ``"qc"``).
 
 .. note::
 

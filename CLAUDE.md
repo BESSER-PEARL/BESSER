@@ -16,7 +16,7 @@ BESSER is a low-code platform for building software through model-driven enginee
 ```bash
 # Create virtual environment and install dependencies
 python -m venv venv
-venv/Script/activate  # Windows: venv\Scripts\activate
+venv/Scripts/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 
 # Install in editable mode (for development)
@@ -85,6 +85,8 @@ The metamodel defines abstract syntax for all domain concepts:
 
 - **`state_machine/`**: Behavioral state modeling
   - `StateMachine`, `State`, `Transition`
+  - `Condition` accepts optional `source` parameter (for serialization round-trips)
+  - `StateMachine.validate()` returns `{success, errors, warnings}` dict
 
 - **`gui/`**: UI modeling
   - `GUIModel` - top-level container
@@ -96,7 +98,7 @@ The metamodel defines abstract syntax for all domain concepts:
 
 - **Other metamodels**: `feature_model/`, `nn/` (neural networks), `quantum/`, `deployment/`, `object/` (instances)
 
-**Key Pattern**: Private properties with getter/setter validation. Base classes define interfaces, subclasses add domain-specific behavior.
+**Key Pattern**: Private properties with getter/setter validation. Base classes define interfaces, subclasses add domain-specific behavior. `NamedElement.name` setter validates against None, empty/whitespace, and warns on Python keywords. Structural model validates attribute shadowing in inheritance hierarchies.
 
 #### 2. Notations (`besser/BUML/notations/`)
 
@@ -134,26 +136,51 @@ class GeneratorInterface(ABC):
 
 #### 4. Web Modeling Editor Backend (`besser/utilities/web_modeling_editor/backend/`)
 
-FastAPI service with multi-service gateway pattern. Main entry point: `backend.py`.
+FastAPI service with a **modular router architecture**. The application factory lives in `backend.py` (~270 lines), which sets up middleware, registers routers, and starts a background cleanup task.
 
-**Core Services**:
+**Routers** (`backend/routers/`):
+Endpoints are split by concern into dedicated routers:
 
-- **Conversion Services** (`services/json_to_buml/`, `services/buml_to_json/`):
+- **`generation_router.py`** - Code generation for all supported generators (single-diagram and project-based)
+- **`conversion_router.py`** - BUML import/export, CSV reverse engineering, image-to-model
+- **`validation_router.py`** - Diagram validation (metamodel + OCL constraints)
+- **`deployment_router.py`** - GitHub deployment and Docker integration
+- **`error_handler.py`** - Centralized `@handle_endpoint_errors` decorator mapping custom exceptions to HTTP status codes
+
+**Middleware** (`backend/middleware/`):
+- **`request_logging.py`** - Structured request logging with unique request IDs (UUID), performance timing, and slow-request warnings (>1s)
+
+**Constants** (`backend/constants/constants.py`):
+- API version, temp directory prefixes, generator defaults, CORS origins, relationship type mappings
+
+**Core Services** (`backend/services/`):
+
+- **Conversion Services** (`services/converters/json_to_buml/`, `services/converters/buml_to_json/`):
   - Bidirectional transformations between frontend JSON and B-UML metamodel
   - 7 processors: class diagrams, state machines, agents, objects, GUI, quantum circuits, projects
   - Detailed parsers for attributes, methods, multiplicity, OCL constraints
 
 - **Validation Services** (`services/validators/`):
   - 3-level validation: construction (setters), metamodel (`.validate()`), OCL constraints
-  - Unified validation endpoint: `/validate-diagram`
 
 - **Deployment Services** (`services/deployment/`):
   - Docker Compose orchestration (`docker_deployment.py`)
   - GitHub integration (`github_service.py`, `github_oauth.py`, `github_deploy_api.py`)
+  - Session store (`session_store.py`) for OAuth state management
 
 - **Reverse Engineering** (`services/reverse_engineering/`):
   - CSV → domain model (`csv_reverse.py`)
   - Image → class diagram (OpenAI integration)
+
+- **Cleanup Service** (`services/cleanup.py`):
+  - Background task that removes temp directories older than 24 hours (configurable)
+  - Runs hourly, handles prefixes: `besser_`, `besser_agent_`, `besser_csv_`, `user_profile_`
+
+- **Exception Hierarchy** (`services/exceptions.py`):
+  - Custom exceptions: `ConversionError`, `ValidationError`, `GenerationError`, `DeploymentError`
+
+- **Feedback Service** (`services/feedback_service.py`):
+  - Handles user feedback submissions
 
 **Key API Endpoints**:
 - `POST /generate-output` - Single diagram → code
@@ -165,10 +192,11 @@ FastAPI service with multi-service gateway pattern. Main entry point: `backend.p
 - `POST /deploy-app` - Docker Compose deployment
 
 **Configuration Layer** (`backend/config/`):
-- `generators.py` - Centralized generator registry with metadata (`GeneratorInfo` NamedTuple)
+- `generators.py` - Centralized generator registry with metadata (`GeneratorInfo` NamedTuple with `requires_class_diagram` flag)
 
 **Models Layer** (`backend/models/`):
 - Pydantic schemas: `DiagramInput`, `ProjectInput`, `FeedbackSubmission`
+- Response models (`models/responses.py`): `DiagramExportResponse`, `ProjectExportResponse`, `ValidationResponse`, `ApiInfoResponse`, `FeedbackResponse`
 
 #### 5. BUML Code Builders (`besser/utilities/buml_code_builder/`)
 
@@ -178,6 +206,7 @@ Generate executable Python code from B-UML metamodel instances:
 - `gui_model_builder.py` - GUIModel → Python code
 - `project_builder.py` - Project → Python code
 - `quantum_model_builder.py` - QuantumCircuit → Python code
+- `common.py` - Shared utilities: `safe_var_name()` (converts names to safe Python identifiers), `_escape_python_string()` (prevents code injection from user-controlled inputs)
 
 **Pattern**: Generated code can be `exec()`'d to recreate the metamodel instance.
 
@@ -185,17 +214,21 @@ Generate executable Python code from B-UML metamodel instances:
 
 Some generators require multiple diagram types:
 - **WebAppGenerator**: Needs `ClassDiagram` (backend) + `GUINoCodeDiagram` (frontend) + optional `AgentDiagram`
-- Projects use `ProjectInput` with `diagrams` dict containing typed diagram data
+- Projects use `ProjectInput` with `diagrams: Dict[str, List[DiagramInput]]` (multiple diagrams per type)
+- `currentDiagramIndices: Dict[str, int]` tracks the active diagram per type
+- Per-diagram `references: Dict[str, str]` resolve cross-diagram dependencies by ID (stable across deletions/reordering)
+- Backward compatible: old single-diagram format auto-converts to arrays via Pydantic model validator
 
 **Flow Example**:
 ```
 1. Frontend sends ProjectInput with ClassDiagram + GUINoCodeDiagram
 2. /generate-output-from-project endpoint
-3. ClassDiagram JSON → process_class_diagram → DomainModel
-4. GUINoCodeDiagram JSON → process_gui_diagram → GUIModel
-5. WebAppGenerator(domain_model, gui_model, agent_model)
-6. Templates rendered → React/TypeScript + FastAPI backend
-7. ZIP streamed to frontend
+3. Active ClassDiagram resolved via currentDiagramIndices or per-diagram references
+4. ClassDiagram JSON → process_class_diagram → DomainModel
+5. GUINoCodeDiagram JSON → process_gui_diagram → GUIModel
+6. WebAppGenerator(domain_model, gui_model, agent_model)
+7. Templates rendered → React/TypeScript + FastAPI backend
+8. ZIP streamed to frontend
 ```
 
 ## Important Conventions
@@ -242,8 +275,16 @@ The frontend lives at `besser/utilities/web_modeling_editor/frontend` (git submo
 - Place tests in `tests/` mirroring source structure
 - Name test files `test_*.py`
 - Add tests for behavioral changes, especially metamodel and generator logic
-- Use fixtures under `tests/fixtures/` or inline in test files
+- **Centralized fixtures** in `tests/conftest.py` provide shared models (e.g., `library_book_author_model`, `employee_self_assoc_model`, `player_team_domain_model`). Prefer reusing these over duplicating test models.
+- Additional domain-specific fixtures in `tests/generators/conftest.py`
 - Validate both structure (class names, endpoints) and content (business logic)
+- `pyproject.toml` configures `--import-mode=importlib` to prevent namespace collisions between test and source packages
+
+## CI/CD Pipelines
+
+- **`.github/workflows/ci.yml`**: Runs backend tests on Python 3.10/3.11/3.12, backend linting with Ruff, and frontend lint+build. Triggered on push to master/development and PRs.
+- **`.github/workflows/security.yml`**: CodeQL security scanning, runs weekly and on push/PRs.
+- **`.github/dependabot.yml`**: Automated dependency updates (weekly for pip, monthly for GitHub Actions).
 
 ## Documentation Sync
 
@@ -292,15 +333,17 @@ Generators registered in `config/generators.py` with metadata:
 ```python
 GeneratorInfo(
     generator_class=DjangoGenerator,
-    output_type="application/zip",
+    output_type="zip",           # "file" or "zip"
     file_extension=".zip",
-    category="web"
+    category="web_framework",
+    requires_class_diagram=True   # whether it needs a class diagram as input
 )
 ```
+Neural network generators (PyTorch, TensorFlow) are conditionally registered only when their dependencies are installed.
 
 ### Bidirectional Converters
 Always maintain symmetry:
-- `json_to_buml/process_class_diagram.py` ↔ `buml_to_json/class_to_json.py`
+- `json_to_buml/class_diagram_processor.py` ↔ `buml_to_json/class_diagram_converter.py`
 - Same features supported in both directions
 
 ### Template Rendering

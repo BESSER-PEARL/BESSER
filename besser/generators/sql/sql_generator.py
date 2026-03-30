@@ -47,8 +47,8 @@ sql_file_path = os.path.join(current_directory, "tables_DIALECT_PLACEHOLDER.sql"
 
 ddl_statements = []
 
-# --- Emit ENUM types ---
-if '{dialect}'.lower() != 'oracle':
+# --- Emit ENUM types (not for Oracle — Oracle uses CHECK constraints) ---
+if 'DIALECT_PLACEHOLDER'.lower() != 'oracle':
     for table in Base.metadata.tables.values():
         for col in table.columns:
             if isinstance(col.type, Enum):
@@ -56,25 +56,25 @@ if '{dialect}'.lower() != 'oracle':
                 enum_class = getattr(col.type, 'enum_class', None)
                 if enum_class:
                     enum_values = [repr(e.value) for e in enum_class]
-                    ddl_statements.append(f"CREATE TYPE {{enum_name}} AS ENUM ({{', '.join(enum_values)}});")
+                    ddl_statements.append(f"CREATE TYPE {enum_name} AS ENUM ({', '.join(enum_values)})")
 
 for table in Base.metadata.sorted_tables:
     ddl = str(CreateTable(table).compile(engine))
     # For Oracle, add CHECK constraint for enum columns
-    if '{dialect}'.lower() == 'oracle':
+    if 'DIALECT_PLACEHOLDER'.lower() == 'oracle':
         for col in table.columns:
             enum_class = getattr(col.type, 'enum_class', None)
             if enum_class:
                 enum_values = [repr(e.value) for e in enum_class]
                 col_name = col.name
                 # Try both quoted and unquoted column names
-                quoted_col = f'"{{col_name}}"'
+                quoted_col = f'"{col_name}"'
                 unquoted_col = col_name
 
                 # Search for column definition (quoted or unquoted)
                 search_patterns = [
-                    (f'{{quoted_col}} VARCHAR', quoted_col),  # Column is quoted in DDL
-                    (f'{{unquoted_col}} VARCHAR', unquoted_col)  # Column is unquoted in DDL
+                    (f'{quoted_col} VARCHAR', quoted_col),  # Column is quoted in DDL
+                    (f'{unquoted_col} VARCHAR', unquoted_col)  # Column is unquoted in DDL
                 ]
 
                 constraint_applied = False
@@ -85,7 +85,7 @@ for table in Base.metadata.sorted_tables:
                         for i, line in enumerate(ddl_lines):
                             if search_str in line:
                                 # Use the same column reference style (quoted/unquoted) in CHECK
-                                check_constraint = f' CHECK ({{check_col_ref}} IN ({{", ".join(enum_values)}}))'
+                                check_constraint = f' CHECK ({check_col_ref} IN ({", ".join(enum_values)}))'
                                 if 'NOT NULL' in line:
                                     # Insert the CHECK constraint immediately after NOT NULL on this line
                                     nn_idx = line.index('NOT NULL') + len('NOT NULL')
@@ -105,7 +105,7 @@ for table in Base.metadata.sorted_tables:
                         break
                 if not constraint_applied:
                     import sys as _sys
-                    print(f"WARNING: Could not inject CHECK constraint for enum column '{{col_name}}' in table '{{table.name}}'", file=_sys.stderr)
+                    print(f"WARNING: Could not inject CHECK constraint for enum column '{col_name}' in table '{table.name}'", file=_sys.stderr)
     ddl_statements.append(ddl)
 
 with open(sql_file_path, "w") as f:

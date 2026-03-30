@@ -83,8 +83,8 @@ def test_baf_generator_creates_config(agent_model, tmpdir):
     )
     generator.generate()
 
-    config_file = os.path.join(str(output_dir), "config.ini")
-    assert os.path.isfile(config_file), "config.ini should be generated"
+    config_file = os.path.join(str(output_dir), "config.yaml")
+    assert os.path.isfile(config_file), "config.yaml should be generated"
 
 
 def test_baf_generator_creates_readme(agent_model, tmpdir):

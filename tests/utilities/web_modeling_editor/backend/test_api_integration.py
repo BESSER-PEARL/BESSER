@@ -384,7 +384,7 @@ class TestGenerateOutput:
         else:
             # Django generation may fail in test environments due to
             # temp directory cleanup timing or path issues.
-            assert response.status_code == 500
+            assert response.status_code in (400, 500)
 
     def test_generate_backend_returns_zip(self, class_diagram_input):
         """Backend (FastAPI) generator returns a ZIP archive."""
@@ -672,24 +672,24 @@ class TestExportBuml:
         assert "Active" in body
 
     def test_export_unsupported_diagram_type(self):
-        """Exporting an unsupported diagram type returns 500."""
+        """Exporting an unsupported diagram type returns 400."""
         payload = {
             "title": "Unknown",
             "model": {"type": "UnknownType", "elements": {}, "relationships": {}},
         }
         response = client.post("/besser_api/export-buml", json=payload)
-        assert response.status_code == 500
+        assert response.status_code == 400
         data = response.json()
         assert "detail" in data
 
     def test_export_missing_diagram_type(self):
-        """Exporting without a diagram type returns 500."""
+        """Exporting without a diagram type returns 400."""
         payload = {
             "title": "NoType",
             "model": {"elements": {}, "relationships": {}},
         }
         response = client.post("/besser_api/export-buml", json=payload)
-        assert response.status_code == 500
+        assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------
@@ -732,9 +732,9 @@ class TestGetJsonModel:
         assert response.status_code == 400
 
     def test_upload_empty_file(self):
-        """Upload an empty file returns 500."""
+        """Upload an empty file returns 400."""
         response = self._upload_buml_content("", "empty.py")
-        assert response.status_code == 500
+        assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------

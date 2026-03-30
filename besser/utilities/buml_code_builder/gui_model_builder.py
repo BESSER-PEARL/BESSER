@@ -768,9 +768,21 @@ def _write_table(f, var_name, chart):
                     # Fallback: try to find the property variable by name
                     f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={field_ref})\n')
             elif isinstance(col, LookupColumn):
-                path_ref = col.path.name if hasattr(col.path, 'name') else str(col.path)
-                field_ref = col.field.name if hasattr(col.field, 'name') else str(col.field)
-                f.write(f'{col_var} = LookupColumn(label="{_escape_string(col.label)}", path={path_ref}, field={field_ref})\n')
+                # path is an association end Property (defined inline in BinaryAssociation)
+                # field is a Property on the target class
+                path_name = col.path.name if hasattr(col.path, 'name') else str(col.path)
+                field_name = col.field.name if hasattr(col.field, 'name') else str(col.field)
+                # Resolve field: TargetClass_fieldName (e.g. Book_title)
+                path_type = getattr(col.path, 'type', None)
+                if path_type and hasattr(path_type, 'name'):
+                    field_ref = f'{path_type.name}_{field_name}'
+                else:
+                    field_ref = field_name
+                # Path property lives inside a BinaryAssociation's ends, not as a standalone variable.
+                # Generate a runtime lookup via domain_model.
+                path_var = f'{col_var}_path'
+                f.write(f'{path_var} = next(end for assoc in domain_model.associations for end in assoc.ends if end.name == "{_escape_string(path_name)}")\n')
+                f.write(f'{col_var} = LookupColumn(label="{_escape_string(col.label)}", path={path_var}, field={field_ref})\n')
             elif isinstance(col, str):
                 # Legacy string columns — keep as-is
                 column_var_names.append(f'"{_escape_string(col)}"')

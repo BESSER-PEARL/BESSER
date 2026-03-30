@@ -73,12 +73,21 @@ def _resolve_type(type_name: str, type_lookup: dict[str, Union[Class, Enumeratio
     """Resolve a type name to a metamodel type object.
 
     Returns the Class/Enumeration from *type_lookup* if found, otherwise
-    returns a new ``PrimitiveDataType``.
+    returns a new ``PrimitiveDataType``.  Raises ``ConversionError`` with
+    a descriptive message if the name is neither a known user type nor a
+    valid primitive.
     """
     resolved = type_lookup.get(type_name)
     if resolved is not None:
         return resolved
-    return PrimitiveDataType(type_name)
+    try:
+        return PrimitiveDataType(type_name)
+    except ValueError:
+        raise ConversionError(
+            f"Unknown type '{type_name}'. It is not a class, enumeration, "
+            f"or valid primitive type (str, int, float, bool, date, datetime, time, any). "
+            f"Make sure the referenced type exists in the diagram."
+        )
 
 
 def _process_enumerations(

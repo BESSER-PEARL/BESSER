@@ -62,6 +62,9 @@ def handle_endpoint_errors(endpoint_name: str):
             except GenerationError as exc:
                 logger.error("Generation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except ValueError as exc:
+                logger.warning("Value error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             except Exception:
                 logger.exception("Unexpected error in %s", endpoint_name)
                 raise HTTPException(
@@ -83,6 +86,9 @@ def handle_endpoint_errors(endpoint_name: str):
             except GenerationError as exc:
                 logger.error("Generation error in %s: %s", endpoint_name, exc)
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
+            except ValueError as exc:
+                logger.warning("Value error in %s: %s", endpoint_name, exc)
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
             except Exception:
                 logger.exception("Unexpected error in %s", endpoint_name)
                 raise HTTPException(

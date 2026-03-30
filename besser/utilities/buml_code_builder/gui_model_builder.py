@@ -26,7 +26,8 @@ from besser.BUML.metamodel.gui.graphical_ui import (
     DataSourceElement,
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent
+    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,
+    Column, FieldColumn, LookupColumn
 )
 from besser.BUML.metamodel.gui.events_actions import Event, Transition, Create, Read, Update, Delete
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
@@ -111,7 +112,8 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write("    UnitSize, PositionType, Alignment\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.dashboard import (\n")
-        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent\n")
+        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,\n")
+        f.write("    Column, FieldColumn, LookupColumn\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.events_actions import (\n")
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
@@ -746,18 +748,40 @@ def _write_table(f, var_name, chart):
         params.append(f'show_pagination={chart.show_pagination}')
     if hasattr(chart, 'rows_per_page'):
         params.append(f'rows_per_page={chart.rows_per_page}')
+    # Write column objects before the Table constructor
+    column_var_names = []
     if hasattr(chart, 'columns') and chart.columns:
-        # Handle columns as either strings or Column objects (FieldColumn, LookupColumn, etc.)
-        column_literals = []
-        for col in chart.columns:
-            if col:
-                if isinstance(col, str):
-                    column_literals.append(f'"{_escape_string(col)}"')
+        for i, col in enumerate(chart.columns):
+            if not col:
+                continue
+            col_var = f'{var_name}_col_{i}'
+            if isinstance(col, FieldColumn):
+                field_ref = col.field.name if hasattr(col.field, 'name') else str(col.field)
+                # Reference the Property variable from the domain model
+                # The domain model builder names them: ClassName_attributeName
+                # We need to find which class owns this property
+                binding = getattr(chart, 'data_binding', None)
+                if binding and hasattr(binding, 'domain_concept') and binding.domain_concept:
+                    class_name = binding.domain_concept.name
+                    f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={class_name}_{field_ref})\n')
                 else:
-                    # Column object - represent as string for now
-                    column_literals.append(f'"{_escape_string(str(col))}"')
-        if column_literals:
-            params.append(f'columns=[{", ".join(column_literals)}]')
+                    # Fallback: try to find the property variable by name
+                    f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={field_ref})\n')
+            elif isinstance(col, LookupColumn):
+                path_ref = col.path.name if hasattr(col.path, 'name') else str(col.path)
+                field_ref = col.field.name if hasattr(col.field, 'name') else str(col.field)
+                f.write(f'{col_var} = LookupColumn(label="{_escape_string(col.label)}", path={path_ref}, field={field_ref})\n')
+            elif isinstance(col, str):
+                # Legacy string columns — keep as-is
+                column_var_names.append(f'"{_escape_string(col)}"')
+                continue
+            else:
+                column_var_names.append(f'"{_escape_string(str(col))}"')
+                continue
+            column_var_names.append(col_var)
+
+    if column_var_names:
+        params.append(f'columns=[{", ".join(column_var_names)}]')
 
     f.write(f'{var_name} = Table({", ".join(params)})\n')
     if hasattr(chart, 'data_binding') and chart.data_binding:

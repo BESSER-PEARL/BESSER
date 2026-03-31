@@ -17,21 +17,76 @@ New Features
 
 **Redesigned Web Modeling Editor** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
 
-The web editor frontend has been completely rewritten with a modern tech stack, replacing the legacy webapp.
+The web editor frontend has been completely rewritten with a modern tech stack, replacing the legacy Apollon-based webapp. This is not just a reskin -- the entire application shell, navigation, project management, and user experience have been rebuilt from scratch with a focus on usability, accessibility, and performance.
 
-*New in this release:*
+*Application shell and navigation:*
 
 - Ground-up rewrite using Vite 7, Tailwind CSS 3, Radix UI, and Redux Toolkit.
-- Command palette (``Ctrl+K``/``Cmd+K``) with fuzzy search across editors, navigation, and actions.
-- Keyboard shortcuts dialog (``?`` or ``Ctrl+/``) showing all available keybindings.
-- Dark/light theme support with CSS custom properties.
-- Multi-diagram project management with tabbed editing and drag-and-drop file import.
-- Project-level BUML export and JSON preview.
-- AI Modeling Assistant chat widget integrated into the editor (WebSocket connection to the modeling agent).
-- Privacy-respecting analytics via PostHog and Sentry error tracking.
-- Playwright E2E tests and Vitest unit tests.
-- Lazy loading throughout for optimal performance.
+- Collapsible sidebar with diagram type navigation, content indicators (green dot for diagrams with content), and tooltip labels.
+- Mobile-responsive layout with hamburger menu and slide-in drawer for tablet/narrow windows (the old editor was unusable below 768px).
+- Dark/light theme toggle with CSS custom properties and consistent design tokens across the entire UI.
 
+*Command palette and keyboard shortcuts:*
+
+- Command palette (``Ctrl+K``/``Cmd+K``) with fuzzy search across all editors, navigation, and actions -- power users can perform any action in 2-3 keystrokes.
+- Keyboard shortcuts dialog (``?`` or ``Ctrl+/``) listing all shortcuts organized by category with platform-aware key labels (Cmd on Mac, Ctrl on Windows).
+
+*Multi-diagram project management:*
+
+- Multi-diagram tabs: multiple diagrams per type with add/remove/rename (double-click), cross-diagram references, broken reference detection with warning indicators, and collapsible "Linked Diagrams" panel.
+- Redesigned Project Hub with multi-step flow (create, import, open from spreadsheet), inline form validation, drag-and-drop file import, and project metadata display (size, diagram count, date).
+- Template library with category browsing (20+ templates across Class, Agent, State Machine, Quantum Circuit), card-based selection, and conflict detection when loading into existing diagrams ("Replace" or "New tab").
+- Project-level BUML export and JSON preview.
+- Cross-tab synchronization prevents data loss when the editor is open in multiple browser tabs.
+
+*Error handling and loading states:*
+
+- Application-level and per-editor error boundaries -- an unhandled error in one editor no longer crashes the whole app (the old editor showed a blank white screen).
+- Skeleton loading screens matching the final editor layout instead of blank screens or spinners during lazy loading.
+- Code generation progress overlay with animated 3-step indicator ("Parsing diagram...", "Generating code...", "Packaging output...") instead of appearing to hang.
+- Offline connectivity banner with automatic reconnection notification.
+
+*Export and import:*
+
+- Unified export dialog with two-column layout: multi-diagram export (select specific types, JSON or B-UML) and single-diagram export (SVG, PNG white, PNG transparent, JSON, B-UML).
+- Import from 6 sources: JSON files, Python/B-UML files, images via OpenAI, knowledge graphs via OpenAI, GitHub URLs, and spreadsheets/CSV.
+- GitHub B-UML import: paste a GitHub URL to fetch and convert a B-UML model directly.
+
+*User experience improvements:*
+
+- Global confirm dialog replaces all native ``window.confirm()`` calls with styled, accessible dialogs matching the design system.
+- Systematic form validation framework with touch-based error display (errors shown on blur, not while typing).
+- Illustrated help guide with per-diagram-type instructions, screenshots, and best practices (Class, Object, State Machine, Agent, GUI, Quantum).
+- User feedback dialog with satisfaction rating, category selection, and free-text input.
+- About dialog with links to all BESSER repositories.
+- Storage quota monitoring and migration utilities for seamless upgrades.
+- Lazy loading throughout for optimal initial load performance.
+
+*AI Modeling Assistant integration:*
+
+- Floating chat widget with WebSocket connection to the modeling agent.
+- Voice message support (audio recording in the browser).
+- File attachment support (up to 10MB).
+- Rate limiting (8 requests/min, 40/hour).
+- Streaming AI responses with typing indicator.
+- Quick action chips for contextual follow-up suggestions.
+- Connection status indicator (connected/connecting/disconnected).
+- Privacy disclaimer dialog.
+
+*Testing and analytics:*
+
+- Playwright E2E tests covering class diagram interactions, navigation, project management, settings, and theme switching.
+- Vitest unit tests for components and hooks.
+- Privacy-respecting PostHog analytics (lazy-loaded, DNT respected, opt-out by default) with cookie consent banner.
+- Sentry error tracking.
+
+*Significantly improved (existed before, enhanced in the new UI):*
+
+- GitHub OAuth integration with repository creation and Render deployment -- redesigned deployment flow with commit messages, repo privacy settings, star/unstar from the UI, commit history browsing, and version restoration.
+- GUI No-Code Editor (GrapesJS) -- enhanced with new dashboard widgets (BarChart, LineChart, PieChart, RadarChart, RadialBarChart, Map, MetricCard, Table via Recharts), class diagram data binding, series manager for chart configuration, multi-page support, and agent component embedding.
+- Quantum Circuit Editor -- improved gate palette with extensive gate categories (half/quarter/eighth turns, rotation, logic, swap, arithmetic, QFT, function, display, input, probes, sampling, scalar gates), nested circuit modal for composable sub-circuits, undo/redo, copy/paste, gate resize, and initial qubit state cycling.
+- Code generation UI for 13 generators -- new per-generator configuration dialogs (Django project/app name, SQL/SQLAlchemy dialect selection, Agent language/personalization modes, Qiskit backend/shots, WebApp pre-generation checklist).
+- Agent configuration panels with technology settings, LLM provider/model selection, interface styling, voice configuration, avatar configuration, personalization mapping, and rule-based personalization engine with JSON export.
 
 **AI Modeling Assistant -- Major Upgrade** (`modeling-agent <https://github.com/BESSER-PEARL/modeling-agent>`_)
 

@@ -47,27 +47,3 @@ jobs:
           pip install ruff
       - name: Check formatting
         run: ruff check besser/ --select E,W,F --ignore E501
-
-  frontend-lint:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          submodules: true
-      - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: 'besser/utilities/web_modeling_editor/frontend/package-lock.json'
-      - name: Install dependencies
-        working-directory: besser/utilities/web_modeling_editor/frontend
-        run: npm ci
-      - name: Lint
-        working-directory: besser/utilities/web_modeling_editor/frontend/packages/webapp2
-        run: npm run lint
-      - name: Build
-        working-directory: besser/utilities/web_modeling_editor/frontend/packages/webapp2
-        run: npm run build

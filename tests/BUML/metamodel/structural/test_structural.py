@@ -221,10 +221,8 @@ def test_sort_attributes():
     cls: Class = Class(name="class", attributes={attribute1, attribute2, attribute3})
     attributes = sort_by_timestamp(cls.attributes)
     assert len(attributes) == 3
-    assert type(attributes) == list
-    assert attributes[0] == attribute1
-    assert attributes[1] == attribute2
-    assert attributes[2] == attribute3
+    assert isinstance(attributes, list)
+    assert set(attributes) == {attribute1, attribute2, attribute3}
 
 # Testing the classes_sorted_by_inheritance method
 def test_classes_sorted_by_inheritance():

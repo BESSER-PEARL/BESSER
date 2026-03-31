@@ -363,7 +363,6 @@ def parse_input_field(component: Dict[str, Any], styling, name: str, meta: Dict)
         InputField instance with validation rules
     """
     attributes = component.get("attributes") if isinstance(component.get("attributes"), dict) else {}
-    comp_type = str(component.get("type", "")).lower()
     tag = str(component.get("tagName", "")).lower()
 
     field_type = InputFieldType.Text

@@ -120,7 +120,6 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
     states = {}  # name -> state_id mapping
     functions = {}  # name -> function_node mapping
     intents = {}  # name -> intent_id mapping
-    state_machine_name = "Generated_State_Machine"
 
 
     # Track metadata for comments

@@ -203,8 +203,6 @@ def process_agent_diagram(json_data):
 
     # Track states and bodies for later reference
     states_by_id = {}
-    bodies_by_id = {}
-    fallback_bodies_by_id = {}
     intents_by_id = {}
     rag_dbs_by_id = {}
     rag_dbs_by_name = {}

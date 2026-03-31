@@ -45,4 +45,4 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff
       - name: Check formatting
-        run: ruff check besser/ --select W291,W292,W293,F811,F541,E401 --ignore E501
+        run: ruff check besser/ --select F841,F401,F541,F811,E711,E721,E731,E741 --ignore E501 --exclude "*/BESSERActionLanguageParser.py"

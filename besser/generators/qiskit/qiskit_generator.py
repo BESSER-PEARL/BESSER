@@ -142,7 +142,6 @@ class QiskitGenerator(GeneratorInterface):
         functions = []
         for gate_key, gate in function_gates.items():
             gate_name = gate.name.replace(' ', '_').replace('-', '_')
-            num_qubits = len(gate.target_qubits)
             func_lines = [
                 f"def _function_gate_{gate_name}_{id(gate)}(num_qubits):",
                 f"    \"\"\"Custom gate: {gate.name}\"\"\"",

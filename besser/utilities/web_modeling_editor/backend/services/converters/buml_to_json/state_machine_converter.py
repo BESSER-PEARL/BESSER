@@ -481,7 +481,6 @@ def state_machine_to_json(content: str):
     # Track states and functions
     states = {}  # name -> state_id mapping
     functions = {}  # name -> function_node mapping
-    state_machine_name = "Generated_State_Machine"
 
     # Track metadata for comments
     state_comments = {}  # state_var -> comment_text
@@ -501,9 +500,7 @@ def state_machine_to_json(content: str):
                     and node.value.func.id == "StateMachine"
                 ):
                     for kw in node.value.keywords:
-                        if kw.arg == "name":
-                            state_machine_name = ast.literal_eval(kw.value)
-                        elif kw.arg == "metadata":
+                        if kw.arg == "metadata":
                             # Extract StateMachine metadata
                             if isinstance(kw.value, ast.Call):
                                 for meta_kw in kw.value.keywords:

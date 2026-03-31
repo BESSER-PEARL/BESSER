@@ -351,7 +351,7 @@ def class_buml_to_json(domain_model):
                 if ordered_literals is not None:
                     literals_iter = ordered_literals
                 else:
-                    literals_iter = sorted(type_obj.literals, key=lambda l: l.name)
+                    literals_iter = sorted(type_obj.literals, key=lambda lit: lit.name)
                 for literal in literals_iter:
                     literal_id = str(uuid.uuid4())
                     elements[literal_id] = {

@@ -423,7 +423,6 @@ class BOCLListener(ParseTreeListener):
         if len(self.coll_data) != 0:
             self.rootHandler.handle_adding_to_root(self.coll_data.pop())
         else:
-            temp = ctx.getText()
             if ctx.parentCtx is not None:
                 propertyName = ctx.parentCtx.getText().split('->')[0]
                 self.rootHandler.handle_property(propertyName)
@@ -511,7 +510,6 @@ class BOCLListener(ParseTreeListener):
             print(inspect.stack()[0][3])
             if self.debug_print:
                 print(ctx.getText())
-        txt = ctx.getText()
         self.coll_data.append(self.rootHandler.create_ordered_set())
 
         pass
@@ -889,8 +887,6 @@ class BOCLListener(ParseTreeListener):
     def enterID(self, ctx: BOCLParser.IDContext):
         # print(inspect.stack()[0][3])
         # print(ctx.getText())
-        txt = ctx.getText()
-
         if self.debug:
             print(inspect.stack()[0][3])
             if self.debug_print:

@@ -52,7 +52,6 @@ def calculate_connection_points(element_bounds, direction):
 def calculate_path_points(source_point, target_point, source_dir, target_dir):
     """Calculate intermediate points for the relationship path."""
     points = [source_point]
-    offset = 30  # Distance minimale pour les détours
 
     # Calculer les points intermédiaires en fonction des directions
     if source_dir == "Right" and target_dir == "Left":

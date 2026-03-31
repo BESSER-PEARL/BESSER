@@ -3,7 +3,6 @@ Class diagram processing for converting JSON to BUML format.
 """
 
 import logging
-import re
 from typing import Any, Optional, Union
 
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError
@@ -29,16 +28,31 @@ def parse_method_signature_from_code(
     if not isinstance(method_code, str) or not method_code.strip():
         return None
 
-    # Two-step parsing avoids polynomial backtracking on untrusted input
-    sig_match = re.search(r"def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)", method_code)
-    if not sig_match:
+    # String-based parsing to avoid ReDoS on untrusted input
+    def_idx = method_code.find("def ")
+    if def_idx == -1:
         return None
-    rest = method_code[sig_match.end():]
-    ret_match = re.match(r"\s*->\s*([^:{\n]+)", rest)
-    return_type_raw = ret_match.group(1).strip() if ret_match else None
-    signature_match = sig_match
-    method_name, params_text = signature_match.groups()
-    return_type = return_type_raw
+    after_def = method_code[def_idx + 4:].lstrip()
+    paren_open = after_def.find("(")
+    if paren_open == -1:
+        return None
+    method_name = after_def[:paren_open].strip()
+    if not method_name or not method_name.replace("_", "").isalnum():
+        return None
+    paren_close = after_def.find(")", paren_open)
+    if paren_close == -1:
+        return None
+    params_text = after_def[paren_open + 1:paren_close]
+    after_paren = after_def[paren_close + 1:].lstrip()
+    return_type = None
+    if after_paren.startswith("->"):
+        ret_text = after_paren[2:]
+        end = len(ret_text)
+        for ch in (":", "{", "\n"):
+            pos = ret_text.find(ch)
+            if pos != -1 and pos < end:
+                end = pos
+        return_type = ret_text[:end].strip() or None
     signature = f"{method_name.strip()}({(params_text or '').strip()})"
     if return_type:
         signature_with_return = f"{signature}: {return_type.strip()}"

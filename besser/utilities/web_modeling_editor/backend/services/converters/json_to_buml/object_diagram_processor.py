@@ -372,7 +372,7 @@ def process_object_diagram(json_data, domain_model):
                 if len(link_ends) == 2:
                     # Use link_name if provided, otherwise generate a default name
                     link_display_name = link_name if link_name else f"{source_obj.name}_{target_obj.name}_link"
-                    link = Link(name=link_display_name, association=association_obj, connections=link_ends)
+                    Link(name=link_display_name, association=association_obj, connections=link_ends)
                     # Links are automatically added to objects via the Link constructor
                 else:
                     raise ConversionError(

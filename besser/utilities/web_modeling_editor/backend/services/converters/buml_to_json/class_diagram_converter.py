@@ -165,6 +165,7 @@ def class_buml_to_json(domain_model):
                         "visibility": attr.visibility,
                         "attributeType": attr_type,
                         "isOptional": attr.is_optional,
+                        "isId": attr.is_id,
                         "isDerived": attr.is_derived,
                     }
                     if attr.default_value is not None:

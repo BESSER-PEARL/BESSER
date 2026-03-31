@@ -590,6 +590,11 @@ class Property(TypedElement):
                  default_value: Any = None,
                  timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False,
                  uncertainty: float = 0.0):
+        
+        if is_id and is_optional:
+            raise ValueError(f"Property '{name}' cannot be both an identifier (is_id=True)"
+                             f"and optional (is_optional=True)")
+        
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity

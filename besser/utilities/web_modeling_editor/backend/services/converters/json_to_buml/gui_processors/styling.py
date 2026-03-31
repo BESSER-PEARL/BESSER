@@ -21,10 +21,10 @@ from besser.BUML.metamodel.gui import (
 def infer_unit(value: str) -> UnitSize:
     """
     Infer a UnitSize from a CSS value.
-    
+
     Args:
         value: CSS value string
-        
+
     Returns:
         Corresponding UnitSize enum
     """
@@ -49,10 +49,10 @@ def infer_unit(value: str) -> UnitSize:
 def ensure_styling_parts(styling: Styling) -> Styling:
     """
     Make sure a Styling instance always has size, position and color objects attached.
-    
+
     Args:
         styling: Styling object to validate
-        
+
     Returns:
         Styling object with all required parts
     """
@@ -68,10 +68,10 @@ def ensure_styling_parts(styling: Styling) -> Styling:
 def styling_from_css(style_dict: Dict[str, Any]) -> Styling:
     """
     Build a Styling object from a CSS dictionary.
-    
+
     Args:
         style_dict: Dictionary of CSS properties
-        
+
     Returns:
         Styling object
     """
@@ -84,7 +84,7 @@ def merge_styling_with_overrides(styling: Styling, overrides: Dict[str, Any]) ->
     """
     Apply CSS overrides to a Styling object.
     Handles standard CSS properties plus flexbox and grid layout.
-    
+
     Args:
         styling: Styling object to update
         overrides: Dictionary of CSS properties to apply
@@ -93,7 +93,7 @@ def merge_styling_with_overrides(styling: Styling, overrides: Dict[str, Any]) ->
     size = styling.size
     position = styling.position
     color = styling.color
-    
+
     # Initialize layout properties storage
     layout_props = {
         'flex_direction': None,
@@ -356,11 +356,11 @@ def merge_styling_with_overrides(styling: Styling, overrides: Dict[str, Any]) ->
 def parse_color(value, default="#000000"):
     """
     Parses a color value from a string or dict, returns hex or rgba string.
-    
+
     Args:
         value: Color value (string or dict with r,g,b,a keys)
         default: Default color to return if parsing fails
-        
+
     Returns:
         Color string in hex or rgba format
     """
@@ -380,15 +380,15 @@ def parse_color(value, default="#000000"):
 def build_style_map(styles_list) -> Dict[str, Styling]:
     """
     Build a style map keyed by selectors (id/class/type) from GrapesJS styles.
-    
+
     Args:
         styles_list: List of style entries from GrapesJS
-        
+
     Returns:
         Dictionary mapping selectors to Styling objects
     """
     style_map: Dict[str, Styling] = {}
-    
+
     for style_entry in styles_list or []:
         selectors = style_entry.get("selectors", [])
         style = style_entry.get("style", {}) or {}
@@ -402,23 +402,23 @@ def build_style_map(styles_list) -> Dict[str, Styling]:
                 key = selector
             if key:
                 style_map[key] = styling
-    
+
     return style_map
 
 
 def resolve_component_styling(component: Dict[str, Any], style_map: Dict[str, Styling]) -> Styling:
     """
     Resolve styling for a component by merging class styles, type styles, and inline styles.
-    
+
     Args:
         component: GrapesJS component dict
         style_map: Map of selectors to Styling objects
-        
+
     Returns:
         Resolved Styling object
     """
     from .utils import parse_style_string
-    
+
     base = None
     attributes = component.get("attributes")
 
@@ -438,7 +438,7 @@ def resolve_component_styling(component: Dict[str, Any], style_map: Dict[str, St
                 cls_name = cls_item.get("name")
             elif isinstance(cls_item, str):
                 cls_name = cls_item
-            
+
             if cls_name:
                 for selector in (cls_name, f".{cls_name}"):
                     if selector in style_map:
@@ -470,11 +470,11 @@ def resolve_component_styling(component: Dict[str, Any], style_map: Dict[str, St
                 if attributes.get(key):
                     has_inline = True
                     break
-        
+
         if not has_inline:
             # No styles found - return None to signal "no styling"
             return None
-        
+
         # Has inline styles but no base - create minimal styling
         base = Styling(size=Size(), position=Position(), color=Color())
     else:

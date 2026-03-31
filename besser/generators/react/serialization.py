@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 from enum import Enum
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Set
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from besser.BUML.metamodel.gui import (
     Button,
     DataList,
     EmbeddedContent,
     Form,
-    GUIModel,
     Image,
     InputField,
     Link,
@@ -35,26 +34,24 @@ from besser.BUML.metamodel.gui.dashboard import (
 from besser.BUML.metamodel.gui.events_actions import (
     Create,
     Delete,
-    Event,
-    Parameter,
     Read,
     Transition,
     Update,
 )
-from besser.BUML.metamodel.structural import Class, DomainModel, Enumeration
+from besser.BUML.metamodel.structural import Class, Enumeration
 from besser.utilities import sort_by_timestamp
 
 
 class GuiSerializationMixin:
     def _build_generation_context(self) -> Dict[str, Any]:
         components_payload, styles_payload, meta = self._serialize_gui_model()
-        
+
         # Collect all unique field names from all FieldColumns across all Tables
         all_table_fields = self._collect_all_table_fields()
-        
+
         # Get used component types for conditional rendering in templates
         used_component_types = self._get_used_component_types()
-        
+
         return {
             "model": self.gui_model,
             "components_json": self._to_pretty_json(components_payload),
@@ -114,7 +111,7 @@ class GuiSerializationMixin:
         # Note: page_id is set by processor.py for GrapesJS pages
         screen_id = getattr(screen, 'page_id', None) or screen.component_id or screen.name
         screen_name = screen.name
-        
+
         node: Dict[str, Any] = {
             "id": screen_id,
             "name": screen.description or self._humanize(screen_name),
@@ -129,7 +126,7 @@ class GuiSerializationMixin:
         # Sort elements by display_order to preserve JSON ordering
         elements = list(screen.view_elements)
         elements.sort(key=lambda e: (e.display_order, e.name))
-        
+
         for element in elements:
             node["components"].append(self._serialize_component(element))
 
@@ -164,7 +161,7 @@ class GuiSerializationMixin:
             # Sort children by display_order to preserve JSON ordering
             children_list = list(element.view_elements)
             children_list.sort(key=lambda e: (e.display_order, e.name))
-            
+
             children = [self._serialize_component(child) for child in children_list]
             if children:
                 node["children"] = children
@@ -269,7 +266,7 @@ class GuiSerializationMixin:
                                     param_data["options"] = sorted([literal.name for literal in param_type.literals])
 
                                 input_params[param.name] = param_data
-                        
+
                         if input_params:
                             attributes['input-parameters'] = input_params
 
@@ -491,7 +488,7 @@ class GuiSerializationMixin:
                         column_dict["options"] = sorted([literal.name for literal in field_type.literals])
                     else:
                         column_dict["type"] = field_type.name if hasattr(field_type, "name") else "str"
-                    
+
                     # Check if the field is required based on minimum multiplicity
                     if hasattr(col.field, "multiplicity") and hasattr(col.field.multiplicity, "min"):
                         column_dict["required"] = col.field.multiplicity.min > 0
@@ -512,7 +509,7 @@ class GuiSerializationMixin:
                             column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
                     else:
                         column_dict["type"] = getattr(col.field, "type", {}).name if hasattr(getattr(col.field, "type", None), "name") else "str"
-                    
+
                     # Check if the lookup path is required based on minimum multiplicity
                     if hasattr(col.path, "multiplicity") and hasattr(col.path.multiplicity, "min"):
                         column_dict["required"] = col.path.multiplicity.min > 0
@@ -595,7 +592,7 @@ class GuiSerializationMixin:
 
             if form_columns:
                 node["chart"]["formColumns"] = form_columns
-            
+
             # Remove raw GrapesJS columns from attributes - we use the processed columns in chart
             if "attributes" in node and isinstance(node["attributes"], dict) and "columns" in node["attributes"]:
                 node["attributes"] = {k: v for k, v in node["attributes"].items() if k != "columns"}
@@ -706,7 +703,7 @@ class GuiSerializationMixin:
         data_filter = getattr(binding, "data_filter", None)
         label_field_path = getattr(binding, "label_field_path", None)
         data_field_path = getattr(binding, "data_field_path", None)
-        
+
         endpoint = None
         if domain and getattr(domain, "name", None):
             endpoint = f"/{domain.name.lower()}/"
@@ -729,14 +726,14 @@ class GuiSerializationMixin:
         """Serialize chart series with their data bindings."""
         if not series_list:
             return None
-        
+
         serialized = []
         default_colors = ["#4CAF50", "#2196F3", "#FF9800", "#E91E63", "#9C27B0", "#00BCD4", "#FF5722", "#795548"]
-        
+
         for idx, series in enumerate(series_list):
             binding = getattr(series, "data_binding", None)
             styling = getattr(series, "styling", None)
-            
+
             # Extract color from styling or use default
             # Check multiple color properties in order of preference
             color = None
@@ -744,49 +741,49 @@ class GuiSerializationMixin:
                 color_obj = getattr(styling, "color", None)
                 if color_obj:
                     # Try primary_color first (set by chart parser), then line_color, bar_color, background_color
-                    color = (getattr(color_obj, "primary_color", None) or 
-                             getattr(color_obj, "line_color", None) or 
+                    color = (getattr(color_obj, "primary_color", None) or
+                             getattr(color_obj, "line_color", None) or
                              getattr(color_obj, "bar_color", None) or
                              getattr(color_obj, "background_color", None))
             if not color:
                 color = default_colors[idx % len(default_colors)]
-            
+
             series_data: Dict[str, Any] = {
                 "name": series.name,
                 "label": series.label or series.name,
                 "color": color,
             }
-            
+
             # Add data binding info if available
             if binding:
                 domain = getattr(binding, "domain_concept", None)
                 label_field = getattr(binding, "label_field", None)
                 data_field = getattr(binding, "data_field", None)
                 filter_expression = getattr(binding, "filter_expression", None)
-                
+
                 if domain:
                     series_data["dataSource"] = domain.name.lower()
                     series_data["endpoint"] = f"/{domain.name.lower()}/"
-                
+
                 # Use label_field_path for nested fields, otherwise use label_field attribute
                 label_field_path = getattr(binding, "label_field_path", None)
                 if label_field_path:
                     series_data["labelField"] = label_field_path
                 elif label_field:
                     series_data["labelField"] = getattr(label_field, "name", None)
-                
+
                 # Use data_field_path for nested fields, otherwise use data_field attribute
                 data_field_path = getattr(binding, "data_field_path", None)
                 if data_field_path:
                     series_data["dataField"] = data_field_path
                 elif data_field:
                     series_data["dataField"] = getattr(data_field, "name", None)
-                
+
                 if filter_expression:
                     series_data["filter"] = str(filter_expression)
-            
+
             serialized.append(self._clean_dict(series_data))
-        
+
         return serialized if serialized else None
 
     # --------------------------------------------------------------------- #
@@ -1093,7 +1090,7 @@ class GuiSerializationMixin:
             "--chart-bar-color": "#CCCCCC",
             "--chart-color-palette": "default",
         }
-        
+
         # Check if there's at least one non-default value
         for key, value in style.items():
             if key not in defaults:
@@ -1102,7 +1099,7 @@ class GuiSerializationMixin:
             if defaults.get(key) != value:
                 # This is a default property but with a different value
                 return True
-        
+
         # All values are defaults
         return False
 
@@ -1224,12 +1221,12 @@ class GuiSerializationMixin:
         Collect all unique field names from FieldColumns across all Tables in the GUI model.
         Recursively searches through all ViewContainers to find nested Tables.
         These will be used to generate dynamic option display logic in the template.
-        
+
         Returns:
             List of unique field names sorted alphabetically
         """
         field_names = set()
-        
+
         def scan_element_for_tables(element):
             """Recursively scan an element and its children for Tables."""
             if isinstance(element, Table):
@@ -1238,30 +1235,30 @@ class GuiSerializationMixin:
                     if isinstance(col, FieldColumn):
                         field_name = col.field.name if hasattr(col.field, "name") else str(col.field)
                         field_names.add(field_name)
-            
+
             # Recursively scan children if this is a ViewContainer
             if isinstance(element, ViewContainer):
                 for child in element.view_elements:
                     scan_element_for_tables(child)
-        
+
         # Iterate through all modules and screens to find Tables (including nested ones)
         for module in self.gui_model.modules:
             for screen in module.screens:
                 for element in screen.view_elements:
                     scan_element_for_tables(element)
-        
+
         return sorted(field_names)
 
     def _get_used_component_types(self) -> set:
         """
         Scan the GUI model to determine which component types are actually used.
         Recursively searches through all ViewContainers to find nested components.
-        
+
         Returns:
             Set of component type names (e.g., 'LineChart', 'BarChart', 'Table', etc.)
         """
         used_types = set()
-        
+
         def scan_element(element):
             """Recursively scan an element and its children for component types."""
             # Map component instances to their type names
@@ -1279,18 +1276,18 @@ class GuiSerializationMixin:
                 used_types.add('Table')
             elif isinstance(element, MetricCard):
                 used_types.add('MetricCard')
-            
+
             # Recursively scan children if this is a ViewContainer
             if isinstance(element, ViewContainer):
                 for child in element.view_elements:
                     scan_element(child)
-        
+
         # Scan all screens and their children
         for module in self.gui_model.modules:
             for screen in module.screens:
                 for element in screen.view_elements:
                     scan_element(element)
-        
+
         return used_types
 
     @staticmethod
@@ -1300,20 +1297,20 @@ class GuiSerializationMixin:
         if isinstance(value, Enum):
             return value.value if hasattr(value, "value") else value.name
         return str(value)
-    
+
     def _get_entity_name_from_id(self, entity_id: str) -> Optional[str]:
         """Get entity name from the structural model by ID"""
         if not hasattr(self, 'model') or not self.model:
             return None
-        
+
         # Search for class with matching name or component_id
         for cls in self.model.get_classes():
             if cls.name == entity_id or getattr(cls, 'component_id', None) == entity_id:
                 return cls.name
-        
+
         # If not found, return the ID as-is (it might already be a name)
         return entity_id
-    
+
     @staticmethod
     def _infer_type(value: Any) -> str:
         """Infer parameter type from value"""
@@ -1374,14 +1371,14 @@ class GuiSerializationMixin:
     @staticmethod
     def _clean_dict(data: Dict[str, Any], preserve_keys: set = None) -> Dict[str, Any]:
         """Clean dict by removing empty/None values.
-        
+
         Args:
             data: Dictionary to clean
             preserve_keys: Set of keys to preserve even if their value is empty
         """
         if preserve_keys is None:
             preserve_keys = {"components", "children"}  # Always preserve these for TypeScript compatibility
-        
+
         cleaned: Dict[str, Any] = {}
         for key, value in data.items():
             if isinstance(value, bool):

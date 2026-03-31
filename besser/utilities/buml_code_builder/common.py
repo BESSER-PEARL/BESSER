@@ -69,16 +69,16 @@ def safe_class_name(name):
     Add a suffix to class names that match reserved keywords or BUML metaclass names.
     If the name already ends with an underscore and would conflict with a reserved name,
     add a numeric suffix instead.
-    
+
     Parameters:
     name (str): The original class name
-    
+
     Returns:
     str: A safe variable name for the class
     """
     if not name:
         return "unnamed_class"
-        
+
     if keyword.iskeyword(name):
         return f"{name}_"
     if name.endswith('_'):

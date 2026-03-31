@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, List, Union
+from typing import Optional, Dict, Any, List
 from pydantic import BaseModel, model_validator
 from besser.utilities.web_modeling_editor.backend.models import DiagramInput
 

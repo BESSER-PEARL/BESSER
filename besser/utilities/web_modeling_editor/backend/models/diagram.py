@@ -1,6 +1,6 @@
 from typing import Dict, Any, Literal, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 class DjangoConfig(BaseModel):
     project_name: str

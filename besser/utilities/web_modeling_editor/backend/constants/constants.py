@@ -57,4 +57,4 @@ RELATIONSHIP_TYPES = {
     "composition": "ClassComposition",
     "aggregation": "ClassAggregation",
     "inheritance": "ClassInheritance"
-} 
+}

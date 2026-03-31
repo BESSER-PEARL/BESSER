@@ -1,7 +1,7 @@
 import os
 from besser.BUML.metamodel.gui import *
 from besser.BUML.metamodel.structural import *
-from jinja2 import Template, Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader
 from besser.generators import GeneratorInterface
 
 
@@ -19,7 +19,7 @@ class CompeletedCodeGenerator(GeneratorInterface):
         structure_file (str): Path to the structure.py file.
         python_code (str): The Python code to be included.
     """
-    
+
     def __init__(self, output_dir: str = None, output_file_name: str = None, structure_file_path: str = None, code_file: str = None, keyworld: str=None):
         super().__init__(output_dir)
         # Set default directory to 'output/app_files' if not specified
@@ -49,12 +49,12 @@ class CompeletedCodeGenerator(GeneratorInterface):
 
         with open(self.code_file, 'r') as f:
            code_contnet= f.read()
- 
+
 
         with open(file_path, mode="w") as f:
             generated_code = template.render(
                 output_file_name= self.output_file_name,
-                structure_file_path=self.structure_file_path, 
+                structure_file_path=self.structure_file_path,
                 code_content=code_contnet,
                 keyworld= self.keyworld
                 )

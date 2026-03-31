@@ -12,10 +12,10 @@ from typing import Any, Dict, Optional
 def sanitize_name(raw_name: Optional[str]) -> str:
     """
     Convert an arbitrary string into a valid BUML element name.
-    
+
     Args:
         raw_name: The raw name to sanitize
-        
+
     Returns:
         A valid BUML element name
     """
@@ -36,23 +36,23 @@ def sanitize_name(raw_name: Optional[str]) -> str:
 def parse_style_string(style_string: str) -> Dict[str, str]:
     """
     Parse an inline CSS string into a dictionary of property/value pairs.
-    
+
     Args:
         style_string: CSS style string (e.g., "color: red; font-size: 14px")
-        
+
     Returns:
         Dictionary of CSS properties
     """
     properties: Dict[str, str] = {}
-    
+
     # Handle non-string inputs (dict, None, etc.)
     if not style_string:
         return properties
-    
+
     # If it's already a dict, return it
     if isinstance(style_string, dict):
         return {k.strip().lower(): str(v).strip() for k, v in style_string.items()}
-    
+
     # If it's not a string, try to convert it
     if not isinstance(style_string, str):
         try:
@@ -74,11 +74,11 @@ def parse_style_string(style_string: str) -> Dict[str, str]:
 def parse_bool(value: Any, default: bool = True) -> bool:
     """
     Parse a boolean value from various input types.
-    
+
     Args:
         value: Value to parse (bool, str, None)
         default: Default value if parsing fails
-        
+
     Returns:
         Boolean value
     """
@@ -94,10 +94,10 @@ def parse_bool(value: Any, default: bool = True) -> bool:
 def clean_attribute_name(attr_text: str) -> str:
     """
     Cleans attribute names by removing visibility and type annotations.
-    
+
     Args:
         attr_text: Raw attribute text
-        
+
     Returns:
         Cleaned attribute name
     """
@@ -110,10 +110,10 @@ def clean_method_name(method_text: str) -> str:
     """
     Cleans method names by removing visibility, parameters, and return type annotations.
     Extracts just the method name from signatures like "+ decrease_stock(qty: int)" -> "decrease_stock"
-    
+
     Args:
         method_text: Raw method text with possible visibility, parameters, and type annotations
-        
+
     Returns:
         Cleaned method name
     """
@@ -132,32 +132,32 @@ def clean_method_name(method_text: str) -> str:
 def get_element_by_id(class_model, element_id):
     """
     Resolve an element by its ID from the class_model.
-    
+
     Args:
         class_model: The class model (dict or list)
         element_id: The element ID to find
-        
+
     Returns:
         The element dict or None if not found
     """
     if not class_model or not element_id:
         return None
-    
+
     if isinstance(class_model, dict):
         if element_id in class_model:
             return class_model[element_id]
-        
+
         # If this is a full diagram dict, look under 'elements'
         if 'elements' in class_model and isinstance(class_model['elements'], dict):
             if element_id in class_model['elements']:
                 return class_model['elements'][element_id]
-    
+
     # List format
     if isinstance(class_model, list):
         for el in class_model:
             if el.get('id') == element_id:
                 return el
-    
+
     return None
 
 
@@ -165,15 +165,14 @@ def extract_text_content(component: Dict[str, Any]) -> str:
     """
     Collect text content from a GrapesJS component (including nested text nodes).
     Converts <br> tags to newlines. Recursively extracts all text content.
-    
+
     Args:
         component: GrapesJS component dict
-        
+
     Returns:
         Extracted text content
     """
-    from .constants import TEXT_TAGS
-    
+
     if not isinstance(component, dict):
         return ""
 
@@ -192,10 +191,10 @@ def extract_text_content(component: Dict[str, Any]) -> str:
     for child in children:
         if not isinstance(child, dict):
             continue
-            
+
         child_type = str(child.get("type", "")).lower()
         child_tag = str(child.get("tagName", "")).lower()
-        
+
         if child_type == "textnode":
             # Direct text node - extract content
             child_content = child.get("content", "")
@@ -209,7 +208,7 @@ def extract_text_content(component: Dict[str, Any]) -> str:
             nested_content = extract_text_content(child)
             if nested_content:
                 content += nested_content
-    
+
     # Clean up and return
     result = content.strip()
     # Remove excessive whitespace but preserve intentional spacing
@@ -217,5 +216,5 @@ def extract_text_content(component: Dict[str, Any]) -> str:
         # Replace multiple spaces with single space, but preserve newlines
         result = re.sub(r'[ \t]+', ' ', result)
         result = re.sub(r'\n\s*\n', '\n', result)
-    
+
     return result

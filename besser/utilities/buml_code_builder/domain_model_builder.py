@@ -9,7 +9,6 @@ from typing import Optional
 from besser.BUML.metamodel.structural.structural import (
     DomainModel,
     AssociationClass,
-    Metadata,
     MethodImplementationType,
 )
 from besser.BUML.metamodel.object.object import ObjectModel
@@ -95,7 +94,7 @@ def domain_model_to_code(
     Generates Python code for a B-UML model and writes it to a specified file.
 
     Parameters:
-        model (DomainModel): The B-UML model object containing classes, enumerations, 
+        model (DomainModel): The B-UML model object containing classes, enumerations,
             associations, and generalizations.
         file_path (str): The path where the generated code will be saved.
         objectmodel (ObjectModel, optional): The B-UML object model to include in the same file.
@@ -216,10 +215,10 @@ def domain_model_to_code(
             for method in sort(cls.methods):
                 # Extract just the method name (before any parenthesis) for the variable name
                 method_var_name = method.name.split('(')[0] if '(' in method.name else method.name
-                
+
                 method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                 visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
-                
+
                 method_code = method.code if hasattr(method, "code") and method.code else ""
 
                 impl_str = ""
@@ -352,10 +351,10 @@ def domain_model_to_code(
                 for method in sort(ac.methods):
                     # Extract just the method name (before any parenthesis) for the variable name
                     method_var_name = method.name.split('(')[0] if '(' in method.name else method.name
-                    
+
                     method_type = PRIMITIVE_TYPE_MAPPING.get(method.type.name, safe_class_name(method.type.name)) if method.type else None
                     visibility_str = f', visibility="{method.visibility}"' if method.visibility != "public" else ""
-                    
+
                     method_code = method.code if hasattr(method, "code") and method.code else ""
 
                     impl_str = ""
@@ -440,7 +439,7 @@ def domain_model_to_code(
 
         # Write domain model
         f.write("# Domain Model\n")
-        
+
         # Write domain model metadata if it exists
         domain_metadata_var = None
         if hasattr(model, 'metadata') and model.metadata:
@@ -453,7 +452,7 @@ def domain_model_to_code(
             if model.metadata.icon:
                 f.write(f'    icon="{_escape_python_string(model.metadata.icon)}"\n')
             f.write(")\n\n")
-        
+
         f.write(f"{model_var_name} = DomainModel(\n")
         f.write(f"    name=\"{_escape_python_string(model.name)}\",\n")
 
@@ -465,7 +464,7 @@ def domain_model_to_code(
         f.write(f"    types={{{types_str}}},\n")
 
         # Include both regular associations and those used in association classes
-        all_assoc_names = ', '.join([assoc.name for assoc in regular_associations] + 
+        all_assoc_names = ', '.join([assoc.name for assoc in regular_associations] +
                                     [ac.association.name for ac in association_classes])
         if all_assoc_names:
             f.write(f"    associations={{{all_assoc_names}}},\n")
@@ -479,7 +478,7 @@ def domain_model_to_code(
             f.write(f"    generalizations={{{', '.join(f'gen_{gen.specific.name}_{gen.general.name}' for gen in sort(model.generalizations))}}},\n")
         else:
             f.write("    generalizations={},\n")
-        
+
         # Add metadata if it exists
         if domain_metadata_var:
             f.write(f"    metadata={domain_metadata_var}\n")
@@ -564,7 +563,7 @@ def domain_model_to_code(
             f.write(f"{object_model_var_name}: ObjectModel = ObjectModel(\n")
             f.write(f"    name=\"{_escape_python_string(objectmodel.name)}\",\n")
             f.write(f"    objects={{{objects_str}}}")
-            
+
             # Add metadata if it exists
             if hasattr(objectmodel, 'metadata') and objectmodel.metadata:
                 if objectmodel.metadata.description:

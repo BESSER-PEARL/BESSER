@@ -4,7 +4,6 @@ Domain model conversion from BUML to JSON format.
 
 import logging
 import uuid
-import ast
 from besser.BUML.metamodel.structural import (
     Class, Property, Method, Parameter as StructuralParameter, DomainModel,
     PrimitiveDataType, Enumeration,
@@ -25,7 +24,7 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     VISIBILITY_MAP, RELATIONSHIP_TYPES
 )
 from besser.utilities.web_modeling_editor.backend.services.utils import (
-    calculate_center_point, determine_connection_direction, calculate_connection_points,
+    determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
 )
 
@@ -168,7 +167,7 @@ def class_buml_to_json(domain_model):
     # Track position
     current_column = 0
     current_row = 0
-    
+
     # Track comments to create
     comments_to_create = []  # [(comment_text, linked_class_id)]
 
@@ -291,7 +290,7 @@ def class_buml_to_json(domain_model):
                             "height": 30,
                         },
                     }
-                    
+
                     # Add code attribute if it exists and is not empty
                     if hasattr(method, "code") and method.code:
                         method_element["code"] = method.code
@@ -403,7 +402,7 @@ def class_buml_to_json(domain_model):
                     else {"constraint": type_obj.expression}
                 ),
             }
-            
+
             # Add metadata fields for classes if they exist
             if isinstance(type_obj, Class) and hasattr(type_obj, 'metadata') and type_obj.metadata:
                 if type_obj.metadata.description:
@@ -628,12 +627,12 @@ def class_buml_to_json(domain_model):
                 "path": [{"x": 0, "y": 0}, {"x": 0, "y": 0}],
                 "isManuallyLayouted": False,
             }
-    
+
     # Create comment elements from metadata descriptions
     for comment_text, linked_class_id in comments_to_create:
         comment_id = str(uuid.uuid4())
         x, y = get_position()
-        
+
         # Create comment element
         elements[comment_id] = {
             "id": comment_id,
@@ -647,7 +646,7 @@ def class_buml_to_json(domain_model):
                 "height": 100,
             },
         }
-        
+
         # Create Link relationship from comment to class
         rel_id = str(uuid.uuid4())
         relationships[rel_id] = {
@@ -671,12 +670,12 @@ def class_buml_to_json(domain_model):
             "path": [{"x": 0, "y": 0}, {"x": 0, "y": 0}],
             "isManuallyLayouted": False,
         }
-    
+
     # Handle domain model level comments (unlinked comments)
     if hasattr(domain_model, 'metadata') and domain_model.metadata and domain_model.metadata.description:
         comment_id = str(uuid.uuid4())
         x, y = get_position()
-        
+
         elements[comment_id] = {
             "id": comment_id,
             "name": domain_model.metadata.description,

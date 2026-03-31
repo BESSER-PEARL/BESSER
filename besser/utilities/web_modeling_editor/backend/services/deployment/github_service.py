@@ -4,14 +4,10 @@ GitHub Service for Repository Creation and Code Push.
 Handles creating GitHub repositories and pushing generated code.
 """
 
-import os
 import base64
-import tempfile
-import shutil
 from typing import Optional, Dict, Any, List
 from pathlib import Path
 import httpx
-from datetime import datetime
 
 
 class GitHubService:
@@ -347,7 +343,7 @@ class GitHubService:
             readme += f"""[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/{owner}/{repo_name})
 """
 
-        readme += f"""
+        readme += """
 A full-stack web application generated from visual models using the [BESSER Web Modeling Editor](https://editor.besser-pearl.org), a low-code open-source platform.
 
 </div>

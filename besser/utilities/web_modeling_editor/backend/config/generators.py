@@ -63,7 +63,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="object_oriented",
         requires_class_diagram=True
     ),
-    
+
     # Web framework generators (class diagram based)
     "django": GeneratorInfo(
         generator_class=DjangoGenerator,
@@ -86,7 +86,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="web_framework",
         requires_class_diagram=True
     ),
-    
+
     # Database generators (class diagram based)
     "sqlalchemy": GeneratorInfo(
         generator_class=SQLAlchemyGenerator,
@@ -102,7 +102,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="database",
         requires_class_diagram=True
     ),
-    
+
     # Data format generators (class diagram based)
     # Note: "Smart Data Models" in the frontend uses this same generator with mode="smart_data".
     # There is no separate "smartdata" generator entry; the mode is passed via config.
@@ -120,7 +120,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="object_model",
         requires_class_diagram=False
     ),
-    
+
     # AI/Agent generators (agent diagram based)
     "agent": GeneratorInfo(
         generator_class=BAFGenerator,
@@ -129,7 +129,7 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="ai_agent",
         requires_class_diagram=False
     ),
-    
+
     # Quantum generators
     "qiskit": GeneratorInfo(
         generator_class=QiskitGenerator,
@@ -217,7 +217,7 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
     info = get_generator_info(generator_type)
     if not info:
         return f"{base_name}.txt"
-    
+
     if generator_type == "python":
         return "classes.py"
     elif generator_type == "pydantic":

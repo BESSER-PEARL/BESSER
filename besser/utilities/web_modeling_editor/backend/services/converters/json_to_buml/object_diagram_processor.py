@@ -12,8 +12,7 @@ from besser.BUML.metamodel.object.builder import ObjectBuilder
 from besser.BUML.metamodel.object import Link, LinkEnd
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.converters.parsers import parse_attribute
-from datetime import datetime, date, time, timedelta
-import re
+from datetime import datetime, timedelta
 
 
 def get_all_attributes(cls, domain_model):
@@ -79,10 +78,10 @@ def parse_datetime_value(value, type_name):
                 else:  # HH:MM:SS format
                     hours, minutes, seconds = map(int, time_components)
                     return timedelta(hours=hours, minutes=minutes, seconds=seconds)
-    except (ValueError, IndexError) as e:
-        logger.warning("Could not parse %s value: %s", type_name, e)
+    except (ValueError, IndexError):
+        logger.warning("Could not parse %s value", type_name)
         return value
-    
+
     return value
 
 
@@ -141,7 +140,7 @@ def process_object_diagram(json_data, domain_model):
             comment_text = element.get("name", "").strip()
             comment_elements[element_id] = comment_text
             continue
-            
+
         if element.get("type") == "ObjectName" or element.get("type") == "UserModelName":
             # Extract object name and class ID
             object_name = element.get("name", "")
@@ -221,7 +220,7 @@ def process_object_diagram(json_data, domain_model):
                     if property_obj:
                         # Convert value to appropriate type
                         converted_value = value
-                        
+
                         # Check if the property type is an enumeration
                         if hasattr(property_obj.type, 'literals'):  # This is an enumeration
                             try:
@@ -250,7 +249,7 @@ def process_object_diagram(json_data, domain_model):
                                 converted_value = value.lower() in ['true', '1', 'yes']
                             elif type_name in ['datetime', 'DateTimeType', 'date', 'DateType', 'time', 'TimeType', 'timedelta', 'TimeDeltaType']:
                                 converted_value = parse_datetime_value(value, type_name)
-                        
+
                         attributes_dict[attr_name] = converted_value
 
             # Add attributes to builder if any were found
@@ -270,25 +269,25 @@ def process_object_diagram(json_data, domain_model):
         if relationship.get("type") == "Link":
             source_element_id = relationship.get("source", {}).get("element")
             target_element_id = relationship.get("target", {}).get("element")
-            
+
             # Determine which is the comment and which is the target
             comment_id = None
             target_id = None
-            
+
             if source_element_id in comment_elements:
                 comment_id = source_element_id
                 target_id = target_element_id
             elif target_element_id in comment_elements:
                 comment_id = target_element_id
                 target_id = source_element_id
-            
+
             if comment_id and target_id:
                 if comment_id not in comment_links:
                     comment_links[comment_id] = []
                 comment_links[comment_id].append(target_id)
-            
+
             continue
-            
+
         if relationship.get("type") == "ObjectLink":
             source_id = relationship.get("source", {}).get("element")
             target_id = relationship.get("target", {}).get("element")
@@ -383,7 +382,7 @@ def process_object_diagram(json_data, domain_model):
                 raise ConversionError(
                     f"Could not find association for link '{link_name}'. Please ensure all links correspond to valid associations in the class diagram."
                 )
-    
+
     for comment_id, comment_text in comment_elements.items():
         if comment_id in comment_links:
             # Comment is linked to specific objects
@@ -407,5 +406,5 @@ def process_object_diagram(json_data, domain_model):
                     object_model.metadata.description += f"\n{comment_text}"
                 else:
                     object_model.metadata.description = comment_text
-    
+
     return object_model

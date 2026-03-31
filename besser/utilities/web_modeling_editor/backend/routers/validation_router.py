@@ -6,7 +6,7 @@ Handles all diagram validation endpoints for the BESSER web modeling editor back
 
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -163,7 +163,7 @@ async def validate_diagram(input_data: DiagramInput):
         # Construction validation errors (from BUML creation setters)
         logger.warning("Construction validation error: %s", e)
         validation_errors.append("A validation error occurred during diagram construction. Please check your diagram for invalid values.")
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error during diagram conversion/validation")
         validation_errors.append("An unexpected error occurred during validation.")
 
@@ -180,7 +180,7 @@ async def validate_diagram(input_data: DiagramInput):
             if hasattr(buml_model, "ocl_warnings") and buml_model.ocl_warnings:
                 validation_warnings.extend(buml_model.ocl_warnings)
 
-        except Exception as e:
+        except Exception:
             logger.exception("Unexpected error during OCL constraint check")
             validation_warnings.append("OCL constraint check encountered an unexpected error.")
 

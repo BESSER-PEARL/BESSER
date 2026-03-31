@@ -205,7 +205,7 @@ class Position:
         bottom (str, optional): Distance from the bottom (e.g., '10px', '10%', None).
         alignment (str, optional): Defines how the element aligns within its container (e.g., "CENTER", "LEFT").
         z_index (int, optional): Determines the stacking order; higher values appear above lower ones.
-    
+
     Attributes:
         p_type (PositionType): The positioning type (e.g., STATIC, ABSOLUTE, RELATIVE).
         top (str): Distance from the top (e.g., '10px', '10%', None).

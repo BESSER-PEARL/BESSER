@@ -11,7 +11,6 @@ import json as json_lib
 from besser.BUML.metamodel.state_machine.state_machine import (
     Body,
     Condition,
-    Event,
     ConfigProperty,
     CustomCodeAction,
     TransitionBuilder,
@@ -19,7 +18,6 @@ from besser.BUML.metamodel.state_machine.state_machine import (
 from besser.BUML.metamodel.state_machine.agent import (
     Agent,
     Intent,
-    Auto,
     DummyEvent,
     IntentMatcher,
     ReceiveFileEvent,
@@ -31,7 +29,6 @@ from besser.BUML.metamodel.state_machine.agent import (
     LLMReply,
     RAGReply,
     DBReply,
-    RAG,
     RAGVectorStore,
     RAGTextSplitter,
 )
@@ -211,7 +208,7 @@ def process_agent_diagram(json_data):
     intents_by_id = {}
     rag_dbs_by_id = {}
     rag_dbs_by_name = {}
-    
+
     # Store comments for later processing
     comment_elements = {}  # {comment_id: comment_text}
     comment_links = {}  # {comment_id: [linked_element_ids]}
@@ -355,17 +352,17 @@ def process_agent_diagram(json_data):
             # Handle comment links
             source_element_id = relationship.get("source", {}).get("element")
             target_element_id = relationship.get("target", {}).get("element")
-            
+
             comment_id = None
             target_id = None
-            
+
             if source_element_id in comment_elements:
                 comment_id = source_element_id
                 target_id = target_element_id
             elif target_element_id in comment_elements:
                 comment_id = target_element_id
                 target_id = source_element_id
-            
+
             if comment_id and target_id:
                 if comment_id not in comment_links:
                     comment_links[comment_id] = []

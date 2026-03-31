@@ -9,12 +9,12 @@ fallback to in-memory storage when the cryptography package is absent).
 import logging
 import os
 import secrets
-from typing import Optional, Dict, Any
+from typing import Optional
 import httpx
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request
 
 logger = logging.getLogger(__name__)
-from fastapi.responses import RedirectResponse, JSONResponse
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 
 from besser.utilities.web_modeling_editor.backend.services.deployment.session_store import (
@@ -166,7 +166,7 @@ async def github_callback(code: str, state: str):
             status_code=302
         )
 
-    except httpx.HTTPError as e:
+    except httpx.HTTPError:
         return RedirectResponse(
             url=f"{DEPLOYMENT_URL}?error=github_api_error",
             status_code=302
@@ -278,7 +278,7 @@ async def star_besser_repo(session_id: str):
             )
             resp.raise_for_status()
         return {"success": True}
-    except httpx.HTTPError as e:
+    except httpx.HTTPError:
         logger.exception("GitHub API request failed")
         raise HTTPException(status_code=502, detail="GitHub API request failed.")
 
@@ -302,6 +302,6 @@ async def unstar_besser_repo(session_id: str):
             )
             resp.raise_for_status()
         return {"success": True}
-    except httpx.HTTPError as e:
+    except httpx.HTTPError:
         logger.exception("GitHub API request failed")
         raise HTTPException(status_code=502, detail="GitHub API request failed.")

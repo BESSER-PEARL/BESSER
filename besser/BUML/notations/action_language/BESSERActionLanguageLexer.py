@@ -1,6 +1,5 @@
 # Generated from D:/Projects/BESSER/besser/BUML/notations/action_language/BESSERActionLanguage.g4 by ANTLR 4.13.2
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
     from typing import TextIO
@@ -206,25 +205,25 @@ class BESSERActionLanguageLexer(Lexer):
     modeNames = [ "DEFAULT_MODE" ]
 
     literalNames = [ "<INVALID>",
-            "'def'", "'('", "','", "')'", "'->'", "':'", "'='", "';'", "'while'", 
-            "'do'", "'for'", "'in'", "'{'", "'}'", "'if'", "'else'", "'return'", 
-            "'[]'", "'?'", "'['", "']'", "'any'", "'float'", "'str'", "'int'", 
-            "'bool'", "'nothing'", "'||'", "'&&'", "'=='", "'!='", "'<'", 
-            "'<='", "'>'", "'>='", "'instanceof'", "'+'", "'-'", "'*'", 
-            "'/'", "'%'", "'!'", "'??'", "'.'", "'this'", "'new'", "'true'", 
+            "'def'", "'('", "','", "')'", "'->'", "':'", "'='", "';'", "'while'",
+            "'do'", "'for'", "'in'", "'{'", "'}'", "'if'", "'else'", "'return'",
+            "'[]'", "'?'", "'['", "']'", "'any'", "'float'", "'str'", "'int'",
+            "'bool'", "'nothing'", "'||'", "'&&'", "'=='", "'!='", "'<'",
+            "'<='", "'>'", "'>='", "'instanceof'", "'+'", "'-'", "'*'",
+            "'/'", "'%'", "'!'", "'??'", "'.'", "'this'", "'new'", "'true'",
             "'false'", "'null'", "'::'", "'..'" ]
 
     symbolicNames = [ "<INVALID>",
             "ID", "INT", "FLOAT", "WS", "NL", "STR" ]
 
-    ruleNames = [ "T__0", "T__1", "T__2", "T__3", "T__4", "T__5", "T__6", 
-                  "T__7", "T__8", "T__9", "T__10", "T__11", "T__12", "T__13", 
-                  "T__14", "T__15", "T__16", "T__17", "T__18", "T__19", 
-                  "T__20", "T__21", "T__22", "T__23", "T__24", "T__25", 
-                  "T__26", "T__27", "T__28", "T__29", "T__30", "T__31", 
-                  "T__32", "T__33", "T__34", "T__35", "T__36", "T__37", 
-                  "T__38", "T__39", "T__40", "T__41", "T__42", "T__43", 
-                  "T__44", "T__45", "T__46", "T__47", "T__48", "T__49", 
+    ruleNames = [ "T__0", "T__1", "T__2", "T__3", "T__4", "T__5", "T__6",
+                  "T__7", "T__8", "T__9", "T__10", "T__11", "T__12", "T__13",
+                  "T__14", "T__15", "T__16", "T__17", "T__18", "T__19",
+                  "T__20", "T__21", "T__22", "T__23", "T__24", "T__25",
+                  "T__26", "T__27", "T__28", "T__29", "T__30", "T__31",
+                  "T__32", "T__33", "T__34", "T__35", "T__36", "T__37",
+                  "T__38", "T__39", "T__40", "T__41", "T__42", "T__43",
+                  "T__44", "T__45", "T__46", "T__47", "T__48", "T__49",
                   "T__50", "ID", "INT", "FLOAT", "WS", "NL", "STR" ]
 
     grammarFileName = "BESSERActionLanguage.g4"

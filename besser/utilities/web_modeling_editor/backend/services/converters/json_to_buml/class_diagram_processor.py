@@ -2,7 +2,6 @@
 Class diagram processing for converting JSON to BUML format.
 """
 
-import json
 import logging
 import re
 from typing import Any, Optional, Union
@@ -30,14 +29,16 @@ def parse_method_signature_from_code(
     if not isinstance(method_code, str) or not method_code.strip():
         return None
 
-    signature_match = re.search(
-        r"def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:->\s*([^:{\n]+?)\s*)?[:{]",
-        method_code,
-    )
-    if not signature_match:
+    # Two-step parsing avoids polynomial backtracking on untrusted input
+    sig_match = re.search(r"def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)", method_code)
+    if not sig_match:
         return None
-
-    method_name, params_text, return_type = signature_match.groups()
+    rest = method_code[sig_match.end():]
+    ret_match = re.match(r"\s*->\s*([^:{\n]+)", rest)
+    return_type_raw = ret_match.group(1).strip() if ret_match else None
+    signature_match = sig_match
+    method_name, params_text = signature_match.groups()
+    return_type = return_type_raw
     signature = f"{method_name.strip()}({(params_text or '').strip()})"
     if return_type:
         signature_with_return = f"{signature}: {return_type.strip()}"

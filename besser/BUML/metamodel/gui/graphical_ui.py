@@ -719,7 +719,7 @@ class DataList(ViewComponent):
 class Button(ViewComponent):
     """
     Represents a button component and encapsulates specific properties of a button, such as its name and label.
-    
+
     Args:
         name (str): The name of the button.
         description (str): The description of the button.

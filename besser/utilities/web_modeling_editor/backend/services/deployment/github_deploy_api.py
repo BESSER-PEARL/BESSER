@@ -5,16 +5,13 @@ This endpoint generates a web app and pushes it to a GitHub repository
 in the user's account, enabling one-click deployment to platforms like Render.
 """
 
-import io
 import logging
 import os
 import uuid
-import zipfile
 import tempfile
 import json
 import httpx
 from typing import Optional, List
-from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field
@@ -77,14 +74,14 @@ async def deploy_webapp_to_github(
 ):
     """
     Deploy generated web application to user's GitHub repository.
-    
+
     Flow:
     1. Verify user has authenticated with GitHub
     2. Generate web app from project diagrams
     3. Create repository in user's GitHub account
     4. Push generated code to repository
     5. Return repository URL and deployment links
-    
+
     The user can then deploy to Render with one click.
     """
     try:
@@ -101,14 +98,14 @@ async def deploy_webapp_to_github(
                 status_code=401,
                 detail="GitHub session expired. Please sign in again."
             )
-        
+
         # Create GitHub service
         github = create_github_service(access_token)
 
         # Get authenticated user info
         user_info = await github.get_authenticated_user()
         username = user_info.get("login")
-        
+
         # Extract deploy config
         deploy_config = body.get("deploy_config", {})
         repo_name = deploy_config.get("repo_name", "besser-webapp")
@@ -119,24 +116,24 @@ async def deploy_webapp_to_github(
 
         # Sanitize repo name
         repo_name = _sanitize_repo_name(repo_name)
-        
+
         # Extract diagrams
         diagrams = body.get("diagrams", {})
         class_diagram_data = diagrams.get("ClassDiagram", {})
         gui_diagram_data = diagrams.get("GUINoCodeDiagram", {})
-        
+
         if not class_diagram_data or not class_diagram_data.get("model"):
             raise HTTPException(
                 status_code=400,
                 detail="ClassDiagram is required for web app deployment"
             )
-        
+
         if not gui_diagram_data or not gui_diagram_data.get("model"):
             raise HTTPException(
                 status_code=400,
                 detail="GUINoCodeDiagram is required for web app deployment"
             )
-        
+
         # Process diagrams to BUML
         buml_model = process_class_diagram(class_diagram_data)
         gui_model = process_gui_diagram(
@@ -144,7 +141,7 @@ async def deploy_webapp_to_github(
             class_diagram_data.get("model"),
             buml_model
         )
-        
+
         # Check for agent diagram — only process if the model contains actual elements
         agent_model = None
         agent_config = None
@@ -271,7 +268,7 @@ async def deploy_webapp_to_github(
         raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error in deploy_webapp_to_github")
         raise HTTPException(
             status_code=500,
@@ -282,7 +279,7 @@ async def deploy_webapp_to_github(
 def _sanitize_repo_name(name: str) -> str:
     """
     Sanitize repository name to meet GitHub requirements.
-    
+
     - Lowercase
     - Replace spaces with hyphens
     - Remove special characters
@@ -290,23 +287,23 @@ def _sanitize_repo_name(name: str) -> str:
     """
     # Convert to lowercase
     name = name.lower()
-    
+
     # Replace spaces with hyphens
     name = name.replace(" ", "-")
-    
+
     # Remove special characters (keep only alphanumeric, hyphens, underscores)
     name = "".join(c for c in name if c.isalnum() or c in "-_")
-    
+
     # Remove leading/trailing hyphens
     name = name.strip("-_")
-    
+
     # Limit length
     name = name[:100]
-    
+
     # Ensure not empty
     if not name:
         name = f"besser-app-{uuid.uuid4().hex[:8]}"
-    
+
     return name
 
 
@@ -320,7 +317,7 @@ def _add_deployment_configs(
 ):
     """
     Add Render deployment configuration (only free platform for full-stack auto-deploy).
-    
+
     Args:
         directory: Path to generated app directory
         app_name: Application name
@@ -368,7 +365,7 @@ def _add_deployment_configs(
         source: /*
         destination: /index.html
 """
-    
+
     # Add agent service if the app includes an agent
     if has_agent:
         agent_script = f"{agent_entrypoint}.py" if agent_entrypoint else "Agent_Diagram.py"
@@ -408,39 +405,39 @@ def _add_deployment_configs(
         sync: false
 """
         render_config += agent_service_config
-    
+
     render_path = os.path.join(directory, "render.yaml")
     with open(render_path, "w") as f:
         f.write(render_config)
-    
+
     # Create .env.production for frontend with backend URL (and agent URL if applicable)
     env_production = f"""# Production environment variables
 # Backend API URL - Update this with your deployed backend URL
 VITE_API_URL=https://{backend_service_name}.onrender.com
 """
-    
+
     if has_agent:
         env_production += f"""# Agent WebSocket URL - Update this with your deployed agent URL
 VITE_AGENT_URL=wss://{agent_service_name}.onrender.com
 """
-    
+
     env_production += """
 # For local development, use: http://localhost:8000 (backend) and ws://localhost:8765 (agent)
 """
-    
+
     env_prod_path = os.path.join(directory, "frontend", ".env.production")
     with open(env_prod_path, "w") as f:
         f.write(env_production)
-    
+
     # Create .env for local development
     env_local = """# Local development environment variables
 VITE_API_URL=http://localhost:8000
 """
-    
+
     if has_agent:
         env_local += """VITE_AGENT_URL=ws://localhost:8765
 """
-    
+
     env_local_path = os.path.join(directory, "frontend", ".env")
     with open(env_local_path, "w") as f:
         f.write(env_local)
@@ -538,24 +535,24 @@ async def get_user_repositories(
 ):
     """
     Get list of repositories for the authenticated user.
-    
+
     Returns only repositories owned by the user, sorted by last updated.
     """
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    
+
     access_token = get_user_token(github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
-    
+
     try:
         github = create_github_service(access_token)
         repos = await github.get_user_repositories()
-        
+
         return GitHubReposListResponse(
             repositories=[GitHubRepoResponse(**r) for r in repos]
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error fetching GitHub repositories")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching repositories.")
 
@@ -576,17 +573,17 @@ async def get_repository_branches(
     """
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    
+
     access_token = get_user_token(github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
-    
+
     try:
         github = create_github_service(access_token)
         branches = await github.get_branches(owner, repo)
-        
+
         return GitHubBranchesListResponse(branches=branches)
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error fetching GitHub branches")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching branches.")
 
@@ -610,17 +607,17 @@ async def check_file_exists(
     """
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    
+
     access_token = get_user_token(github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
-    
+
     try:
         github = create_github_service(access_token)
         exists = await github.file_exists(owner, repo, file_path, branch)
-        
+
         return FileExistsResponse(exists=exists, path=file_path)
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error checking file existence on GitHub")
         raise HTTPException(status_code=500, detail="An internal error occurred while checking file existence.")
 
@@ -653,15 +650,15 @@ async def get_repository_contents(
     """
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    
+
     access_token = get_user_token(github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
-    
+
     try:
         github = create_github_service(access_token)
         contents = await github.get_repository_contents(owner, repo, path, branch)
-        
+
         return GitHubContentsResponse(
             contents=[
                 GitHubContentItem(
@@ -674,7 +671,7 @@ async def get_repository_contents(
                 for item in contents
             ]
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error fetching GitHub repository contents")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching repository contents.")
 
@@ -691,19 +688,19 @@ async def get_repository_commits(
     """
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    
+
     access_token = get_user_token(github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
-    
+
     try:
         github = create_github_service(access_token)
         commits = await github.get_commits(owner, repo, path)
-        
+
         return GitHubCommitsListResponse(
             commits=[GitHubCommitResponse(**c) for c in commits]
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error fetching GitHub commits")
         raise HTTPException(status_code=500, detail="An internal error occurred while fetching commits.")
 
@@ -715,16 +712,16 @@ async def save_project_to_github(
 ):
     """
     Save a BESSER project to a GitHub repository.
-    
+
     Creates or updates the project JSON file in the specified repository.
     """
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    
+
     access_token = get_user_token(github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
-    
+
     try:
         github = create_github_service(access_token)
 
@@ -740,13 +737,13 @@ async def save_project_to_github(
             commit_message=request.commit_message,
             branch=request.branch
         )
-        
+
         return SaveProjectResponse(
             success=True,
             commit_sha=result.get("commit_sha", ""),
-            message=f"Project saved successfully"
+            message="Project saved successfully"
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error saving project to GitHub")
         raise HTTPException(status_code=500, detail="An internal error occurred while saving the project.")
 
@@ -764,26 +761,26 @@ async def load_project_from_github(
     """
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    
+
     access_token = get_user_token(github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
-    
+
     try:
         github = create_github_service(access_token)
 
         # Get file content
         file_data = await github.get_file_content(owner, repo, file_path, branch)
-        
+
         if not file_data:
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail=f"Project file not found: {file_path}"
             )
-        
+
         # Parse JSON content
         project = json.loads(file_data.get("content", "{}"))
-        
+
         return LoadProjectResponse(
             success=True,
             project=project,
@@ -793,7 +790,7 @@ async def load_project_from_github(
         raise HTTPException(status_code=400, detail="Invalid project file format")
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error loading project from GitHub")
         raise HTTPException(status_code=500, detail="An internal error occurred while loading the project.")
 
@@ -808,35 +805,35 @@ async def load_project_from_commit(
 ):
     """
     Load a BESSER project from a specific commit in a GitHub repository.
-    
+
     This allows restoring previous versions of the project.
     """
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    
+
     access_token = get_user_token(github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
-    
+
     try:
         github = create_github_service(access_token)
 
         # Get file content at specific commit
         file_data = await github.get_file_content(owner, repo, file_path, ref=commit_sha)
-        
+
         if not file_data:
             raise HTTPException(
-                status_code=404, 
+                status_code=404,
                 detail=f"Project file not found at commit {commit_sha[:7]}"
             )
-        
+
         # Parse JSON content
         project = json.loads(file_data.get("content", "{}"))
-        
+
         # Get commit info for display
         commits = await github.get_commits(owner, repo, file_path, per_page=100)
         commit_info = next((c for c in commits if c["sha"] == commit_sha), None)
-        
+
         return LoadProjectFromCommitResponse(
             success=True,
             project=project,
@@ -848,7 +845,7 @@ async def load_project_from_commit(
         raise HTTPException(status_code=400, detail="Invalid project file format")
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error loading project from GitHub commit")
         raise HTTPException(status_code=500, detail="An internal error occurred while loading the project from commit.")
 
@@ -860,7 +857,7 @@ async def create_repository_for_project(
 ):
     """
     Create a new GitHub repository and save the project to it.
-    
+
     This is a convenience endpoint that:
     1. Creates a new repository in the user's account
     2. Saves the project JSON as the initial commit
@@ -868,28 +865,28 @@ async def create_repository_for_project(
     """
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    
+
     access_token = get_user_token(github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
-    
+
     try:
         github = create_github_service(access_token)
 
         # Get user info
         user_info = await github.get_authenticated_user()
         username = user_info.get("login")
-        
+
         # Sanitize repo name
         repo_name = _sanitize_repo_name(request.repo_name)
-        
+
         # Create repository
         repo_info = await github.create_repository(
             repo_name=repo_name,
             description=request.description or "BESSER project repository",
             is_private=request.is_private
         )
-        
+
         # Save project to repo
         project_json = json.dumps(request.project_data, indent=2)
         file_path = request.file_path if hasattr(request, 'file_path') and request.file_path else "besser-project.json"
@@ -901,7 +898,7 @@ async def create_repository_for_project(
             commit_message=f"Initial commit: {request.project_data.get('name', 'BESSER Project')}",
             branch="main"
         )
-        
+
         # Create README
         project_name = request.project_data.get("name", "BESSER Project")
         readme_content = f"""# {project_name}
@@ -938,7 +935,7 @@ This repository contains a [BESSER](https://github.com/BESSER-PEARL/BESSER) proj
             commit_message="Add README",
             branch="main"
         )
-        
+
         return CreateRepoForProjectResponse(
             success=True,
             repo_url=repo_info.get("html_url", ""),
@@ -946,7 +943,7 @@ This repository contains a [BESSER](https://github.com/BESSER-PEARL/BESSER) proj
             commit_sha=save_result.get("commit_sha", ""),
             message=f"Repository '{repo_name}' created with project"
         )
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error creating GitHub repository for project")
         raise HTTPException(status_code=500, detail="An internal error occurred while creating the repository.")
 
@@ -977,17 +974,17 @@ async def create_gist_from_project(
 ):
     """
     Create a GitHub Gist from project data.
-    
+
     This creates a shareable Gist containing the project JSON.
     Useful for quick sharing without creating a full repository.
     """
     if not github_session:
         raise HTTPException(status_code=401, detail="GitHub authentication required")
-    
+
     access_token = get_user_token(github_session)
     if not access_token:
         raise HTTPException(status_code=401, detail="GitHub session expired")
-    
+
     try:
         github = create_github_service(access_token)
 
@@ -1005,12 +1002,12 @@ async def create_gist_from_project(
             description=request.description or f"BESSER Project: {project_name}",
             is_public=request.is_public
         )
-        
+
         return CreateGistResponse(
             success=True,
             gist_url=result.get("gist_url", ""),
             gist_id=result.get("gist_id", ""),
-            message=f"Gist created successfully"
+            message="Gist created successfully"
         )
     except httpx.HTTPStatusError as e:
         status_code = e.response.status_code if e.response is not None else 500
@@ -1020,7 +1017,7 @@ async def create_gist_from_project(
         else:
             detail = f"GitHub API error while creating Gist: {str(e)}"
         raise HTTPException(status_code=status_code, detail=detail)
-    except Exception as e:
+    except Exception:
         logger.exception("Unexpected error creating GitHub Gist")
         raise HTTPException(status_code=500, detail="An internal error occurred while creating the Gist.")
 

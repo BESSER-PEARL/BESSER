@@ -9,28 +9,22 @@ import os
 from besser.BUML.metamodel.gui import GUIModel
 from besser.utilities.buml_code_builder.common import safe_class_name, _escape_python_string
 from besser.BUML.metamodel.gui.graphical_ui import (
-    ViewComponent,
     ViewContainer,
-    Screen,
-    Module,
     Button,
     Text,
     Image,
     InputField,
     Form,
     Menu,
-    MenuItem,
     DataList,
     Link,
     EmbeddedContent,
-    DataSourceElement,
 )
 from besser.BUML.metamodel.gui.dashboard import (
     LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,
-    Column, FieldColumn, LookupColumn, ExpressionColumn, MetricCard, Series
+    FieldColumn, LookupColumn, ExpressionColumn, MetricCard
 )
-from besser.BUML.metamodel.gui.binding import DataBinding
-from besser.BUML.metamodel.gui.events_actions import Event, Transition, Create, Read, Update, Delete
+from besser.BUML.metamodel.gui.events_actions import Transition, Create, Read, Update, Delete
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 
 
@@ -49,10 +43,10 @@ def _get_attr_name(element) -> str | None:
 def safe_var_name(name: str) -> str:
     """
     Convert a name to a safe Python variable name.
-    
+
     Args:
         name: Original name
-        
+
     Returns:
         Safe variable name
     """
@@ -208,13 +202,13 @@ def _write_constructor(f, var_name, class_name, params, component):
 def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_var_name: str = "gui_model"):
     """
     Generates Python code for a BUML GUI model and writes it to a specified file.
-    
+
     Args:
         model (GUIModel): The BUML GUI model containing modules, screens, and components
         file_path (str): The path where the generated code will be saved
         domain_model (DomainModel, optional): Structural model to emit before the GUI so that
             data bindings can reference the same `domain_model` variable.
-    
+
     Outputs:
         A Python file containing the code representation of the BUML GUI model
     """
@@ -227,7 +221,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         file_mode = 'a'
     else:
         file_mode = 'w'
-    
+
     with open(output_path, file_mode, encoding='utf-8') as f:
         if domain_model is not None:
             f.write("\n\n")
@@ -236,7 +230,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write("###############\n")
         f.write("#  GUI MODEL  #\n")
         f.write("###############\n\n")
-        
+
         # Write imports
         f.write("from besser.BUML.metamodel.gui import (\n")
         f.write("    GUIModel, Module, Screen,\n")
@@ -257,25 +251,25 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.binding import DataBinding\n")
         f.write("\n")
-        
+
         # Track created variables to avoid duplicates
         created_vars = set()
         # Track pending button events to write after all screens are defined
         pending_button_events = []
-        
+
         # Process each module
         for module_idx, module in enumerate(sorted(model.modules, key=lambda m: m.name)):
             f.write(f"# Module: {module.name}\n")
-            
+
             # Process each screen in the module
             for screen_idx, screen in enumerate(sorted(module.screens, key=lambda s: s.name)):
                 screen_var = safe_var_name(screen.name)
                 if screen_var in created_vars:
                     screen_var = f"{screen_var}_{screen_idx}"
                 created_vars.add(screen_var)
-                
+
                 f.write(f"\n# Screen: {screen.name}\n")
-                
+
                 # Create screen (view_elements is required, will be set after processing children)
                 screen_params = [f'name="{_escape_string(screen.name)}"']
                 screen_params.append(f'description="{_escape_string(screen.description)}"' if screen.description else 'description=""')
@@ -290,19 +284,19 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
                     screen_params.append(f'y_dpi="{_escape_string(screen.y_dpi)}"')
                 if hasattr(screen, 'screen_size') and screen.screen_size:
                     screen_params.append(f'screen_size="{_escape_string(screen.screen_size)}"')
-                
+
                 f.write(f"{screen_var} = Screen({', '.join(screen_params)})\n")
-                
+
                 # Write screen styling if present
                 if screen.styling:
                     _write_styling(f, screen_var, screen.styling, created_vars)
-                
+
                 # Write screen metadata (page_id, component_id for React fidelity)
                 if hasattr(screen, 'page_id') and screen.page_id:
                     f.write(f"{screen_var}.page_id = \"{_escape_string(screen.page_id)}\"\n")
                 if hasattr(screen, 'component_id') and screen.component_id:
                     f.write(f"{screen_var}.component_id = \"{_escape_string(screen.component_id)}\"\n")
-                
+
                 # Process screen elements - preserve original order
                 element_vars = []
                 if hasattr(screen, 'view_elements') and screen.view_elements:
@@ -312,21 +306,21 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
                         elem_var = _write_component(f, elem, created_vars, screen_var, pending_button_events)
                         if elem_var:
                             element_vars.append(elem_var)
-                
+
                 # Assign elements to screen - Screen requires view_elements in __init__ too,
                 # but we set them after creation for code readability
                 if element_vars:
                     f.write(f"{screen_var}.view_elements = {{{', '.join(element_vars)}}}\n")
                 else:
                     f.write(f"{screen_var}.view_elements = set()\n")
-                
+
                 # Set screen layout if present
                 if hasattr(screen, 'layout') and screen.layout:
                     layout_var = _write_layout(f, screen.layout, created_vars, f"{screen_var}_layout")
                     f.write(f"{screen_var}.layout = {layout_var}\n")
-                
+
                 f.write("\n")
-            
+
             # Write deferred button events after all screens are defined
             if pending_button_events:
                 f.write("# Button events and transitions (written after all screens defined to avoid forward references)\n")
@@ -346,19 +340,19 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
                 f.write("\n")
                 # Clear the pending events for next module
                 pending_button_events.clear()
-            
+
             # Create module with screens
             module_var = safe_var_name(module.name)
             if module_var in created_vars:
                 module_var = f"{module_var}_{module_idx}"
             created_vars.add(module_var)
-            
+
             screen_vars = [safe_var_name(s.name) for s in sorted(module.screens, key=lambda s: s.name)]
             f.write(f"{module_var} = Module(\n")
             f.write(f'    name="{_escape_string(module.name)}",\n')
             f.write(f'    screens={{{", ".join(screen_vars)}}}\n')
             f.write(")\n\n")
-        
+
         # Create GUI model
         f.write("# GUI Model\n")
         module_vars = [safe_var_name(m.name) for m in sorted(model.modules, key=lambda m: m.name)]
@@ -380,25 +374,25 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write(f'    modules={{{", ".join(module_vars)}}},\n')
         f.write(f'    description="{_escape_string(model.description)}",\n')
         if style_entries:
-            f.write(f'    style_entries=_style_entries\n')
+            f.write('    style_entries=_style_entries\n')
         else:
-            f.write(f'    style_entries=[]\n')
+            f.write('    style_entries=[]\n')
         f.write(")\n")
-    
+
     print(f"GUI model code saved to {file_path}")
 
 
 def _write_component(f, component, created_vars, parent_var="", pending_button_events=None):
     """
     Write code for a GUI component.
-    
+
     Args:
         f: File handle
         component: Component to write
         created_vars: Set of created variable names
         parent_var: Parent variable name (optional)
         pending_button_events: List to collect buttons with events for deferred writing
-    
+
     Returns:
         Variable name of the created component
     """
@@ -411,7 +405,7 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
         comp_var = f"{base_var}_{counter}"
         counter += 1
     created_vars.add(comp_var)
-    
+
     # Determine component type and write creation code
     if isinstance(component, Button):
         _write_button(f, comp_var, component, created_vars, pending_button_events)
@@ -462,17 +456,17 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
                 child_var = _write_component(f, child, created_vars, comp_var, pending_button_events)
                 if child_var:
                     child_vars.append(child_var)
-            
+
             children_str = f'{{{", ".join(child_vars)}}}' if child_vars else 'set()'
             f.write(f'{comp_var} = ViewContainer(name="{_escape_string(component.name)}", description="{_escape_string(component.description or "")}", view_elements={children_str})\n')
-            
+
             if hasattr(component, 'layout') and component.layout:
                 layout_var = _write_layout(f, component.layout, created_vars, f"{comp_var}_layout")
                 f.write(f'{comp_var}.layout = {layout_var}\n')
         else:
             # Simple ViewComponent with no children
             f.write(f'{comp_var} = ViewComponent(name="{_escape_string(component.name)}", description="{_escape_string(component.description or "")}")\n')
-    
+
     # Styling and metadata are now written by type-specific writers via _write_constructor
 
     return comp_var
@@ -483,12 +477,12 @@ def _write_button(f, var_name, button, created_vars, pending_button_events):
     params = [f'name="{_escape_string(button.name)}"']
     params.append(f'description="{_escape_string(button.description)}"' if button.description else 'description=""')
     params.append(f'label="{_escape_string(button.label)}"' if hasattr(button, 'label') and button.label else 'label=""')
-    
+
     if hasattr(button, 'buttonType') and button.buttonType:
         params.append(f'buttonType=ButtonType.{button.buttonType.name}')
     if hasattr(button, 'actionType') and button.actionType:
         params.append(f'actionType=ButtonActionType.{button.actionType.name}')
-    
+
     # Add new button properties for method execution and CRUD
     if hasattr(button, 'method_btn') and button.method_btn:
         # Reference the actual method object using the same naming convention as domain_model_builder
@@ -497,11 +491,11 @@ def _write_button(f, var_name, button, created_vars, pending_button_events):
         method_name = button.method_btn.name.split('(')[0] if '(' in button.method_btn.name else button.method_btn.name
         method_var = f"{class_var}_m_{method_name}"
         params.append(f'method_btn={method_var}')
-    
+
     if hasattr(button, 'entity_class') and button.entity_class:
         entity_var = safe_class_name(button.entity_class.name)
         params.append(f'entity_class={entity_var}')
-    
+
     if hasattr(button, 'instance_source') and button.instance_source:
         # Handle instance_source as ViewComponent object or string
         if isinstance(button.instance_source, str):
@@ -513,16 +507,16 @@ def _write_button(f, var_name, button, created_vars, pending_button_events):
         else:
             # Fallback: convert to string
             params.append(f'instance_source="{_escape_string(str(button.instance_source))}"')
-    
+
     if hasattr(button, 'is_instance_method') and button.is_instance_method:
         params.append(f'is_instance_method={button.is_instance_method}')
-    
+
     if hasattr(button, 'confirmation_required') and button.confirmation_required:
         params.append(f'confirmation_required={button.confirmation_required}')
-    
+
     if hasattr(button, 'confirmation_message') and button.confirmation_message:
         params.append(f'confirmation_message="{_escape_string(button.confirmation_message)}"')
-    
+
     # Don't write targetScreen here - deferred to after all screens are defined
     # to avoid forward reference issues
 
@@ -561,7 +555,7 @@ def _write_event(f, var_name, event, created_vars, triggered_by_var=None):
 def _write_action(f, var_name, action, created_vars):
     """Write code for an Action."""
     created_vars.add(var_name)
-    
+
     # Extract parameters if present
     params_code = ""
     if hasattr(action, 'parameters') and action.parameters:
@@ -574,7 +568,7 @@ def _write_action(f, var_name, action, created_vars):
             f.write(f'{param_var} = Parameter(name="{_escape_string(param.name)}", param_type="{param_type}", value="{param_value}")\n')
             param_vars.append(param_var)
         params_code = f', parameters={{{", ".join(param_vars)}}}'
-    
+
     if isinstance(action, Transition):
         target_screen = 'None  # TODO: Set target_screen reference'
         if hasattr(action, 'target_screen') and action.target_screen:
@@ -705,7 +699,7 @@ def _write_menu(f, var_name, menu, created_vars):
                 params.append(f'rel="{_escape_string(item.rel)}"')
             f.write(f'{item_var} = MenuItem({", ".join(params)})\n')
             item_vars.append(item_var)
-    
+
     items_str = f'{{{", ".join(item_vars)}}}' if item_vars else '{}'
     params = [f'name="{_escape_string(menu.name)}"', f'description="{_escape_string(menu.description or "")}"', f'menuItems={items_str}']
     _write_constructor(f, var_name, 'Menu', params, menu)
@@ -723,7 +717,7 @@ def _write_data_list(f, var_name, data_list, created_vars):
             f.write(f'{source_var} = DataSourceElement(name="{source_name}")\n')
             _update_data_source_element(f, source_var, source)
             source_vars.append(source_var)
-    
+
     sources_str = f'{{{", ".join(source_vars)}}}' if source_vars else '{}'
     params = [f'name="{_escape_string(data_list.name)}"', f'description="{_escape_string(data_list.description or "")}"', f'list_sources={sources_str}']
     _write_constructor(f, var_name, 'DataList', params, data_list)
@@ -995,7 +989,7 @@ def _write_container(f, var_name, container, created_vars, pending_button_events
             child_var = _write_component(f, child, created_vars, var_name, pending_button_events)
             if child_var:
                 child_vars.append(child_var)
-    
+
     # Create ViewContainer with all params inline
     children_str = f'{{{", ".join(child_vars)}}}' if child_vars else 'set()'
     params = [f'name="{_escape_string(container.name)}"', f'description="{_escape_string(container.description or "")}"', f'view_elements={children_str}']
@@ -1170,13 +1164,13 @@ def _write_agent_component(f, var_name, agent):
     """Write code for an AgentComponent."""
     params = [f'name="{_escape_string(agent.name)}"']
     params.append(f'description="{_escape_string(agent.description or "")}"')
-    
+
     if hasattr(agent, 'agent_name') and agent.agent_name:
         params.append(f'agent_name="{_escape_string(agent.agent_name)}"')
-    
+
     if hasattr(agent, 'agent_title') and agent.agent_title:
         params.append(f'agent_title="{_escape_string(agent.agent_title)}"')
-    
+
     _write_constructor(f, var_name, 'AgentComponent', params, agent)
 
 
@@ -1362,7 +1356,7 @@ def _write_layout(f, layout, created_vars, layout_var):
     if layout_var in created_vars:
         return layout_var
     created_vars.add(layout_var)
-    
+
     params = []
     if hasattr(layout, 'layout_type') and layout.layout_type:
         params.append(f'layout_type=LayoutType.{layout.layout_type.name}')
@@ -1392,5 +1386,5 @@ def _write_layout(f, layout, created_vars, layout_var):
         f.write(f'{layout_var} = Layout({", ".join(params)})\n')
     else:
         f.write(f'{layout_var} = Layout()\n')
-    
+
     return layout_var

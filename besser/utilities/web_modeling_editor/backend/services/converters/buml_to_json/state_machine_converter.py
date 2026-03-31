@@ -10,7 +10,7 @@ import uuid
 import re
 import ast
 from besser.BUML.metamodel.state_machine.state_machine import (
-    StateMachine, State, Body, Event, Condition, CustomCodeAction,
+    StateMachine, CustomCodeAction,
 )
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
@@ -482,7 +482,7 @@ def state_machine_to_json(content: str):
     states = {}  # name -> state_id mapping
     functions = {}  # name -> function_node mapping
     state_machine_name = "Generated_State_Machine"
-    
+
     # Track metadata for comments
     state_comments = {}  # state_var -> comment_text
     sm_comment = None  # StateMachine metadata comment
@@ -851,7 +851,7 @@ def state_machine_to_json(content: str):
                                 },
                             }
                             elements[state["id"]]["fallbackBodies"].append(fallback_id)
-                    
+
                     # Handle state metadata
                     elif node.value.func.attr == "metadata":
                         # This is an assignment like: state_var.metadata = Metadata(...)
@@ -895,7 +895,7 @@ def state_machine_to_json(content: str):
         if state_var in states:
             comment_id = str(uuid.uuid4())
             state_id = states[state_var]["id"]
-            
+
             elements[comment_id] = {
                 "id": comment_id,
                 "name": comment_text,
@@ -908,28 +908,28 @@ def state_machine_to_json(content: str):
                     "height": 100,
                 },
             }
-            
+
             # Create Link relationship
             link_id = str(uuid.uuid4())
             source_element = elements[comment_id]
             target_element = elements[state_id]
-            
+
             source_dir, target_dir = determine_connection_direction(
                 source_element["bounds"], target_element["bounds"]
             )
-            
+
             source_point = calculate_connection_points(
                 source_element["bounds"], source_dir
             )
             target_point = calculate_connection_points(
                 target_element["bounds"], target_dir
             )
-            
+
             path_points = calculate_path_points(
                 source_point, target_point, source_dir, target_dir
             )
             rel_bounds = calculate_relationship_bounds(path_points)
-            
+
             relationships[link_id] = {
                 "id": link_id,
                 "name": "",
@@ -959,7 +959,7 @@ def state_machine_to_json(content: str):
                 },
                 "isManuallyLayouted": False,
             }
-            
+
             comment_y += 130
 
     return {

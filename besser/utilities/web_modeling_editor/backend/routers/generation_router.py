@@ -18,7 +18,6 @@ import json
 import re
 from collections import defaultdict
 from copy import deepcopy
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
 from fastapi import APIRouter, HTTPException
@@ -66,7 +65,6 @@ from besser.utilities.web_modeling_editor.backend.config import (
 
 # Backend constants
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
-    API_VERSION,
     TEMP_DIR_PREFIX,
     AGENT_TEMP_DIR_PREFIX,
     OUTPUT_DIR_NAME,
@@ -82,10 +80,6 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 )
 
 # Backend exceptions
-from besser.utilities.web_modeling_editor.backend.services.exceptions import (
-    ConversionError,
-    ValidationError,
-)
 
 # Centralized error handling
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
@@ -222,7 +216,7 @@ def generate_agent_files(
             zip_buffer.seek(0)
             return zip_buffer, AGENT_OUTPUT_FILENAME
 
-    except Exception as e:
+    except Exception:
         logger.exception("Error generating agent files")
         raise
 

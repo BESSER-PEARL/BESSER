@@ -58,12 +58,12 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     """
     Main entry point: Converts GrapesJS JSON and domain_model into a GUIModel instance.
     Handles style mapping, screens, and recursive component parsing.
-    
+
     Args:
         gui_diagram: The GUI diagram data from GrapesJS
         class_model: The class model for object resolution
         domain_model: The domain metamodel for object resolution
-        
+
     Returns:
         GUIModel instance with screens and components
     """
@@ -77,7 +77,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
     # Build style map from GrapesJS styles
     style_map = build_style_map(gui_model_json.get("styles", []))
-    
+
     # Track used names to ensure uniqueness
     used_names: Set[str] = set()
 
@@ -124,40 +124,40 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         """
         Attach comprehensive metadata to component for code generation fidelity.
         This function is a SAFETY NET that fills in missing metadata after component parsing.
-        
+
         IMPORTANT: This function should NOT overwrite metadata already set by specialized parsers
-        (component_parsers.py). It only fills in gaps for metadata that wasn't set during 
+        (component_parsers.py). It only fills in gaps for metadata that wasn't set during
         component-specific parsing.
-        
+
         Design Pattern:
         1. Specialized parsers (parse_button, parse_text, etc.) set metadata via _attach_component_metadata()
         2. This function (attach_meta) is called AFTER parsing as a fallback
         3. Only sets values if they are None or empty (never overwrites existing data)
-        
+
         This ensures ALL JSON data is preserved for perfect React regeneration.
         """
         if not element:
             return
-        
+
         # Store tag name ONLY if not already set
         if not hasattr(element, 'tag_name') or not element.tag_name:
             element.tag_name = meta.get("tagName")
-        
+
         # Store CSS classes (normalize to list of strings) ONLY if not already set
         if not hasattr(element, 'css_classes') or not element.css_classes:
             element.css_classes = []
             if meta.get("classList"):
                 element.css_classes = [
-                    cls if isinstance(cls, str) else cls.get("name", "") 
+                    cls if isinstance(cls, str) else cls.get("name", "")
                     for cls in meta["classList"]
                 ]
-        
+
         # Store custom attributes ONLY if not already set
         if not hasattr(element, 'custom_attributes') or not element.custom_attributes:
             element.custom_attributes = {}
             if meta.get("attributes"):
                 element.custom_attributes = dict(meta["attributes"]) if isinstance(meta["attributes"], dict) else {}
-        
+
         # Store component_id ONLY if not already set
         # Check for None explicitly since hasattr returns True even if value is None
         if not hasattr(element, 'component_id') or element.component_id is None:
@@ -165,7 +165,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 element.component_id = meta["attributes"].get("id")
             if not element.component_id and element.custom_attributes:
                 element.component_id = element.custom_attributes.get("id")
-        
+
         # Store component_type ONLY if not already set
         if not hasattr(element, 'component_type') or element.component_type is None:
             element.component_type = meta.get("type")
@@ -218,7 +218,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
 
         # Resolve styling
         styling = resolve_component_styling(component, style_map)
-        
+
         # Prepare metadata - preserve ALL JSON data for fidelity
         attributes = component.get("attributes") if isinstance(component.get("attributes"), dict) else {}
         class_list = component.get("classes") or []
@@ -229,7 +229,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             "attributes": attributes,
             "inlineStyle": component.get("style"),
         }
-        
+
         # Set default tagName for known types
         if not meta["tagName"]:
             default_tags = {
@@ -246,7 +246,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 "comment": "div",
             }
             meta["tagName"] = default_tags.get(comp_type)
-        
+
         # Handle iframe/img src attribute
         if meta["tagName"] in {"iframe", "img"} and isinstance(attributes, dict):
             attributes.setdefault("src", component.get("src"))
@@ -400,12 +400,12 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             name = get_unique_name(component, "Container")
             container = parse_container(component, styling, name, meta, parse_component_list)
             attach_meta(container, meta)
-            
+
             # Ensure ViewContainers have stable IDs even if JSON doesn't provide one
             if not container.component_id:
                 # Generate stable ID from component name or position
                 container.component_id = f"container_{name.lower()}"
-            
+
             return container
 
         # === GENERIC COMPONENT ===
@@ -456,21 +456,21 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             if len(frames) > 1:
                 screen_fallback = f"{screen_fallback}_{frame_index + 1}"
             screen_name = get_unique_name(wrapper, screen_fallback)
-            
+
             # Extract screen properties
             page_attrs = page.get("attributes", {}) or {}
             screen_size = "Medium"
             x_dpi = ""
             y_dpi = ""
-            
+
             if isinstance(page_attrs, dict):
                 screen_size = page_attrs.get("screen-size") or page_attrs.get("viewport-size") or "Medium"
                 x_dpi = str(page_attrs.get("x-dpi") or page_attrs.get("dpi") or "")
                 y_dpi = str(page_attrs.get("y-dpi") or page_attrs.get("dpi") or "")
-            
+
             # Derive route path from page name or ID
             route_path = f"/{(page.get('name') or screen_fallback).lower().replace(' ', '-')}"
-            
+
             screen = Screen(
                 name=screen_name,
                 description=str(page.get("name") or screen_fallback),
@@ -484,21 +484,21 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
             styling = resolve_component_styling(wrapper, style_map)
             if styling:  # Only assign if styling exists
                 screen.styling = styling
-            
+
             # Store page metadata for code generation
             if hasattr(screen, 'component_id'):
                 screen.component_id = page_id
             else:
                 setattr(screen, 'page_id', page_id)
-            
+
             # Set layout if present in styling
             if hasattr(screen, 'styling') and screen.styling and hasattr(screen.styling, 'layout') and screen.styling.layout:
                 screen.layout = screen.styling.layout
-            
+
             children = parse_component_list(wrapper.get("components"))
             screen.view_elements = set(children)
             screen_list.append(screen)
-            
+
             # Map page ID to screen for target-screen resolution
             if page_id:
                 page_id_to_screen[page_id] = screen
@@ -527,17 +527,17 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                 if hasattr(element, '_method_class_id') and hasattr(element, '_method_id'):
                     method_class_id = getattr(element, '_method_class_id')
                     method_id = getattr(element, '_method_id')
-                    
+
                     # Step 1: Get the class and method elements from class_model (JSON) by ID
                     method_class_el = get_element_by_id(class_model, method_class_id)
                     method_el = get_element_by_id(class_model, method_id)
-                    
+
                     # Step 2: Extract the names from the JSON elements
                     method_class_name = method_class_el.get('name') if method_class_el else None
                     method_name_raw = method_el.get('name') if method_el else None
                     # Clean the method name to remove visibility, parameters, and type annotations
                     method_name = clean_method_name(method_name_raw) if method_name_raw else None
-                    
+
                     # Step 3: Use domain_model to get the actual BUML objects by name
                     if domain_model and method_class_name:
                         method_class = domain_model.get_class_by_name(method_class_name)
@@ -549,7 +549,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                                 # is_instance_method is already inferred by the parser when
                                 # action_button_type == "run-method" and instance_source is set.
                                 # No additional detection is needed here.
-                
+
                 # Resolve entity_class for CRUD operations
                 if hasattr(element, '_entity_class_id'):
                     entity_class_id = getattr(element, '_entity_class_id')
@@ -562,7 +562,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                         entity_class = domain_model.get_class_by_name(entity_class_name)
                         if entity_class:
                             element.entity_class = entity_class
-                
+
                 # Resolve instance_source (Table component reference)
                 if element.instance_source and isinstance(element.instance_source, str):
                     # Try to find the component by ID
@@ -572,7 +572,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                             if component:
                                 element.instance_source = component
                                 break
-                
+
                 # Resolve target_screen for Navigate action
                 if element.targetScreen is None and element.actionType == ButtonActionType.Navigate:
                     # Try to find target screen from events
@@ -588,7 +588,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                                         element.targetScreen = target_screen
                                         action.target_screen = target_screen
                                         break
-                
+
                 # Check if element has events
                 if hasattr(element, 'events'):
                     for event in element.events:
@@ -603,18 +603,18 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
                                     target_screen = next((s for s in screen_list if s.name == target_id), None)
                                 if target_screen:
                                     action.target_screen = target_screen
-                            
+
                             # Resolve CRUD target_class
                             if isinstance(action, (Create, Read, Update, Delete)) and hasattr(action, '_target_class_name'):
                                 target_name = getattr(action, '_target_class_name')
                                 target_class = domain_model.get_class_by_name(target_name) if domain_model else None
                                 if target_class:
                                     action.target_class = target_class
-            
+
             # Recursively process children in containers
             if isinstance(element, ViewContainer) and hasattr(element, 'view_elements'):
                 resolve_action_references(element.view_elements)
-    
+
     # Apply resolution to all screens
     for screen in screen_list:
         if hasattr(screen, 'view_elements'):
@@ -624,7 +624,7 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     module_name = register_name(f"{gui_name}_Module", "Module")
     dashboard_module = Module(name=module_name, screens=set(screen_list))
     gui_model.modules = {dashboard_module}
-    
+
     # Normalize style entries for template compatibility
     # Convert dictionary selectors to strings and add proper CSS prefixes
     normalized_styles = []
@@ -648,8 +648,8 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
         # Only include entries with valid selectors
         if normalized_selectors:
             normalized_styles.append(normalized_entry)
-    
+
     # Store normalized style entries as a proper model attribute
     gui_model.style_entries = normalized_styles
-    
+
     return gui_model

@@ -379,7 +379,7 @@ class BALRESTGenerator(BALVisitor[RESTGenerationContext, list[str]]):
         return [f"{node.value}"]
 
     def visit_NullLiteral(self, node: NullLiteral, context: RESTGenerationContext) -> list[str]:
-        return [f"None"]
+        return ["None"]
 
     def visit_EnumLiteral(self, node: EnumLiteral, context: RESTGenerationContext) -> list[str]:
         return [f"{node.enumeration.enum.name}.{node.name}"]

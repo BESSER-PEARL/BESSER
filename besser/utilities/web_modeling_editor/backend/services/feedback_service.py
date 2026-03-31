@@ -22,23 +22,23 @@ logger = logging.getLogger(__name__)
 def submit_feedback(feedback: FeedbackSubmission) -> dict:
     """
     Process user feedback and send it via email.
-    
+
     Sends feedback to configured email recipients and stores locally as backup.
     Supports multiple recipient emails separated by comma in FEEDBACK_EMAIL env var.
-    
+
     Args:
         feedback: FeedbackSubmission model containing user feedback data
-        
+
     Returns:
         dict: Status message confirming feedback receipt
-        
+
     Environment Variables:
         FEEDBACK_EMAIL: Email addresses to receive feedback (comma-separated, required)
         SMTP_HOST: SMTP server hostname (default: smtp.gmail.com)
         SMTP_PORT: SMTP server port (default: 587)
         SMTP_USERNAME: SMTP authentication username (defaults to first email)
         SMTP_PASSWORD: SMTP authentication password or app password
-        
+
     Raises:
         Exception: If critical feedback storage fails
     """
@@ -47,15 +47,15 @@ def submit_feedback(feedback: FeedbackSubmission) -> dict:
         # Support multiple emails separated by comma (e.g., "email1@example.com,email2@example.com")
         feedback_emails_str = os.getenv("FEEDBACK_EMAIL", "").strip()
         feedback_emails = [email.strip() for email in feedback_emails_str.split(",") if email.strip()]
-        
+
         smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
         smtp_port = int(os.getenv("SMTP_PORT", "587"))
         smtp_username = os.getenv("SMTP_USERNAME", feedback_emails[0] if feedback_emails else "")
         smtp_password = os.getenv("SMTP_PASSWORD")
-        
+
         if not feedback_emails:
             logger.warning("FEEDBACK_EMAIL not configured. Feedback will only be stored locally.")
-        
+
         # Send email if configured
         if feedback_emails and smtp_password:
             _send_feedback_email(
@@ -66,15 +66,15 @@ def submit_feedback(feedback: FeedbackSubmission) -> dict:
                 smtp_password=smtp_password,
                 recipient_emails=feedback_emails
             )
-        
+
         # Store locally (always, as backup or primary)
         _store_feedback_locally(feedback)
-        
+
         return {
             "status": "success",
             "message": "Feedback received. Thank you for helping us improve BESSER!"
         }
-    
+
     except Exception as e:
         logger.exception("Failed to process feedback")
         raise Exception("Failed to process feedback. Please try again later.") from e
@@ -90,7 +90,7 @@ def _send_feedback_email(
 ) -> None:
     """
     Send feedback email to configured recipients.
-    
+
     Args:
         feedback: Feedback submission data
         smtp_host: SMTP server hostname
@@ -105,7 +105,7 @@ def _send_feedback_email(
             "neutral": "😐",
             "sad": "😞"
         }.get(feedback.satisfaction, "❓")
-        
+
         # Create MIME message
         msg = MIMEMultipart("alternative")
         msg["Subject"] = (
@@ -114,28 +114,28 @@ def _send_feedback_email(
         )
         msg["From"] = smtp_username
         msg["To"] = ", ".join(recipient_emails)
-        
+
         # Create HTML email body
         html = _create_html_email_body(feedback, satisfaction_emoji)
-        
+
         # Create plain text version as fallback
         text = _create_text_email_body(feedback, satisfaction_emoji)
-        
+
         msg.attach(MIMEText(text, "plain"))
         msg.attach(MIMEText(html, "html"))
-        
+
         # Send email with longer timeout for Gmail
         with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
             server.starttls()
             server.login(smtp_username, smtp_password)
             # Send to all configured email addresses
             server.send_message(msg, to_addrs=recipient_emails)
-        
+
         logger.info(
             "Feedback email sent to %s: %s - %s",
             ', '.join(recipient_emails), feedback.satisfaction, feedback.category
         )
-        
+
     except Exception as email_error:
         logger.warning("Failed to send feedback email: %s", str(email_error))
         logger.warning("  Host: %s:%s, Recipients: %s", smtp_host, smtp_port, ', '.join(recipient_emails))
@@ -145,10 +145,10 @@ def _send_feedback_email(
 def _store_feedback_locally(feedback: FeedbackSubmission) -> None:
     """
     Store feedback locally in JSONL format.
-    
+
     Args:
         feedback: Feedback submission data
-        
+
     Raises:
         Exception: If local storage fails
     """
@@ -156,13 +156,13 @@ def _store_feedback_locally(feedback: FeedbackSubmission) -> None:
         feedback_dir = Path("feedback_data")
         feedback_dir.mkdir(exist_ok=True)
         feedback_file = feedback_dir / f"feedback_{datetime.now().strftime('%Y%m%d')}.jsonl"
-        
+
         with open(feedback_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(feedback.model_dump(), ensure_ascii=False) + "\n")
-        
+
         logger.info("Feedback stored locally: %s - %s", feedback.satisfaction, feedback.category)
-        
-    except Exception as e:
+
+    except Exception:
         logger.exception("Error storing feedback locally")
         raise
 
@@ -170,11 +170,11 @@ def _store_feedback_locally(feedback: FeedbackSubmission) -> None:
 def _create_html_email_body(feedback: FeedbackSubmission, satisfaction_emoji: str) -> str:
     """
     Create HTML email body for feedback.
-    
+
     Args:
         feedback: Feedback submission data
         satisfaction_emoji: Emoji representing satisfaction level
-        
+
     Returns:
         str: HTML email body
     """
@@ -183,19 +183,19 @@ def _create_html_email_body(feedback: FeedbackSubmission, satisfaction_emoji: st
         "neutral": ("#fff3cd", "#856404"),
         "sad": ("#f8d7da", "#721c24"),
     }
-    
+
     bg_color, text_color = satisfaction_colors.get(
         feedback.satisfaction,
         ("#f0f0f0", "#333")
     )
-    
+
     email_row = (
         f'<tr><td style="padding: 10px; font-weight: bold;">Email:</td>'
         f'<td style="padding: 10px;"><a href="mailto:{feedback.email}">{feedback.email}</a></td></tr>'
         if feedback.email
         else ""
     )
-    
+
     html = f"""
     <html>
     <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
@@ -203,14 +203,14 @@ def _create_html_email_body(feedback: FeedbackSubmission, satisfaction_emoji: st
             <h2 style="color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px;">
                 New Feedback Received
             </h2>
-            
+
             <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
                 <table style="width: 100%; border-collapse: collapse;">
                     <tr>
                         <td style="padding: 10px; font-weight: bold; width: 150px;">Satisfaction:</td>
                         <td style="padding: 10px;">
-                            <span style="background: {bg_color}; 
-                                         color: {text_color}; 
+                            <span style="background: {bg_color};
+                                         color: {text_color};
                                          padding: 5px 15px; border-radius: 20px;">
                                 {satisfaction_emoji} {feedback.satisfaction.upper()}
                             </span>
@@ -227,12 +227,12 @@ def _create_html_email_body(feedback: FeedbackSubmission, satisfaction_emoji: st
                     {email_row}
                 </table>
             </div>
-            
+
             <div style="background: white; padding: 20px; border-radius: 8px; margin: 20px 0;">
                 <h3 style="color: #2c3e50; margin-top: 0;">Feedback Message:</h3>
                 <p style="white-space: pre-wrap;">{feedback.feedback}</p>
             </div>
-            
+
             <div style="background: #ecf0f1; padding: 15px; border-radius: 8px; margin: 20px 0; font-size: 12px; color: #7f8c8d;">
                 <strong>User Agent:</strong><br>
                 {feedback.user_agent}
@@ -247,16 +247,16 @@ def _create_html_email_body(feedback: FeedbackSubmission, satisfaction_emoji: st
 def _create_text_email_body(feedback: FeedbackSubmission, satisfaction_emoji: str) -> str:
     """
     Create plain text email body for feedback.
-    
+
     Args:
         feedback: Feedback submission data
         satisfaction_emoji: Emoji representing satisfaction level
-        
+
     Returns:
         str: Plain text email body
     """
     email_line = f"Email: {feedback.email}" if feedback.email else ""
-    
+
     text = f"""
 New BESSER Feedback Received
 =============================

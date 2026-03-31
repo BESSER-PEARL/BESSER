@@ -1,5 +1,6 @@
-import pickle, os
-from besser.BUML.metamodel.structural import DomainModel, NamedElement
+import pickle
+import os
+from besser.BUML.metamodel.structural import DomainModel
 
 def sort_by_timestamp(obj_set: set) -> list:
     """

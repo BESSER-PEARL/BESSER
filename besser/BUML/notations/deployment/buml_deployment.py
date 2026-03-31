@@ -35,6 +35,6 @@ def buml_deployment_model(deployment_textfile: str, buml_model_file_name: str = 
     with open(output_file, 'r') as model_code:
         code = model_code.read()
         exec(code, namespace)
-    
+
     BUML_model: DeploymentModel = namespace.get('deployment_model')
     return BUML_model

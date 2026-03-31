@@ -1,6 +1,6 @@
 from typing import Dict, Any, Literal, Optional
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 class DjangoConfig(BaseModel):
     project_name: str
@@ -22,6 +22,7 @@ class DiagramInput(BaseModel):
     generator: Optional[str] = None
     config: Optional[dict] = None
     referenceDiagramData: Optional[Dict[str, Any]] = None
+    references: Optional[Dict[str, str]] = None  # Per-diagram cross-references by ID (e.g. {"ClassDiagram": "uuid-..."})
 
 
 class FeedbackSubmission(BaseModel):

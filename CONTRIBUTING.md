@@ -54,7 +54,7 @@ to help us handle your report effectively:
 4. **Install project dependencies and configure the environment:**
    ```bash
    python -m venv venv
-   venv/Script/activate
+   venv/Scripts/activate
    pip install -r requirements.txt
    ```
    The script installs core dependencies and ensures the `PYTHONPATH` points to
@@ -117,8 +117,9 @@ overview of how the pieces fit together.
   `GeneratorInterface` and reuse existing templates/utilities when adding a new
   target.
 - **Utilities (`besser/utilities/`)** – Home to shared helpers, CLI tooling, and
-  the services backing the web modeling editor. Prefer augmenting these modules
-  over creating bespoke helpers inside generators.
+  the services backing the web modeling editor. The backend uses a modular router
+  architecture (routers, middleware, services, models). Prefer augmenting these
+  modules over creating bespoke helpers inside generators.
 
 ### Related projects
 
@@ -162,10 +163,10 @@ generators, and utilities that the editor consumes.
 
 ## 🔀 Creating Pull Requests
 
-1. Create a topic branch off `main` that describes your change, e.g.,
+1. Create a topic branch off `master` that describes your change, e.g.,
    `feature/add-django-generator`.
 2. Make logically grouped commits with meaningful messages.
-3. Ensure your branch is up to date with `main` before opening the PR.
+3. Ensure your branch is up to date with `master` before opening the PR.
 4. Fill in the pull request template, summarizing the change, tests run, and any
    follow-up work.
 5. Be responsive to review feedback—review is a collaborative conversation.

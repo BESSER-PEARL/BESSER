@@ -2,12 +2,24 @@
 Attribute parsing utilities for converting JSON to BUML format.
 """
 
+import logging
+
 from besser.BUML.metamodel.structural import Enumeration, Class
 from besser.utilities.web_modeling_editor.backend.constants.constants import VISIBILITY_MAP, VALID_PRIMITIVE_TYPES
 
+logger = logging.getLogger(__name__)
 
-def parse_attribute(attribute_name, domain_model=None):
-    """Parse an attribute string to extract visibility, name, and type, removing any colons."""
+
+def parse_attribute(attribute_name, domain_model=None, type_lookup=None):
+    """Parse an attribute string to extract visibility, name, and type, removing any colons.
+
+    Args:
+        attribute_name: The raw attribute string (e.g. "+ name: str").
+        domain_model: Optional DomainModel for resolving user-defined types.
+        type_lookup: Optional pre-built ``{name: type_obj}`` dict for O(1)
+            type resolution.  When provided, *domain_model* is still accepted
+            but the lookup dict is preferred.
+    """
     # Split the string by colon first to separate name and type
     name_type_parts = attribute_name.split(":")
 
@@ -16,7 +28,7 @@ def parse_attribute(attribute_name, domain_model=None):
         type_part = name_type_parts[1].strip()
 
         # Check for visibility symbol at start of name
-        if name_part[0] in VISIBILITY_MAP:
+        if name_part and name_part[0] in VISIBILITY_MAP:
             visibility = VISIBILITY_MAP[name_part[0]]
             name = name_part[1:].strip()
         else:
@@ -30,8 +42,14 @@ def parse_attribute(attribute_name, domain_model=None):
                 visibility = "public"
                 name = name_parts[0]
 
-        # Handle the type
-        if domain_model and any(isinstance(t, (Enumeration, Class)) and t.name == type_part for t in domain_model.types):
+        # Handle the type — use O(1) lookup when available
+        is_user_type = False
+        if type_lookup is not None:
+            is_user_type = type_part in type_lookup
+        elif domain_model:
+            is_user_type = any(isinstance(t, (Enumeration, Class)) and t.name == type_part for t in domain_model.types)
+
+        if is_user_type:
             attr_type = type_part
         else:
             attr_type = VALID_PRIMITIVE_TYPES.get(type_part.lower(), None)
@@ -57,5 +75,6 @@ def parse_attribute(attribute_name, domain_model=None):
             name = parts[1]
             attr_type = "str"
     if not name:  # Skip if name is empty
+        logger.warning("Skipping attribute with empty name from input: '%s'", attribute_name)
         return None, None, None
     return visibility, name, attr_type

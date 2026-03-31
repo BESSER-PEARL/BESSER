@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 from besser.generators.web_app import WebAppGenerator
 from besser.utilities.web_modeling_editor.backend.services.converters import (
@@ -69,7 +72,7 @@ def generate_web_app(json_path: Path, output_dir: Path, include_agent: bool = Tr
         agent_diagram = _get_diagram(diagrams, "AgentDiagram")
         if agent_diagram:
             if verbose:
-                print("Detected AgentDiagram. Generating agent output.")
+                logger.info("Detected AgentDiagram. Generating agent output.")
             agent_model = process_agent_diagram(agent_diagram)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -131,7 +134,7 @@ def main() -> None:
         include_agent=not args.no_agent,
         verbose=args.verbose,
     )
-    print(f"Web app generated at: {generated_path}")
+    logger.info("Web app generated at: %s", generated_path)
 
 
 if __name__ == "__main__":

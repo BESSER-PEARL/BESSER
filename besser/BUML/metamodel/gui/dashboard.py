@@ -7,7 +7,7 @@ from besser.BUML.metamodel.structural import Property
 
 class AgentComponent(ViewComponent):
     """Represents a BESSER Agent component in the GUI.
-    
+
     Args:
         name (str): The name of the agent component.
         agent_name (str | None): The name of the agent diagram to reference.
@@ -100,7 +100,7 @@ class Chart(ViewComponent):
     @primary_color.setter
     def primary_color(self, value: Optional[str]):
         self._primary_color = value
-    
+
     @property
     def series(self) -> list[Series]:
         """list[Series]: List of data series in the chart."""
@@ -511,7 +511,7 @@ class PieChart(Chart):
         return self._show_labels
 
     @show_labels.setter
-    def show_labels(self, value: bool): 
+    def show_labels(self, value: bool):
         """Property: Set whether to show the labels of the pie chart."""
         self._show_labels = value
 
@@ -731,7 +731,7 @@ class RadialBarChart(Chart):
         show_legend (bool): Whether to show the legend.
         legend_position (str): Position of the legend.
         show_tooltip (bool): Whether to show tooltips.
-        
+
     Attributes:
         name (str): The name of the radial bar chart.
         start_angle (int): The start angle of the radial bar chart.
@@ -847,7 +847,7 @@ class Column:
 
     Args:
         label (str): The display label of the column.
-    
+
     Attributes:
         label (str): The display label of the column.
     """
@@ -899,7 +899,7 @@ class LookupColumn(Column):
         label (str): The display label of the column.
         path (Property): The property representing the lookup path.
         field (Property): The property representing the lookup field.
-        
+
     Attributes:
         label (str): The display label of the column.
         path (Property): The property representing the lookup path.
@@ -945,7 +945,7 @@ class ExpressionColumn(Column):
     Args:
         label (str): The display label of the column.
         expression (str): The expression used to compute the column value.
-        
+
     Attributes:
         label (str): The display label of the column.
         expression (str): The expression used to compute the column value.
@@ -1106,7 +1106,7 @@ class Table(ViewComponent):
 
 class MetricCard(ViewComponent):
     """Represents a metric card / KPI card component in the dashboard.
-    
+
     Args:
         name (str): The name of the metric card.
         metric_title (str): The title displayed on the metric card.
@@ -1118,7 +1118,7 @@ class MetricCard(ViewComponent):
         negative_color (str): Color for negative trends.
         title (str | None): Optional title for the metric card container.
         primary_color (str | None): Optional primary color.
-    
+
     Attributes:
         metric_title (str): The title displayed on the metric card.
         format (str): The format for displaying the value.
@@ -1128,7 +1128,7 @@ class MetricCard(ViewComponent):
         positive_color (str): Color for positive trends.
         negative_color (str): Color for negative trends.
     """
-    
+
     def __init__(
         self,
         name: str,
@@ -1153,97 +1153,97 @@ class MetricCard(ViewComponent):
         self.negative_color = negative_color
         self.title = title
         self.primary_color = primary_color
-    
+
     @property
     def metric_title(self) -> str:
         """Property: Get the metric title."""
         return self._metric_title
-    
+
     @metric_title.setter
     def metric_title(self, value: str):
         """Property: Set the metric title."""
         self._metric_title = value
-    
+
     @property
     def format(self) -> str:
         """Property: Get the display format."""
         return self._format
-    
+
     @format.setter
     def format(self, value: str):
         """Property: Set the display format."""
         self._format = value
-    
+
     @property
     def value_color(self) -> str:
         """Property: Get the value color."""
         return self._value_color
-    
+
     @value_color.setter
     def value_color(self, value: str):
         """Property: Set the value color."""
         self._value_color = value
-    
+
     @property
     def value_size(self) -> int:
         """Property: Get the value font size."""
         return self._value_size
-    
+
     @value_size.setter
     def value_size(self, value: int):
         """Property: Set the value font size."""
         self._value_size = value
-    
+
     @property
     def show_trend(self) -> bool:
         """Property: Get whether to show trend."""
         return self._show_trend
-    
+
     @show_trend.setter
     def show_trend(self, value: bool):
         """Property: Set whether to show trend."""
         self._show_trend = value
-    
+
     @property
     def positive_color(self) -> str:
         """Property: Get the positive trend color."""
         return self._positive_color
-    
+
     @positive_color.setter
     def positive_color(self, value: str):
         """Property: Set the positive trend color."""
         self._positive_color = value
-    
+
     @property
     def negative_color(self) -> str:
         """Property: Get the negative trend color."""
         return self._negative_color
-    
+
     @negative_color.setter
     def negative_color(self, value: str):
         """Property: Set the negative trend color."""
         self._negative_color = value
-    
+
     @property
     def title(self) -> Optional[str]:
         """Optional[str]: Optional title for the metric card container."""
         return self._title
-    
+
     @title.setter
     def title(self, value: Optional[str]):
         """Property: Set the title."""
         self._title = value
-    
+
     @property
     def primary_color(self) -> Optional[str]:
         """Optional[str]: Optional primary color."""
         return self._primary_color
-    
+
     @primary_color.setter
     def primary_color(self, value: Optional[str]):
         """Property: Set the primary color."""
         self._primary_color = value
-    
+
     def __repr__(self):
         return (
             f"MetricCard(name={self.name}, metric_title={self.metric_title}, "

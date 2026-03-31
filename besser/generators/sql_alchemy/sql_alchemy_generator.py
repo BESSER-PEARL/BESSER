@@ -55,7 +55,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
     def separate_classes(self):
         """
         Separates regular classes from association classes in the model.
-        
+
         Returns:
             tuple: A tuple containing two lists (regular_classes, association_classes)
         """
@@ -87,18 +87,18 @@ class SQLAlchemyGenerator(GeneratorInterface):
 
     def generate(self, dbms: str = "sqlite"):
         """
-        Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified 
+        Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified
         output directory.
-        If the output directory was not specified, the code generated will be stored in the 
+        If the output directory was not specified, the code generated will be stored in the
         <current directory>/output
         folder.
 
         Args:
-            dbms (str, optional): The database management system to be used. Values allowed: 
+            dbms (str, optional): The database management system to be used. Values allowed:
             "sqlite", "postgresql", "mysql", "mssql", "mariadb", or "oracle". Defaults to "sqlite".
 
         Returns:
-            None, but stores the generated code as a file named sql_alchemy.py 
+            None, but stores the generated code as a file named sql_alchemy.py
         """
         if dbms not in self.VALID_DBMS:
             raise ValueError(f"Invalid DBMS. Valid options are {', '.join(self.VALID_DBMS)}.")

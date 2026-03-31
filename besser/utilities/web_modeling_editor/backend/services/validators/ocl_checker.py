@@ -1,6 +1,10 @@
+import logging
+import re
+
 from besser.BUML.notations.ocl.OCLParserWrapper import OCLParserWrapper
 from bocl.OCLWrapper import OCLWrapper
-import re
+
+logger = logging.getLogger(__name__)
 
 def extract_context_class_name(expression):
     """Extract the context class name from an OCL expression"""
@@ -10,7 +14,8 @@ def extract_context_class_name(expression):
         if match:
             return match.group(1)
         return ""
-    except:
+    except Exception as e:
+        logger.warning("Failed to extract context class name from OCL expression: %s", e)
         return ""
 
 def is_basic_ocl_syntax_valid(expression):
@@ -19,23 +24,24 @@ def is_basic_ocl_syntax_valid(expression):
         # Check for basic OCL structure
         if not expression.strip():
             return False
-        
+
         # Must start with context
         if not expression.strip().lower().startswith('context'):
             return False
-        
+
         # Check for balanced parentheses
         open_parens = expression.count('(')
         close_parens = expression.count(')')
         if open_parens != close_parens:
             return False
-        
+
         # Check for basic OCL keywords that suggest valid structure
         ocl_keywords = ['inv', 'pre', 'post', 'self', 'collect', 'select', 'exists', 'forall', 'size']
         has_ocl_keywords = any(keyword in expression.lower() for keyword in ocl_keywords)
-        
+
         return has_ocl_keywords
-    except:
+    except Exception as e:
+        logger.warning("Basic OCL syntax validation failed: %s", e)
         return False
 
 def check_ocl_constraint(domain_model, object_model = None):
@@ -70,14 +76,14 @@ def check_ocl_constraint(domain_model, object_model = None):
                 else:
                     # Check if there are instances of the context class in the object model
                     context_class_name = extract_context_class_name(constraint.expression)
-                    context_instances = [obj for obj in object_model.objects 
+                    context_instances = [obj for obj in object_model.objects
                                         if hasattr(obj, 'classifier') and obj.classifier.name.lower() == context_class_name.lower()]
 
                     if not context_instances:
                         # No instances of the context class exist, skip evaluation
                         # valid_constraints.append(f"⚠️ '{constraint.expression}' - No instances of '{context_class_name}' found to evaluate constraint")
                         continue
-                    
+
                     # Use evaluate method for OCLWrapper (evaluation with object model)
                     result = parser.evaluate(constraint)
                     if result is True:
@@ -87,6 +93,7 @@ def check_ocl_constraint(domain_model, object_model = None):
                     else:
                         valid_constraints.append(f"✅ '{constraint.expression}' - Evaluates to: {result}")
             except Exception as e:
+                logger.error("Error evaluating OCL constraint '%s': %s", constraint.expression, e)
                 invalid_constraints.append(f"❌ '{constraint.expression}' - Error: {str(e)} \n")
 
         return {
@@ -96,10 +103,11 @@ def check_ocl_constraint(domain_model, object_model = None):
             "message": f"Found {len(valid_constraints)} valid and {len(invalid_constraints)} invalid constraints"
         }
 
-    except Exception as e:
+    except Exception:
+        logger.exception("OCL constraint checking failed")
         return {
             "success": False,
-            "message": f"{str(e)}",
+            "message": "OCL constraint checking encountered an unexpected error.",
             "valid_constraints": [],
             "invalid_constraints": []
         }

@@ -1,10 +1,14 @@
+import logging
 import os
 import subprocess
 import yaml
 
-def remove_volumes():
+logger = logging.getLogger(__name__)
+
+def remove_volumes(directory: str):
+    compose_path = os.path.join(directory, "docker-compose.yml")
     # Load the docker-compose.yml file
-    with open("docker-compose.yml", "r", encoding="utf-8") as f:
+    with open(compose_path, "r", encoding="utf-8") as f:
         compose_data = yaml.safe_load(f)
 
     # Remove the volumes section from each service
@@ -13,19 +17,19 @@ def remove_volumes():
             del compose_data["services"][service]["volumes"]
 
     # Save the changes back to the docker-compose.yml file
-    with open("docker-compose.yml", "w", encoding="utf-8") as f:
+    with open(compose_path, "w", encoding="utf-8") as f:
         yaml.dump(compose_data, f, default_flow_style=False)
 
-    print("Volumes section removed from docker-compose.yml!")
+    logger.info("Volumes section removed from docker-compose.yml")
 
 def is_deployment_running(directory: str) -> bool:
     try:
-        os.chdir(directory)
         result = subprocess.run(
             ["docker-compose", "ps", "-q"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            check=True
+            check=True,
+            cwd=directory
         )
         running_containers = result.stdout.decode().strip()
         return bool(running_containers)
@@ -47,7 +51,7 @@ def get_container_on_port(port: int):
 
 def is_port_used(port: int, expected_container: str) -> bool:
     container_name = get_container_on_port(port)
-    print(f"Container ID on port {port}: {container_name}")
+    logger.debug("Container ID on port %d: %s", port, container_name)
     return container_name is not None and container_name != expected_container
 
 def run_docker_compose(directory: str, project_name: str):
@@ -56,9 +60,7 @@ def run_docker_compose(directory: str, project_name: str):
         if not os.path.exists(directory):
             raise FileNotFoundError(f"The directory {directory} does not exist.")
 
-        # Change working directory to the directory containing the docker-compose.yml
-        os.chdir(directory)
-        remove_volumes()
+        remove_volumes(directory)
 
         # Check if the port is already in use by another container
         expected_container = project_name + "_web_1"
@@ -67,21 +69,22 @@ def run_docker_compose(directory: str, project_name: str):
 
         # Check if the deployment is already running
         #if is_deployment_running(directory):
-        #    print("Deployment detected. Rebuilding before starting.")
-        subprocess.run(["docker-compose", "down"], check=True)
-        subprocess.run(["docker-compose", "build"], check=True)
+        #    logger.info("Deployment detected. Rebuilding before starting.")
+        subprocess.run(["docker-compose", "down"], check=True, cwd=directory)
+        subprocess.run(["docker-compose", "build"], check=True, cwd=directory)
 
         # Run docker-compose up command
         result = subprocess.run(
             ["docker-compose", "up", "-d"],
             check=True, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stderr=subprocess.PIPE,
+            cwd=directory
         )
-        print("Docker Compose executed successfully")
-        print(result.stdout.decode())
+        logger.info("Docker Compose executed successfully")
+        logger.debug(result.stdout.decode())
 
     except subprocess.CalledProcessError as e:
-        print(f"Error running docker-compose: {e}")
-        print(e.stderr.decode())
+        logger.error("Error running docker-compose: %s", e)
+        logger.error(e.stderr.decode())
     except FileNotFoundError as e:
-        print(e)
+        logger.error(e)

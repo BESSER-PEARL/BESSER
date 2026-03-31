@@ -10,7 +10,7 @@ from .text_parser import sanitize_text
 
 __all__ = [
     'parse_attribute',
-    'parse_method', 
+    'parse_method',
     'parse_multiplicity',
     'process_ocl_constraints',
     'sanitize_text'

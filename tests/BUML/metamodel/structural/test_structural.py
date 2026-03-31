@@ -591,3 +591,19 @@ def test_element_uncertainty_type_validation():
     class1.uncertainty = 0.5
     assert class1.uncertainty == 0.5
     assert isinstance(class1.uncertainty, float)
+    
+
+def test_property_is_id_validation():
+    """Test all scenarios for Property identifiers"""
+    # Check default value (is_id should be False by default)
+    prop_default = Property(name="normal_attr", type=StringType)
+    assert prop_default.is_id is False
+    
+    # Check correct initialization as an identifier
+    prop = Property(name="id_attr", type=StringType, is_id=True)
+    assert prop.is_id is True
+    assert prop.is_optional is False
+    
+    # Check validation rule (conflict between is_id and is_optional)
+    with pytest.raises(ValueError, match="cannot be both an identifier"):
+        Property(name="invalid_prop", type=StringType, is_id=True, is_optional=True)

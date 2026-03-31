@@ -1,0 +1,192 @@
+Version 7.0.0
+=============
+
+Major release: redesigned web editor, AI-powered modeling assistant, modular backend architecture, expanded metamodel styling, multi-diagram projects, and comprehensive security hardening.
+
+Highlights
+----------
+
+- **New Web Modeling Editor UI**: Complete frontend rewrite with modern stack (Vite, Tailwind CSS, Radix UI, Redux Toolkit).
+- **AI Modeling Assistant Enhanced**: Major upgrade to the conversational AI assistant with 2 new diagram types, voice input, file conversion, code generation triggering, deterministic layout engine, and multi-step orchestration.
+- **Backend Architecture Refactor**: Monolithic backend decomposed into modular routers, middleware, and services.
+- **Multi-Diagram Projects**: First-class support for multiple diagrams of the same type within a project.
+- **Security Hardening**: CSP headers, encrypted OAuth sessions, request size limits, code injection prevention.
+
+New Features
+------------
+
+**Redesigned Web Modeling Editor** (`BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_)
+
+The web editor frontend has been completely rewritten with a modern tech stack, replacing the legacy webapp.
+
+*New in this release:*
+
+- Ground-up rewrite using Vite 7, Tailwind CSS 3, Radix UI, and Redux Toolkit.
+- Command palette (``Ctrl+K``/``Cmd+K``) with fuzzy search across editors, navigation, and actions.
+- Keyboard shortcuts dialog (``?`` or ``Ctrl+/``) showing all available keybindings.
+- Dark/light theme support with CSS custom properties.
+- Multi-diagram project management with tabbed editing and drag-and-drop file import.
+- Project-level BUML export and JSON preview.
+- AI Modeling Assistant chat widget integrated into the editor (WebSocket connection to the modeling agent).
+- Privacy-respecting analytics via PostHog and Sentry error tracking.
+- Playwright E2E tests and Vitest unit tests.
+- Lazy loading throughout for optimal performance.
+
+
+**AI Modeling Assistant -- Major Upgrade** (`modeling-agent <https://github.com/BESSER-PEARL/modeling-agent>`_)
+
+The modeling agent (previously supporting Class, Object, State Machine, and Agent diagrams with basic creation in v1.0.0) has been significantly enhanced with new diagram types, new capabilities, and a complete architecture overhaul. See the `modeling-agent v2.0.0 release notes <https://github.com/BESSER-PEARL/modeling-agent>`_ for full details.
+
+*New diagram types:*
+
+- GUI No-Code diagram support (metric cards, action buttons, charts, navigation, sample data generation).
+- Quantum Circuit diagram support (gate symbols, qubit management, circuit operations).
+
+*New capabilities:*
+
+- Voice input via OpenAI Whisper speech-to-text.
+- File conversion: PlantUML, RDF/OWL/TTL knowledge graphs, images, and PDFs converted to diagram specifications.
+- Code generation triggering for 15+ BESSER generators (Django, Python, Java, SQL, WebApp, Qiskit, etc.) plus export and deploy.
+- Multi-step orchestration decomposes compound requests (e.g., "create a library system and generate Django code") into sequential operations across diagram types.
+- Deterministic layout engine with collision avoidance replaces random positioning; LLM produces only semantic content.
+- Conversation memory with sliding-window and optional LLM summarization.
+- Context-aware suggestions after each action based on current project state.
+- Confirmation flows before replacing existing diagrams.
+- "Describe my diagram" intent for explaining the current canvas.
+- Token and cost tracking per session.
+- Domain pattern library with pre-built templates for common system types.
+
+*Enhanced existing capabilities:*
+
+- Model modification expanded from Class-only to all 6 diagram types.
+- Intent recognition overhauled with pattern-based cross-validation (3 new intents: generation, describe model, workflow).
+- Pydantic-enforced structured outputs for all diagram types eliminate manual JSON parsing.
+- Architecture restructured from flat files into modular ``src/`` package with clear separation of concerns.
+- Built on BESSER Agentic Framework (BAF) v4.3.1 with OpenAI ``gpt-4.1-mini``.
+
+**Modular Backend Architecture**
+- Decomposed monolithic ``backend.py`` (~1900 lines) into focused modules (~270 lines remaining).
+- ``routers/generation_router.py``: All code generation endpoints.
+- ``routers/conversion_router.py``: BUML import/export, CSV reverse engineering, image-to-model.
+- ``routers/validation_router.py``: Diagram validation endpoints.
+- ``routers/deployment_router.py``: GitHub deployment and Docker integration.
+- ``routers/error_handler.py``: Centralized ``@handle_endpoint_errors`` decorator mapping custom exceptions to HTTP status codes.
+- ``middleware/request_logging.py``: Structured request logging with UUID-based ``X-Request-ID`` headers, performance timing, and slow-request warnings (>1s).
+- ``services/cleanup.py``: Background task removing temp directories older than 24 hours, runs hourly.
+- ``services/exceptions.py``: Custom exception hierarchy (``ConversionError``, ``ValidationError``, ``GenerationError``, ``DeploymentError``).
+- ``models/responses.py``: Typed Pydantic response models replacing ad-hoc dict responses.
+- ``constants/constants.py``: Centralized API constants, generator defaults, CORS origins, relationship type mappings.
+
+**Multi-Diagram Project Support**
+- ``ProjectInput.diagrams`` supports multiple diagrams per type (``Dict[str, List[DiagramInput]]``).
+- ``currentDiagramIndices`` tracks the active diagram per type.
+- Per-diagram ``references`` for stable cross-diagram linking by ID (resilient to deletions and reordering).
+- Backward compatible: old single-diagram format auto-converts via Pydantic model validator.
+
+**Security Enhancements**
+- ``SecurityHeadersMiddleware``: Adds ``X-Content-Type-Options``, ``X-Frame-Options``, ``Referrer-Policy``, ``Content-Security-Policy``, ``Strict-Transport-Security``, and ``Permissions-Policy``.
+- ``RequestSizeLimitMiddleware``: Rejects requests >50MB.
+- CORS hardened from wildcard ``*`` to configurable whitelist via ``CORS_ORIGINS`` environment variable.
+- Encrypted file-based OAuth session store using Fernet encryption with TTL expiration.
+- ``_escape_python_string()`` utility prevents code injection in generated Python code that may be ``exec()``'d.
+- ``safe_var_name()`` / ``safe_class_name()`` ensure generated identifiers are safe.
+- Fixed SQL DDL generation vulnerability (double f-string interpolation).
+- Removed Docker socket mount from ``docker-compose.yml``.
+
+**New Generators Registered**
+- RDF (``RDFGenerator``), REST API (``RESTAPIGenerator``), React (``ReactGenerator``), Flutter (``FlutterGenerator``), Terraform (``TerraformGenerator``).
+- Conditionally registered: PyTorch (``PytorchGenerator``), TensorFlow (``TFGenerator``) -- only when their dependencies are installed.
+- Added ``ClassAggregation`` to ``RELATIONSHIP_TYPES``.
+
+**Expanded GUI Metamodel Styling**
+- ``Size``: 18 new properties -- typography (``font_weight``, ``font_family``, ``font_style``, ``text_decoration``, ``text_transform``, ``letter_spacing``, ``word_spacing``, ``white_space``, ``word_break``), min/max dimensions (``min_width``, ``max_width``, ``min_height``, ``max_height``), per-side padding and margin.
+- ``Position``: 11 new properties -- ``display``, ``overflow``, ``overflow_x/y``, ``visibility``, ``cursor``, ``box_sizing``, ``transform``, ``transition``, ``animation``, ``filter``.
+- ``Color``: 14 new properties -- border details (``border_radius``, ``border_width``, ``border_style``, per-side borders), shadows (``box_shadow``, ``text_shadow``), background extras (``background_image``, ``background_size``, ``background_position``, ``background_repeat``).
+- ``Layout``: 6 new flex-item properties -- ``flex``, ``flex_grow``, ``flex_shrink``, ``flex_basis``, ``order``, ``align_self``.
+- ``ViewElement`` constructor now accepts ``component_id``, ``tag_name``, ``css_classes``, ``custom_attributes``, ``display_order`` as keyword arguments.
+- ``GUIModel`` gains ``style_entries`` parameter for storing CSS style data.
+
+**Structural Metamodel Validation**
+- ``DomainModel.validate()`` now detects attribute shadowing in inheritance hierarchies.
+- ``NamedElement.name`` setter rejects ``None`` and whitespace-only strings, warns on Python keywords.
+
+**CI/CD Pipelines**
+- ``.github/workflows/ci.yml``: Backend tests on Python 3.10/3.11/3.12, Ruff linting, and frontend lint+build.
+- ``.github/workflows/security.yml``: Weekly CodeQL security scanning.
+- ``.github/dependabot.yml``: Automated dependency updates (weekly for pip, monthly for GitHub Actions).
+
+**Comprehensive Test Suite** (+5,635 lines)
+- ``test_builders.py`` (1,317 lines): All BUML code builders.
+- ``test_converter_roundtrip.py`` (1,277 lines): JSON-to-BUML-to-JSON round-trip tests.
+- ``test_api_integration.py`` (1,082 lines): Backend API integration tests.
+- ``test_parsers.py`` (559 lines): Attribute, method, multiplicity, OCL, and text parsers.
+- New generator tests: BAF, JSON Object, Qiskit, React, Terraform, WebApp.
+- Centralized test fixtures in ``tests/conftest.py`` and ``tests/generators/conftest.py``.
+
+Bug Fixes
+---------
+
+- Fixed ``Processor.x86`` enum value from ``"x84"`` to ``"x86"``.
+- Fixed ``Protocol.udp`` enum value from ``"UPD"`` to ``"UDP"``.
+- Fixed ``LayoutType.SRACK`` typo to ``LayoutType.STACK``.
+- Fixed ``Transition.__repr__`` crash when ``event`` is ``None``.
+- Fixed ``Object.__getattr__`` recursive call during initialization.
+- Fixed ``DataValue`` crash when ``name`` is empty string (generates fallback name).
+- Fixed ``LLMIntentClassifierConfiguration.parameters`` mutable default argument (``{}`` to ``None``).
+- Fixed ``venv/Script/activate`` typo to ``venv/Scripts/activate`` in documentation.
+- Fixed Java template: ``protected`` changed to ``private`` for class attributes.
+- Fixed Java template: ``java.time.UUID`` changed to ``java.util.UUID``.
+- Fixed Pydantic generator regex: ``r"\\W"`` (escaped backslash) changed to ``r"\W"`` (non-word character class).
+- Fixed Java generator: operator precedence bug in temp directory detection (``if 'tmp' or 'AppData' in path`` always evaluated to ``True``).
+- Fixed ``utils.py``: type hint syntax from ``model_path= str`` to ``model_path: str``.
+
+Improvements
+------------
+
+**Code Builders**
+- All BUML code builders now use ``_escape_python_string()`` for safe string interpolation.
+- ``safe_var_name()`` applied to state and intent names for generated variable references.
+- ``gui_model_builder.py`` rewritten to support expanded styling properties and component metadata.
+- ``project_builder.py`` rewritten for multi-diagram project format.
+- ``agent_model_builder.py`` accepts ``model_var_name`` parameter for customizable output.
+- Deterministic output: sorted set serialization in domain model builder.
+
+**Converters**
+- All JSON-to-BUML and BUML-to-JSON converters updated for multi-diagram project support.
+- New ``state_machine_object_to_json()`` function for direct StateMachine object conversion.
+- GUI converters support all expanded CSS properties.
+- Parser error handling improved with descriptive ``ValueError`` exceptions.
+- All ``print()`` statements replaced with structured ``logging`` calls.
+
+**Generators**
+- Django generator: Jinja2 environment consolidated (eliminated 8 duplicate ``Environment`` instances).
+- Pydantic generator: generates ``Optional[...]`` types when ``multiplicity.min == 0``.
+- React generator: supports all expanded CSS properties from the metamodel.
+- Flutter generator: improved ``DateTimeType`` and ``DateType`` type mapping, ``print()`` replaced with logging.
+
+**Deployment Services**
+- GitHub OAuth uses encrypted session store instead of in-memory state.
+- Docker deployment methods accept ``directory`` parameter instead of using ``os.chdir()``.
+- Feedback service migrated from ``dict()`` to ``model_dump()`` (Pydantic v2).
+
+**Documentation**
+- New ``DEVELOPMENT_SETUP.md`` with complete setup guide.
+- New ``docs/source/web_editor_backend.rst`` for backend API documentation.
+- Updated documentation for generators, metamodel types, and contributing guide.
+
+Breaking Changes
+----------------
+
+.. warning::
+
+   This release contains several breaking changes. Review carefully before upgrading.
+
+- **NamedElement.name validation**: Now raises ``ValueError`` for ``None``, empty, and whitespace-only names. Code passing these values to any ``NamedElement`` subclass constructor will break.
+- **LayoutType.SRACK renamed**: ``LayoutType.SRACK`` is now ``LayoutType.STACK``. Code referencing the old name will raise ``AttributeError``.
+- **GUI Style defaults changed to None**: ``Size``, ``Position``, ``Color``, and ``Layout`` classes now default most properties to ``None`` instead of concrete values (e.g., ``Size.width`` was ``"auto"``, now ``None``). Code relying on these defaults must be updated.
+- **ViewElement.display_order type**: Changed from ``int`` to ``float``.
+- **ProjectInput.diagrams type**: Changed from ``Dict[str, DiagramInput]`` to ``Dict[str, List[DiagramInput]]``. A Pydantic model validator provides backward compatibility for API consumers, but code directly accessing ``diagrams[key]`` as a single ``DiagramInput`` will break.
+- **CORS policy**: Changed from wildcard ``*`` to an explicit origin list. Unlisted origins will be rejected. Configure via the ``CORS_ORIGINS`` environment variable.
+- **Backend module structure**: All endpoint functions moved from ``backend.py`` to router modules. Code importing directly from ``backend`` will break.
+- **Java generated code**: Class attributes changed from ``protected`` to ``private``.
+- **z_index validation**: Now accepts ``None`` and negative integers (was non-negative only). This relaxes the constraint but changes the contract.

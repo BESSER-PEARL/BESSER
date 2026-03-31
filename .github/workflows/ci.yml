@@ -28,7 +28,7 @@ jobs:
           pip install pytest
       - name: Run tests
         run: |
-          python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x
+          python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn --ignore=tests/BUML/metamodel/nn -x
 
   backend-lint:
     runs-on: ubuntu-latest

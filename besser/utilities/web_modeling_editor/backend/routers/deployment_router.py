@@ -55,6 +55,15 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 
 logger = logging.getLogger(__name__)
 
+
+def _safe_path(base_dir: str, user_filename: str) -> str:
+    """Resolve a user-provided filename safely within base_dir."""
+    safe_name = os.path.basename(user_filename)
+    full_path = os.path.realpath(os.path.join(base_dir, safe_name))
+    if not full_path.startswith(os.path.realpath(base_dir)):
+        raise ValueError("Invalid path")
+    return full_path
+
 router = APIRouter(prefix="/besser_api", tags=["deployment"])
 
 
@@ -96,12 +105,8 @@ async def deploy_app(input_data: DiagramInput):
             if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_-]*$', project_name):
                 raise HTTPException(status_code=400, detail="Invalid project name")
 
-            # Clean up any existing project directory first
-            project_dir = os.path.join(temp_dir, project_name)
-
-            # Verify resolved path is still within the temp directory
-            if not os.path.realpath(project_dir).startswith(os.path.realpath(temp_dir)):
-                raise HTTPException(status_code=400, detail="Invalid project name")
+            # Sanitize and resolve project directory safely within temp_dir
+            project_dir = _safe_path(temp_dir, project_name)
             if os.path.exists(project_dir):
                 shutil.rmtree(project_dir)
 
@@ -123,8 +128,7 @@ async def deploy_app(input_data: DiagramInput):
             if not os.path.exists(project_dir) or not os.listdir(project_dir):
                 raise ValueError("Django project generation failed: Output directory is empty")
 
-            full_path = os.path.join(temp_dir, project_name)
-            await asyncio.to_thread(run_docker_compose, directory=full_path, project_name=project_name)
+            await asyncio.to_thread(run_docker_compose, directory=project_dir, project_name=project_name)
 
         else:
             raise ValueError("Deployment only possible for Django projects")

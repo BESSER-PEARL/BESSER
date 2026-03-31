@@ -161,8 +161,8 @@ async def validate_diagram(input_data: DiagramInput):
 
     except ValueError as e:
         # Construction validation errors (from BUML creation setters)
-        error_msg = str(e)
-        validation_errors.append(error_msg)
+        logger.warning("Construction validation error: %s", e)
+        validation_errors.append("A validation error occurred during diagram construction. Please check your diagram for invalid values.")
     except Exception as e:
         logger.exception("Unexpected error during diagram conversion/validation")
         validation_errors.append("An unexpected error occurred during validation.")

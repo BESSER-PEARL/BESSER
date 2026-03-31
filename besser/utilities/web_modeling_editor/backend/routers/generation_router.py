@@ -97,6 +97,15 @@ logger = logging.getLogger(__name__)
 SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'apikey', 'api-key'}
 
 
+def _safe_path(base_dir: str, user_filename: str) -> str:
+    """Resolve a user-provided filename safely within base_dir."""
+    safe_name = os.path.basename(user_filename)
+    full_path = os.path.realpath(os.path.join(base_dir, safe_name))
+    if not full_path.startswith(os.path.realpath(base_dir)):
+        raise ValueError("Invalid path")
+    return full_path
+
+
 def sanitize_config(config: dict) -> dict:
     """Return a shallow copy of config with sensitive values masked."""
     return {k: '***' if any(s in k.lower() for s in SENSITIVE_KEYS) else v for k, v in config.items()}
@@ -579,7 +588,7 @@ def _generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[
             _normalize_user_model_output(object_model, temp_dir)
 
             file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
-            json_path = os.path.join(temp_dir, f"{file_name}.json")
+            json_path = _safe_path(temp_dir, f"{file_name}.json")
             if not os.path.isfile(json_path):
                 raise HTTPException(status_code=500, detail="Failed to render user profile JSON document")
 
@@ -594,7 +603,7 @@ def _generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[
 
 def _normalize_user_model_output(object_model, temp_dir: str) -> None:
     file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
-    json_path = os.path.join(temp_dir, f"{file_name}.json")
+    json_path = _safe_path(temp_dir, f"{file_name}.json")
     if not os.path.isfile(json_path):
         return
 
@@ -755,7 +764,12 @@ async def _generate_django(buml_model, generator_class, config: dict, temp_dir: 
     app_name = config.get("app_name", DEFAULT_DJANGO_APP_NAME) if config else DEFAULT_DJANGO_APP_NAME
     containerization = config.get("containerization", False) if config else False
 
-    project_dir = os.path.join(temp_dir, project_name)
+    # Sanitize project_name to prevent path traversal
+    project_name = os.path.basename(project_name)
+    if not project_name:
+        project_name = DEFAULT_DJANGO_PROJECT_NAME
+
+    project_dir = _safe_path(temp_dir, project_name)
 
     # Clean up any existing project directory
     if os.path.exists(project_dir):
@@ -973,7 +987,7 @@ def _create_file_response(temp_dir: str, generator_type: str):
         ext = generator_info.file_extension if generator_info else ""
         matching = [f for f in sorted(files) if f.endswith(ext)] if ext else []
         file_name = matching[0] if matching else sorted(files)[0]
-    output_file_path = os.path.join(temp_dir, file_name)
+    output_file_path = _safe_path(temp_dir, file_name)
 
     with open(output_file_path, "rb") as f:
         file_content = f.read()

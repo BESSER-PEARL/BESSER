@@ -80,7 +80,7 @@ def parse_datetime_value(value, type_name):
                     hours, minutes, seconds = map(int, time_components)
                     return timedelta(hours=hours, minutes=minutes, seconds=seconds)
     except (ValueError, IndexError) as e:
-        logger.warning("Could not parse %s value '%s': %s", type_name, value, e)
+        logger.warning("Could not parse %s value: %s", type_name, e)
         return value
     
     return value

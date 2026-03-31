@@ -31,7 +31,7 @@ def parse_method_signature_from_code(
         return None
 
     signature_match = re.search(
-        r"def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:->\s*([^:{\n]+))?\s*[:{]",
+        r"def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*(?:->\s*([^:{\n]+?)\s*)?[:{]",
         method_code,
     )
     if not signature_match:

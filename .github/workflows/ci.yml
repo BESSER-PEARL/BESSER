@@ -3,11 +3,9 @@ name: CI
 on:
   pull_request:
     branches: [master, development]
-  push:
-    branches: [master, development]
 
 jobs:
-  backend-tests:
+  tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -30,7 +28,7 @@ jobs:
         run: |
           python -m pytest tests/ -q --tb=short --ignore=tests/generators/nn -x
 
-  backend-lint:
+  lint:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

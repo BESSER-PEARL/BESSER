@@ -50,7 +50,7 @@ class ObjectBuilder:
                     if attr.name == "name":
                         name_property = attr
                         break
-                
+
                 if name_property:
                     # Create AttributeLink directly for the "name" attribute
                     data_value = DataValue(classifier=name_property.type, value=value)

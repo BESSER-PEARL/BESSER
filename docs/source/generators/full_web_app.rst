@@ -37,26 +37,21 @@ Sub-Generators
 
 The Full Web App Generator internally uses these specialized generators:
 
-**Backend** (see :doc:`backend`)
-   Uses: :doc:`pydantic`, :doc:`alchemy`, :doc:`rest_api`
+- **Backend:** :doc:`backend` (which uses :doc:`pydantic`, :doc:`alchemy`, :doc:`rest_api`)
+- **Frontend:** :doc:`react` (React application with TableComponent, MethodButton, charts)
 
-**Frontend** (see :doc:`react`)
-   React application with TableComponent, MethodButton, charts
 
-.. toctree::
-   :maxdepth: 1
-   :caption: Backend Components
+Multi-Diagram Projects
+----------------------
 
-   backend
-   pydantic
-   alchemy
-   rest_api
+The Full Web App Generator uses the **multi-diagram project format**. A project can contain
+multiple diagrams of each type (e.g., several class diagrams or GUI designs). The active
+diagram per type is selected via ``currentDiagramIndices``, and individual diagrams can
+reference each other by ID through the ``references`` field. This allows stable cross-diagram
+resolution even when diagrams are reordered or deleted.
 
-.. toctree::
-   :maxdepth: 1
-   :caption: Frontend Components
-
-   react
+When generating from the web editor, the backend resolves the active ``ClassDiagram`` and
+``GUINoCodeDiagram`` (and optionally an ``AgentDiagram``) from the project payload.
 
 
 How It Works

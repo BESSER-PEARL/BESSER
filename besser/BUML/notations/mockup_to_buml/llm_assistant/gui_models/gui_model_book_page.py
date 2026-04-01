@@ -25,7 +25,7 @@ BookList: DataList=DataList(name="BookList", description="A diverse group of boo
 # Book directory screen definition
 BookListScreen: Screen = Screen(name="BookListScreen", description="Explore a collection of books",
                           x_dpi="x_dpi", y_dpi="y_dpi", size="SmallScreen", view_elements={bookAddingButton, BookList})
-                          
+
 
 # Module definition:
 MyModule: Module = Module(name="module_name", screens={BookListScreen})

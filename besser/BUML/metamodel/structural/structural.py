@@ -2,6 +2,8 @@ from abc import ABC
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Union, List, TYPE_CHECKING
+import keyword
+import logging
 import time
 
 if TYPE_CHECKING:
@@ -18,7 +20,7 @@ class Element(ABC):
         timestamp (datetime): Object creation datetime (default is current time).
         is_derived (bool): Indicates whether the element is derived (False as default).
         uncertainty (float): Indicates the uncertainty level of the element as a probability between 0 and 1 (0.0 as default).
-    
+
     Attributes:
         timestamp (datetime): Object creation datetime (default is current time).
         is_derived (bool): Indicates whether the element is derived (False as default).
@@ -60,7 +62,7 @@ class Element(ABC):
     def uncertainty(self, uncertainty: float):
         """
         float: Set the uncertainty level of the element as a probability between 0 and 1.
-        
+
         Raises:
             ValueError: If the uncertainty value is not between 0 and 1 inclusive.
         """
@@ -173,14 +175,20 @@ class NamedElement(Element):
     def name(self, name: str):
         """
         str: Set the name of the named element.
-        
+
         Raises:
-            ValueError: If the name is empty or contains invalid characters (spaces, hyphens, etc.).
+            ValueError: If the name is None, empty, whitespace-only, or contains invalid characters (spaces, hyphens, etc.).
         """
+        if name is None:
+            raise ValueError("Name cannot be None.")
+        if not isinstance(name, str) or name.strip() == "":
+            raise ValueError("Name cannot be empty or whitespace-only.")
         if ' ' in name:
             raise ValueError(f"'{name}' is invalid. Name cannot contain spaces.")
         if '-' in name:
             raise ValueError(f"'{name}' is invalid. Hyphens are not allowed; use '_' instead.")
+        if keyword.iskeyword(name):
+            logging.warning(f"'{name}' is a Python keyword. This may cause issues in generated code.")
         self.__name = name
 
     @property
@@ -192,9 +200,9 @@ class NamedElement(Element):
     def visibility(self, visibility: str):
         """
         str: Set the visibility of the named element.
-        
+
         Raises:
-            ValueError: If the visibility provided is none of these: public, 
+            ValueError: If the visibility provided is none of these: public,
             private, protected, or package.
         """
         if visibility not in ['public', 'private', 'protected', 'package']:
@@ -273,11 +281,11 @@ class PrimitiveDataType(DataType):
     @NamedElement.name.setter
     def name(self, name: str):
         """
-        str: Set the name of the PrimitiveDataType. 
-        
+        str: Set the name of the PrimitiveDataType.
+
         Raises:
             ValueError: If an invalid primitive data type is provided.
-                        Allowed values are int, float, str, bool, time, date, 
+                        Allowed values are int, float, str, bool, time, date,
                         datetime, timedelta, and any.
         """
         if name not in ['int', 'float', 'str', 'bool', 'time', 'date', 'datetime', 'timedelta', 'any']:
@@ -349,8 +357,8 @@ class EnumerationLiteral(NamedElement):
     @owner.setter
     def owner(self, owner: DataType):
         """
-        DataType: Set the owner. 
-        
+        DataType: Set the owner.
+
         Raises:
             ValueError: If the owner is not an enumeration.
         """
@@ -369,16 +377,16 @@ class Enumeration(DataType):
 
     Args:
         name (str): The name of the enumeration data type.
-        literals (set[EnumerationLiteral]): Set of enumeration literals associated with the 
+        literals (set[EnumerationLiteral]): Set of enumeration literals associated with the
                 enumeration (None as default).
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the enumeration (None as default).
 
     Attributes:
         name (str): Inherited from DataType, represents the name of the enumeration.
-        literals (set[EnumerationLiteral]): Represents a set of enumeration literals associated 
+        literals (set[EnumerationLiteral]): Represents a set of enumeration literals associated
                 with the enumeration (None as default).
-        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is 
+        timestamp (datetime): Inherited from NamedElement; object creation datetime (default is
                 current time).
         metadata (Metadata): Metadata information for the enumeration (None as default).
     """
@@ -396,8 +404,8 @@ class Enumeration(DataType):
     @literals.setter
     def literals(self, literals: set[EnumerationLiteral]):
         """
-        DataType: Set the literals. 
-        
+        DataType: Set the literals.
+
         Raises:
             ValueError: if two literals have the same name.
         """
@@ -414,7 +422,7 @@ class Enumeration(DataType):
     def add_literal(self, literal: EnumerationLiteral):
         """
         Add an enumeration literal to the set.
-        
+
         Raises:
             ValueError: if the enumeration literal name already exist.
         """
@@ -510,8 +518,8 @@ class Multiplicity(Element):
     @min.setter
     def min(self, min_multiplicity: int):
         """
-        int: Set the minimum multiplicity 
-        
+        int: Set the minimum multiplicity
+
         Raises:
             ValueError: (Invalid min multiplicity) if the minimum multiplicity is less than 0.
         """
@@ -528,7 +536,7 @@ class Multiplicity(Element):
     def max(self, max_multiplicity: int):
         """
         int: Set the maximum multiplicity.
-        
+
         Raises:
             ValueError: (Invalid max multiplicity) if the maximum multiplicity is less than 0 or
             less than minimum multiplicity.
@@ -609,7 +617,7 @@ class Property(TypedElement):
     def owner(self, owner: Type):
         """
         Type: Set the owner type of the property.
-        
+
         Raises:
             ValueError: (Invalid owner) if the owner is instance of DataType.
         """
@@ -832,7 +840,7 @@ class Method(TypedElement):
     def parameters(self, parameters: list[Parameter]):
         """
         list[Parameter]: Set the parameters of the method.
-        
+
         Raises:
             ValueError: if two parameters have the same name.
         """
@@ -856,7 +864,7 @@ class Method(TypedElement):
     def add_parameter(self, parameter: Parameter):
         """
         Parameter: Add a parameter to the set of class parameters.
-        
+
         Raises:
             ValueError: if the parameter name already exist.
         """
@@ -874,7 +882,7 @@ class Method(TypedElement):
     def owner(self, owner: Type):
         """
         Type: Set the owner type of the method.
-        
+
         Raises:
             ValueError: (Invalid owner) if the owner is instance of DataType.
         """
@@ -935,11 +943,11 @@ class BehaviorImplementation(NamedElement):
 
     Args:
         name (str): The name of the behavior implementation.
-        
+
     Attributes:
-        name (str): The name of the behavior implementation.  
+        name (str): The name of the behavior implementation.
     """
-    
+
     def __init__(self, name: str, uncertainty: float = 0.0):
         super().__init__(name, uncertainty=uncertainty)
 
@@ -954,12 +962,12 @@ class BehaviorDeclaration(NamedElement):
     Args:
         name (str): The name of the behavior.
         implementations (set[BehaviorImplementation]): The implementations associated with the behavior.
-        
+
     Attributes:
         name (str): The name of the behavior.
         implementations (set[BehaviorImplementation]): The implementations associated with the behavior.
     """
-    
+
     def __init__(self, name: str, implementations: set[BehaviorImplementation], uncertainty: float = 0.0):
         super().__init__(name, uncertainty=uncertainty)
         self.implementations: set[BehaviorImplementation] = implementations
@@ -1042,7 +1050,7 @@ class Class(Type):
     def attributes(self, attributes: set[Property]):
         """
         set[Property]: Set the attributes of the class.
-        
+
         Raises:
             ValueError: if two attributes have the same name.
             ValueError: if two attributes are id.
@@ -1083,7 +1091,7 @@ class Class(Type):
     def methods(self, methods: set[Method]):
         """
         set[Method]: Set the methods of the class.
-        
+
         Raises:
             ValueError: if two methods have the same name.
         """
@@ -1108,7 +1116,7 @@ class Class(Type):
     def add_method(self, method: Method):
         """
         Method: Add a method to the set of class methods.
-        
+
         Raises:
             ValueError: if the method name already exist.
         """
@@ -1126,7 +1134,7 @@ class Class(Type):
     def add_attribute(self, attribute: Property):
         """
         Property: Add an attribute to the set of class attributes.
-        
+
         Raises:
             ValueError: if the attribute name already exist.
         """
@@ -1147,7 +1155,7 @@ class Class(Type):
     def behaviors(self, behaviors: set[BehaviorDeclaration]):
         """
         set[BehaviorDeclaration]: Set the behaviors associated with the class.
-        
+
         Raises:
             ValueError: if two behaviors have the same name.
         """
@@ -1321,7 +1329,7 @@ class Association(NamedElement):
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the association (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
-        
+
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the association.
         ends (set[Property]): The set of ends related to the association.
@@ -1345,7 +1353,7 @@ class Association(NamedElement):
     def ends(self, ends: set[Property]):
         """
         set[Property]: Set the ends of the association. Two or more ends are required.
-        
+
         Raises:
             ValueError: if an association has less than two ends.
             TypeError: if any element in ends is not a Property instance.
@@ -1354,7 +1362,7 @@ class Association(NamedElement):
         for end in ends:
             if not isinstance(end, Property):
                 raise TypeError(f"Expected Property instance, but got {type(end).__name__} instance: {end}")
-        
+
         if len(ends) <= 1:
              raise ValueError("An association must have more than one end")
         names = [e.name for e in ends]
@@ -1377,7 +1385,7 @@ class BinaryAssociation(Association):
 
     A BinaryAssociation is a specialized form of Association that specifically involves
     two ends, each associated with a class. It enforces constraints on the association,
-    such as having exactly two ends. Exactly two ends are required 
+    such as having exactly two ends. Exactly two ends are required
 
     Args:
         name (str): The name of the binary association.
@@ -1397,9 +1405,9 @@ class BinaryAssociation(Association):
     @Association.ends.setter
     def ends(self, ends: set[Property]):
         """set[Property]: Set the ends of the association.
-        
+
         Raises:
-            ValueError: if the association ends are not exactly two, or if both ends are tagged as aggregation, or 
+            ValueError: if the association ends are not exactly two, or if both ends are tagged as aggregation, or
             if both ends are tagged as composition.
             TypeError: if any element in ends is not a Property instance.
         """
@@ -1407,7 +1415,7 @@ class BinaryAssociation(Association):
         for end in ends:
             if not isinstance(end, Property):
                 raise TypeError(f"Expected Property instance, but got {type(end).__name__} instance: {end}")
-        
+
         if len(ends) != 2:
             raise ValueError("A binary association must have exactly two ends")
         if list(ends)[0].is_composite is True and list(ends)[1].is_composite is True:
@@ -1468,7 +1476,7 @@ class Generalization(Element):
         specific (Class): The specific (child) class in the generalization relationship.
         timestamp (datetime): Object creation datetime (default is current time).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
-    
+
     Attributes:
         general (Class): The general (parent) class in the generalization relationship.
         specific (Class): The specific (child) class in the generalization relationship.
@@ -1506,7 +1514,7 @@ class Generalization(Element):
     def specific(self, specific: Class):
         """
         Class: Set the specific (child) class.
-        
+
         Raises:
             ValueError: if the general class is equal to the specific class
         """
@@ -1720,7 +1728,7 @@ class Model(NamedElement):
         metadata (Metadata): Metadata information for the model (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
         elements (set[Element]): Set of model Elements in the Model.
-        
+
     Attributes:
         name (str): Inherited from NamedElement, represents the name of the model.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
@@ -1747,7 +1755,7 @@ class Model(NamedElement):
             self.__elements = set()
 
 class DomainModel(Model):
-    """A domain model comprises a number of types, associations, 
+    """A domain model comprises a number of types, associations,
     generalizations, packages, constraints, and others.
 
     Args:
@@ -1806,7 +1814,7 @@ class DomainModel(Model):
     def types(self, types: set[Type]):
         """
         set[Type]: Set the set of types in the domain model, including primitive data types.
-        
+
         Raises:
             ValueError: if there are two types with the same name.
             TypeError: if any element in types is not a Type instance.
@@ -1815,10 +1823,10 @@ class DomainModel(Model):
         for type_ in types:
             if not isinstance(type_, Type):
                 raise TypeError(f"Expected Type instance, but got {type(type_).__name__} instance: {type_}")
-        
+
         primitive_names = {'int', 'str', 'bool', 'float', 'datetime', 'date', 'time', 'timedelta', 'any'}
         has_primitives = any(t.name in primitive_names for t in types)
-    
+
         if not has_primitives:
             types = types | data_types
 
@@ -1868,7 +1876,7 @@ class DomainModel(Model):
     def associations(self, associations: set[Association]):
         """
         set[Association]: Set the set of associations in the domain model.
-        
+
         Raises:
             ValueError: if there are two associations with the same name.
             TypeError: if any element in associations is not an Association instance.
@@ -1878,7 +1886,7 @@ class DomainModel(Model):
             for association in associations:
                 if not isinstance(association, Association):
                     raise TypeError(f"Expected Association instance, but got {type(association).__name__} instance: {association}")
-            
+
             names_seen = set()
             duplicates = set()
 
@@ -1925,7 +1933,7 @@ class DomainModel(Model):
     def generalizations(self, generalizations: set[Generalization]):
         """
         set[Generalization]: Set the set of generalizations in the domain model.
-        
+
         Raises:
             TypeError: if any element in generalizations is not a Generalization instance.
         """
@@ -1934,7 +1942,7 @@ class DomainModel(Model):
             for generalization in generalizations:
                 if not isinstance(generalization, Generalization):
                     raise TypeError(f"Expected Generalization instance, but got {type(generalization).__name__} instance: {generalization}")
-            
+
             self.__generalizations = generalizations
         else:
             self.__generalizations = set()
@@ -1984,7 +1992,7 @@ class DomainModel(Model):
             for package in packages:
                 if not isinstance(package, Package):
                     raise TypeError(f"Expected Package instance, but got {type(package).__name__} instance: {package}")
-            
+
             names_seen = set()
             duplicates = set()
 
@@ -2021,7 +2029,7 @@ class DomainModel(Model):
             for constraint in constraints:
                 if not isinstance(constraint, Constraint):
                     raise TypeError(f"Expected Constraint instance, but got {type(constraint).__name__} instance: {constraint}")
-            
+
             names = [constraint.name for constraint in constraints]
             if len(names) != len(set(names)):
                 raise ValueError("The model cannot have two constraints with the same name")
@@ -2103,6 +2111,7 @@ class DomainModel(Model):
         self._validate_associations(errors)
         self._validate_constraints(errors)
         self._validate_circular_inheritance(errors)
+        self._validate_attribute_shadowing(errors)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -2147,14 +2156,14 @@ class DomainModel(Model):
         def has_cycle(cls: Class, visited: set, rec_stack: set) -> bool:
             visited.add(cls)
             rec_stack.add(cls)
-            
+
             for parent in cls.parents():
                 if parent not in visited:
                     if has_cycle(parent, visited, rec_stack):
                         return True
                 elif parent in rec_stack:
                     return True
-            
+
             rec_stack.remove(cls)
             return False
 
@@ -2164,6 +2173,17 @@ class DomainModel(Model):
                 if has_cycle(cls, visited, set()):
                     errors.append(
                         f"Circular inheritance detected involving class '{cls.name}'."
+                    )
+
+    def _validate_attribute_shadowing(self, errors: list[str]):
+        """Validate that subclass attributes do not shadow inherited attributes."""
+        for cls in self.get_classes():
+            inherited_names = {attr.name for attr in cls.inherited_attributes()}
+            for attr in cls.attributes:
+                if attr.name in inherited_names:
+                    errors.append(
+                        f"Class '{cls.name}' defines attribute '{attr.name}' "
+                        f"which already exists in a parent class."
                     )
 
     def __repr__(self):

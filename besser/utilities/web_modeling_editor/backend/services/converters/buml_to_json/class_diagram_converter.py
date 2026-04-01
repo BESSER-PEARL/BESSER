@@ -2,19 +2,29 @@
 Domain model conversion from BUML to JSON format.
 """
 
+import logging
 import uuid
-import ast
 from besser.BUML.metamodel.structural import (
-    Class, Property, Method, DomainModel, PrimitiveDataType, Enumeration,
+    Class, Property, Method, Parameter as StructuralParameter, DomainModel,
+    PrimitiveDataType, Enumeration,
     EnumerationLiteral, BinaryAssociation, Generalization, Multiplicity,
     UNLIMITED_MAX_MULTIPLICITY, Constraint, AssociationClass, Metadata,
     MethodImplementationType
 )
+
+# Layout constants for auto-grid positioning
+LAYOUT_GRID_WIDTH = 1200
+LAYOUT_GRID_HEIGHT = 800
+LAYOUT_X_SPACING = 300
+LAYOUT_Y_SPACING = 200
+LAYOUT_MAX_COLUMNS = 3
+
+logger = logging.getLogger(__name__)
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     VISIBILITY_MAP, RELATIONSHIP_TYPES
 )
 from besser.utilities.web_modeling_editor.backend.services.utils import (
-    calculate_center_point, determine_connection_direction, calculate_connection_points,
+    determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
 )
 
@@ -28,9 +38,26 @@ def parse_buml_content(content: str) -> DomainModel:
 
         # Create a safe environment for eval without any generators
         safe_globals = {
+            "__builtins__": {
+                "set": set,
+                "list": list,
+                "dict": dict,
+                "tuple": tuple,
+                "str": str,
+                "int": int,
+                "float": float,
+                "bool": bool,
+                "len": len,
+                "range": range,
+                "True": True,
+                "False": False,
+                "None": None,
+                "print": lambda *a, **kw: None,  # no-op to prevent info leakage
+            },
             "Class": Class,
             "Property": Property,
             "Method": Method,
+            "Parameter": StructuralParameter,
             "PrimitiveDataType": PrimitiveDataType,
             "BinaryAssociation": BinaryAssociation,
             "Constraint": Constraint,
@@ -39,21 +66,46 @@ def parse_buml_content(content: str) -> DomainModel:
             "Generalization": Generalization,
             "Enumeration": Enumeration,
             "EnumerationLiteral": EnumerationLiteral,
+            "DomainModel": DomainModel,
+            "AssociationClass": AssociationClass,
+            "Metadata": Metadata,
+            "MethodImplementationType": MethodImplementationType,
             "set": set,
             "StringType": PrimitiveDataType("str"),
             "IntegerType": PrimitiveDataType("int"),
+            "FloatType": PrimitiveDataType("float"),
+            "BooleanType": PrimitiveDataType("bool"),
+            "TimeType": PrimitiveDataType("time"),
             "DateType": PrimitiveDataType("date"),
+            "DateTimeType": PrimitiveDataType("datetime"),
+            "TimeDeltaType": PrimitiveDataType("timedelta"),
+            "AnyType": PrimitiveDataType("any"),
         }
 
         # Ensure we have a string before preprocessing
         if not isinstance(content, str):
             raise TypeError(f"Expected B-UML content as str or DomainModel, got {type(content)!r}")
 
-        # Pre-process the content to remove generator-related lines
+        # Pre-process the content to remove import and generator-related lines.
+        # All required types are already provided in safe_globals, so import
+        # statements are unnecessary and would fail in the sandboxed environment.
         cleaned_lines = []
+        in_import_block = False
         for line in content.splitlines():
-            if not any(gen in line for gen in ["Generator(", ".generate("]):
-                cleaned_lines.append(line)
+            stripped = line.lstrip()
+            if in_import_block:
+                # Continue skipping until we find the closing parenthesis
+                if ")" in line:
+                    in_import_block = False
+                continue
+            if stripped.startswith(("import ", "from ")):
+                # Check if this is a multi-line import (has open paren but no close)
+                if "(" in line and ")" not in line:
+                    in_import_block = True
+                continue
+            if any(gen in line for gen in ["Generator(", ".generate("]):
+                continue
+            cleaned_lines.append(line)
         cleaned_content = "\n".join(cleaned_lines)
 
         # Execute the cleaned B-UML content
@@ -85,7 +137,7 @@ def parse_buml_content(content: str) -> DomainModel:
         return domain_model
 
     except Exception as e:
-        print(f"Error parsing B-UML content: {e}")
+        logger.error("Error parsing B-UML content: %s", e)
         raise ValueError(f"Failed to parse B-UML content: {str(e)}")
 
 
@@ -93,23 +145,29 @@ def class_buml_to_json(domain_model):
     """Convert a B-UML DomainModel object to JSON format matching the frontend structure."""
     elements = {}
     relationships = {}
+    # Retrieve method diagram reference mapping (populated by json_to_buml round-trip).
+    # Keyed by (class_name, method_name) -> {"stateMachineId": ..., "quantumCircuitId": ...}
+    method_diagram_refs = getattr(domain_model, 'method_diagram_refs', {})
+    # Retrieve saved layout positions for round-trip fidelity (populated by json_to_buml).
+    # Keyed by element name (classes/enums) or composite key (relationships).
+    layout_positions = getattr(domain_model, '_layout_positions', {})
     # Default diagram size
     default_size = {
-        "width": 1200,
-        "height": 800,
+        "width": LAYOUT_GRID_WIDTH,
+        "height": LAYOUT_GRID_HEIGHT,
     }
 
     # Grid layout configuration
     grid_size = {
-        "x_spacing": 300,
-        "y_spacing": 200,
-        "max_columns": 3,
+        "x_spacing": LAYOUT_X_SPACING,
+        "y_spacing": LAYOUT_Y_SPACING,
+        "max_columns": LAYOUT_MAX_COLUMNS,
     }
 
     # Track position
     current_column = 0
     current_row = 0
-    
+
     # Track comments to create
     comments_to_create = []  # [(comment_text, linked_class_id)]
 
@@ -129,14 +187,26 @@ def class_buml_to_json(domain_model):
     # First pass: Create all class and enumeration elements
     class_id_map = {}  # Store mapping between Class objects and their IDs
 
-    for type_obj in domain_model.types | domain_model.constraints:
-        if isinstance(type_obj, (Class, Enumeration, Constraint)):
+    # Sort types/constraints by name for deterministic output across runs.
+    for type_obj in sorted(
+        (t for t in domain_model.types | domain_model.constraints if isinstance(t, (Class, Enumeration, Constraint))),
+        key=lambda t: t.name,
+    ):
             # Generate UUID for the element
             element_id = str(uuid.uuid4())
             class_id_map[type_obj] = element_id
 
-            # Get position for this element
-            x, y = get_position()
+            # Use saved layout position if available, otherwise fall back to grid layout
+            saved_bounds = layout_positions.get(type_obj.name)
+            if saved_bounds:
+                x = saved_bounds["x"]
+                y = saved_bounds["y"]
+                saved_width = saved_bounds.get("width", 160)
+                saved_height = saved_bounds.get("height", 100)
+            else:
+                x, y = get_position()
+                saved_width = None
+                saved_height = None
 
             # Initialize lists for attributes and methods IDs
             attribute_ids = []
@@ -145,7 +215,7 @@ def class_buml_to_json(domain_model):
             # Process attributes/literals
             y_offset = y + 40  # Starting position for attributes
             if isinstance(type_obj, Class):
-                for attr in type_obj.attributes:
+                for attr in sorted(type_obj.attributes, key=lambda a: a.name):
                     attr_id = str(uuid.uuid4())
                     attr_type = (
                         attr.type.name if hasattr(attr.type, "name") else str(attr.type)
@@ -174,7 +244,7 @@ def class_buml_to_json(domain_model):
                     y_offset += 30
 
                 # Process methods
-                for method in type_obj.methods:
+                for method in sorted(type_obj.methods, key=lambda m: m.name):
                     method_id = str(uuid.uuid4())
                     visibility_symbol = next(
                         k for k, v in VISIBILITY_MAP.items() if v == method.visibility
@@ -220,7 +290,7 @@ def class_buml_to_json(domain_model):
                             "height": 30,
                         },
                     }
-                    
+
                     # Add code attribute if it exists and is not empty
                     if hasattr(method, "code") and method.code:
                         method_element["code"] = method.code
@@ -252,20 +322,19 @@ def class_buml_to_json(domain_model):
                         else:
                             method_element["implementationType"] = impl_type_map.get(impl_type, "none")
 
-                    # Add state machine reference if present
-                    state_machine_id = None
-                    if hasattr(method, "_state_machine_id") and method._state_machine_id:
-                        state_machine_id = method._state_machine_id
-                    elif hasattr(method, "state_machine") and method.state_machine:
+                    # Add state machine reference if present.
+                    # First check the method_diagram_refs mapping (populated during
+                    # json_to_buml conversion), then fall back to actual object references.
+                    refs = method_diagram_refs.get((type_obj.name, method.name), {})
+                    state_machine_id = refs.get("stateMachineId") or None
+                    if not state_machine_id and hasattr(method, "state_machine") and method.state_machine:
                         # If we have an actual state machine object, use its name as ID
                         state_machine_id = method.state_machine.name
                     if state_machine_id:
                         method_element["stateMachineId"] = state_machine_id
 
-                    quantum_circuit_id = None
-                    if hasattr(method, "_quantum_circuit_id") and method._quantum_circuit_id:
-                        quantum_circuit_id = method._quantum_circuit_id
-                    elif hasattr(method, "quantum_circuit") and method.quantum_circuit:
+                    quantum_circuit_id = refs.get("quantumCircuitId") or None
+                    if not quantum_circuit_id and hasattr(method, "quantum_circuit") and method.quantum_circuit:
                         # If we have an actual quantum circuit object, use its name as ID
                         quantum_circuit_id = method.quantum_circuit.name
                     if quantum_circuit_id:
@@ -276,8 +345,14 @@ def class_buml_to_json(domain_model):
                     y_offset += 30
 
             elif isinstance(type_obj, Enumeration):
-                # Handle enumeration literals
-                for literal in type_obj.literals:
+                # Use preserved insertion order if available (from JSON round-trip),
+                # otherwise fall back to alphabetical sort for deterministic output.
+                ordered_literals = getattr(type_obj, '_ordered_literals', None)
+                if ordered_literals is not None:
+                    literals_iter = ordered_literals
+                else:
+                    literals_iter = sorted(type_obj.literals, key=lambda lit: lit.name)
+                for literal in literals_iter:
                     literal_id = str(uuid.uuid4())
                     elements[literal_id] = {
                         "id": literal_id,
@@ -295,6 +370,7 @@ def class_buml_to_json(domain_model):
                     y_offset += 30
 
             # Create the element
+            computed_height = max(100, 30 * (len(attribute_ids) + len(method_ids) + 1))
             element_data = {
                 "id": element_id,
                 "name": type_obj.name,
@@ -311,8 +387,8 @@ def class_buml_to_json(domain_model):
                 "bounds": {
                     "x": x,
                     "y": y,
-                    "width": 160,
-                    "height": max(100, 30 * (len(attribute_ids) + len(method_ids) + 1)),
+                    "width": saved_width if saved_width is not None else 160,
+                    "height": saved_height if saved_height is not None else computed_height,
                 },
                 **(
                     {
@@ -326,7 +402,7 @@ def class_buml_to_json(domain_model):
                     else {"constraint": type_obj.expression}
                 ),
             }
-            
+
             # Add metadata fields for classes if they exist
             if isinstance(type_obj, Class) and hasattr(type_obj, 'metadata') and type_obj.metadata:
                 if type_obj.metadata.description:
@@ -341,11 +417,13 @@ def class_buml_to_json(domain_model):
             elements[element_id] = element_data
 
     # Second pass: Create relationships
-    for association in domain_model.associations:
+    for association in sorted(domain_model.associations, key=lambda a: a.name):
         try:
             rel_id = str(uuid.uuid4())
             name = association.name if association.name else ""
-            ends = list(association.ends)
+            # Sort ends by name for deterministic source/target assignment
+            # before applying the swap logic below.
+            ends = sorted(association.ends, key=lambda e: e.name)
             if len(ends) == 2:
                 source_prop, target_prop = ends
 
@@ -358,38 +436,17 @@ def class_buml_to_json(domain_model):
                     elif source_prop.is_navigable and not target_prop.is_navigable:
                         source_prop, target_prop = target_prop, source_prop
                     elif not source_prop.is_navigable and not target_prop.is_navigable:
-                        print(f"Warning: Both ends of association {name} are not navigable. Skipping this association.")
+                        logger.warning("Both ends of association %s are not navigable. Skipping this association.", name)
                         continue
 
                 source_class = source_prop.type
                 target_class = target_prop.type
 
                 if source_class in class_id_map and target_class in class_id_map:
-                    # Get source and target elements
-                    source_element = elements[class_id_map[source_class]]
-                    target_element = elements[class_id_map[target_class]]
-
-                    # Calculate connection directions and points
-                    source_dir, target_dir = determine_connection_direction(
-                        source_element["bounds"], target_element["bounds"]
-                    )
-
-                    source_point = calculate_connection_points(
-                        source_element["bounds"], source_dir
-                    )
-                    target_point = calculate_connection_points(
-                        target_element["bounds"], target_dir
-                    )
-
-                    # Calculate path points
-                    path_points = calculate_path_points(
-                        source_point, target_point, source_dir, target_dir
-                    )
-
-                    # Calculate bounds
-                    rel_bounds = calculate_relationship_bounds(path_points)
-
-                    # Determine relationship type
+                    # Determine relationship type.
+                    # NOTE: ClassAggregation cannot be reconstructed here because the
+                    # B-UML metamodel does not carry an aggregation flag on Property.
+                    # Aggregation associations are round-tripped as ClassBidirectional.
                     rel_type = (
                         RELATIONSHIP_TYPES["composition"]
                         if target_prop.is_composite
@@ -400,70 +457,116 @@ def class_buml_to_json(domain_model):
                         )
                     )
 
+                    # Check for saved layout positions from a previous round-trip
+                    saved_rel = layout_positions.get(f"rel_{name}")
+                    if saved_rel:
+                        # Restore saved layout
+                        rel_bounds = saved_rel.get("bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
+                        path_points = saved_rel.get("path", [{"x": 0, "y": 0}, {"x": 0, "y": 0}])
+                        is_manually_layouted = saved_rel.get("isManuallyLayouted", False)
+                        source_bounds = saved_rel.get("source_bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
+                        source_dir = saved_rel.get("source_direction", "Right")
+                        target_bounds = saved_rel.get("target_bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
+                        target_dir = saved_rel.get("target_direction", "Left")
+                    else:
+                        # Fall back to computing layout from element positions
+                        source_element = elements[class_id_map[source_class]]
+                        target_element = elements[class_id_map[target_class]]
+
+                        source_dir, target_dir = determine_connection_direction(
+                            source_element["bounds"], target_element["bounds"]
+                        )
+                        source_point = calculate_connection_points(
+                            source_element["bounds"], source_dir
+                        )
+                        target_point = calculate_connection_points(
+                            target_element["bounds"], target_dir
+                        )
+                        path_points = calculate_path_points(
+                            source_point, target_point, source_dir, target_dir
+                        )
+                        rel_bounds = calculate_relationship_bounds(path_points)
+                        is_manually_layouted = False
+                        source_bounds = {
+                            "x": source_point["x"],
+                            "y": source_point["y"],
+                            "width": 0,
+                            "height": 0,
+                        }
+                        target_bounds = {
+                            "x": target_point["x"],
+                            "y": target_point["y"],
+                            "width": 0,
+                            "height": 0,
+                        }
+
                     relationships[rel_id] = {
                         "id": rel_id,
                         "name": name,
                         "type": rel_type,
                         "source": {
                             "element": class_id_map[source_class],
-                            "multiplicity": f"{source_prop.multiplicity.min}..{'*' if source_prop.multiplicity.max == 9999 else source_prop.multiplicity.max}",
+                            "multiplicity": f"{source_prop.multiplicity.min}..{'*' if source_prop.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else source_prop.multiplicity.max}",
                             "role": source_prop.name,
                             "direction": source_dir,
-                            "bounds": {
-                                "x": source_point["x"],
-                                "y": source_point["y"],
-                                "width": 0,
-                                "height": 0,
-                            },
+                            "bounds": source_bounds,
                         },
                         "target": {
                             "element": class_id_map[target_class],
-                            "multiplicity": f"{target_prop.multiplicity.min}..{'*' if target_prop.multiplicity.max == 9999 else target_prop.multiplicity.max}",
+                            "multiplicity": f"{target_prop.multiplicity.min}..{'*' if target_prop.multiplicity.max == UNLIMITED_MAX_MULTIPLICITY else target_prop.multiplicity.max}",
                             "role": target_prop.name,
                             "direction": target_dir,
-                            "bounds": {
-                                "x": target_point["x"],
-                                "y": target_point["y"],
-                                "width": 0,
-                                "height": 0,
-                            },
+                            "bounds": target_bounds,
                         },
                         "bounds": rel_bounds,
                         "path": path_points,
-                        "isManuallyLayouted": False,
+                        "isManuallyLayouted": is_manually_layouted,
                     }
         except Exception as e:
-            print(f"Error creating relationship: {e}")
+            logger.error("Error converting relationship to JSON: %s", e, exc_info=True)
             continue
 
     # Handle generalizations
-    for generalization in domain_model.generalizations:
+    for generalization in sorted(domain_model.generalizations, key=lambda g: (g.specific.name, g.general.name)):
         rel_id = str(uuid.uuid4())
         if (
             generalization.general in class_id_map
             and generalization.specific in class_id_map
         ):
+            # Check for saved layout positions from a previous round-trip
+            gen_key = f"gen_{generalization.specific.name}_{generalization.general.name}"
+            saved_gen = layout_positions.get(gen_key)
+            if saved_gen:
+                gen_path = saved_gen.get("path", [
+                    {"x": 0, "y": 0}, {"x": 50, "y": 0},
+                    {"x": 50, "y": 50}, {"x": 100, "y": 50},
+                ])
+                gen_source_bounds = saved_gen.get("source_bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
+                gen_target_bounds = saved_gen.get("target_bounds", {"x": 0, "y": 0, "width": 0, "height": 0})
+            else:
+                gen_path = [
+                    {"x": 0, "y": 0}, {"x": 50, "y": 0},
+                    {"x": 50, "y": 50}, {"x": 100, "y": 50},
+                ]
+                gen_source_bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
+                gen_target_bounds = {"x": 0, "y": 0, "width": 0, "height": 0}
+
             relationships[rel_id] = {
                 "id": rel_id,
                 "type": "ClassInheritance",
                 "source": {
                     "element": class_id_map[generalization.specific],
-                    "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
+                    "bounds": gen_source_bounds,
                 },
                 "target": {
                     "element": class_id_map[generalization.general],
-                    "bounds": {"x": 0, "y": 0, "width": 0, "height": 0},
+                    "bounds": gen_target_bounds,
                 },
-                "path": [
-                    {"x": 0, "y": 0},
-                    {"x": 50, "y": 0},
-                    {"x": 50, "y": 50},
-                    {"x": 100, "y": 50},
-                ],
+                "path": gen_path,
             }
 
     # Handle association classes
-    for type_obj in domain_model.types:
+    for type_obj in sorted(domain_model.types, key=lambda t: t.name):
         if isinstance(type_obj, AssociationClass) and type_obj in class_id_map:
             # Track associations by name for easier lookup
             association_by_name = {}
@@ -493,8 +596,14 @@ def class_buml_to_json(domain_model):
                     "isManuallyLayouted": False,
                 }
 
-    # Handle OCL constraint links
-    for type_obj in domain_model.constraints:
+    # Handle OCL constraint links (visual-only relationships).
+    # NOTE: The constraint DATA is stored in ClassOCLConstraint elements (created above
+    # from domain_model.constraints). The ClassOCLLink relationships created here are
+    # purely for the frontend to draw a visual link between the constraint box and the
+    # class it applies to. On the json_to_buml side, ClassOCLLink relationships are
+    # intentionally skipped (the context class is derived from the OCL expression text).
+    # Both are needed: the element for data, the link for visual layout.
+    for type_obj in sorted(domain_model.constraints, key=lambda c: c.name):
         if isinstance(type_obj, Constraint) and type_obj.context in class_id_map:
             rel_id = str(uuid.uuid4())
             relationships[rel_id] = {
@@ -518,12 +627,12 @@ def class_buml_to_json(domain_model):
                 "path": [{"x": 0, "y": 0}, {"x": 0, "y": 0}],
                 "isManuallyLayouted": False,
             }
-    
+
     # Create comment elements from metadata descriptions
     for comment_text, linked_class_id in comments_to_create:
         comment_id = str(uuid.uuid4())
         x, y = get_position()
-        
+
         # Create comment element
         elements[comment_id] = {
             "id": comment_id,
@@ -537,7 +646,7 @@ def class_buml_to_json(domain_model):
                 "height": 100,
             },
         }
-        
+
         # Create Link relationship from comment to class
         rel_id = str(uuid.uuid4())
         relationships[rel_id] = {
@@ -561,12 +670,12 @@ def class_buml_to_json(domain_model):
             "path": [{"x": 0, "y": 0}, {"x": 0, "y": 0}],
             "isManuallyLayouted": False,
         }
-    
+
     # Handle domain model level comments (unlinked comments)
     if hasattr(domain_model, 'metadata') and domain_model.metadata and domain_model.metadata.description:
         comment_id = str(uuid.uuid4())
         x, y = get_position()
-        
+
         elements[comment_id] = {
             "id": comment_id,
             "name": domain_model.metadata.description,

@@ -1,7 +1,6 @@
 # Generated from ./NN.g4 by ANTLR 4.13.1
 # encoding: utf-8
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
 	from typing import TextIO
@@ -180,62 +179,62 @@ class NNParser ( Parser ):
 
     sharedContextCache = PredictionContextCache()
 
-    literalNames = [ "<INVALID>", "':'", "'layers'", "'sub_nn'", "'tensor_ops'", 
-                     "'modules'", "'config'", "'batch_size'", "'='", "'epochs'", 
-                     "'learning_rate'", "'optimiser'", "'metrics'", "'loss_function'", 
-                     "'weight_decay'", "'momentum'", "'-'", "'actv_func'", 
-                     "'name_layer_input'", "'input_reused'", "'type'", "'Linear'", 
-                     "'in_features'", "'out_features'", "'Flatten'", "'start_dim'", 
-                     "'end_dim'", "'Embedding'", "'num_embeddings'", "'embedding_dim'", 
-                     "'SimpleRNN'", "'LSTM'", "'GRU'", "'return_type'", 
-                     "'input_size'", "'hidden_size'", "'bidirectional'", 
-                     "'dropout'", "'batch_first'", "'kernel_dim'", "'stride_dim'", 
-                     "'padding_type'", "'padding_amount'", "'Conv1D'", "'Conv2D'", 
-                     "'Conv3D'", "'in_channels'", "'out_channels'", "'Pooling'", 
-                     "'pooling_type'", "'dimension'", "'output_dim'", "'Dropout'", 
-                     "'rate'", "'crossentropy'", "'binary_crossentropy'", 
-                     "'mse'", "'TrainingDataset'", "'name'", "'path_data'", 
-                     "'task_type'", "'input_format'", "'image'", "'labels'", 
-                     "'{'", "','", "'}'", "'TestDataset'", "'('", "'col'", 
-                     "'label'", "')'", "'concatenate_dim'", "'layers_of_tensors'", 
-                     "'reshape_dim'", "'transpose_dim'", "'permute_dim'", 
-                     "'after_activ_func'", "'['", "']'", "'relu'", "'leaky_relu'", 
-                     "'sigmoid'", "'softmax'", "'tanh'", "'None'", "'last'", 
-                     "'full'", "'hidden'", "'reshape'", "'concatenate'", 
-                     "'multiply'", "'matmultiply'", "'permute'", "'transpose'", 
-                     "'binary'", "'multi_class'", "'regression'", "'csv'", 
-                     "'images'", "'valid'", "'same'", "'average'", "'max'", 
-                     "'adaptive_average'", "'adaptive_max'", "'1D'", "'2D'", 
+    literalNames = [ "<INVALID>", "':'", "'layers'", "'sub_nn'", "'tensor_ops'",
+                     "'modules'", "'config'", "'batch_size'", "'='", "'epochs'",
+                     "'learning_rate'", "'optimiser'", "'metrics'", "'loss_function'",
+                     "'weight_decay'", "'momentum'", "'-'", "'actv_func'",
+                     "'name_layer_input'", "'input_reused'", "'type'", "'Linear'",
+                     "'in_features'", "'out_features'", "'Flatten'", "'start_dim'",
+                     "'end_dim'", "'Embedding'", "'num_embeddings'", "'embedding_dim'",
+                     "'SimpleRNN'", "'LSTM'", "'GRU'", "'return_type'",
+                     "'input_size'", "'hidden_size'", "'bidirectional'",
+                     "'dropout'", "'batch_first'", "'kernel_dim'", "'stride_dim'",
+                     "'padding_type'", "'padding_amount'", "'Conv1D'", "'Conv2D'",
+                     "'Conv3D'", "'in_channels'", "'out_channels'", "'Pooling'",
+                     "'pooling_type'", "'dimension'", "'output_dim'", "'Dropout'",
+                     "'rate'", "'crossentropy'", "'binary_crossentropy'",
+                     "'mse'", "'TrainingDataset'", "'name'", "'path_data'",
+                     "'task_type'", "'input_format'", "'image'", "'labels'",
+                     "'{'", "','", "'}'", "'TestDataset'", "'('", "'col'",
+                     "'label'", "')'", "'concatenate_dim'", "'layers_of_tensors'",
+                     "'reshape_dim'", "'transpose_dim'", "'permute_dim'",
+                     "'after_activ_func'", "'['", "']'", "'relu'", "'leaky_relu'",
+                     "'sigmoid'", "'softmax'", "'tanh'", "'None'", "'last'",
+                     "'full'", "'hidden'", "'reshape'", "'concatenate'",
+                     "'multiply'", "'matmultiply'", "'permute'", "'transpose'",
+                     "'binary'", "'multi_class'", "'regression'", "'csv'",
+                     "'images'", "'valid'", "'same'", "'average'", "'max'",
+                     "'adaptive_average'", "'adaptive_max'", "'1D'", "'2D'",
                      "'3D'" ]
 
-    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "BOOL", "ID", "INT", "WS", "STRING", 
+    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "BOOL", "ID", "INT", "WS", "STRING",
                       "DOUBLE" ]
 
     RULE_neuralNetwork = 0
@@ -273,13 +272,13 @@ class NNParser ( Parser ):
     RULE_poolingType = 32
     RULE_dimensionality = 33
 
-    ruleNames =  [ "neuralNetwork", "parameters", "layer", "layerParams", 
-                   "generalLayer", "linear", "flatten", "embedding", "rnn", 
-                   "cnn", "cnnParams", "convolutional", "pooling", "layerModifier", 
-                   "dropout", "normalisation", "lossFunction", "sub_nn", 
-                   "trainingDataset", "testDataset", "label", "tensorOp", 
-                   "modules", "intList", "strList", "intStrList", "activityFuncType", 
-                   "returnTypeRRN", "tensorOpType", "taskType", "inputFormat", 
+    ruleNames =  [ "neuralNetwork", "parameters", "layer", "layerParams",
+                   "generalLayer", "linear", "flatten", "embedding", "rnn",
+                   "cnn", "cnnParams", "convolutional", "pooling", "layerModifier",
+                   "dropout", "normalisation", "lossFunction", "sub_nn",
+                   "trainingDataset", "testDataset", "label", "tensorOp",
+                   "modules", "intList", "strList", "intStrList", "activityFuncType",
+                   "returnTypeRRN", "tensorOpType", "taskType", "inputFormat",
                    "paddingType", "poolingType", "dimensionality" ]
 
     EOF = Token.EOF
@@ -483,13 +482,13 @@ class NNParser ( Parser ):
             self.match(NNParser.T__1)
             self.state = 71
             self.match(NNParser.T__0)
-            self.state = 73 
+            self.state = 73
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
                 self.state = 72
                 self.layer()
-                self.state = 75 
+                self.state = 75
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==16):
@@ -503,13 +502,13 @@ class NNParser ( Parser ):
                 self.match(NNParser.T__2)
                 self.state = 78
                 self.match(NNParser.T__0)
-                self.state = 80 
+                self.state = 80
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 while True:
                     self.state = 79
                     self.sub_nn()
-                    self.state = 82 
+                    self.state = 82
                     self._errHandler.sync(self)
                     _la = self._input.LA(1)
                     if not (_la==16):
@@ -527,13 +526,13 @@ class NNParser ( Parser ):
                 self.match(NNParser.T__3)
                 self.state = 90
                 self.match(NNParser.T__0)
-                self.state = 92 
+                self.state = 92
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 while True:
                     self.state = 91
                     self.tensorOp()
-                    self.state = 94 
+                    self.state = 94
                     self._errHandler.sync(self)
                     _la = self._input.LA(1)
                     if not (_la==16):
@@ -1857,7 +1856,7 @@ class NNParser ( Parser ):
             self.match(NNParser.T__1)
             self.state = 307
             self.match(NNParser.T__0)
-            self.state = 309 
+            self.state = 309
             self._errHandler.sync(self)
             _alt = 1
             while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -1867,7 +1866,7 @@ class NNParser ( Parser ):
 
                 else:
                     raise NoViableAltException(self)
-                self.state = 311 
+                self.state = 311
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,26,self._ctx)
 
@@ -2319,7 +2318,7 @@ class NNParser ( Parser ):
         self._la = 0 # Token type
         try:
             self.enterOuterAlt(localctx, 1)
-            self.state = 405 
+            self.state = 405
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
@@ -2327,7 +2326,7 @@ class NNParser ( Parser ):
                 self.match(NNParser.T__15)
                 self.state = 404
                 self.match(NNParser.ID)
-                self.state = 407 
+                self.state = 407
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==16):

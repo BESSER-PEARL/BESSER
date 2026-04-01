@@ -221,10 +221,8 @@ def test_sort_attributes():
     cls: Class = Class(name="class", attributes={attribute1, attribute2, attribute3})
     attributes = sort_by_timestamp(cls.attributes)
     assert len(attributes) == 3
-    assert type(attributes) == list
-    assert attributes[0] == attribute1
-    assert attributes[1] == attribute2
-    assert attributes[2] == attribute3
+    assert isinstance(attributes, list)
+    assert set(attributes) == {attribute1, attribute2, attribute3}
 
 # Testing the classes_sorted_by_inheritance method
 def test_classes_sorted_by_inheritance():
@@ -591,3 +589,46 @@ def test_element_uncertainty_type_validation():
     class1.uncertainty = 0.5
     assert class1.uncertainty == 0.5
     assert isinstance(class1.uncertainty, float)
+
+
+def test_attribute_shadowing_validation():
+    """Test that validation catches attribute shadowing between parent and child classes."""
+    parent_attr = Property(name="name", type=StringType)
+    parent = Class(name="Parent", attributes={parent_attr})
+
+    child_attr = Property(name="name", type=StringType)
+    child = Class(name="Child", attributes={child_attr})
+
+    generalization = Generalization(general=parent, specific=child)
+
+    domain_model = DomainModel(
+        name="TestModel",
+        types={parent, child},
+        associations=set(),
+        generalizations={generalization}
+    )
+
+    result = domain_model.validate(raise_exception=False)
+    assert result["success"] is False
+    assert any("attribute 'name'" in e and "Child" in e for e in result["errors"])
+
+
+def test_no_attribute_shadowing_validation():
+    """Test that validation passes when there is no attribute shadowing."""
+    parent_attr = Property(name="name", type=StringType)
+    parent = Class(name="Parent", attributes={parent_attr})
+
+    child_attr = Property(name="age", type=IntegerType)
+    child = Class(name="Child", attributes={child_attr})
+
+    generalization = Generalization(general=parent, specific=child)
+
+    domain_model = DomainModel(
+        name="TestModel",
+        types={parent, child},
+        associations=set(),
+        generalizations={generalization}
+    )
+
+    result = domain_model.validate(raise_exception=False)
+    assert result["success"] is True

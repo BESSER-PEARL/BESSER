@@ -15,3 +15,7 @@ See the following examples where we define B-UML models and implement some code 
    examples/mockup_to_buml_example
    examples/agent
    examples/smart_web
+
+.. note::
+   Additional examples are available in the
+   `BESSER-examples <https://github.com/BESSER-PEARL/BESSER-examples>`_ repository.

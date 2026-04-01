@@ -63,11 +63,14 @@ Getting Started
 
 1. Fork the repository and clone your fork locally.
 2. Create and activate a Python 3.10+ virtual environment.
-3. Run ``
-     python -m venv venv
-     venv\Scripts\activate
-     pip install -r requirements.txt`` to install dependencies and configure
-   ``PYTHONPATH``.
+3. Install dependencies:
+
+   .. code-block:: bash
+
+      python -m venv venv
+      venv\Scripts\activate          # Windows
+      source venv/bin/activate       # Linux / macOS
+      pip install -r requirements.txt
 4. Install the documentation extras with ``pip install -r docs/requirements.txt``
    if you plan to edit the docs.
 5. Run an example, such as ``python tests/BUML/metamodel/structural/library/library.py``,
@@ -85,21 +88,21 @@ Prerequisites: Node.js 20+ and npm.
 1. Initialize the submodule: ``git submodule update --init --recursive``.
 2. Install dependencies: ``cd besser/utilities/web_modeling_editor/frontend && npm install``.
 3. Start the backend API (from the repo root): ``python besser/utilities/web_modeling_editor/backend/backend.py``.
-4. Start the webapp: ``npm run start:webapp`` (still in the frontend folder).
+4. Start the webapp dev server: ``npm run dev`` (still in the frontend folder).
 
-The webapp runs on http://localhost:8080 and expects the backend at
+The Vite dev server runs on http://localhost:8080 and expects the backend at
 http://localhost:9000/besser_api in development mode.
 
 **Using the standalone WME repo:**
 
 1. Clone `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_.
-2. Run ``npm install`` and ``npm run start:webapp``.
+2. Run ``npm install`` and ``npm run dev``.
 3. Start the BESSER backend as above if you need live API integration.
 
 Development Workflow
 --------------------
 
-* Create a feature branch from ``main`` for each logical change.
+* Create a feature branch from ``master`` for each logical change.
 * Keep commits focused and descriptive. Favor incremental commits over monolithic
   ones so reviewers can follow the reasoning.
 * Update or add tests alongside code changes.
@@ -128,8 +131,10 @@ Testing and Quality Checks
 * Run the entire test suite with ``python -m pytest`` from the repository root.
 * Use ``python -m pytest <path>`` to target specific directories or modules
   while iterating.
-* Prefer fixtures and example models located under ``tests/`` when extending
-  coverage instead of duplicating assets.
+* Prefer reusing shared fixtures from ``tests/conftest.py`` (e.g.,
+  ``library_book_author_model``, ``employee_self_assoc_model``) instead of
+  duplicating test models. Additional domain-specific fixtures live in
+  ``tests/generators/conftest.py``.
 * Keep assertions focused on observable behavior—avoid over-specifying
   implementation details.
 
@@ -148,7 +153,7 @@ Documentation Workflow
 Submitting Your Change
 ----------------------
 
-* Ensure your branch is rebased on the latest ``main`` before opening a pull
+* Ensure your branch is rebased on the latest ``master`` before opening a pull
   request.
 * Fill in the pull request template, describing the change, tests executed, and
   any additional context reviewers should know.

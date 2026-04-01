@@ -1,7 +1,6 @@
 import os
 import configparser
 import docker
-from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.generators.rest_api import RESTAPIGenerator
@@ -17,8 +16,8 @@ class BackendGenerator(GeneratorInterface):
     Args:
         model (DomainModel): An instance of the DomainModel class representing the B-UML model.
         http_methods (list, optional): A list of HTTP methods to be used in the REST API. Defaults to All.
-        nested_creations (bool, optional): This parameter specifies how entities are linked in the API request. If set to True, the API expects 
-                                identifiers and links entities based on these IDs. If set to False, the API handles the creation of 
+        nested_creations (bool, optional): This parameter specifies how entities are linked in the API request. If set to True, the API expects
+                                identifiers and links entities based on these IDs. If set to False, the API handles the creation of
                                 new entities based on the data provided in the request. Defaults to True
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
         docker_image (bool, optional): Flag to indicate if Docker image generation is required. Defaults to False.

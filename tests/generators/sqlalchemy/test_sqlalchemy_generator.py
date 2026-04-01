@@ -8,91 +8,16 @@ import datetime
 import re
 
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
-from besser.BUML.metamodel.structural import (
-    Class, DomainModel, DateType, StringType, IntegerType,
-    Property, BinaryAssociation, Multiplicity, Generalization
-)
+
+
+# Use the shared library_model_with_inheritance fixture from
+# tests/generators/conftest.py
+
 
 @pytest.fixture
-def domain_model():
-    # Classes
-    Author = Class(name="Author")
-    Book = Class(name="Book")
-    Library = Class(name="Library")
-    BookType = Class(name="BookType")
-    Horror = Class(name="Horror")
-    History = Class(name="History")
-    Science = Class(name="Science")
-
-    # Author class attributes and methods
-    Author_name: Property = Property(name="name", type=StringType)
-    Author_email: Property = Property(name="email", type=StringType)
-    Author.attributes={Author_name, Author_email}
-
-    # Book class attributes and methods
-    Book_pages: Property = Property(name="pages", type=IntegerType)
-    Book_title: Property = Property(name="title", type=StringType)
-    Book_release: Property = Property(name="release", type=DateType)
-    Book.attributes={Book_release, Book_pages, Book_title}
-
-    # Library class attributes and methods
-    Library_name: Property = Property(name="name", type=StringType)
-    Library_address: Property = Property(name="address", type=StringType)
-    Library.attributes={Library_address, Library_name}
-
-    # BookType class attributes and methods
-    BookType_position: Property = Property(name="position", type=IntegerType)
-    BookType.attributes={BookType_position}
-
-    # Horror class attributes and methods
-    Horror_attribute: Property = Property(name="attribute", type=StringType)
-    Horror.attributes={Horror_attribute}
-
-    # History class attributes and methods
-    History_attribute: Property = Property(name="attribute", type=StringType)
-    History.attributes={History_attribute}
-
-    # Science class attributes and methods
-    Science_attribute: Property = Property(name="attribute", type=StringType)
-    Science.attributes={Science_attribute}
-
-    # Relationships
-    Author_Book: BinaryAssociation = BinaryAssociation(
-        name="Author_Book",
-        ends={
-            Property(name="writtenBy", type=Author, multiplicity=Multiplicity(1, 9999)),
-            Property(name="publishes", type=Book, multiplicity=Multiplicity(0, 9999))
-        }
-    )
-    Library_Book: BinaryAssociation = BinaryAssociation(
-        name="Library_Book",
-        ends={
-            Property(name="locatedIn", type=Library, multiplicity=Multiplicity(1, 1)),
-            Property(name="has", type=Book, multiplicity=Multiplicity(0, 9999))
-        }
-    )
-    BookType_Book: BinaryAssociation = BinaryAssociation(
-        name="BookType_Book",
-        ends={
-            Property(name="book_type", type=BookType, multiplicity=Multiplicity(1, 1)),
-            Property(name="books", type=Book, multiplicity=Multiplicity(0, 9999))
-        }
-    )
-
-    # Generalizations
-    gen_History_BookType = Generalization(general=BookType, specific=History)
-    gen_Horror_BookType = Generalization(general=BookType, specific=Horror)
-    gen_Science_BookType = Generalization(general=BookType, specific=Science)
-
-    # Domain Model
-    model = DomainModel(
-        name="Class_Diagram",
-        types={Author, Book, Library, BookType, Horror, History, Science},
-        associations={Author_Book, Library_Book, BookType_Book},
-        generalizations={gen_History_BookType, gen_Horror_BookType, gen_Science_BookType}
-    )
-
-    return model
+def domain_model(library_model_with_inheritance):
+    """Alias the shared fixture so existing test signatures stay unchanged."""
+    return library_model_with_inheritance
 
 @pytest.fixture
 def generated_sqlalchemy_module(domain_model, tmpdir):

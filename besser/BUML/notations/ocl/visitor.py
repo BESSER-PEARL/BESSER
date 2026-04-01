@@ -7,8 +7,8 @@ from besser.BUML.metamodel.ocl.ocl import (
     SequenceType, OrderedSetType,
 )
 from besser.BUML.metamodel.structural.structural import Property
-from BOCLVisitor import  BOCLVisitor
-from BOCLParser import BOCLParser
+from .BOCLVisitor import BOCLVisitor
+from .BOCLParser import BOCLParser
 
 
 class BOCLVisitorImpl(BOCLVisitor):

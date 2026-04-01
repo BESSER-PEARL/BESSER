@@ -1,5 +1,5 @@
 from bocl.OCLWrapper import OCLWrapper
-from bocl.error_handling import BOCLSyntaxError
+from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 import re
 
 def extract_context_class_name(expression):

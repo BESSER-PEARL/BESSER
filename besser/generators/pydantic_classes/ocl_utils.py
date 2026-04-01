@@ -11,10 +11,10 @@ OCL expression tree.
 import re
 from typing import Optional, Dict, Any, List
 from antlr4 import InputStream, CommonTokenStream
-from bocl.grammar.BOCLLexer import BOCLLexer
-from bocl.grammar.BOCLParser import BOCLParser
-from bocl.visitor import BOCLVisitorImpl
-from bocl.error_handling import BOCLErrorListener
+from besser.BUML.notations.ocl.BOCLLexer import BOCLLexer
+from besser.BUML.notations.ocl.BOCLParser import BOCLParser
+from besser.BUML.notations.ocl.visitor import BOCLVisitorImpl
+from besser.BUML.notations.ocl.error_handling import BOCLErrorListener
 
 from besser.BUML.metamodel.ocl.ocl import (
     OperationCallExpression, PropertyCallExpression,

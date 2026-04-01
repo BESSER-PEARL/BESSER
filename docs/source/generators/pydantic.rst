@@ -98,5 +98,21 @@ For each OCL constraint, the generator produces a Pydantic ``field_validator``:
                 raise ValueError('age must be > 10')
             return v
 
-These validators automatically enforce constraints when creating or updating entities via the REST API, 
+These validators automatically enforce constraints when creating or updating entities via the REST API,
 and the error messages are displayed in the frontend web application.
+
+Layered Output (Backend Integration)
+-------------------------------------
+
+When used through the :doc:`Backend Generator <backend>`, the Pydantic generator also supports a **layered mode**
+that produces per-entity schema files instead of a single flat file:
+
+.. code-block:: text
+
+   app/schemas/
+   ├── __init__.py        # Re-exports all schemas, calls model_rebuild()
+   └── {entity}.py        # One Pydantic schema per entity
+
+This mode is used automatically by the Backend Generator — you don't need to call it directly.
+The class body rendering logic (attributes, relationships, OCL validators) is shared between both modes
+via the ``pydantic_helpers.py.j2`` macros, so a bug fix applies to both flat and layered output.

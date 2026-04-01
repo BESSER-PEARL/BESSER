@@ -58,3 +58,21 @@ looks like this:
   mark a parent class as abstract in the B-UML model, but there are limitations in Concrete inheritance, for example: the definition of relationships
   involving abstract classes are not supported. So only if the abstract class does not have relationships, it will be treated as a concrete parent class, otherwise,
   it will be treated as a parent class using Joined Table Inheritance.
+
+Layered Output (Backend Integration)
+-------------------------------------
+
+When used through the :doc:`Backend Generator <backend>`, the SQLAlchemy generator also supports a **layered mode**
+that produces per-entity model files instead of a single flat file:
+
+.. code-block:: text
+
+   app/models/
+   ├── __init__.py    # Association tables, imports, relationship attachments
+   ├── _base.py       # Base(DeclarativeBase)
+   ├── _enums.py      # All enum definitions
+   └── {entity}.py    # One ORM model per entity
+
+This mode is used automatically by the Backend Generator — you don't need to call it directly.
+The rendering logic (type mapping, attribute rendering, FK placement) is shared between both modes
+via the ``helpers.py.j2`` macros, so a bug fix applies to both flat and layered output.

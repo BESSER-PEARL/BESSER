@@ -1,0 +1,42 @@
+import os
+import logging
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from app.config import DATABASE_URL
+from app.models import Base
+
+logger = logging.getLogger(__name__)
+
+
+def init_db():
+    """Initialize the database engine and create all tables."""
+    # Ensure local SQLite directory exists (safe no-op for other DBs)
+    os.makedirs("data", exist_ok=True)
+    engine = create_engine(
+        DATABASE_URL,
+        connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
+        pool_size=10,
+        max_overflow=20,
+        pool_pre_ping=True,
+        echo=False,
+    )
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    Base.metadata.create_all(bind=engine)
+    return SessionLocal
+
+
+# Initialize database session factory
+SessionLocal = init_db()
+
+
+def get_db():
+    """FastAPI dependency that provides a database session."""
+    db = SessionLocal()
+    try:
+        yield db
+    except Exception:
+        db.rollback()
+        logger.error("Database session rollback due to exception")
+        raise
+    finally:
+        db.close()

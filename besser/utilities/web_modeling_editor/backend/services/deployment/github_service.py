@@ -377,7 +377,7 @@ cd frontend && npm install && npm start
 
 **Backend:**
 ```bash
-cd backend && pip install -r requirements.txt && uvicorn main_api:app --reload
+cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload
 ```
 
 **Full stack (Docker):**

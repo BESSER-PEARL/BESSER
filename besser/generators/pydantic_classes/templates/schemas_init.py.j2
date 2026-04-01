@@ -1,0 +1,24 @@
+# Re-export all schema classes
+{% for class_obj in classes %}
+from app.schemas.{{ class_obj.name | lower }} import {{ class_obj.name }}Create
+{% endfor %}
+{% for asso_class in asso_classes %}
+from app.schemas.{{ asso_class.name | lower }} import {{ asso_class.name }}Create
+{% endfor %}
+
+# Resolve forward references
+{% for class_obj in classes %}
+{{ class_obj.name }}Create.model_rebuild()
+{% endfor %}
+{% for asso_class in asso_classes %}
+{{ asso_class.name }}Create.model_rebuild()
+{% endfor %}
+
+__all__ = [
+    {% for class_obj in classes %}
+    "{{ class_obj.name }}Create",
+    {% endfor %}
+    {% for asso_class in asso_classes %}
+    "{{ asso_class.name }}Create",
+    {% endfor %}
+]

@@ -4,7 +4,7 @@ import unicodedata
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
-from besser.generators.structural_utils import get_foreign_keys
+from besser.generators.structural_utils import get_foreign_keys, used_enums_for_class, separate_classes
 from besser.generators.pydantic_classes.ocl_utils import build_constraints_map
 
 class PydanticGenerator(GeneratorInterface):
@@ -26,6 +26,80 @@ class PydanticGenerator(GeneratorInterface):
         self.domain_model = model
         self.backend = backend
         self.nested_creations = nested_creations
+
+    def _create_env(self):
+        """Create Jinja2 environment pointing to this generator's templates.
+
+        Uses a bare env (like generate()) so that the {%- whitespace
+        control in templates works correctly without double-stripping.
+        """
+        def ascii_identifier(name: str) -> str:
+            normalized = unicodedata.normalize("NFKD", name)
+            ascii_name = normalized.encode("ascii", "ignore").decode("ascii")
+            ascii_name = re.sub(r"\W", "_", ascii_name)
+            if ascii_name and ascii_name[0].isdigit():
+                ascii_name = f"_{ascii_name}"
+            return ascii_name
+
+        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+        env = Environment(
+            loader=FileSystemLoader(templates_path),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            keep_trailing_newline=True,
+            extensions=['jinja2.ext.do'],
+        )
+        env.filters["ascii_identifier"] = ascii_identifier
+        return env
+
+    def generate_layered(self, app_dir: str):
+        """Generate per-entity Pydantic schema files into app_dir/schemas/.
+
+        Args:
+            app_dir: Path to the app/ directory where schemas/ will be created.
+        """
+        schemas_dir = os.path.join(app_dir, "schemas")
+        os.makedirs(schemas_dir, exist_ok=True)
+
+        env = self._create_env()
+        sorted_classes = self.domain_model.classes_sorted_by_inheritance()
+        classes, asso_classes = separate_classes(self.domain_model)
+        constraints_map = build_constraints_map(self.domain_model)
+        enumerations = list(self.domain_model.get_enumerations())
+
+        ctx = {
+            "domain": self.domain_model,
+            "sorted_classes": sorted_classes,
+            "backend": self.backend,
+            "nested_creations": self.nested_creations,
+            "constraints_map": constraints_map,
+            "fkeys": get_foreign_keys(self.domain_model),
+            "class_names": {cls.name for cls in sorted_classes},
+            "enumerations": enumerations,
+            "classes": classes,
+            "asso_classes": asso_classes,
+        }
+
+        def _write(path, content):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(content)
+
+        # Per-entity schema files
+        for class_obj in sorted_classes:
+            used = used_enums_for_class(class_obj, enumerations)
+            _write(
+                os.path.join(schemas_dir, f"{class_obj.name.lower()}.py"),
+                env.get_template("schema_entity.py.j2").render(
+                    class_obj=class_obj, used_enums=used, **ctx
+                ),
+            )
+
+        # __init__.py — Re-exports and model_rebuild()
+        _write(
+            os.path.join(schemas_dir, "__init__.py"),
+            env.get_template("schemas_init.py.j2").render(**ctx),
+        )
 
     def generate(self):
         """

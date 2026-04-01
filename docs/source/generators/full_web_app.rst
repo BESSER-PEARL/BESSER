@@ -79,11 +79,15 @@ Generated Output Structure
 
    my_app/
    ├── backend/
-   │   ├── main_api.py          # REST API endpoints
-   │   ├── pydantic_classes.py  # Data validation models
-   │   ├── sql_alchemy.py       # Database ORM models
+   │   ├── requirements.txt     # Python dependencies
    │   ├── Dockerfile           # Backend container
-   │   └── requirements.txt     # Python dependencies
+   │   └── app/
+   │       ├── main.py          # FastAPI app, middleware, endpoints
+   │       ├── config.py        # API metadata, DB URL
+   │       ├── database.py      # SQLAlchemy engine, session
+   │       ├── models/          # ORM models (per-entity)
+   │       ├── schemas/         # Pydantic schemas (per-entity)
+   │       └── routers/         # REST API routers (per-entity)
    ├── frontend/
    │   ├── src/
    │   │   ├── components/      # React components
@@ -243,7 +247,7 @@ Without Docker
 
    cd backend
    pip install -r requirements.txt
-   uvicorn main_api:app --reload
+   uvicorn app.main:app --reload
 
 **Frontend:**
 

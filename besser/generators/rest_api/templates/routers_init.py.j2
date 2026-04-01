@@ -1,0 +1,9 @@
+{% for class_obj in classes %}
+from app.routers.{{ class_obj.name | lower }} import router as {{ class_obj.name | lower }}_router
+{% endfor %}
+
+all_routers = [
+    {% for class_obj in classes %}
+    {{ class_obj.name | lower }}_router,
+    {% endfor %}
+]

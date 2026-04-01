@@ -18,6 +18,13 @@ from besser.BUML.metamodel.structural import (
 )
 
 
+def _read(output_dir, *parts):
+    """Helper to read a generated file from the layered output structure."""
+    path = os.path.join(str(output_dir), *parts)
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
 def test_backend_generator_full_uml(tmpdir):
     """
     End-to-end backend generation for a mixed UML model:
@@ -96,53 +103,59 @@ def test_backend_generator_full_uml(tmpdir):
     generator = BackendGenerator(model=model, output_dir=str(output_dir))
     generator.generate()
 
-    api_file = os.path.join(str(output_dir), "main_api.py")
-    pydantic_file = os.path.join(str(output_dir), "pydantic_classes.py")
-    sqlalchemy_file = os.path.join(str(output_dir), "sql_alchemy.py")
+    # Check layered structure exists
+    app_dir = os.path.join(str(output_dir), "app")
+    assert os.path.isdir(os.path.join(app_dir, "models"))
+    assert os.path.isdir(os.path.join(app_dir, "schemas"))
+    assert os.path.isdir(os.path.join(app_dir, "routers"))
+    assert os.path.isfile(os.path.join(app_dir, "main.py"))
+    assert os.path.isfile(os.path.join(app_dir, "config.py"))
+    assert os.path.isfile(os.path.join(app_dir, "database.py"))
 
-    assert os.path.isfile(api_file)
-    assert os.path.isfile(pydantic_file)
-    assert os.path.isfile(sqlalchemy_file)
+    # Read per-entity files
+    enums_model = _read(output_dir, "app", "models", "_enums.py")
+    employee_schema = _read(output_dir, "app", "schemas", "employee.py")
+    person_schema = _read(output_dir, "app", "schemas", "person.py")
+    manager_schema = _read(output_dir, "app", "schemas", "manager.py")
+    department_schema = _read(output_dir, "app", "schemas", "department.py")
+    project_schema = _read(output_dir, "app", "schemas", "project.py")
+    employee_model = _read(output_dir, "app", "models", "employee.py")
+    manager_model = _read(output_dir, "app", "models", "manager.py")
+    models_init = _read(output_dir, "app", "models", "__init__.py")
+    manager_router = _read(output_dir, "app", "routers", "manager.py")
 
-    with open(api_file, "r", encoding="utf-8") as f:
-        api_code = f.read()
-    with open(pydantic_file, "r", encoding="utf-8") as f:
-        pydantic_code = f.read()
-    with open(sqlalchemy_file, "r", encoding="utf-8") as f:
-        sqlalchemy_code = f.read()
+    # Enums defined in models/_enums.py
+    assert "class Role(enum.Enum):" in enums_model
+    assert 'STAFF = "STAFF"' in enums_model
 
-    # Pydantic: enums and inheritance
-    assert "class Role(Enum):" in pydantic_code
-    assert "STAFF = \"STAFF\"" in pydantic_code
-    assert "class PersonCreate(BaseModel):" in pydantic_code
-    assert "class EmployeeCreate(PersonCreate):" in pydantic_code
-    assert "class ManagerCreate(EmployeeCreate):" in pydantic_code
+    # Pydantic: inheritance
+    assert "class PersonCreate(" in person_schema
+    assert "class EmployeeCreate(PersonCreate):" in employee_schema
+    assert "class ManagerCreate(EmployeeCreate):" in manager_schema
 
     # Pydantic: relationship fields
-    assert "department: int  # N:1 Relationship (mandatory)" in pydantic_code
-    assert "employees: Optional[List[int]] = None  # 1:N Relationship" in pydantic_code
-    assert "projects: Optional[List[int]] = None  # N:M Relationship (optional)" in pydantic_code
-    assert "managers: Optional[List[int]] = None  # N:M Relationship (optional)" in pydantic_code
+    assert "department: int  # N:1 Relationship (mandatory)" in employee_schema
+    assert "employees: Optional[List[int]] = None  # 1:N Relationship" in department_schema
+    assert "projects: Optional[List[int]] = None  # N:M Relationship (optional)" in manager_schema
+    assert "managers: Optional[List[int]] = None  # N:M Relationship (optional)" in project_schema
 
-    # SQLAlchemy: inheritance + FK + join table
-    assert "class Employee(Person):" in sqlalchemy_code
-    assert "class Manager(Employee):" in sqlalchemy_code
-    assert "department_id: Mapped[int] = mapped_column(ForeignKey(\"department.id\")" in sqlalchemy_code
-    assert "managerproject = Table(" in sqlalchemy_code
+    # SQLAlchemy: inheritance + FK
+    assert "class Employee(Person):" in employee_model
+    assert "class Manager(Employee):" in manager_model
+    assert "department_id: Mapped[int] = mapped_column(ForeignKey(\"department.id\")" in employee_model
+
+    # SQLAlchemy: join table in models/__init__.py
+    assert "managerproject = Table(" in models_init
 
     # REST API: constructor uses inherited attributes
-    assert "name=manager_data.name" in api_code
-    assert "salary=manager_data.salary" in api_code
-    assert "level=manager_data.level" in api_code
+    assert "name=manager_data.name" in manager_router
+    assert "salary=manager_data.salary" in manager_router
+    assert "level=manager_data.level" in manager_router
 
 
 def test_backend_generator_full_uml_and_implem(tmpdir):
     """
-    End-to-end backend generation for a mixed UML model:
-    - Enumerations
-    - Deep inheritance (Person <- Employee <- Manager)
-    - N:1, 1:N, and N:M associations
-    - Method implementations
+    End-to-end backend generation with method implementations (BAL).
     """
     role_enum = Enumeration(
         name="Role",
@@ -224,49 +237,47 @@ def test_backend_generator_full_uml_and_implem(tmpdir):
     generator = BackendGenerator(model=model, output_dir=str(output_dir))
     generator.generate()
 
-    api_file = os.path.join(str(output_dir), "main_api.py")
-    pydantic_file = os.path.join(str(output_dir), "pydantic_classes.py")
-    sqlalchemy_file = os.path.join(str(output_dir), "sql_alchemy.py")
+    enums_model = _read(output_dir, "app", "models", "_enums.py")
+    person_schema = _read(output_dir, "app", "schemas", "person.py")
+    employee_schema = _read(output_dir, "app", "schemas", "employee.py")
+    manager_schema = _read(output_dir, "app", "schemas", "manager.py")
+    department_schema = _read(output_dir, "app", "schemas", "department.py")
+    project_schema = _read(output_dir, "app", "schemas", "project.py")
+    employee_model = _read(output_dir, "app", "models", "employee.py")
+    manager_model = _read(output_dir, "app", "models", "manager.py")
+    models_init = _read(output_dir, "app", "models", "__init__.py")
+    manager_router = _read(output_dir, "app", "routers", "manager.py")
 
-    assert os.path.isfile(api_file)
-    assert os.path.isfile(pydantic_file)
-    assert os.path.isfile(sqlalchemy_file)
+    # Enums defined in models/_enums.py
+    assert "class Role(enum.Enum):" in enums_model
+    assert 'STAFF = "STAFF"' in enums_model
 
-    with open(api_file, "r", encoding="utf-8") as f:
-        api_code = f.read()
-    with open(pydantic_file, "r", encoding="utf-8") as f:
-        pydantic_code = f.read()
-    with open(sqlalchemy_file, "r", encoding="utf-8") as f:
-        sqlalchemy_code = f.read()
-
-    # Pydantic: enums and inheritance
-    assert "class Role(Enum):" in pydantic_code
-    assert "STAFF = \"STAFF\"" in pydantic_code
-    assert "class PersonCreate(BaseModel):" in pydantic_code
-    assert "class EmployeeCreate(PersonCreate):" in pydantic_code
-    assert "class ManagerCreate(EmployeeCreate):" in pydantic_code
+    # Pydantic: inheritance
+    assert "class PersonCreate(" in person_schema
+    assert "class EmployeeCreate(PersonCreate):" in employee_schema
+    assert "class ManagerCreate(EmployeeCreate):" in manager_schema
 
     # Pydantic: relationship fields
-    assert "department: int  # N:1 Relationship (mandatory)" in pydantic_code
-    assert "employees: Optional[List[int]] = None  # 1:N Relationship" in pydantic_code
-    assert "projects: Optional[List[int]] = None  # N:M Relationship (optional)" in pydantic_code
-    assert "managers: Optional[List[int]] = None  # N:M Relationship (optional)" in pydantic_code
+    assert "department: int  # N:1 Relationship (mandatory)" in employee_schema
+    assert "employees: Optional[List[int]] = None  # 1:N Relationship" in department_schema
+    assert "projects: Optional[List[int]] = None  # N:M Relationship (optional)" in manager_schema
+    assert "managers: Optional[List[int]] = None  # N:M Relationship (optional)" in project_schema
 
     # SQLAlchemy: inheritance + FK + join table
-    assert "class Employee(Person):" in sqlalchemy_code
-    assert "class Manager(Employee):" in sqlalchemy_code
-    assert "department_id: Mapped[int] = mapped_column(ForeignKey(\"department.id\")" in sqlalchemy_code
-    assert "managerproject = Table(" in sqlalchemy_code
+    assert "class Employee(Person):" in employee_model
+    assert "class Manager(Employee):" in manager_model
+    assert "department_id: Mapped[int] = mapped_column(ForeignKey(\"department.id\")" in employee_model
+    assert "managerproject = Table(" in models_init
 
     # REST API: constructor uses inherited attributes
-    assert "name=manager_data.name" in api_code
-    assert "salary=manager_data.salary" in api_code
-    assert "level=manager_data.level" in api_code
+    assert "name=manager_data.name" in manager_router
+    assert "salary=manager_data.salary" in manager_router
+    assert "level=manager_data.level" in manager_router
 
     # REST API: Methods implementation
-    assert "inst_to_update = _manager_object" in api_code
-    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = inst_to_update.level, name = inst_to_update.name, role = inst_to_update.role, salary = (1.1 * _manager_object.salary), department = inst_to_update.department, projects = inst_to_update.projects), database)" in api_code
-    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = (_manager_object.level + 1), name = inst_to_update.name, role = inst_to_update.role, salary = inst_to_update.salary, department = inst_to_update.department, projects = inst_to_update.projects), database)" in api_code
+    assert "inst_to_update = _manager_object" in manager_router
+    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = inst_to_update.level, name = inst_to_update.name, role = inst_to_update.role, salary = (1.1 * _manager_object.salary), department = inst_to_update.department, projects = inst_to_update.projects), database)" in manager_router
+    assert "await update_manager(inst_to_update.id, ManagerCreate(created_at = inst_to_update.created_at, email = inst_to_update.email, level = (_manager_object.level + 1), name = inst_to_update.name, role = inst_to_update.role, salary = inst_to_update.salary, department = inst_to_update.department, projects = inst_to_update.projects), database)" in manager_router
 
 
 def test_backend_generator_one_to_one_optional_field(tmpdir):
@@ -305,17 +316,16 @@ def test_backend_generator_one_to_one_optional_field(tmpdir):
     generator = BackendGenerator(model=model, output_dir=str(output_dir))
     generator.generate()
 
-    pydantic_file = os.path.join(str(output_dir), "pydantic_classes.py")
-    with open(pydantic_file, "r", encoding="utf-8") as f:
-        pydantic_code = f.read()
+    adevice_schema = _read(output_dir, "app", "schemas", "adevice.py")
+    bserial_schema = _read(output_dir, "app", "schemas", "bserial.py")
 
     # FK side (ADevice) should be mandatory
-    assert "class ADeviceCreate(BaseModel):" in pydantic_code
-    assert "serial: int  # 1:1 Relationship (mandatory)" in pydantic_code
+    assert "class ADeviceCreate(" in adevice_schema
+    assert "serial: int  # 1:1 Relationship (mandatory)" in adevice_schema
 
     # Non-FK side (BSerial) should still have the relationship field (optional)
-    assert "class BSerialCreate(BaseModel):" in pydantic_code
-    assert "device: Optional[int] = None  # 1:1 Relationship (optional)" in pydantic_code
+    assert "class BSerialCreate(" in bserial_schema
+    assert "device: Optional[int] = None  # 1:1 Relationship (optional)" in bserial_schema
 
 
 def test_backend_generator_nested_creations_nm(tmpdir):
@@ -343,11 +353,10 @@ def test_backend_generator_nested_creations_nm(tmpdir):
     generator = BackendGenerator(model=model, output_dir=str(output_dir), nested_creations=True)
     generator.generate()
 
-    pydantic_file = os.path.join(str(output_dir), "pydantic_classes.py")
-    with open(pydantic_file, "r", encoding="utf-8") as f:
-        pydantic_code = f.read()
+    student_schema = _read(output_dir, "app", "schemas", "student.py")
+    course_schema = _read(output_dir, "app", "schemas", "course.py")
 
-    assert "class StudentCreate(BaseModel):" in pydantic_code
-    assert "courses: Optional[List[Union[\"CourseCreate\", int]]] = None  # N:M Relationship" in pydantic_code
-    assert "class CourseCreate(BaseModel):" in pydantic_code
-    assert "students: Optional[List[Union[\"StudentCreate\", int]]] = None  # N:M Relationship" in pydantic_code
+    assert "class StudentCreate(" in student_schema
+    assert 'courses: Optional[List[Union["CourseCreate", int]]] = None  # N:M Relationship' in student_schema
+    assert "class CourseCreate(" in course_schema
+    assert 'students: Optional[List[Union["StudentCreate", int]]] = None  # N:M Relationship' in course_schema

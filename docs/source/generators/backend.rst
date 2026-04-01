@@ -30,13 +30,39 @@ entities using their identifiers. The default setting is False, which restricts 
 ``docker_image`` parameter is there to assist you in `creating a Docker image <#docker-image-generation>`_ for your application.
 
 
-Invoke the generate method to produce the backend code.The generated files will be placed in the ``<<current_directory>>/output_backend``.
-This method will generate several files:
+Invoke the generate method to produce the backend code. The generated files will be placed in the ``<<current_directory>>/output_backend``.
+The generator produces a layered FastAPI project structure:
 
-   + ``main_api.py``: Contains the REST API endpoints.
-   + ``sql_alchemy.py``: Includes SQL Alchemy database models.
-   + ``pydantic_classes.py``: Consists of Pydantic validation models.
-   + ``database.db``: A SqlLite database file.
+.. code-block:: text
+
+   output_backend/
+   ├── requirements.txt
+   ├── .env.example        # Copy to .env and customize
+   └── app/
+       ├── __init__.py
+       ├── main.py           # FastAPI app, middleware, system endpoints
+       ├── config.py          # API metadata, DB URL, port
+       ├── database.py        # SQLAlchemy engine, session, get_db
+       ├── bal.py             # BESSER Action Language helpers
+       ├── models/            # SQLAlchemy ORM models (per-entity)
+       │   ├── __init__.py    # Association tables, relationships
+       │   ├── _base.py       # Base class
+       │   ├── _enums.py      # Enum definitions
+       │   └── {entity}.py    # One file per entity
+       ├── schemas/           # Pydantic validation schemas (per-entity)
+       │   ├── __init__.py    # Re-exports, model_rebuild()
+       │   └── {entity}.py    # One file per entity
+       └── routers/           # FastAPI routers (per-entity)
+           ├── __init__.py    # Collects all routers
+           └── {entity}.py    # CRUD endpoints per entity
+
+To run the generated backend:
+
+.. code-block:: bash
+
+   cd output_backend
+   pip install -r requirements.txt
+   python app/main.py
 
 
 .. image:: ../img/backend_generator_schema.png
@@ -293,3 +319,148 @@ The generated API also includes system-level endpoints:
    * - GET
      - ``/statistics``
      - Database statistics (entity counts)
+
+
+Extending the Generated Backend
+-------------------------------
+
+The layered structure is designed so you can add custom functionality **without modifying generated files**.
+This means you can re-generate the backend (e.g. after a model change) without losing your customizations.
+
+Configuration
+^^^^^^^^^^^^^
+
+The generator creates a ``.env.example`` file with all configurable values.
+Copy it to ``.env`` and customize:
+
+.. code-block:: bash
+
+   cp .env.example .env
+   # Edit .env with your values
+
+The generated ``app/config.py`` reads from environment variables with fallback defaults:
+
+.. code-block:: python
+
+   DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/myapp.db")
+   PORT = int(os.getenv("PORT", "8000"))
+
+To switch to PostgreSQL, just set the environment variable:
+
+.. code-block:: bash
+
+   DATABASE_URL=postgresql://user:pass@localhost/mydb
+
+Adding Custom Routes
+^^^^^^^^^^^^^^^^^^^^
+
+Create a new file in ``app/routers/`` and register it in ``app/main.py``:
+
+.. code-block:: python
+
+   # app/routers/upload.py
+   from fastapi import APIRouter, UploadFile
+
+   router = APIRouter(prefix="/upload", tags=["Upload"])
+
+   @router.post("/")
+   async def upload_file(file: UploadFile):
+       contents = await file.read()
+       # your custom logic here
+       return {"filename": file.filename, "size": len(contents)}
+
+Then in ``app/main.py``, add:
+
+.. code-block:: python
+
+   from app.routers.upload import router as upload_router
+   app.include_router(upload_router)
+
+Adding Authentication / Middleware
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Add middleware directly in ``app/main.py``:
+
+.. code-block:: python
+
+   # JWT authentication example
+   from fastapi import Security
+   from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+
+   security = HTTPBearer()
+
+   def verify_token(credentials: HTTPAuthorizationCredentials = Security(security)):
+       token = credentials.credentials
+       # verify JWT token here
+       return token
+
+   # Protect specific routers
+   from app.routers.my_protected import router as protected_router
+   app.include_router(protected_router, dependencies=[Security(security)])
+
+Or add a global middleware:
+
+.. code-block:: python
+
+   @app.middleware("http")
+   async def custom_middleware(request, call_next):
+       # your logic before the request
+       response = await call_next(request)
+       # your logic after the response
+       return response
+
+Adding Custom Business Logic
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For service-layer logic, create a ``app/services/`` directory:
+
+.. code-block:: text
+
+   app/
+   ├── services/
+   │   ├── email_service.py
+   │   └── payment_service.py
+   └── ...
+
+Then import and use it from your custom routes:
+
+.. code-block:: python
+
+   # app/routers/orders.py (your custom router)
+   from app.services.payment_service import process_payment
+
+   @router.post("/{order_id}/pay")
+   async def pay_order(order_id: int, db: Session = Depends(get_db)):
+       order = db.query(Order).get(order_id)
+       process_payment(order)
+       return {"status": "paid"}
+
+Docker Deployment
+^^^^^^^^^^^^^^^^^
+
+The ``.env`` file works with Docker Compose via ``env_file``:
+
+.. code-block:: yaml
+
+   # docker-compose.yml
+   services:
+     backend:
+       build: ./backend
+       env_file: ./backend/.env
+       ports:
+         - "${PORT:-8000}:${PORT:-8000}"
+
+For production, override the database URL:
+
+.. code-block:: bash
+
+   # .env
+   DATABASE_URL=postgresql://user:pass@db:5432/myapp
+   PORT=8000
+
+.. tip::
+
+   **Re-generation workflow**: When you re-generate after a model change, the generated files
+   (``app/models/``, ``app/schemas/``, ``app/routers/``) get overwritten. Your custom files
+   (``app/services/``, ``app/routers/upload.py``, ``.env``) are untouched because the generator
+   only writes files it knows about. Keep custom code in separate files to stay safe.

@@ -1,70 +1,74 @@
 Backend example
 ==================
 
-This example showcases the BESSER backend generator's capability to produce essential components for a backend service, based on the Library example B-UML model.
+This example showcases the BESSER backend generator's capability to produce a layered FastAPI backend service, based on the Library example B-UML model.
 
-The generator creates three primary files, which together form the backbone of the backend system, here's a snippet from the generated files:
+The generator creates a structured project under ``output_backend/app/`` with per-entity files for models, schemas, and routers.
+Here's a snippet from the generated files:
 
-``main_api.py``:Contains the REST API endpoints that define how the server responds to client requests:
+``app/main.py``: The FastAPI application with middleware, exception handlers, and system endpoints:
 
 .. code-block:: python
-   
-   ############################################
-   #   Initialize the database
-   ############################################
 
-   SQLALCHEMY_DATABASE_URL = "sqlite:///./Library model.db"
-   engine = create_engine(
-       SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+   from app.config import API_TITLE, API_DESCRIPTION, API_VERSION, PORT
+   from app.database import get_db
+   from app.models import *
+   from app.routers import all_routers
+
+   app = FastAPI(
+       title=API_TITLE,
+       description=API_DESCRIPTION,
+       version=API_VERSION,
    )
-   SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-   Base.metadata.create_all(bind=engine)
 
-   app = FastAPI()
+   # Include all entity routers
+   for router in all_routers:
+       app.include_router(router)
 
-   # Initialize database session
-   def get_db():
-       database = SessionLocal()
-       yield database
-       database.close()
-   ############################################
-   #   Library functions
-   ############################################
-
-   @app.get("/book/", response_model=None)
-  def get_all_book(database: Session = Depends(get_db)) -> list[Book]:
-    book_list = database.query(Book).all()
-    return book_list
-
-
-``sql_alchemy.py``:  This file includes the SQLAlchemy ORM models that map Python classes to database tables:
+``app/models/book.py``: Per-entity SQLAlchemy ORM model:
 
 .. code-block:: python
+
+   from app.models._base import Base
 
    class Book(Base):
-    __tablename__ = "book"
-    id: Mapped[int] = mapped_column(primary_key=True)
-    pages: Mapped[int] = mapped_column(Integer)
-    title: Mapped[str] = mapped_column(String(100))
-    release: Mapped[datetime] = mapped_column(DateTime)
+       __tablename__ = "book"
+       id: Mapped[int] = mapped_column(primary_key=True)
+       pages: Mapped[int] = mapped_column(Integer)
+       title: Mapped[str] = mapped_column(String(100))
+       release: Mapped[datetime] = mapped_column(DateTime)
 
-
-   #--- Foreign keys and relationships of the library table
-   Library.has: Mapped[List["Book"]] = relationship("Book", back_populates="locatedIn")
-
-``pydantic_classes.py`` : Comprises Pydantic models for data validation and serialization:
+``app/schemas/book.py``: Per-entity Pydantic schema for data validation:
 
 .. code-block:: python
 
-  class BookCreate(BaseModel):
-    pages: int
-    title: str
-    release: datetime
-    library_id: int
-    authors: Optional[List[Union["AuthorCreate", int]]] = None
+   class BookCreate(BaseModel):
+       pages: int
+       title: str
+       release: datetime
+       library_id: int
+       authors: Optional[List[Union["AuthorCreate", int]]] = None
 
-After launching the main_api.py file, the server will be up and running, and the client can interact with the backend service through the defined REST API endpoints.
-It will create a SQLite database according to the defined models in the sql_alchemy.py file.
+``app/routers/book.py``: Per-entity FastAPI router with CRUD endpoints:
+
+.. code-block:: python
+
+   router = APIRouter(prefix="/book", tags=["Book"])
+
+   @router.get("/", response_model=None)
+   def get_all_book(database: Session = Depends(get_db)) -> list:
+       return database.query(Book).all()
+
+To run the generated backend:
+
+.. code-block:: bash
+
+   cd output_backend
+   pip install -r requirements.txt
+   python app/main.py
+
+The server will start and create a SQLite database according to the defined models.
+The OpenAPI docs are available at ``http://localhost:8000/docs``.
 
 .. image:: ../img/library_database.png
   :width: 250

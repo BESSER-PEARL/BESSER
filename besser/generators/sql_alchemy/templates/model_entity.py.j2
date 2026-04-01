@@ -1,0 +1,97 @@
+{% import "helpers.py.j2" as helper -%}
+from typing import List, Optional
+from sqlalchemy import Column, ForeignKey, Table, Text, Boolean, String, Date, Time, DateTime, Float, Integer, Enum
+{% if class_obj.is_abstract and not class_obj.parents() and not class_obj.association_ends() -%}
+from sqlalchemy.ext.declarative import AbstractConcreteBase
+{% endif -%}
+from sqlalchemy.orm import Mapped, mapped_column
+from datetime import datetime as dt_datetime, time as dt_time, date as dt_date
+from app.models._base import Base
+{% for enum_name in used_enums -%}
+from app.models._enums import {{ enum_name }}
+{% endfor -%}
+{% for parent in class_obj.parents() -%}
+from app.models.{{ parent.name | lower }} import {{ parent.name }}
+{% endfor %}
+
+
+class {{ class_obj.name }}(
+    {%- if class_obj.parents() -%}
+    {% for parent in class_obj.parents() -%}
+            {{parent.name}}{{ ", " if not loop.last else "):" }}
+    {% endfor -%}
+    {% else -%}
+    {% if class_obj.name in concrete_parents -%}
+    AbstractConcreteBase, Base):
+    {% else -%}
+        Base):
+    {% endif -%}
+    {% endif -%}
+    {%- if class_obj.name in concrete_parents -%}
+    strict_attrs = True
+    {%- else -%}
+    __tablename__ = "{{class_obj.name.lower()}}"
+    {%- endif -%}
+    {%- for parent in sort(class_obj.parents()) %}
+    {%- if parent.name not in concrete_parents %}
+    id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
+    {%- endif %}
+    {%- endfor %}
+    {%- if (class_obj.parents() | rejectattr("name", "in", concrete_parents) | list | length == 0)
+        and ((not ids.get(class_obj.name))) %}
+    id: Mapped[int] = mapped_column(primary_key=True)
+    {%- endif %}
+    {#- Class attributes #}
+        {{- helper.render_attributes(class_obj, enumerations, types, ids, sort)}}
+
+    {#- Foreign keys #}
+    {%- set ns = namespace(has_association_class = false, has_relationships = false) %}
+    {%- set ns.class_name = class_obj.name %}
+    {%- for asso_class in asso_classes %}
+        {%- for end in asso_class.association.ends %}
+            {%- if end.type.name == ns.class_name %}
+                {%- set ns.has_association_class = true %}
+            {%- endif %}
+        {%- endfor %}
+    {%- endfor %}
+
+    {%- for end in class_obj.association_ends() if end.owner.ends|length == 2 %}
+        {%- set ns.assoc_has_class = false %}
+        {%- for asso_class in asso_classes %}
+            {%- if asso_class.association.name == end.owner.name %}
+                {%- set ns.assoc_has_class = true %}
+            {%- endif %}
+        {%- endfor %}
+        {%- if not ns.assoc_has_class %}
+            {%- set ns.has_relationships = true %}
+            {%- set ns.end_own = end %}
+            {%- for a_end in end.owner.ends if a_end != end %}
+                {%- set ns.end_own = a_end %}
+            {%- endfor %}
+            {#- Foreign Key #}
+            {%- if [class_obj.name, end.name] == fkeys.get(end.owner.name) %}
+    {{end.name}}_id: Mapped[int] = mapped_column(ForeignKey("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
+            {%- if end.multiplicity.min == 0 %}, nullable=True{%- endif %}
+            {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
+        {%- endif %}
+    {%- endfor %}
+
+    {#- Polymorphic configuration #}
+    {%- if (class_obj.specializations()|length > 0
+       and class_obj.name not in concrete_parents
+       and (class_obj.parents() | rejectattr("name", "in", concrete_parents) | list | length == 0)) %}
+    type_spec: Mapped[str] = mapped_column(String(50))
+    __mapper_args__ = {
+        "polymorphic_identity": "{{ class_obj.name.lower() }}",
+        "polymorphic_on": "type_spec",
+    }
+    {%- elif (class_obj.parents() | rejectattr("name", "in", concrete_parents) | list | length > 0) %}
+    __mapper_args__ = {
+        "polymorphic_identity": "{{ class_obj.name.lower() }}",
+    }
+    {%- elif class_obj.parents() | selectattr("name", "in", concrete_parents) | list | length > 0 %}
+    __mapper_args__ = {
+        "polymorphic_identity": "{{ class_obj.name.lower() }}",
+        "concrete": True,
+    }
+    {%- endif %}

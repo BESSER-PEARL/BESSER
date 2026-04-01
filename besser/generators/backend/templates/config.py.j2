@@ -1,0 +1,12 @@
+import os
+
+# API metadata
+API_TITLE = "{{ api_title }}"
+API_DESCRIPTION = "{{ api_description }}"
+API_VERSION = "{{ api_version }}"
+
+# Database
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/{{ name }}.db")
+
+# Server
+PORT = int(os.getenv("PORT", "{{ port }}"))

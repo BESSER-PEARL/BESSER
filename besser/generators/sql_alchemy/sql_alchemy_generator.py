@@ -1,9 +1,12 @@
 import os
 from jinja2 import Environment, FileSystemLoader
-from besser.BUML.metamodel.structural import DomainModel, AssociationClass
+from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
 from besser.utilities.utils import sort_by_timestamp
-from besser.generators.structural_utils import get_foreign_keys
+from besser.generators.structural_utils import (
+    get_foreign_keys, get_sqlalchemy_types, get_ids, separate_classes,
+    get_concrete_table_inheritance, used_enums_for_class,
+)
 
 class SQLAlchemyGenerator(GeneratorInterface):
     """
@@ -15,75 +18,99 @@ class SQLAlchemyGenerator(GeneratorInterface):
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
     """
 
-    TYPES = {
-        "int": "Integer",
-        "str": "String(100)",
-        "float": "Float",
-        "bool": "Boolean",
-        "time": "Time",
-        "date": "Date",
-        "datetime": "DateTime",
-    }
-
     VALID_DBMS = {"sqlite", "postgresql", "mysql", "mssql", "mariadb", "oracle"}
 
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
-        # Add enums to TYPES dictionary
-        for enum in model.get_enumerations():
-            self.TYPES[enum.name] = f"Enum('{enum.name}')"
+        self.TYPES = get_sqlalchemy_types(model)
 
     def get_ids(self):
-        """
-        Returns a dictionary with the class names as keys and the id attributes as values.
-        """
-        ids_dict = {}
-        for cls in self.model.get_classes():
-            # First, look for the first attribute marked with is_id
-            id_attr = next((attr.name for attr in cls.attributes if attr.is_id), None)
-
-            # If no attribute with is_id is found, check for an attribute with name "id"
-            if not id_attr:
-                id_attr = next((attr.name for attr in cls.attributes if attr.name == "id"), None)
-
-            # Only add to the dictionary if an is_id or "id" attribute is found
-            if id_attr:
-                ids_dict[cls.name] = id_attr
-
-        return ids_dict
+        return get_ids(self.model)
 
     def separate_classes(self):
-        """
-        Separates regular classes from association classes in the model.
-
-        Returns:
-            tuple: A tuple containing two lists (regular_classes, association_classes)
-        """
-        classes_list = self.model.classes_sorted_by_inheritance()
-        classes = []
-        asso_classes = []
-
-        # Separate regular classes and association classes
-        for class_item in classes_list:
-            if isinstance(class_item, AssociationClass):
-                asso_classes.append(class_item)
-            else:
-                classes.append(class_item)
-
-        return classes, asso_classes
+        return separate_classes(self.model)
 
     def get_concrete_table_inheritance(self):
-        """
-        Determines if the model uses concrete table inheritance.
+        return get_concrete_table_inheritance(self.model)
 
-        Returns:
-            list: A list of class parents that use concrete table inheritance.
+    def _create_env(self):
+        """Create Jinja2 environment pointing to this generator's templates.
+
+        Uses the same bare env as generate() so that shared templates
+        (helpers.py.j2) and their {%- whitespace control work consistently.
         """
-        concrete_parents = []
-        for class_ in self.model.get_classes():
-            if class_.is_abstract and not class_.parents() and not class_.association_ends():
-                concrete_parents.append(class_.name)
-        return concrete_parents
+        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+        return Environment(loader=FileSystemLoader(templates_path))
+
+    def _build_layered_context(self):
+        """Build the template context for layered output."""
+        classes, asso_classes = self.separate_classes()
+        return {
+            "classes": classes,
+            "asso_classes": asso_classes,
+            "types": self.TYPES,
+            "ids": self.get_ids(),
+            "fkeys": get_foreign_keys(self.model),
+            "concrete_parents": self.get_concrete_table_inheritance(),
+            "enumerations": list(self.model.get_enumerations()),
+            "associations": list(self.model.associations),
+            "sort": sort_by_timestamp,
+        }
+
+    def generate_layered(self, app_dir: str):
+        """Generate per-entity SQLAlchemy model files into app_dir/models/.
+
+        Args:
+            app_dir: Path to the app/ directory where models/ will be created.
+        """
+        models_dir = os.path.join(app_dir, "models")
+        os.makedirs(models_dir, exist_ok=True)
+
+        env = self._create_env()
+        ctx = self._build_layered_context()
+
+        def _write(path, content):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(content)
+
+        # _base.py — Base class
+        _write(
+            os.path.join(models_dir, "_base.py"),
+            env.get_template("models_base.py.j2").render(),
+        )
+
+        # _enums.py — All enum definitions
+        _write(
+            os.path.join(models_dir, "_enums.py"),
+            env.get_template("models_enums.py.j2").render(**ctx),
+        )
+
+        # Per-entity model files
+        for class_obj in ctx["classes"]:
+            used = used_enums_for_class(class_obj, ctx["enumerations"])
+            _write(
+                os.path.join(models_dir, f"{class_obj.name.lower()}.py"),
+                env.get_template("model_entity.py.j2").render(
+                    class_obj=class_obj, used_enums=used, **ctx
+                ),
+            )
+
+        # Per-association-class model files
+        for asso_class in ctx["asso_classes"]:
+            used = used_enums_for_class(asso_class, ctx["enumerations"])
+            _write(
+                os.path.join(models_dir, f"{asso_class.name.lower()}.py"),
+                env.get_template("model_asso_entity.py.j2").render(
+                    asso_class=asso_class, used_enums=used, **ctx
+                ),
+            )
+
+        # __init__.py — Association tables, imports, relationships
+        _write(
+            os.path.join(models_dir, "__init__.py"),
+            env.get_template("models_init.py.j2").render(**ctx),
+        )
 
     def generate(self, dbms: str = "sqlite"):
         """

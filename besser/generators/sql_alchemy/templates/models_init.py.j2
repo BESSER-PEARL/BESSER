@@ -1,0 +1,97 @@
+{% import "helpers.py.j2" as helper -%}
+from typing import List, Optional
+from sqlalchemy import Column, ForeignKey, Table
+from sqlalchemy.orm import Mapped, relationship
+from app.models._base import Base
+from app.models._enums import *
+
+# Association tables for many-to-many relationships
+{%- for association in associations if association.ends|length == 2 %}
+{%- set ns = namespace(many_to_many = True, has_association_class = False) %}
+{%- for end in association.ends %}
+{%- if end.multiplicity.max < 2 %}
+{%- set ns.many_to_many = False %}
+{%- endif %}
+{%- endfor %}
+{%- for asso_class in asso_classes %}
+{%- if asso_class.association.name == association.name %}
+{%- set ns.has_association_class = True %}
+{%- endif %}
+{%- endfor %}
+{%- if ns.many_to_many == True and not ns.has_association_class %}
+
+{{ association.name.lower() }} = Table(
+    "{{ association.name.lower() }}",
+    Base.metadata,
+    {%- for end in association.ends %}
+    Column("{{ end.name }}", ForeignKey("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True),
+    {%- endfor %}
+)
+{%- endif %}
+{%- endfor %}
+
+# Import all entity models
+{%- for class_obj in classes %}
+from app.models.{{ class_obj.name | lower }} import {{ class_obj.name }}
+{%- endfor %}
+
+# Import association class models
+{%- for asso_class in asso_classes %}
+from app.models.{{ asso_class.name | lower }} import {{ asso_class.name }}
+{%- endfor %}
+
+# Attach relationships (must be done after all models are imported)
+{%- for class_obj in classes %}
+    {%- set ns = namespace(has_association_class = false, has_relationships = false) %}
+    {%- set ns.class_name = class_obj.name %}
+    {%- for asso_class in asso_classes %}
+        {%- for end in asso_class.association.ends %}
+            {%- if end.type.name == ns.class_name %}
+                {%- set ns.has_association_class = true %}
+            {%- endif %}
+        {%- endfor %}
+    {%- endfor %}
+
+    {%- for end in class_obj.association_ends() if end.owner.ends|length == 2 %}
+        {%- set ns.assoc_has_class = false %}
+        {%- for asso_class in asso_classes %}
+            {%- if asso_class.association.name == end.owner.name %}
+                {%- set ns.assoc_has_class = true %}
+            {%- endif %}
+        {%- endfor %}
+        {%- if not ns.assoc_has_class %}
+            {%- set ns.has_relationships = true %}
+{{ helper.render_relationship(class_obj, end, ns, ids, fkeys) }}
+        {%- endif %}
+    {%- endfor %}
+{%- endfor %}
+
+{#- Association Class Relationships #}
+{%- for asso_class in asso_classes %}
+    {%- for end in asso_class.association.ends %}
+{{ asso_class.name }}.{{ end.name }}: Mapped["{{ end.type.name }}"] = relationship("{{ end.type.name }}", back_populates="{{ asso_class.name.lower() }}s")
+{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped[List["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}")
+    {%- endfor %}
+{%- endfor %}
+
+__all__ = [
+    "Base",
+    {%- for class_obj in classes %}
+    "{{ class_obj.name }}",
+    {%- endfor %}
+    {%- for asso_class in asso_classes %}
+    "{{ asso_class.name }}",
+    {%- endfor %}
+    {%- for association in associations if association.ends|length == 2 %}
+    {%- set ns = namespace(many_to_many = True, has_association_class = False) %}
+    {%- for end in association.ends %}
+    {%- if end.multiplicity.max < 2 %}{% set ns.many_to_many = False %}{% endif %}
+    {%- endfor %}
+    {%- for asso_class in asso_classes %}
+    {%- if asso_class.association.name == association.name %}{% set ns.has_association_class = True %}{% endif %}
+    {%- endfor %}
+    {%- if ns.many_to_many == True and not ns.has_association_class %}
+    "{{ association.name.lower() }}",
+    {%- endif %}
+    {%- endfor %}
+]

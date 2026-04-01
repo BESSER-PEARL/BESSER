@@ -1,30 +1,58 @@
 import os
 import configparser
-import docker
+from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.generators import GeneratorInterface
-from besser.generators.rest_api import RESTAPIGenerator
+from besser.generators.structural_utils import separate_classes
 from besser.generators.sql_alchemy import SQLAlchemyGenerator
 from besser.generators.pydantic_classes import PydanticGenerator
-from besser.generators.backend.docker_files import generate_docker_files
+from besser.generators.rest_api import RESTAPIGenerator
+
 
 class BackendGenerator(GeneratorInterface):
     """
-    BackendGenerator is a class that implements the GeneratorInterface and is responsible for generating
-    a Backend model code with a REST API using FAST API framework, SQLAlchemy and a Pydantic model based on the input B-UML model.
+    BackendGenerator generates a layered FastAPI backend project from a B-UML domain model.
+
+    It orchestrates three sub-generators (SQLAlchemyGenerator, PydanticGenerator,
+    RESTAPIGenerator) to produce per-entity files, then adds the app-level glue
+    (main.py, config.py, database.py, bal.py).
+
+    The generated output follows a standard FastAPI project structure::
+
+        app/
+        ├── __init__.py
+        ├── main.py         # FastAPI app, middleware, system endpoints
+        ├── config.py        # API metadata, DB URL, port
+        ├── database.py      # SQLAlchemy engine, session, get_db
+        ├── bal.py           # BESSER Action Language helpers
+        ├── models/          # SQLAlchemy ORM models (per-entity)
+        ├── schemas/         # Pydantic schemas (per-entity)
+        └── routers/         # FastAPI routers (per-entity)
 
     Args:
-        model (DomainModel): An instance of the DomainModel class representing the B-UML model.
-        http_methods (list, optional): A list of HTTP methods to be used in the REST API. Defaults to All.
-        nested_creations (bool, optional): This parameter specifies how entities are linked in the API request. If set to True, the API expects
-                                identifiers and links entities based on these IDs. If set to False, the API handles the creation of
-                                new entities based on the data provided in the request. Defaults to True
-        output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
-        docker_image (bool, optional): Flag to indicate if Docker image generation is required. Defaults to False.
-        docker_config_path (str, optional): The path to the docker configuration file to auto upload the image. Defaults to None.
+        model (DomainModel): The B-UML domain model.
+        http_methods (list, optional): HTTP methods to generate (GET, POST, PUT, DELETE). Defaults to all.
+        nested_creations (bool, optional): Allow inline entity creation in M:N relationships. Defaults to False.
+        output_dir (str, optional): Output directory. Defaults to ``./output_backend``.
+        api_title (str, optional): FastAPI title. Defaults to ``"{model.name} API"``.
+        api_description (str, optional): FastAPI description.
+        api_version (str, optional): API version string. Defaults to ``"1.0.0"``.
+        docker_image (bool, optional): Generate Docker files. Defaults to False.
+        docker_config_path (str, optional): Path to Docker config file.
     """
 
-    def __init__(self, model: DomainModel, http_methods: list = None, nested_creations: bool = False, output_dir: str = None, docker_image: bool = False, docker_config_path: str = None):
+    def __init__(
+        self,
+        model: DomainModel,
+        http_methods: list = None,
+        nested_creations: bool = False,
+        output_dir: str = None,
+        api_title: str = None,
+        api_description: str = None,
+        api_version: str = "1.0.0",
+        docker_image: bool = False,
+        docker_config_path: str = None,
+    ):
         super().__init__(model, output_dir)
         allowed_methods = ["GET", "POST", "PUT", "DELETE"]
         if not http_methods:
@@ -33,17 +61,14 @@ class BackendGenerator(GeneratorInterface):
             http_methods = [method for method in http_methods if method in allowed_methods]
         self.http_methods = http_methods
         self.nested_creations = nested_creations
+        self.api_title = api_title or f"{model.name} API"
+        self.api_description = api_description or "Auto-generated REST API with full CRUD operations, relationship management, and advanced features"
+        self.api_version = api_version
         self.docker_image = docker_image
         self.docker_config_path = docker_config_path
-        self.config = self.load_config()
+        self.config = self._load_config()
 
-    def load_config(self):
-        """
-        Loads the configuration from the specified config file path if provided.
-
-        Returns:
-            dict: A dictionary containing the Docker configuration, or None if the config file path is not provided or file not found.
-        """
+    def _load_config(self):
         if self.docker_config_path and os.path.exists(self.docker_config_path):
             config = configparser.ConfigParser()
             config.read(self.docker_config_path)
@@ -55,79 +80,142 @@ class BackendGenerator(GeneratorInterface):
                 "docker_tag": config.get("DEFAULT", "docker_tag"),
                 "docker_port": config.get("DEFAULT", "docker_port"),
             }
-        else:
-            if not self.docker_config_path:
-                print("No configuration docker file.")
-            else:
-                print(f"Configuration file not found at path: {self.docker_config_path}")
-            return None
+        return None
+
+    # ------------------------------------------------------------------
+    # Jinja2 environment (for backend-specific templates only)
+    # ------------------------------------------------------------------
+
+    def _create_jinja_env(self):
+        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
+        return Environment(
+            loader=FileSystemLoader(templates_path),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            keep_trailing_newline=True,
+        )
+
+    # ------------------------------------------------------------------
+    # File helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _write(path, content):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            f.write(content)
+
+    # ------------------------------------------------------------------
+    # generate()
+    # ------------------------------------------------------------------
 
     def generate(self):
+        """Generate a layered FastAPI backend project.
+
+        Delegates per-entity file generation to the sub-generators and
+        renders the app-level glue files itself.
         """
-        Generates Backend model code based on the provided B-UML model and saves it to the specified output directory.
-        If the output directory was not specified, the code generated will be stored in the <current directory>/output_backend folder.
+        root = self.output_dir or os.path.join(os.path.abspath(""), "output_backend")
+        app_dir = os.path.join(root, "app")
+        os.makedirs(app_dir, exist_ok=True)
 
-        Returns:
-            None, but stores the generated code as files main_api.py, sql_alchemy.py and pydantic_classes.py
-        """
-        if self.output_dir is not None:
-            backend_folder_path = self.output_dir
-            os.makedirs(backend_folder_path, exist_ok=True)
-            print(f"Backend folder created at {backend_folder_path}")
-        else:
-            backend_folder_path = os.path.join(os.path.abspath(''), "output_backend")
-            os.makedirs(backend_folder_path, exist_ok=True)
-            print(f"Backend folder created at {backend_folder_path}")
+        # -- Sub-generators produce per-entity files --
+        sql_gen = SQLAlchemyGenerator(model=self.model)
+        sql_gen.generate_layered(app_dir)
 
-        docker_port = self.config["docker_port"] if self.config else 8000  # Use default port if config not provided
+        pydantic_gen = PydanticGenerator(
+            model=self.model,
+            backend=True,
+            nested_creations=self.nested_creations,
+        )
+        pydantic_gen.generate_layered(app_dir)
 
-        rest_api = RESTAPIGenerator(model=self.model, http_methods=self.http_methods, nested_creations=self.nested_creations, output_dir=backend_folder_path, backend=True, port=docker_port)
-        rest_api.generate()
+        rest_gen = RESTAPIGenerator(
+            model=self.model,
+            http_methods=self.http_methods,
+            nested_creations=self.nested_creations,
+        )
+        rest_gen.generate_layered(app_dir)
 
-        sql_alchemy = SQLAlchemyGenerator(model=self.model, output_dir=backend_folder_path)
-        sql_alchemy.generate()
+        # -- App-level glue files (BackendGenerator's own templates) --
+        env = self._create_jinja_env()
+        classes, asso_classes = separate_classes(self.model)
+        port = int(self.config["docker_port"]) if self.config else 8000
 
-        pydantic_model = PydanticGenerator(model=self.model, output_dir=backend_folder_path, backend=True, nested_creations=self.nested_creations)
-        pydantic_model.generate()
+        ctx = {
+            "name": self.model.name,
+            "classes": classes,
+            "asso_classes": asso_classes,
+            "api_title": self.api_title,
+            "api_description": self.api_description,
+            "api_version": self.api_version,
+            "port": port,
+        }
 
+        self._write(
+            os.path.join(app_dir, "__init__.py"),
+            env.get_template("app_init.py.j2").render(),
+        )
+        self._write(
+            os.path.join(app_dir, "config.py"),
+            env.get_template("config.py.j2").render(**ctx),
+        )
+        self._write(
+            os.path.join(app_dir, "database.py"),
+            env.get_template("database.py.j2").render(**ctx),
+        )
+        self._write(
+            os.path.join(app_dir, "bal.py"),
+            env.get_template("bal.py.j2").render(),
+        )
+        self._write(
+            os.path.join(app_dir, "main.py"),
+            env.get_template("main.py.j2").render(**ctx),
+        )
+        self._write(
+            os.path.join(root, "requirements.txt"),
+            env.get_template("requirements.txt.j2").render(),
+        )
+        self._write(
+            os.path.join(root, ".env.example"),
+            env.get_template("env.example.j2").render(**ctx),
+        )
+
+        # -- Docker --
         if self.docker_image:
             if self.config:
-                self.build_and_push_docker_image(backend_folder_path)
+                self._build_and_push_docker_image(root)
             else:
-                generate_docker_files(backend_folder_path)
+                from besser.generators.backend.docker_files import generate_docker_files
+                generate_docker_files(root)
 
-    def build_and_push_docker_image(self, backend_folder_path):
-        """
-        Builds and pushes the Docker image based on the provided backend folder path.
+        print(f"Backend generated at {root}")
 
-        Args:
-            backend_folder_path (str): The path to the backend folder containing the generated code.
+    # ------------------------------------------------------------------
+    # Docker
+    # ------------------------------------------------------------------
 
-        Returns:
-            None
-        """
+    def _build_and_push_docker_image(self, backend_folder_path):
+        import docker as docker_lib
+
         docker_port = self.config["docker_port"]
 
         dockerfile_content = f"""
-        FROM python:3.9-slim
-        WORKDIR /app
+FROM python:3.11-slim
+WORKDIR /app
 
-        COPY main_api.py /app
-        COPY pydantic_classes.py /app
-        COPY sql_alchemy.py /app
+RUN mkdir -p /app/data
 
-        RUN pip install requests==2.31.0
-        RUN pip install fastapi==0.110.0
-        RUN pip install pydantic==2.6.3
-        RUN pip install uvicorn==0.28.0
-        RUN pip install SQLAlchemy==2.0.29
-        RUN pip install httpx==0.27.0
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-        EXPOSE {docker_port}
-        CMD ["python", "main_api.py"]
-        """
+COPY app/ ./app/
 
-        with open(os.path.join(backend_folder_path, 'Dockerfile'), 'w') as dockerfile:
+EXPOSE {docker_port}
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "{docker_port}"]
+"""
+
+        with open(os.path.join(backend_folder_path, "Dockerfile"), "w") as dockerfile:
             dockerfile.write(dockerfile_content)
 
         image_name = self.config["docker_image_name"]
@@ -135,25 +223,15 @@ class BackendGenerator(GeneratorInterface):
         tag = self.config["docker_tag"]
         full_image_name = f"{repository}/{image_name}:{tag}"
 
-        # Create docker client
-        client = docker.from_env()
-
-        # Create docker image
-        image, build_logs = client.images.build(
-            path=backend_folder_path,
-            rm=True,
-            tag=full_image_name
-        )
-
+        client = docker_lib.from_env()
+        image, build_logs = client.images.build(path=backend_folder_path, rm=True, tag=full_image_name)
         for log in build_logs:
             print(log)
 
-        # Docker login
         username = self.config["docker_username"]
         password = self.config["docker_password"]
         client.login(username=username, password=password)
 
-        # Push Docker image
         resp = client.api.push(full_image_name, stream=True, decode=True)
         for line in resp:
             print(line)

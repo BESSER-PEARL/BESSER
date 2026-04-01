@@ -1,0 +1,8 @@
+import enum
+{%- for enumeration in enumerations %}
+
+class {{ enumeration.name }}(enum.Enum):
+    {%- for literal in enumeration.literals %}
+    {{ literal.name }} = "{{ literal.name }}"
+    {%- endfor %}
+{%- endfor %}

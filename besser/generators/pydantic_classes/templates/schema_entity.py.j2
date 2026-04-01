@@ -1,0 +1,18 @@
+{% import "pydantic_helpers.py.j2" as pydantic_helpers -%}
+from datetime import datetime, date, time
+from typing import Any, List, Optional, Union, Set
+from enum import Enum as PyEnum
+from pydantic import BaseModel, field_validator
+{% if class_obj.is_abstract and not class_obj.parents() %}
+from abc import ABC, abstractmethod
+{% endif %}
+{% for parent in class_obj.parents() %}
+from app.schemas.{{ parent.name | lower }} import {{ parent.name }}Create
+{% endfor %}
+{% for enum_name in used_enums %}
+from app.models._enums import {{ enum_name }}
+{% endfor %}
+
+
+class {{ class_obj.name }}Create{% if class_obj.parents() %}({% for parent in class_obj.parents() %}{{parent.name}}Create{{ ", " if not loop.last else "" }}{% endfor %}){% elif class_obj.is_abstract %}(ABC, BaseModel){% else %}(BaseModel){% endif %}:
+{{ pydantic_helpers.render_class_body(class_obj, backend, fkeys, nested_creations, constraints_map) }}

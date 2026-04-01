@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import logging
 import os
 import re
 import sys
 import tempfile
 import zipfile
+
+logger = logging.getLogger(__name__)
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
@@ -18,8 +21,6 @@ from besser.generators.agents.baf_generator import GenerationMode
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
 from besser.utilities.web_modeling_editor.backend.services.converters import process_agent_diagram
-from besser.utilities.web_modeling_editor.backend.services.utils.resource_manager import cleanup_temp_resources
-
 AgentZipGenerator = Callable[[Any, Optional[Dict[str, Any]]], Tuple[io.BytesIO, str]]
 
 
@@ -147,11 +148,12 @@ def normalize_personalization_mapping(
             try:
                 agent_model_buml = process_agent_diagram(mapping_payload)
             except Exception as conversion_error:
+                logger.exception("Failed to convert personalizationMapping agent_model at index %d", index)
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Failed to convert personalizationMapping "
-                        f"agent_model at index {index} to BUML: {conversion_error}"
+                        f"Failed to convert personalizationMapping agent_model at index {index}. "
+                        "Please check the agent model data."
                     ),
                 ) from conversion_error
 
@@ -203,8 +205,7 @@ async def handle_multi_language_generation(
     zip_buffer = io.BytesIO()
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
         for agent_model, lang in agent_models:
-            temp_dir = tempfile.mkdtemp(prefix=f"besser_agent_{lang}_")
-            try:
+            with tempfile.TemporaryDirectory(prefix=f"besser_agent_{lang}_") as temp_dir:
                 agent_file = os.path.join(temp_dir, f"agent_model_{lang}.py")
                 agent_model_to_code(agent_model, agent_file)
                 sys.path.insert(0, temp_dir)
@@ -235,8 +236,6 @@ async def handle_multi_language_generation(
                         file_path = os.path.join(output_dir, file_name)
                         if os.path.isfile(file_path):
                             zip_file.write(file_path, f"{lang}/{file_name}")
-            finally:
-                cleanup_temp_resources(temp_dir)
     zip_buffer.seek(0)
     return zip_buffer, "agents_multi_lang.zip"
 
@@ -277,11 +276,12 @@ def handle_variation_generation(
             try:
                 variant_agent_model = to_agent_model(variant_snapshot)
             except Exception as conversion_error:
+                logger.exception("Invalid agent model for variation '%s'", entry.get('name', index))
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Invalid agent model provided for variation "
-                        f"'{entry.get('name', index)}': {conversion_error}"
+                        f"Invalid agent model provided for variation "
+                        f"'{entry.get('name', index)}'. Please check the agent model data."
                     ),
                 ) from conversion_error
 

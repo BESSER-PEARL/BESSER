@@ -1,13 +1,10 @@
 import os
-import subprocess
-import sys
 from jinja2 import Environment, FileSystemLoader
-from besser.BUML.metamodel.gui import GUIModel, Module, Button, DataList, DataSourceElement
-from besser.BUML.metamodel.structural import DomainModel, PrimitiveDataType, Enumeration
+from besser.BUML.metamodel.gui import GUIModel
+from besser.BUML.metamodel.structural import DomainModel
 from besser.generators.backend import BackendGenerator
 from besser.generators.react import ReactGenerator
 from besser.generators import GeneratorInterface
-from besser.utilities import sort_by_timestamp
 
 ##############################
 #   Web Application Generator
@@ -59,16 +56,15 @@ class WebAppGenerator(GeneratorInterface):
         backend_dir = os.path.join(self.output_dir, "backend") if self.output_dir else "backend"
         backend_gen = BackendGenerator(self.model, output_dir=backend_dir)
         backend_gen.generate()
-    
+
     def _generate_agent(self, env):
         """Generate agent code if agent model is provided."""
         from besser.generators.agents.baf_generator import BAFGenerator
-        from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
-        
+
         # Generate agent code in 'agent' subfolder
         agent_dir = os.path.join(self.output_dir, "agent") if self.output_dir else "agent"
         os.makedirs(agent_dir, exist_ok=True)
-        
+
         # # Generate agent model file
         # agent_file = os.path.join(agent_dir, "agent_model.py")
         # agent_model_to_code(self.agent_model, agent_file)
@@ -80,7 +76,7 @@ class WebAppGenerator(GeneratorInterface):
     def _generate_docker_files(self, env):
         """
         Generates Docker-related files for deployment.
-        
+
         Args:
             env: The Jinja2 environment for template rendering.
         """
@@ -103,7 +99,7 @@ class WebAppGenerator(GeneratorInterface):
         os.makedirs(os.path.dirname(backend_dockerfile_path), exist_ok=True)
         with open(backend_dockerfile_path, 'w') as f:
             f.write(backend_dockerfile_template.render())
-        
+
         # Generate agent Dockerfile if agent model exists
         if self.agent_model:
             agent_dockerfile_template = env.get_template('agent.Dockerfile.j2')

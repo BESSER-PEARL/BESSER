@@ -1,9 +1,9 @@
 from abc import ABC
 from enum import Enum
 import json
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 
-from besser.BUML.metamodel.state_machine.state_machine import Action, Transition, Event, Condition, StateMachine, State, Session, TransitionBuilder
+from besser.BUML.metamodel.state_machine.state_machine import Action, Event, Condition, StateMachine, State, Session, TransitionBuilder
 from besser.BUML.metamodel.structural import NamedElement
 
 
@@ -262,7 +262,7 @@ class LLMIntentClassifierConfiguration(IntentClassifierConfiguration):
     def __init__(
             self,
             llm_suite: LLMSuite,
-            parameters: dict = {},
+            parameters: dict = None,
             use_intent_descriptions: bool = False,
             use_training_sentences: bool = False,
             use_entity_descriptions: bool = False,
@@ -270,7 +270,7 @@ class LLMIntentClassifierConfiguration(IntentClassifierConfiguration):
     ):
         super().__init__()
         self.llm_suite: str = llm_suite.value
-        self.parameters: dict = parameters
+        self.parameters: dict = parameters if parameters is not None else {}
         self.use_intent_descriptions: bool = use_intent_descriptions
         self.use_training_sentences: bool = use_training_sentences
         self.use_entity_descriptions: bool = use_entity_descriptions
@@ -332,7 +332,7 @@ class LLMWrapper(ABC):
             session (Session): the user session
             parameters (dict): the LLM parameters. If none is provided, the RAG's default value will be used
             system_message (str): system message to give high priority context to the LLM
-       
+
         Returns:
             str: the LLM output
         """
@@ -1168,8 +1168,8 @@ class AgentState(State):
     def go_to(self, dest: 'AgentState') -> None:
         """Create a new `auto` transition on this state.
 
-        This transition needs no event to be triggered, which means that when the agent moves to a state 
-        that has an `auto` transition, the agent will move to the transition's destination state 
+        This transition needs no event to be triggered, which means that when the agent moves to a state
+        that has an `auto` transition, the agent will move to the transition's destination state
         unconditionally without waiting for user input. This transition cannot be combined with other
         transitions.
 
@@ -1403,9 +1403,9 @@ class Agent(StateMachine):
         if new_state in self.states:
             raise ValueError(f"Duplicated state in agent ({new_state.name})")
         if initial and self.initial_state():
-            raise ValueError(f"A agent must have exactly 1 initial state")
+            raise ValueError("A agent must have exactly 1 initial state")
         if not initial and not self.states:
-            raise ValueError(f"The first state of a agent must be initial")
+            raise ValueError("The first state of a agent must be initial")
         self.states.append(new_state)
         return new_state
 

@@ -40,7 +40,7 @@ class ConfigProperty:
 
 class Action(ABC):
     """Base class for actions composing a Body.
-    
+
     Actions represent discrete operations that can be performed in a state body,
     enabling programmatic manipulation and model transformation.
     """
@@ -52,15 +52,15 @@ class Action(ABC):
 
 class CustomCodeAction(Action):
     """Arbitrary code action from a callable or raw source string.
-    
+
     Args:
         source (str, optional): Raw Python source code
         callable (Callable, optional): A callable whose source will be extracted
-        
+
     Attributes:
         source (str): The Python source code
     """
-    
+
     def __init__(self, source: str = None, callable: Callable = None):
         if callable is not None:
             src = inspect.getsource(callable)
@@ -134,13 +134,13 @@ class Body(Method):
             Body: Returns self for method chaining
         """
         self.actions.append(action)
-        
+
         # Update code: if new action is CustomCodeAction, set code to its code, otherwise set to ""
         if isinstance(action, CustomCodeAction):
             self.code = action.to_code()
         else:
             self.code = ""
-        
+
         return self
 
     def add_custom_code(self, source: str) -> 'Body':
@@ -180,9 +180,17 @@ class Condition(Method):
     """The representation of a condition (i.e., a boolean function) that may cause the transition of state
     in a state machine.
 
+    A Condition can be created from either a callable (whose source will be
+    extracted via ``inspect.getsource``) **or** a raw source-code string.
+    Providing a ``source`` string is useful when the condition originates from
+    serialised data (e.g. JSON round-trip through the web editor) where no
+    live callable is available.
+
     Args:
         name (str): The name of the condition.
-        callable (Callable): The function containing the condition's code.
+        callable (Callable, optional): The function containing the condition's code.
+        source (str, optional): Raw Python source code for the condition.
+            If both *callable* and *source* are given, *callable* takes precedence.
 
     Attributes:
         name (str): Inherited from Method, represents the name of the condition.
@@ -194,9 +202,11 @@ class Condition(Method):
         code (str): Inherited from Method, code of the condition.
     """
 
-    def __init__(self, name: str, callable: Callable):
+    def __init__(self, name: str, callable: Callable = None, source: str = None):
         if callable is not None:
             code = inspect.getsource(callable)
+        elif source is not None:
+            code = textwrap.dedent(source)
         else:
             code = None
         super().__init__(
@@ -311,7 +321,8 @@ class Transition(NamedElement):
         return not self.event and not self.conditions
 
     def __repr__(self):
-        return f"Transition(name='{self.name}', source='{self.source.name}', dest='{self.dest.name}', event='{self.event.name}', conditions='{[condition.name for condition in self.conditions]}')"
+        event_name = self.event.name if self.event else 'None'
+        return f"Transition(name='{self.name}', source='{self.source.name}', dest='{self.dest.name}', event='{event_name}', conditions='{[condition.name for condition in self.conditions]}')"
 
 
 class State(NamedElement):
@@ -455,9 +466,9 @@ class StateMachine(Model):
         if new_state in self.states:
             raise ValueError(f"Duplicated state in StateMachine ({new_state.name})")
         if initial and self.initial_state():
-            raise ValueError(f"A StateMachine must have exactly 1 initial state")
+            raise ValueError("A StateMachine must have exactly 1 initial state")
         if not initial and not self.states:
-            raise ValueError(f"The first state of a StateMachine must be initial")
+            raise ValueError("The first state of a StateMachine must be initial")
         self.states.append(new_state)
         return new_state
 
@@ -480,6 +491,23 @@ class StateMachine(Model):
         """
         for state in self.states:
             state.fallback_body = body
+
+    def validate(self, raise_exception: bool = True) -> dict:
+        """Validate the state machine according to structural constraints.
+
+        Args:
+            raise_exception (bool): If True, raise ValueError when validation fails.
+
+        Returns:
+            dict: Validation result with success flag, errors, and warnings.
+        """
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
+        if errors and raise_exception:
+            raise ValueError("\n".join(errors))
+        return result
 
     def __repr__(self):
         states_str = ', '.join([str(state) for state in self.states])

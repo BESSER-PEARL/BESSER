@@ -284,7 +284,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
         for arg in node.arguments:
             args_types.append(arg.accept(self, context))
 
-        struct_to_action_type = lambda x: ObjectType(x.type) if isinstance(x.type, Class) else base_classes[x.type.name]
+        def struct_to_action_type(x):
+            return ObjectType(x.type) if isinstance(x.type, Class) else base_classes[x.type.name]
 
         parameters = list(node.method.parameters)
         param_types = list(map(struct_to_action_type, parameters))
@@ -523,8 +524,8 @@ class BALTypeChecker(BALVisitor[TypeCheckingContext, Type]):
         return StringType()
 
     def visit_InstanceOf(self, node: InstanceOf, context: TypeCheckingContext) -> Type:
-        instance = node.instance.accept(self, context)
-        the_type = node.type.accept(self, context)
+        node.instance.accept(self, context)
+        node.type.accept(self, context)
         return BoolType()
 
     def visit_Reference(self, node: Reference, context: TypeCheckingContext) -> Type:

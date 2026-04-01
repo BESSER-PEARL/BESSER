@@ -24,14 +24,15 @@ method as follows:
 The configuration parameters for the `PytorchGenerator` are as follows:
 
 - **model**: The neural network model.
-- **output_dir**: The name of the output directory where the ``pytorch_nn_subclassing.py`` file will be generated.
+- **output_dir**: The name of the output directory where the ``pytorch_nn.py`` file will be generated.
 - **generation_type**: The type of NN architecture. Either ``subclassing`` or ``sequential``.
 
 
-The ``pytorch_nn_subclassing.py`` file will be generated inside ``output_folder`` and it will look as follows:
+The ``pytorch_nn.py`` file will be generated inside ``output_folder`` and it will look as follows:
 
 
 
-.. literalinclude:: ../../../tests/BUML/metamodel/nn/output/tutorial_example/pytorch_nn_subclassing.py
-   :language: python
-   :linenos:
+.. note::
+   The generated file ``pytorch_nn.py`` will contain a PyTorch ``nn.Module`` subclass
+   with the layers and forward method defined by your B-UML neural network model.
+   Run the generated script to train and evaluate the model.

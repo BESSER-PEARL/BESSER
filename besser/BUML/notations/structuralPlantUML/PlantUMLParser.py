@@ -1,7 +1,6 @@
 # Generated from ./PlantUML.g4 by ANTLR 4.13.1
 # encoding: utf-8
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
 	from typing import TextIO
@@ -116,26 +115,26 @@ class PlantUMLParser ( Parser ):
 
     sharedContextCache = PredictionContextCache()
 
-    literalNames = [ "<INVALID>", "'skinparam'", "'groupInheritance'", "'class'", 
-                     "'{'", "'}'", "'abstract'", "':'", "'--'", "'<'", "'>'", 
-                     "'o'", "'<|--'", "'--|>'", "'extends'", "'..'", "'('", 
-                     "','", "')'", "'='", "'enum'", "'#'", "'-'", "'~'", 
-                     "'+'", "'int'", "'float'", "'str'", "'string'", "'bool'", 
-                     "'time'", "'date'", "'datetime'", "'timedelta'", "'{static}'", 
-                     "'{abstract}'", "'@startuml'", "'@enduml'", "<INVALID>", 
-                     "<INVALID>", "<INVALID>", "'*'", "<INVALID>", "<INVALID>", 
+    literalNames = [ "<INVALID>", "'skinparam'", "'groupInheritance'", "'class'",
+                     "'{'", "'}'", "'abstract'", "':'", "'--'", "'<'", "'>'",
+                     "'o'", "'<|--'", "'--|>'", "'extends'", "'..'", "'('",
+                     "','", "')'", "'='", "'enum'", "'#'", "'-'", "'~'",
+                     "'+'", "'int'", "'float'", "'str'", "'string'", "'bool'",
+                     "'time'", "'date'", "'datetime'", "'timedelta'", "'{static}'",
+                     "'{abstract}'", "'@startuml'", "'@enduml'", "<INVALID>",
+                     "<INVALID>", "<INVALID>", "'*'", "<INVALID>", "<INVALID>",
                      "'\"'" ]
 
-    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "Start", "End", "ID", "INT", "FLOAT", "ASTK", "WS", 
+    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "Start", "End", "ID", "INT", "FLOAT", "ASTK", "WS",
                       "NL", "D_QUOTE" ]
 
     RULE_domainModel = 0
@@ -164,11 +163,11 @@ class PlantUMLParser ( Parser ):
     RULE_primitiveData = 23
     RULE_modifier = 24
 
-    ruleNames =  [ "domainModel", "element", "skinParam", "class", "abstract", 
-                   "relationship", "association", "bidirectional", "unidirectional", 
-                   "aggregation", "composition", "inheritance", "extends", 
-                   "cardinality", "cardinalityVal", "attribute", "method", 
-                   "parameter", "value", "dType", "enumeration", "enumLiteral", 
+    ruleNames =  [ "domainModel", "element", "skinParam", "class", "abstract",
+                   "relationship", "association", "bidirectional", "unidirectional",
+                   "aggregation", "composition", "inheritance", "extends",
+                   "cardinality", "cardinalityVal", "attribute", "method",
+                   "parameter", "value", "dType", "enumeration", "enumLiteral",
                    "visibility", "primitiveData", "modifier" ]
 
     EOF = Token.EOF
@@ -367,13 +366,13 @@ class PlantUMLParser ( Parser ):
             else:
                 raise NoViableAltException(self)
 
-            self.state = 67 
+            self.state = 67
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
                 self.state = 66
                 self.match(PlantUMLParser.NL)
-                self.state = 69 
+                self.state = 69
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==43):

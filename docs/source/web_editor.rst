@@ -25,6 +25,18 @@ The frontend is vendored into this repository as a git submodule at
 ``besser/utilities/web_modeling_editor/frontend``, while the backend services live here under
 ``besser/utilities/web_modeling_editor/backend``.
 
+Backend API Reference
+---------------------
+
+The backend services that power code generation, validation, and deployment are
+documented separately. If you are integrating with the backend API or extending it,
+see:
+
+.. toctree::
+   :maxdepth: 1
+
+   web_editor_backend
+
 .. note::
    The BESSER Web Modeling Editor is based on a fork of the
    `Apollon project <https://apollon-library.readthedocs.io/en/latest/>`_, a UML modeling editor.

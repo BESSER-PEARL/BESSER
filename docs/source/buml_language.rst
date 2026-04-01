@@ -15,7 +15,7 @@ With B-UML, you can design various types of models using its diverse sublanguage
 * :doc:`../buml_language/model_types/state_machine`
 * :doc:`../buml_language/model_types/agent`
 
-BESSER currently offers five ways to specify your models with B-UML. However, not all model types support all three forms.
+BESSER currently offers five ways to specify your models with B-UML. However, not all model types support all five forms.
 
 * Build the model coding in Python Using the B-UML python library
 * Define the model via textual notation using one of our grammars
@@ -47,3 +47,4 @@ Contents
 
    buml_language/model_types
    buml_language/model_building
+   besser_action_language

@@ -1,7 +1,6 @@
 # Generated from ./BOCL.g4 by ANTLR 4.13.1
 # encoding: utf-8
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
 	from typing import TextIO
@@ -490,40 +489,40 @@ class BOCLParser ( Parser ):
 
     sharedContextCache = PredictionContextCache()
 
-    literalNames = [ "<INVALID>", "'*'", "'now'", "'today'", "'addDays'", 
-                     "'context'", "'init'", "'inv'", "'pre'", "'post'", 
-                     "'self'", "'forAll'", "'exists'", "'select'", "'reject'", 
-                     "'collect'", "'OclAny'", "'OclVoid'", "<INVALID>", 
-                     "<INVALID>", "'..'", "'::'", "'('", "')'", "'{'", "'}'", 
-                     "';'", "':'", "','", "'.'", "'='", "'''", "'Boolean'", 
-                     "'Integer'", "'Real'", "<INVALID>", "'if'", "'then'", 
-                     "'else'", "'endif'", "'and'", "'or'", "'not'", "'<>'", 
-                     "'<'", "'<='", "'>'", "'>='", "'|'", "<INVALID>", "'Bag'", 
-                     "'Sequence'", "'OrderedSet'", "'-'", "'+'", "'/'", 
-                     "' '", "'xor'", "'implies'", "'oclAsType'", "'oclIsTypeOf'", 
-                     "'oclIsKindOf'", "'allInstances'", "'isEmpty'", "'sum'", 
-                     "'size'", "'includes'", "'excludes'", "'subSequence'", 
-                     "'subOrderedSet'", "'prepend'", "'last'", "'append'", 
-                     "'symmetricDifference'", "'first'", "'derive'", "'body'", 
-                     "'union'", "'null'", "'let'", "'in'", "<INVALID>", 
+    literalNames = [ "<INVALID>", "'*'", "'now'", "'today'", "'addDays'",
+                     "'context'", "'init'", "'inv'", "'pre'", "'post'",
+                     "'self'", "'forAll'", "'exists'", "'select'", "'reject'",
+                     "'collect'", "'OclAny'", "'OclVoid'", "<INVALID>",
+                     "<INVALID>", "'..'", "'::'", "'('", "')'", "'{'", "'}'",
+                     "';'", "':'", "','", "'.'", "'='", "'''", "'Boolean'",
+                     "'Integer'", "'Real'", "<INVALID>", "'if'", "'then'",
+                     "'else'", "'endif'", "'and'", "'or'", "'not'", "'<>'",
+                     "'<'", "'<='", "'>'", "'>='", "'|'", "<INVALID>", "'Bag'",
+                     "'Sequence'", "'OrderedSet'", "'-'", "'+'", "'/'",
+                     "' '", "'xor'", "'implies'", "'oclAsType'", "'oclIsTypeOf'",
+                     "'oclIsKindOf'", "'allInstances'", "'isEmpty'", "'sum'",
+                     "'size'", "'includes'", "'excludes'", "'subSequence'",
+                     "'subOrderedSet'", "'prepend'", "'last'", "'append'",
+                     "'symmetricDifference'", "'first'", "'derive'", "'body'",
+                     "'union'", "'null'", "'let'", "'in'", "<INVALID>",
                      "'def'" ]
 
-    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "CONTEXT", "INIT", "INV", "PRE", "POST", 
-                      "SELF", "FORALL", "EXISTS", "SELECT", "REJECT", "COLLECT", 
-                      "OCLANY", "OCLVOID", "DATE", "WS", "DoubleDots", "DoubleCOLON", 
-                      "LPAREN", "RPAREN", "LBRACE", "RBRACE", "SEMI", "COLON", 
-                      "COMMA", "DOT", "EQUAL", "SingleQuote", "BOOLEAN_TYPE", 
-                      "INTEGER_TYPE", "REAL_TYPE", "STRING_TYPE", "IF", 
-                      "THEN", "ELSE", "ENDIF", "AND", "OR", "NOT", "NOTEQUAL", 
-                      "LT", "LE", "GT", "GE", "PIPE", "SET", "BAG", "SEQUENCE", 
-                      "ORDEREDSET", "MINUS", "PLUS", "Divide", "EMPTYSTRING", 
-                      "XOR", "IMPLIES", "OCLASTYPE", "OCLISTYPEOF", "OCLISKINDOF", 
-                      "ALLINSTANCES", "ISEMPTY", "SUM", "SIZE", "INCLUDES", 
-                      "EXCLUDES", "SUBSEQUENCE", "SUBORDEREDSET", "PREPEND", 
-                      "LAST", "APPEND", "SYMMETRICDIFFERENCE", "FIRST", 
-                      "DERIVE", "BODY", "UNION", "NULL", "LET", "IN", "Arrow", 
-                      "Def", "ID", "NUMBER", "STRING_LITERAL", "BOOLEAN_LITERAL", 
+    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "CONTEXT", "INIT", "INV", "PRE", "POST",
+                      "SELF", "FORALL", "EXISTS", "SELECT", "REJECT", "COLLECT",
+                      "OCLANY", "OCLVOID", "DATE", "WS", "DoubleDots", "DoubleCOLON",
+                      "LPAREN", "RPAREN", "LBRACE", "RBRACE", "SEMI", "COLON",
+                      "COMMA", "DOT", "EQUAL", "SingleQuote", "BOOLEAN_TYPE",
+                      "INTEGER_TYPE", "REAL_TYPE", "STRING_TYPE", "IF",
+                      "THEN", "ELSE", "ENDIF", "AND", "OR", "NOT", "NOTEQUAL",
+                      "LT", "LE", "GT", "GE", "PIPE", "SET", "BAG", "SEQUENCE",
+                      "ORDEREDSET", "MINUS", "PLUS", "Divide", "EMPTYSTRING",
+                      "XOR", "IMPLIES", "OCLASTYPE", "OCLISTYPEOF", "OCLISKINDOF",
+                      "ALLINSTANCES", "ISEMPTY", "SUM", "SIZE", "INCLUDES",
+                      "EXCLUDES", "SUBSEQUENCE", "SUBORDEREDSET", "PREPEND",
+                      "LAST", "APPEND", "SYMMETRICDIFFERENCE", "FIRST",
+                      "DERIVE", "BODY", "UNION", "NULL", "LET", "IN", "Arrow",
+                      "Def", "ID", "NUMBER", "STRING_LITERAL", "BOOLEAN_LITERAL",
                       "COMMENT", "LINE_COMMENT" ]
 
     RULE_oclFile = 0
@@ -547,11 +546,11 @@ class BOCLParser ( Parser ):
     RULE_literal = 18
     RULE_dateLiteral = 19
 
-    ruleNames =  [ "oclFile", "preCondition", "postCondition", "initConstraints", 
-                   "contextDeclaration", "constraint", "functionCall", "type", 
-                   "collectionType", "userDefinedType", "expression", "endExpression", 
-                   "binaryFunctionCall", "binaryExpression", "unaryExpression", 
-                   "operator", "numberORUserDefined", "primaryExpression", 
+    ruleNames =  [ "oclFile", "preCondition", "postCondition", "initConstraints",
+                   "contextDeclaration", "constraint", "functionCall", "type",
+                   "collectionType", "userDefinedType", "expression", "endExpression",
+                   "binaryFunctionCall", "binaryExpression", "unaryExpression",
+                   "operator", "numberORUserDefined", "primaryExpression",
                    "literal", "dateLiteral" ]
 
     EOF = Token.EOF
@@ -1253,7 +1252,7 @@ class BOCLParser ( Parser ):
         def getRuleIndex(self):
             return BOCLParser.RULE_contextDeclaration
 
-     
+
         def copyFrom(self, ctx:ParserRuleContext):
             super().copyFrom(ctx)
 
@@ -1364,7 +1363,7 @@ class BOCLParser ( Parser ):
             while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                 if _alt==1:
                     self.state = 140
-                    self.constraint() 
+                    self.constraint()
                 self.state = 145
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,15,self._ctx)
@@ -2023,7 +2022,7 @@ class BOCLParser ( Parser ):
         def getRuleIndex(self):
             return BOCLParser.RULE_expression
 
-     
+
         def copyFrom(self, ctx:ParserRuleContext):
             super().copyFrom(ctx)
 
@@ -3610,7 +3609,7 @@ class BOCLParser ( Parser ):
                         self.state = 290
                         self.match(BOCLParser.DOT)
                         self.state = 291
-                        self.match(BOCLParser.ID) 
+                        self.match(BOCLParser.ID)
                     self.state = 296
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,44,self._ctx)
@@ -3648,7 +3647,7 @@ class BOCLParser ( Parser ):
                         self.state = 306
                         self.match(BOCLParser.DOT)
                         self.state = 307
-                        self.match(BOCLParser.ID) 
+                        self.match(BOCLParser.ID)
                     self.state = 312
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,46,self._ctx)
@@ -3686,7 +3685,7 @@ class BOCLParser ( Parser ):
                         self.state = 322
                         self.match(BOCLParser.DOT)
                         self.state = 323
-                        self.match(BOCLParser.ID) 
+                        self.match(BOCLParser.ID)
                     self.state = 328
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,48,self._ctx)
@@ -3756,7 +3755,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 354
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 359
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,53,self._ctx)
@@ -3816,7 +3815,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 380
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 385
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,58,self._ctx)
@@ -3842,7 +3841,7 @@ class BOCLParser ( Parser ):
                         self.state = 389
                         self.match(BOCLParser.DOT)
                         self.state = 390
-                        self.match(BOCLParser.ID) 
+                        self.match(BOCLParser.ID)
                     self.state = 395
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,60,self._ctx)
@@ -3882,7 +3881,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 406
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 411
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,63,self._ctx)
@@ -3922,7 +3921,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 422
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 427
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,66,self._ctx)
@@ -3962,7 +3961,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 438
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 443
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,69,self._ctx)
@@ -4008,7 +4007,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 460
-                        self.match(BOCLParser.LPAREN) 
+                        self.match(BOCLParser.LPAREN)
                     self.state = 465
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,73,self._ctx)
@@ -4043,7 +4042,7 @@ class BOCLParser ( Parser ):
                             self.state = 473
                             self.match(BOCLParser.COMMA)
 
-                 
+
                     self.state = 480
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,77,self._ctx)
@@ -4054,7 +4053,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 481
-                        self.match(BOCLParser.RBRACE) 
+                        self.match(BOCLParser.RBRACE)
                     self.state = 486
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,78,self._ctx)
@@ -4065,7 +4064,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 487
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 492
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,79,self._ctx)
@@ -4119,7 +4118,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 512
-                        self.match(BOCLParser.LPAREN) 
+                        self.match(BOCLParser.LPAREN)
                     self.state = 517
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,84,self._ctx)
@@ -4154,7 +4153,7 @@ class BOCLParser ( Parser ):
                             self.state = 525
                             self.match(BOCLParser.COMMA)
 
-                 
+
                     self.state = 532
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,88,self._ctx)
@@ -4165,7 +4164,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 533
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 538
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,89,self._ctx)
@@ -4176,7 +4175,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 539
-                        self.match(BOCLParser.RBRACE) 
+                        self.match(BOCLParser.RBRACE)
                     self.state = 544
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,90,self._ctx)
@@ -4204,7 +4203,7 @@ class BOCLParser ( Parser ):
 
                 self.state = 551
                 self.match(BOCLParser.ALLINSTANCES)
-                self.state = 553 
+                self.state = 553
                 self._errHandler.sync(self)
                 _alt = 1
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -4214,7 +4213,7 @@ class BOCLParser ( Parser ):
 
                     else:
                         raise NoViableAltException(self)
-                    self.state = 555 
+                    self.state = 555
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,93,self._ctx)
 
@@ -4226,7 +4225,7 @@ class BOCLParser ( Parser ):
                     self.expression()
 
 
-                self.state = 561 
+                self.state = 561
                 self._errHandler.sync(self)
                 _alt = 1
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -4236,7 +4235,7 @@ class BOCLParser ( Parser ):
 
                     else:
                         raise NoViableAltException(self)
-                    self.state = 563 
+                    self.state = 563
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,95,self._ctx)
 
@@ -4317,7 +4316,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 595
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 600
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,103,self._ctx)
@@ -4371,7 +4370,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 620
-                        self.match(BOCLParser.LPAREN) 
+                        self.match(BOCLParser.LPAREN)
                     self.state = 625
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,108,self._ctx)
@@ -4406,7 +4405,7 @@ class BOCLParser ( Parser ):
                             self.state = 633
                             self.match(BOCLParser.COMMA)
 
-                 
+
                     self.state = 640
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,112,self._ctx)
@@ -4427,7 +4426,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 647
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 652
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,114,self._ctx)
@@ -4473,7 +4472,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 667
-                        self.match(BOCLParser.LPAREN) 
+                        self.match(BOCLParser.LPAREN)
                     self.state = 672
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,118,self._ctx)
@@ -4518,7 +4517,7 @@ class BOCLParser ( Parser ):
                             self.state = 686
                             self.match(BOCLParser.COMMA)
 
-                 
+
                     self.state = 693
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,123,self._ctx)
@@ -4529,7 +4528,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 694
-                        self.match(BOCLParser.RBRACE) 
+                        self.match(BOCLParser.RBRACE)
                     self.state = 699
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,124,self._ctx)
@@ -4540,7 +4539,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 700
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 705
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,125,self._ctx)
@@ -4584,7 +4583,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 719
-                        self.match(BOCLParser.LPAREN) 
+                        self.match(BOCLParser.LPAREN)
                     self.state = 724
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,129,self._ctx)
@@ -4629,7 +4628,7 @@ class BOCLParser ( Parser ):
                             self.state = 738
                             self.match(BOCLParser.COMMA)
 
-                 
+
                     self.state = 745
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,134,self._ctx)
@@ -4640,7 +4639,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 746
-                        self.match(BOCLParser.RBRACE) 
+                        self.match(BOCLParser.RBRACE)
                     self.state = 751
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,135,self._ctx)
@@ -4651,7 +4650,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 752
-                        self.match(BOCLParser.RPAREN) 
+                        self.match(BOCLParser.RPAREN)
                     self.state = 757
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,136,self._ctx)
@@ -4673,7 +4672,7 @@ class BOCLParser ( Parser ):
                 self.match(BOCLParser.Arrow)
                 self.state = 762
                 self.match(BOCLParser.PREPEND)
-                self.state = 764 
+                self.state = 764
                 self._errHandler.sync(self)
                 _alt = 1
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -4683,7 +4682,7 @@ class BOCLParser ( Parser ):
 
                     else:
                         raise NoViableAltException(self)
-                    self.state = 766 
+                    self.state = 766
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,138,self._ctx)
 
@@ -4721,7 +4720,7 @@ class BOCLParser ( Parser ):
                     self._errHandler.sync(self)
                     _la = self._input.LA(1)
 
-                self.state = 784 
+                self.state = 784
                 self._errHandler.sync(self)
                 _alt = 1
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -4731,7 +4730,7 @@ class BOCLParser ( Parser ):
 
                     else:
                         raise NoViableAltException(self)
-                    self.state = 786 
+                    self.state = 786
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,143,self._ctx)
 
@@ -4754,7 +4753,7 @@ class BOCLParser ( Parser ):
                 self.match(BOCLParser.LAST)
                 self.state = 793
                 self.match(BOCLParser.LPAREN)
-                self.state = 795 
+                self.state = 795
                 self._errHandler.sync(self)
                 _alt = 1
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -4764,7 +4763,7 @@ class BOCLParser ( Parser ):
 
                     else:
                         raise NoViableAltException(self)
-                    self.state = 797 
+                    self.state = 797
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,145,self._ctx)
 
@@ -4821,7 +4820,7 @@ class BOCLParser ( Parser ):
                     self._errHandler.sync(self)
                     _la = self._input.LA(1)
 
-                self.state = 821 
+                self.state = 821
                 self._errHandler.sync(self)
                 _alt = 1
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -4831,7 +4830,7 @@ class BOCLParser ( Parser ):
 
                     else:
                         raise NoViableAltException(self)
-                    self.state = 823 
+                    self.state = 823
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,151,self._ctx)
 
@@ -4865,7 +4864,7 @@ class BOCLParser ( Parser ):
                     self.consume()
                 self.state = 832
                 self.match(BOCLParser.LPAREN)
-                self.state = 841 
+                self.state = 841
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 while True:
@@ -4889,7 +4888,7 @@ class BOCLParser ( Parser ):
                         self.match(BOCLParser.COMMA)
 
 
-                    self.state = 843 
+                    self.state = 843
                     self._errHandler.sync(self)
                     _la = self._input.LA(1)
                     if not (_la==83):
@@ -4956,7 +4955,7 @@ class BOCLParser ( Parser ):
                 self.match(BOCLParser.LPAREN)
                 self.state = 864
                 self.expression()
-                self.state = 866 
+                self.state = 866
                 self._errHandler.sync(self)
                 _alt = 1
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -4966,7 +4965,7 @@ class BOCLParser ( Parser ):
 
                     else:
                         raise NoViableAltException(self)
-                    self.state = 868 
+                    self.state = 868
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,160,self._ctx)
 
@@ -5080,7 +5079,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 903
-                        self.match(BOCLParser.LPAREN) 
+                        self.match(BOCLParser.LPAREN)
                     self.state = 908
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,165,self._ctx)
@@ -5101,7 +5100,7 @@ class BOCLParser ( Parser ):
                         self.state = 912
                         self.match(BOCLParser.DOT)
                         self.state = 913
-                        self.match(BOCLParser.ID) 
+                        self.match(BOCLParser.ID)
                     self.state = 918
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,167,self._ctx)
@@ -5122,7 +5121,7 @@ class BOCLParser ( Parser ):
                     self.primaryExpression()
 
 
-                self.state = 927 
+                self.state = 927
                 self._errHandler.sync(self)
                 _alt = 1
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
@@ -5134,7 +5133,7 @@ class BOCLParser ( Parser ):
 
                     else:
                         raise NoViableAltException(self)
-                    self.state = 929 
+                    self.state = 929
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,170,self._ctx)
 
@@ -5169,7 +5168,7 @@ class BOCLParser ( Parser ):
                 while _alt!=2 and _alt!=ATN.INVALID_ALT_NUMBER:
                     if _alt==1:
                         self.state = 941
-                        self.match(BOCLParser.ID) 
+                        self.match(BOCLParser.ID)
                     self.state = 946
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,173,self._ctx)
@@ -5486,7 +5485,7 @@ class BOCLParser ( Parser ):
                         self.state = 1009
                         self.match(BOCLParser.DOT)
                         self.state = 1010
-                        self.match(BOCLParser.ID) 
+                        self.match(BOCLParser.ID)
                     self.state = 1015
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,189,self._ctx)
@@ -5589,7 +5588,7 @@ class BOCLParser ( Parser ):
                         self.state = 1020
                         self.match(BOCLParser.DOT)
                         self.state = 1021
-                        self.match(BOCLParser.ID) 
+                        self.match(BOCLParser.ID)
                     self.state = 1026
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,191,self._ctx)
@@ -5644,7 +5643,7 @@ class BOCLParser ( Parser ):
                         self.state = 1044
                         self.match(BOCLParser.DOT)
                         self.state = 1045
-                        self.match(BOCLParser.ID) 
+                        self.match(BOCLParser.ID)
                     self.state = 1050
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,194,self._ctx)

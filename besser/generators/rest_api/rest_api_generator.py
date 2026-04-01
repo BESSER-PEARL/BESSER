@@ -5,7 +5,6 @@ from besser.BUML.notations.action_language.ActionLanguageASTBuilder import parse
 from besser.generators import GeneratorInterface
 from besser.generators.structural_utils import get_foreign_keys
 from besser.generators.action_language.RESTGenerator import bal_to_rest
-from besser.generators.structural_utils import get_foreign_keys
 from besser.generators.pydantic_classes import PydanticGenerator
 
 class RESTAPIGenerator(GeneratorInterface):
@@ -21,8 +20,8 @@ class RESTAPIGenerator(GeneratorInterface):
                          Each element should be one of "GET", "POST", "PUT","PATCH","DELETE". This allows generating
                          only the parts of the API that are needed.
         backend (bool, optional): A boolean flag indicating whether the generator should generate code for a backend API.
-        nested_creations (bool, optional): This parameter determines how entities are linked in the API request. 
-                                            If set to True, both nested creations and linking by the ID of the entity 
+        nested_creations (bool, optional): This parameter determines how entities are linked in the API request.
+                                            If set to True, both nested creations and linking by the ID of the entity
                                             are enabled. If set to False, only the ID of the linked entity will be used.
                                             The default value is False.
         output_dir (str, optional): The output directory where the generated code will be saved. Defaults to None.
@@ -55,7 +54,7 @@ class RESTAPIGenerator(GeneratorInterface):
             "sqlalchemy>=2.0.0",
             "python-multipart>=0.0.6"
         ]
-        
+
         file_path = self.build_generation_path(file_name="requirements.txt")
         with open(file_path, "w") as f:
             f.write("\n".join(requirements))
@@ -105,7 +104,7 @@ class RESTAPIGenerator(GeneratorInterface):
         else:
             pydantic_model = PydanticGenerator(model=self.model, backend=self.backend, nested_creations=self.nested_creations, output_dir=self.output_dir)
             pydantic_model.generate()
-            
+
             file_path = self.build_generation_path(file_name="rest_api.py")
             templates_path = os.path.join(os.path.dirname(
             os.path.abspath(__file__)), "templates")

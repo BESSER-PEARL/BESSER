@@ -8,7 +8,7 @@ import logging
 import re
 
 from besser.BUML.metamodel.state_machine.state_machine import (
-    StateMachine, State, Body, Event, Transition, Condition, CustomCodeAction,
+    StateMachine, Body, Event, Condition, CustomCodeAction,
 )
 from besser.BUML.metamodel.structural import Metadata
 from besser.utilities.web_modeling_editor.backend.services.exceptions import ConversionError

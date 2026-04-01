@@ -36,7 +36,7 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
 CMD ["uvicorn", "main_api:app", "--host", "0.0.0.0", "--port", "8000"]
 '''
         )
-    
+
     # Generate requirements.txt
     with open(path + '/requirements.txt', 'w') as requirements:
         requirements.write('''fastapi==0.135.1
@@ -47,7 +47,7 @@ httpx==0.28.1
 requests==2.32.3
 '''
         )
-    
+
     # Generate .dockerignore for smaller build context
     with open(path + '/.dockerignore', 'w') as dockerignore:
         dockerignore.write('''__pycache__
@@ -123,7 +123,7 @@ def main():
         stream=True,
         decode=True,
     )
-    
+
     for line in resp:
         print(line)
 

@@ -9,21 +9,8 @@ import re
 from besser.BUML.metamodel.state_machine.state_machine import (
     StateMachine, CustomCodeAction,
 )
+from besser.utilities.buml_code_builder.common import _escape_python_string
 
-
-def _escape_python_string(value: str) -> str:
-    """Escape a string for safe interpolation into generated Python source code.
-
-    Prevents code injection when user-controlled values (names, labels, etc.)
-    are embedded inside string literals in generated Python files that may
-    later be executed with ``exec()``.
-    """
-    return (value
-            .replace('\\', '\\\\')
-            .replace("'", "\\'")
-            .replace('"', '\\"')
-            .replace('\n', '\\n')
-            .replace('\r', '\\r'))
 
 def _sanitize_identifier(name: str) -> str:
     """Sanitize a string to be a valid Python identifier."""
@@ -107,7 +94,7 @@ def state_machine_to_code(model: StateMachine, file_path: str = None,
             code_lines.append(cleaned_code)
             code_lines.append("")
             written_code_blocks.add(name)
-            code_lines.append(f"{safe_name} = Event(name='{_escape_python_string(name)}')")
+            code_lines.append(f"{safe_name} = Event(name='{_escape_python_string(name)}', callable={safe_name})")
         else:
             code_lines.append(f"{safe_name} = Event(name='{_escape_python_string(name)}')")
         code_lines.append("")

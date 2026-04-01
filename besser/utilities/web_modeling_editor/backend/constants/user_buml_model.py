@@ -3,12 +3,9 @@
 ####################
 
 from besser.BUML.metamodel.structural import (
-    Class, Property, Method, Parameter,
-    BinaryAssociation, Generalization, DomainModel,
+    Class, Property, BinaryAssociation, Generalization, DomainModel,
     Enumeration, EnumerationLiteral, Multiplicity,
-    StringType, IntegerType, FloatType, BooleanType,
-    TimeType, DateType, DateTimeType, TimeDeltaType,
-    AnyType, Constraint, AssociationClass, Metadata
+    StringType, IntegerType, DateTimeType, Metadata
 )
 
 # Enumerations

@@ -40,7 +40,7 @@ class ConfigProperty:
 
 class Action(ABC):
     """Base class for actions composing a Body.
-    
+
     Actions represent discrete operations that can be performed in a state body,
     enabling programmatic manipulation and model transformation.
     """
@@ -52,15 +52,15 @@ class Action(ABC):
 
 class CustomCodeAction(Action):
     """Arbitrary code action from a callable or raw source string.
-    
+
     Args:
         source (str, optional): Raw Python source code
         callable (Callable, optional): A callable whose source will be extracted
-        
+
     Attributes:
         source (str): The Python source code
     """
-    
+
     def __init__(self, source: str = None, callable: Callable = None):
         if callable is not None:
             src = inspect.getsource(callable)
@@ -134,13 +134,13 @@ class Body(Method):
             Body: Returns self for method chaining
         """
         self.actions.append(action)
-        
+
         # Update code: if new action is CustomCodeAction, set code to its code, otherwise set to ""
         if isinstance(action, CustomCodeAction):
             self.code = action.to_code()
         else:
             self.code = ""
-        
+
         return self
 
     def add_custom_code(self, source: str) -> 'Body':
@@ -321,7 +321,8 @@ class Transition(NamedElement):
         return not self.event and not self.conditions
 
     def __repr__(self):
-        return f"Transition(name='{self.name}', source='{self.source.name}', dest='{self.dest.name}', event='{self.event.name}', conditions='{[condition.name for condition in self.conditions]}')"
+        event_name = self.event.name if self.event else 'None'
+        return f"Transition(name='{self.name}', source='{self.source.name}', dest='{self.dest.name}', event='{event_name}', conditions='{[condition.name for condition in self.conditions]}')"
 
 
 class State(NamedElement):
@@ -465,9 +466,9 @@ class StateMachine(Model):
         if new_state in self.states:
             raise ValueError(f"Duplicated state in StateMachine ({new_state.name})")
         if initial and self.initial_state():
-            raise ValueError(f"A StateMachine must have exactly 1 initial state")
+            raise ValueError("A StateMachine must have exactly 1 initial state")
         if not initial and not self.states:
-            raise ValueError(f"The first state of a StateMachine must be initial")
+            raise ValueError("The first state of a StateMachine must be initial")
         self.states.append(new_state)
         return new_state
 

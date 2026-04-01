@@ -1,1 +1,1 @@
-from .qiskit_generator import QiskitGenerator
+from .qiskit_generator import QiskitGenerator as QiskitGenerator

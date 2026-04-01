@@ -63,7 +63,7 @@ def image_to_plantuml(image_path: str, openai_token: str, openai_model: str = "g
 
     # Extract the chunk
     plant_uml_chunk = message[start_position:end_position + len("@enduml")]
-    # 
+    #
     return plant_uml_chunk
 
 
@@ -81,7 +81,7 @@ def image_to_buml(image_path: str, openai_token: str, openai_model: str = "gpt-4
     plant_uml_chunk = image_to_plantuml(image_path=image_path, openai_token=openai_token, openai_model=openai_model)
     # Create and write to the file
     with open("image.txt", "w") as file:
-        file.write(plant_uml_chunk)    
+        file.write(plant_uml_chunk)
     domain = plantuml_to_buml(plantUML_model_path="image.txt", buml_file_path="buml_model_from_image")
     os.remove("image.txt")
     return domain

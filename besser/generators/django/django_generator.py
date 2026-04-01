@@ -48,6 +48,12 @@ class DjangoGenerator(GeneratorInterface):
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
         self.env = Environment(loader=FileSystemLoader(templates_path), trim_blocks=True,
                                lstrip_blocks=True, extensions=['jinja2.ext.do'])
+        # Register custom Jinja2 tests once for all methods
+        self.env.tests['is_Button'] = self.is_button
+        self.env.tests['is_List'] = self.is_list
+        self.env.tests['is_ModelElement'] = self.is_model_element
+        self.env.tests['is_primitive_data_type'] = self.is_primitive_data_type
+        self.env.tests['is_enumeration'] = self.is_enumeration
 
     @property
     def gui_model(self) -> GUIModel:
@@ -142,12 +148,8 @@ class DjangoGenerator(GeneratorInterface):
                     self.many_to_many[association.name] = ends[0].type.name
 
         file_path = os.path.join(self.project_name, self.app_name, "models.py")
-        templates_path = os.path.join(os.path.dirname(
-            os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('models.py.j2')
+        template = self.env.get_template('models.py.j2')
 
-        env.tests['is_primitive_data_type'] = self.is_primitive_data_type
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(model=self.model,
                                             sort_by_timestamp=sort_by_timestamp,
@@ -171,12 +173,7 @@ class DjangoGenerator(GeneratorInterface):
         """
 
         file_path = os.path.join(self.project_name, self.app_name, "urls.py")
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('urls.py.j2')
-        env.tests['is_Button'] = self.is_button
-        env.tests['is_List'] = self.is_list
-        env.tests['is_ModelElement'] = self.is_model_element
+        template = self.env.get_template('urls.py.j2')
 
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
@@ -221,13 +218,7 @@ class DjangoGenerator(GeneratorInterface):
         """
 
         file_path = os.path.join(self.project_name, self.app_name, "forms.py")
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('forms.py.j2')
-        env.tests['is_Button'] = self.is_button
-        env.tests['is_List'] = self.is_list
-        env.tests['is_ModelElement'] = self.is_model_element
-        env.tests['is_enumeration'] = self.is_enumeration
+        template = self.env.get_template('forms.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
             self.module = next(iter(self.gui_model.modules))
@@ -277,12 +268,7 @@ class DjangoGenerator(GeneratorInterface):
             None, but stores the generated code as a file named views.py.
         """
         file_path = os.path.join(self.project_name, self.app_name, "views.py")
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('views.py.j2')
-        env.tests['is_Button'] = self.is_button
-        env.tests['is_List'] = self.is_list
-        env.tests['is_ModelElement'] = self.is_model_element
+        template = self.env.get_template('views.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
             self.module = next(iter(self.gui_model.modules))
@@ -330,12 +316,7 @@ class DjangoGenerator(GeneratorInterface):
         # Customize the output directory here
         self.output_dir = os.path.join(os.getcwd(), self.project_name, self.app_name, "templates")
         file_path = self.build_generation_path(file_name="home.html")
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('home_page.py.j2')
-        env.tests['is_Button'] = self.is_button
-        env.tests['is_List'] = self.is_list
-        env.tests['is_ModelElement'] = self.is_model_element
+        template = self.env.get_template('home_page.py.j2')
         if self.module is None:
             # User did not specify a module, so select the first module from the set of modules
             self.module = next(iter(self.gui_model.modules))
@@ -373,14 +354,8 @@ class DjangoGenerator(GeneratorInterface):
         # Customize the output directory here
         self.output_dir = os.path.join(os.getcwd(), self.project_name, self.app_name, "templates")
 
-
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
         # Load the Jinja template
-        template = env.get_template('basePageFile.py.j2')
-        env.tests['is_Button'] = self.is_button
-        env.tests['is_List'] = self.is_list
-        env.tests['is_ModelElement'] = self.is_model_element
+        template = self.env.get_template('basePageFile.py.j2')
 
         # Select the first module if none was specified
         if self.module is None:
@@ -424,14 +399,8 @@ class DjangoGenerator(GeneratorInterface):
         # Customize the output directory here
         self.output_dir = os.path.join(os.getcwd(), self.project_name, self.app_name, "templates")
 
-
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
         # Load the Jinja template
-        template = env.get_template('list_page.py.j2')
-        env.tests['is_Button'] = self.is_button
-        env.tests['is_List'] = self.is_list
-        env.tests['is_ModelElement'] = self.is_model_element
+        template = self.env.get_template('list_page.py.j2')
 
         # Select the first module if none was specified
         if self.module is None:
@@ -482,13 +451,8 @@ class DjangoGenerator(GeneratorInterface):
         # Customize the output directory here
         self.output_dir = os.path.join(os.getcwd(), self.project_name, self.app_name, "templates")
 
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
         # Load the Jinja template
-        template = env.get_template('form_page.py.j2')
-        env.tests['is_Button'] = self.is_button
-        env.tests['is_List'] = self.is_list
-        env.tests['is_ModelElement'] = self.is_model_element
+        template = self.env.get_template('form_page.py.j2')
 
         # Select the first module if none was specified
         if self.module is None:
@@ -543,9 +507,7 @@ class DjangoGenerator(GeneratorInterface):
         self.output_dir = os.path.join(os.getcwd(), self.project_name, self.project_name)
 
         file_path = self.build_generation_path(file_name="urls.py")
-        templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
-        env = Environment(loader=FileSystemLoader(templates_path))
-        template = env.get_template('project_urls.py.j2')
+        template = self.env.get_template('project_urls.py.j2')
 
         with open(file_path, mode="w", encoding="utf-8") as f:
             generated_code = template.render(app=self.app_name)

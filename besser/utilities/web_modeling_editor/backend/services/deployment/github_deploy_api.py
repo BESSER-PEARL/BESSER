@@ -117,10 +117,20 @@ async def deploy_webapp_to_github(
         # Sanitize repo name
         repo_name = _sanitize_repo_name(repo_name)
 
-        # Extract diagrams
+        # Extract diagrams — supports both multi-diagram (list) and legacy (dict) format
         diagrams = body.get("diagrams", {})
-        class_diagram_data = diagrams.get("ClassDiagram", {})
-        gui_diagram_data = diagrams.get("GUINoCodeDiagram", {})
+        current_indices = body.get("currentDiagramIndices", {})
+
+        def _get_active(diagram_type: str):
+            """Return the active diagram dict for the given type, handling list or dict."""
+            value = diagrams.get(diagram_type)
+            if isinstance(value, list):
+                idx = current_indices.get(diagram_type, 0)
+                return value[idx] if 0 <= idx < len(value) else (value[0] if value else {})
+            return value or {}
+
+        class_diagram_data = _get_active("ClassDiagram")
+        gui_diagram_data = _get_active("GUINoCodeDiagram")
 
         if not class_diagram_data or not class_diagram_data.get("model"):
             raise HTTPException(
@@ -145,7 +155,7 @@ async def deploy_webapp_to_github(
         # Check for agent diagram — only process if the model contains actual elements
         agent_model = None
         agent_config = None
-        agent_diagram_data = diagrams.get("AgentDiagram", {})
+        agent_diagram_data = _get_active("AgentDiagram")
         agent_model_data = agent_diagram_data.get("model", {}) if agent_diagram_data else {}
         if agent_model_data and agent_model_data.get("elements"):
             agent_model = process_agent_diagram(agent_diagram_data)
@@ -341,8 +351,6 @@ def _add_deployment_configs(
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
-      - key: PORT
-        value: 8000
 
   # Frontend (Free static site)
   - type: web

@@ -249,20 +249,9 @@ def _process_classes(
                         raise ConversionError(f"Duplicate attribute name '{name}' found in class '{class_name}'")
                     attribute_names.add(name)
 
-                    # Find the type in the domain model
-                    type_obj = None
-                    for t in domain_model.types:
-                        if isinstance(t, (Enumeration, Class)) and t.name == attr_type:
-                            type_obj = t
-                            break
-
-                    if type_obj:
-                        property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, is_id=is_id, is_derived=is_derived, default_value=default_value)
-                    else:
-                        property_ = Property(name=name, type=PrimitiveDataType(attr_type), visibility=visibility, is_optional=is_optional, is_id=is_id, is_derived=is_derived, default_value=default_value)
                     # Resolve the attribute type via O(1) lookup
                     type_obj = _resolve_type(attr_type, type_lookup)
-                    property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, is_derived=is_derived, default_value=default_value)
+                    property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, is_id=is_id, is_derived=is_derived, default_value=default_value)
                     cls.add_attribute(property_)
 
             # Add methods

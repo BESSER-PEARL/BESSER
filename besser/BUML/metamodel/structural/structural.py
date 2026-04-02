@@ -598,11 +598,7 @@ class Property(TypedElement):
                  default_value: Any = None,
                  timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False,
                  uncertainty: float = 0.0):
-        
-        if is_id and is_optional:
-            raise ValueError(f"Property '{name}' cannot be both an identifier (is_id=True)"
-                             f"and optional (is_optional=True)")
-        
+
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
@@ -668,6 +664,8 @@ class Property(TypedElement):
     @is_id.setter
     def is_id(self, is_id: bool):
         """bool: Set whether the property is an id."""
+        if is_id and self.is_optional:
+            raise ValueError("A property cannot be both an identifier and optional.")
         self.__is_id = is_id
 
     @property
@@ -688,6 +686,8 @@ class Property(TypedElement):
     @is_optional.setter
     def is_optional(self, is_optional: bool):
         """bool: Set whether the property is optional."""
+        if is_optional and self.is_id:
+            raise ValueError("A property cannot be both an identifier and optional.")
         self.__is_optional = is_optional
 
     @property

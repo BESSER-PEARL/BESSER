@@ -47,3 +47,8 @@ generated/*
 skills-lock.json
 scripts/
 New folder/*
+
+# Node
+node_modules/
+**/node_modules/
+

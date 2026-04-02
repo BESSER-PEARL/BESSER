@@ -56,7 +56,7 @@ class LLMOrchestrator:
         on_progress: Optional callback(turn, tool_name, status) for UI integration.
     """
 
-    MAX_TURNS = 50
+    MAX_TURNS = 80
 
     def __init__(
         self,
@@ -106,6 +106,7 @@ class LLMOrchestrator:
             raise ValueError("Instructions cannot be empty")
 
         start_time = time.monotonic()
+        self._write_skills_guide()
         system = self._build_system_prompt()
         messages: list[dict] = [{"role": "user", "content": instructions}]
 
@@ -195,6 +196,99 @@ class LLMOrchestrator:
         return self.output_dir
 
     # ------------------------------------------------------------------
+    # Skills guide — the CLAUDE.md equivalent for generated code
+    # ------------------------------------------------------------------
+
+    def _write_skills_guide(self) -> None:
+        """Write .besser_guide.md into the workspace for the LLM to read."""
+        guide = """\
+# BESSER Generator Guide
+
+Read this BEFORE modifying any generated code.
+
+## Golden Rule
+
+**NEVER overwrite generated files with write_file.** Use modify_file for all changes.
+The write_file tool will BLOCK you from overwriting generator output.
+Use write_file ONLY for NEW files (auth.py, Dockerfile, README, configs).
+
+## What each generator produces
+
+### generate_fastapi_backend
+Creates `backend/` with:
+- `main_api.py` — FastAPI app with CRUD endpoints for every model entity
+  - App created as: `app = FastAPI(...)`
+  - Each entity has: GET list, GET by id, POST, PUT, DELETE
+  - Endpoints use SQLAlchemy session via `get_db()` dependency
+  - Structure: imports → app → get_db → endpoints
+- `sql_alchemy.py` — SQLAlchemy ORM models
+  - `Base = declarative_base()`
+  - One class per entity with Column definitions
+  - Relationships defined with `relationship()`
+  - `engine = create_engine(...)` at the bottom
+- `pydantic_classes.py` — Pydantic request/response schemas
+  - One BaseModel per entity
+  - Type hints matching the domain model
+- `requirements.txt` — pip dependencies
+
+**How to modify main_api.py:**
+- Add auth: create NEW auth.py, then modify_file to add `Depends(get_current_user)` to endpoint params
+- Add pagination: find `def get_<entity>` endpoints, add `skip: int = 0, limit: int = 20` params
+- Add new endpoint: find the last `@app` decorated function, insert your new endpoint after it
+- Change DB: find `create_engine(` line, change the connection string
+
+**How to modify sql_alchemy.py:**
+- Add index: find `Column(` definition, add `index=True` param
+- Add constraint: add `__table_args__` to the class
+- Change DB: find `create_engine(` and change the URL
+
+**How to modify pydantic_classes.py:**
+- Add validator: find the class, add `@field_validator('field_name')` method
+- Add new field: insert a new line in the class body
+
+### generate_pydantic
+Creates `pydantic/pydantic_classes.py` — same structure as above but standalone.
+
+### generate_sqlalchemy
+Creates `sqlalchemy/sql_alchemy.py` — same structure as above but standalone.
+
+### generate_django
+Creates `django/` with a full Django project:
+- `manage.py`, `settings.py`, `urls.py`
+- `models.py` — Django models for each entity
+- `views.py`, `admin.py`
+How to add DRF: create NEW `serializers.py` + `viewsets.py`, modify `urls.py` to add router.
+
+### generate_python_classes
+Creates `python/classes.py` — plain Python classes with getters/setters.
+
+### generate_react
+Creates `react/` with full React TypeScript app. REQUIRES GUI model.
+
+### generate_web_app
+Creates `web_app/` with frontend/ + backend/ + docker-compose.yml. REQUIRES GUI model.
+
+## Common patterns
+
+### Adding authentication to FastAPI
+1. `write_file("backend/auth.py", ...)` — NEW file with JWT logic
+2. `modify_file("backend/main_api.py", ...)` — add `from auth import ...` to imports
+3. `modify_file("backend/main_api.py", ...)` — add auth dependency to protected endpoints
+4. `modify_file("backend/requirements.txt", ...)` — add python-jose, passlib
+
+### Adding pagination to FastAPI
+1. `modify_file("backend/main_api.py", old_text="def get_users(", new_text="def get_users(skip: int = 0, limit: int = 20, ")`
+2. `modify_file("backend/main_api.py", old_text=".all()", new_text=".offset(skip).limit(limit).all()")`
+
+### Changing database from SQLite to PostgreSQL
+1. `modify_file("backend/sql_alchemy.py", old_text="sqlite:///", new_text="postgresql://user:pass@localhost:5432/dbname")`
+2. `modify_file("backend/requirements.txt", ...)` — add psycopg2-binary
+"""
+        guide_path = os.path.join(self.output_dir, ".besser_guide.md")
+        with open(guide_path, "w", encoding="utf-8") as f:
+            f.write(guide)
+
+    # ------------------------------------------------------------------
     # Loop detection
     # ------------------------------------------------------------------
 
@@ -238,59 +332,81 @@ class LLMOrchestrator:
 You are an expert full-stack developer. You build production-ready applications \
 from domain models using the BESSER low-code platform.
 
-You have access to code generators, file operations, and shell commands. \
-You can generate code, run it, see errors, and fix them — just like a real developer.
+You have code generators, file operations, and shell commands as tools.
 
 ## Domain Model
 
-This is the user's validated data model. Every class, attribute, and relationship \
-is correct and intentional.
+Every class, attribute, and relationship below is the user's validated specification.
 
 ```json
 {model_json}
 ```
 {gui_section}{agent_section}
+## Skills Guide
+
+A file `.besser_guide.md` is in your workspace. **Read it first** with `read_file` \
+before modifying any generated code. It explains the structure of each generator's \
+output and shows exactly how to make common modifications (auth, pagination, DB changes).
+
+## CRITICAL RULE: Preserve generator output
+
+BESSER's generators produce tested, reliable code. When you call a generator:
+
+1. **DO NOT rewrite generated files with write_file.** The generator output is your \
+foundation. Treat it like code written by a senior colleague — modify it surgically, \
+don't throw it away.
+
+2. **Use modify_file for ALL changes to generated files.** Find the exact section that \
+needs changing and replace just that section. For example, to add a new endpoint, \
+find the last endpoint in main_api.py and insert after it — don't rewrite the whole file.
+
+3. **Only use write_file for NEW files** that no generator produced: auth modules, \
+Dockerfiles, CI configs, README, .env files, etc.
+
 ## How to work
 
-### Phase 1: Generate base code
-For each component the user wants:
-- **If a BESSER generator exists** (FastAPI, Django, React, Pydantic, SQLAlchemy, etc.): \
-call it first. Generator output is tested and reliable — it's your foundation.
-- **If no generator exists** (NestJS, Next.js, Express, Spring Boot, etc.): \
-write the code from scratch using the domain model above as your specification. \
-Every entity, attribute, type, and relationship in your code must match the model.
+### Step 1: Generate
+Call the appropriate generator(s). If no generator exists for what the user wants \
+(e.g., NestJS, Next.js), write from scratch using the model as spec.
 
-### Phase 2: Customize
-Read the generated files, then modify them to add what the user asked for \
-(authentication, pagination, theming, deployment, etc.). Use `modify_file` for \
-targeted edits — don't rewrite entire files.
+### Step 2: Read
+Read the generated files to understand the structure, imports, and patterns.
 
-### Phase 3: Verify
-- Run `check_syntax` on Python files after modifying them.
-- Use `run_command` to test the code: `python -c "import main_api"`, \
-`python -m py_compile file.py`, `npm run build`, etc.
-- If a command fails, **read the error output carefully**, fix the issue, and try again.
-- Install dependencies with `install_dependencies` if needed.
+### Step 3: Modify (not rewrite!)
+Use `modify_file` to make targeted additions:
+- To add auth: find the app initialization, insert middleware after it
+- To add pagination: find a GET endpoint, add limit/offset parameters to it
+- To change the database: find the create_engine call, change the connection string
 
-### Phase 4: Finalize
-- Write a README.md with clear setup and run instructions.
-- List all dependencies (requirements.txt, package.json).
-- If relevant, write a Dockerfile and/or docker-compose.yml.
+### Step 4: Add new files
+Use `write_file` ONLY for files that don't exist yet: auth.py, Dockerfile, README.md, etc.
+
+### Step 5: Verify
+- `check_syntax` on modified Python files
+- `run_command` to test imports and basic functionality
+- `install_dependencies` if needed
+- If something fails, read the error, fix with `modify_file`, try again
 
 ## Rules
 
-1. **Model is truth**: Never invent entities or attributes not in the model. \
-If the user needs something not in the model, tell them.
-2. **Generators first**: Always prefer calling a generator over writing from scratch.
-3. **Read before modify**: Always `read_file` before `modify_file`.
-4. **Test your work**: After generating and modifying code, run it to verify. \
-The generate → test → fix loop is what makes your output reliable.
-5. **Fix errors**: If a command or syntax check fails, read the error, fix the code, \
-and verify again. Don't leave broken code.
-6. **Be precise with modify_file**: The `old_text` must match exactly including \
-whitespace and indentation. Use `read_file` or `search_in_files` to find the exact text.
+1. **NEVER rewrite a generated file.** Use modify_file to change it surgically. \
+If you find yourself wanting to write_file on a file that a generator created, \
+stop and use modify_file instead.
+2. **Model is truth.** Never invent entities not in the model.
+3. **Generators first.** Always call a generator before writing code from scratch.
+4. **Test your work.** The generate → test → fix loop makes output reliable.
+5. **Be precise.** modify_file's old_text must match exactly (whitespace matters).
 
-When done, briefly summarize what you built and how to run it.
+## Efficiency
+
+You have a limited number of turns. Be efficient:
+- Call multiple tools in the same turn when they're independent
+- Write complete files in one write_file call (don't write partial files and modify later)
+- For the frontend: write each file completely in one go
+- Don't over-test: one import check + one basic validation is enough
+- Finish with Docker + README — don't run out of turns before those
+
+When done, briefly summarize what you built.
 """
 
     # ------------------------------------------------------------------

@@ -65,6 +65,8 @@ class ToolExecutor:
         self.gui_model = gui_model
         self.agent_model = agent_model
         self.agent_config = agent_config
+        # Track files created by generators — used to warn if LLM overwrites them
+        self._generator_files: set[str] = set()
 
     def execute(self, tool_name: str, arguments: dict) -> str:
         """
@@ -120,6 +122,13 @@ class ToolExecutor:
         os.makedirs(d, exist_ok=True)
         return d
 
+    def _track_generated_files(self, directory: str) -> list[dict]:
+        """List files in a generator output dir and mark them as generator-created."""
+        files = self._list_dir(directory)
+        for f in files:
+            self._generator_files.add(f["path"])
+        return files
+
     @staticmethod
     def _truncate(text: str, limit: int = MAX_OUTPUT_SIZE) -> str:
         """Truncate text with a note if it exceeds the limit."""
@@ -131,6 +140,41 @@ class ToolExecutor:
     # Generator tools
     # ------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Modification guides — tell the LLM HOW to modify each generator's output
+    # ------------------------------------------------------------------
+
+    _MODIFICATION_GUIDES: dict[str, str] = {
+        "generate_pydantic": (
+            "To add validators: use modify_file to add @field_validator methods inside the class. "
+            "To add new fields: find the class definition and insert a new field line."
+        ),
+        "generate_sqlalchemy": (
+            "To change the database: modify the create_engine() call. "
+            "To add indexes: find the Column definition and add index=True. "
+            "To add constraints: add __table_args__ to the class."
+        ),
+        "generate_fastapi_backend": (
+            "This generated 3 files: main_api.py (endpoints), sql_alchemy.py (ORM), pydantic_classes.py (schemas). "
+            "To add auth: create a NEW auth.py file, then use modify_file to add Depends(get_current_user) to endpoints in main_api.py. "
+            "To add pagination: use modify_file to add skip/limit parameters to GET list endpoints. "
+            "To add a new endpoint: find the last @app route in main_api.py and insert after it. "
+            "NEVER rewrite these files — use modify_file for surgical edits."
+        ),
+        "generate_django": (
+            "To add DRF: create a NEW serializers.py and viewsets.py, then modify urls.py to add router. "
+            "To customize admin: use modify_file on admin.py to add list_display etc."
+        ),
+        "generate_react": (
+            "To add theming: modify App.tsx to wrap with ThemeProvider. "
+            "To add new pages: create new component files and modify the router."
+        ),
+        "generate_web_app": (
+            "This generated frontend/ + backend/ + docker-compose.yml. "
+            "Modify each subdirectory's files separately. Never rewrite generated files."
+        ),
+    }
+
     def _gen_pydantic(self, args: dict) -> dict:
         from besser.generators.pydantic_classes import PydanticGenerator
         out = self._gen_dir("pydantic")
@@ -139,7 +183,11 @@ class ToolExecutor:
             backend=args.get("backend", False),
             nested_creations=args.get("nested_creations", False),
         ).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {
+            "status": "ok",
+            "files": self._track_generated_files(out),
+            "guide": self._MODIFICATION_GUIDES.get("generate_pydantic", ""),
+        }
 
     def _gen_sqlalchemy(self, args: dict) -> dict:
         from besser.generators.sql_alchemy import SQLAlchemyGenerator
@@ -147,7 +195,11 @@ class ToolExecutor:
         SQLAlchemyGenerator(model=self.domain_model, output_dir=out).generate(
             dbms=args.get("dbms", "sqlite")
         )
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {
+            "status": "ok",
+            "files": self._track_generated_files(out),
+            "guide": self._MODIFICATION_GUIDES.get("generate_sqlalchemy", ""),
+        }
 
     def _gen_fastapi_backend(self, args: dict) -> dict:
         from besser.generators.backend import BackendGenerator
@@ -156,7 +208,11 @@ class ToolExecutor:
             model=self.domain_model, output_dir=out,
             http_methods=args.get("http_methods", ["GET", "POST", "PUT", "DELETE"]),
         ).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {
+            "status": "ok",
+            "files": self._track_generated_files(out),
+            "guide": self._MODIFICATION_GUIDES.get("generate_fastapi_backend", ""),
+        }
 
     def _gen_django(self, args: dict) -> dict:
         from besser.generators.django import DjangoGenerator
@@ -167,25 +223,29 @@ class ToolExecutor:
             app_name=args.get("app_name", "myapp"),
             gui_model=self.gui_model, output_dir=out,
         ).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {
+            "status": "ok",
+            "files": self._track_generated_files(out),
+            "guide": self._MODIFICATION_GUIDES.get("generate_django", ""),
+        }
 
     def _gen_python_classes(self, args: dict) -> dict:
         from besser.generators.python_classes import PythonGenerator
         out = self._gen_dir("python")
         PythonGenerator(model=self.domain_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_java_classes(self, args: dict) -> dict:
         from besser.generators.java_classes import JavaGenerator
         out = self._gen_dir("java")
         JavaGenerator(model=self.domain_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_sql(self, args: dict) -> dict:
         from besser.generators.sql import SQLGenerator
         out = self._gen_dir("sql")
         SQLGenerator(model=self.domain_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_json_schema(self, args: dict) -> dict:
         from besser.generators.json import JSONSchemaGenerator
@@ -194,7 +254,7 @@ class ToolExecutor:
             model=self.domain_model, output_dir=out,
             mode=args.get("mode", "regular"),
         ).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_rest_api(self, args: dict) -> dict:
         from besser.generators.rest_api import RESTAPIGenerator
@@ -203,7 +263,7 @@ class ToolExecutor:
             model=self.domain_model, output_dir=out,
             http_methods=args.get("http_methods", ["GET", "POST", "PUT", "DELETE"]),
         ).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_react(self, args: dict) -> dict:
         if not self.gui_model:
@@ -211,7 +271,7 @@ class ToolExecutor:
         from besser.generators.react import ReactGenerator
         out = self._gen_dir("react")
         ReactGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_flutter(self, args: dict) -> dict:
         if not self.gui_model:
@@ -219,7 +279,7 @@ class ToolExecutor:
         from besser.generators.flutter import FlutterGenerator
         out = self._gen_dir("flutter")
         FlutterGenerator(model=self.domain_model, gui_model=self.gui_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_web_app(self, args: dict) -> dict:
         if not self.gui_model:
@@ -230,13 +290,13 @@ class ToolExecutor:
             model=self.domain_model, gui_model=self.gui_model, output_dir=out,
             agent_model=self.agent_model, agent_config=self.agent_config,
         ).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_rdf(self, args: dict) -> dict:
         from besser.generators.rdf import RDFGenerator
         out = self._gen_dir("rdf")
         RDFGenerator(model=self.domain_model, output_dir=out).generate()
-        return {"status": "ok", "files": self._list_dir(out)}
+        return {"status": "ok", "files": self._track_generated_files(out)}
 
     # ------------------------------------------------------------------
     # File tools
@@ -262,7 +322,20 @@ class ToolExecutor:
         return {"content": self._truncate(content, MAX_FILE_READ)}
 
     def _write_file(self, args: dict) -> dict:
-        path = self._safe_path(args["path"])
+        rel_path = args["path"].replace("\\", "/")
+        path = self._safe_path(rel_path)
+
+        # Guardrail: warn if overwriting a generator-created file
+        if rel_path in self._generator_files:
+            return {
+                "error": (
+                    f"'{rel_path}' was created by a BESSER generator. "
+                    "Do NOT overwrite it with write_file — use modify_file "
+                    "to make targeted edits instead. The generator output is "
+                    "tested and reliable; modify it surgically."
+                ),
+            }
+
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             f.write(args["content"])

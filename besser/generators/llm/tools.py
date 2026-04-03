@@ -186,13 +186,22 @@ FILE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "read_file",
         "description": (
-            "Read the contents of a file from the workspace. "
-            "Always read generated code before modifying it."
+            "Read a file from the workspace. For large files (>200 lines), use "
+            "offset and limit to read specific line ranges instead of the whole file. "
+            "Example: offset=50, limit=30 reads lines 50-79."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "Relative path within the workspace"},
+                "offset": {
+                    "type": "integer",
+                    "description": "Starting line number (0-indexed). Default: 0 (start of file)",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max number of lines to read. Default: all remaining lines",
+                },
             },
             "required": ["path"],
         },
@@ -335,5 +344,15 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
 
 
 def get_all_tools() -> list[dict[str, Any]]:
-    """Return all tool definitions combined."""
+    """Return tools available to the LLM in Phase 2.
+
+    Generator tools are NOT included — the orchestrator calls them
+    directly in Phase 1.  The LLM only gets file, execution, and
+    validation tools for customizing the generated output.
+    """
+    return FILE_TOOLS + EXECUTION_TOOLS + VALIDATION_TOOLS
+
+
+def get_all_tools_including_generators() -> list[dict[str, Any]]:
+    """Return ALL tools (including generators) — for no-generator mode."""
     return GENERATOR_TOOLS + FILE_TOOLS + EXECUTION_TOOLS + VALIDATION_TOOLS

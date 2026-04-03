@@ -39,7 +39,12 @@ import os
 from typing import Any
 
 from besser.generators import GeneratorInterface
-from besser.generators.llm.llm_client import ClaudeLLMClient, _resolve_api_key
+from besser.generators.llm.llm_client import (
+    ClaudeLLMClient,
+    LLMProvider,
+    create_llm_client,
+    _resolve_api_key,
+)
 from besser.generators.llm.orchestrator import LLMOrchestrator
 
 logger = logging.getLogger(__name__)
@@ -49,8 +54,12 @@ class LLMGenerator(GeneratorInterface):
     """
     LLM-augmented code generator.
 
-    Uses Anthropic Claude to orchestrate BESSER's deterministic generators
+    Uses an LLM to orchestrate BESSER's deterministic generators
     and customize their output based on natural language instructions.
+
+    Supports multiple LLM providers via the ``provider`` parameter:
+    - ``"anthropic"`` (default) — Anthropic Claude models
+    - ``"openai"`` — OpenAI GPT / o3 models (requires ``pip install openai``)
 
     For components where BESSER has a generator (FastAPI, Django, React, etc.),
     the LLM calls it to get reliable base code, then modifies the output.
@@ -60,15 +69,17 @@ class LLMGenerator(GeneratorInterface):
     Args:
         model: The BUML domain model.
         instructions: Natural language description of what to build.
-        api_key: Anthropic API key (or set ANTHROPIC_API_KEY env var).
-        llm_model: Claude model ID (default: claude-sonnet-4-20250514).
+        api_key: API key for the selected provider (or set via environment variable).
+        llm_model: Model ID (default depends on provider).
+        provider: LLM provider to use: ``"anthropic"`` or ``"openai"``.
         gui_model: Optional GUI model (for React/Flutter/WebApp generators).
         agent_model: Optional agent model (for BAF generator).
         agent_config: Optional agent config dict.
         output_dir: Where to write generated files (default: ./output).
         max_turns: Maximum agent loop iterations (default: 50).
-        base_url: Custom Anthropic API base URL (for gateways/proxies).
-            Also reads from ANTHROPIC_BASE_URL env var.
+        max_cost_usd: Maximum estimated cost in USD before stopping (default: 5.0).
+        max_runtime_seconds: Maximum wall-clock time in seconds (default: 1200 = 20 min).
+        base_url: Custom API base URL (for gateways/proxies).
     """
 
     def __init__(
@@ -77,11 +88,14 @@ class LLMGenerator(GeneratorInterface):
         instructions: str,
         api_key: str | None = None,
         llm_model: str | None = None,
+        provider: str = "anthropic",
         gui_model=None,
         agent_model=None,
         agent_config: dict | None = None,
         output_dir: str | None = None,
         max_turns: int | None = None,
+        max_cost_usd: float = 5.0,
+        max_runtime_seconds: int = 1200,
         base_url: str | None = None,
     ):
         super().__init__(model, output_dir)
@@ -90,11 +104,13 @@ class LLMGenerator(GeneratorInterface):
         self.agent_model = agent_model
         self.agent_config = agent_config
         self.max_turns = max_turns
+        self.max_cost_usd = max_cost_usd
+        self.max_runtime_seconds = max_runtime_seconds
 
-        # Resolve API key and create client
-        resolved_key = _resolve_api_key(api_key=api_key)
-        self.llm_client = ClaudeLLMClient(
-            api_key=resolved_key,
+        # Create client via factory (handles API key resolution per provider)
+        self.llm_client: LLMProvider = create_llm_client(
+            provider=provider,
+            api_key=api_key,
             model=llm_model,
             base_url=base_url,
         )
@@ -116,7 +132,7 @@ class LLMGenerator(GeneratorInterface):
             raise ValueError("Instructions cannot be empty")
 
         output = self.build_generation_dir()
-        orchestrator = LLMOrchestrator(
+        self._orchestrator = LLMOrchestrator(
             llm_client=self.llm_client,
             domain_model=self.model,
             gui_model=self.gui_model,
@@ -124,8 +140,10 @@ class LLMGenerator(GeneratorInterface):
             agent_config=self.agent_config,
             output_dir=output,
             max_turns=self.max_turns,
+            max_cost_usd=self.max_cost_usd,
+            max_runtime_seconds=self.max_runtime_seconds,
         )
-        result = orchestrator.run(self.instructions)
+        result = self._orchestrator.run(self.instructions)
 
         # Validate that something was actually generated
         generated_files = []
@@ -142,3 +160,27 @@ class LLMGenerator(GeneratorInterface):
             len(generated_files), result,
         )
         return result
+
+    def fix_error(self, error_message: str) -> str:
+        """
+        Fix an error from running the generated code.
+
+        Call this after ``generate()`` with the error/traceback from your
+        terminal. The LLM analyzes it and either fixes the code or tells
+        you what to do (e.g., "rebuild Docker", "reset database").
+
+        Usage::
+
+            gen = LLMGenerator(model=m, instructions="...")
+            gen.generate()
+
+            # User runs the app, gets an error
+            response = gen.fix_error("ImportError: No module named 'auth'")
+            print(response)  # "Fixed: added auth.py with JWT logic"
+
+        Returns:
+            The LLM's explanation of what it did or what you should do.
+        """
+        if not hasattr(self, '_orchestrator') or self._orchestrator is None:
+            raise RuntimeError("Call generate() first before fix_error()")
+        return self._orchestrator.fix_error(error_message)

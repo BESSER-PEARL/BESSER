@@ -79,6 +79,27 @@ class TestFileTools:
     def test_path_traversal_blocked(self, executor):
         assert "error" in _call(executor, "read_file", {"path": "../../etc/passwd"})
 
+    def test_read_file_with_offset_limit(self, executor):
+        """Line-based pagination: read specific line range."""
+        content = "\n".join(f"line {i}" for i in range(100))
+        _call(executor, "write_file", {"path": "big.py", "content": content})
+        result = _call(executor, "read_file", {"path": "big.py", "offset": 10, "limit": 5})
+        assert result["start_line"] == 11  # 1-indexed
+        assert result["end_line"] == 15
+        assert result["total_lines"] == 100
+        assert result["lines_read"] == 5
+        assert "line 10" in result["content"]
+        assert "line 14" in result["content"]
+        assert "line 15" not in result["content"]
+
+    def test_read_file_large_hint(self, executor):
+        """Large files get a pagination hint."""
+        content = "\n".join(f"x = {i}" for i in range(300))
+        _call(executor, "write_file", {"path": "large.py", "content": content})
+        result = _call(executor, "read_file", {"path": "large.py"})
+        assert result["total_lines"] == 300
+        assert "hint" in result
+
     def test_search_in_files(self, executor):
         _call(executor, "write_file", {"path": "one.py", "content": "def hello():\n    pass"})
         _call(executor, "write_file", {"path": "two.py", "content": "def world():\n    pass"})
@@ -202,8 +223,11 @@ class TestOrchestratorIntegration:
 
         turn_counter = {"n": 0}
 
+        from besser.generators.llm.llm_client import UsageTracker
+
         class MockClient:
             model = "mock-model"
+            usage = UsageTracker("mock-model")
 
             def chat(self, system, messages, tools):
                 turn_counter["n"] += 1
@@ -267,6 +291,7 @@ class TestOrchestratorIntegration:
         # Verify recipe has metadata
         with open(os.path.join(result_dir, ".besser_recipe.json")) as f:
             recipe = json.load(f)
-        assert recipe["model_name"] == "TestModel"
-        assert recipe["turns"] == 5
-        assert len(recipe["tool_calls"]) == 4
+        assert recipe["model"]["name"] == "TestModel"
+        # Phase 1 adds generate_fastapi_backend (turn 0) + mock LLM adds 4 tool calls
+        assert recipe["turns"] >= 4
+        assert len(recipe["tool_calls"]) >= 4

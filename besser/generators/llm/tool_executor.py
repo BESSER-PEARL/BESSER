@@ -29,11 +29,12 @@ logger = logging.getLogger(__name__)
 # Maximum time a shell command can run (seconds)
 COMMAND_TIMEOUT = 120
 
-# Maximum output size returned to the LLM (chars)
-MAX_OUTPUT_SIZE = 30_000
+# Maximum output size returned to the LLM (chars).
+# Lower = less context bloat = more turns before compaction needed.
+MAX_OUTPUT_SIZE = 15_000
 
-# Maximum file size for read_file (chars)
-MAX_FILE_READ = 50_000
+# Maximum file content returned by read_file (chars)
+MAX_FILE_READ = 20_000
 
 
 class ToolExecutor:
@@ -90,16 +91,21 @@ class ToolExecutor:
 
     def _safe_path(self, rel_path: str) -> str:
         """Resolve a relative path within the workspace.  Blocks traversal."""
-        # Normalize and resolve
         full = os.path.realpath(os.path.join(self.workspace, rel_path))
-        if not full.startswith(self.workspace):
+        full_norm = os.path.normcase(full)
+        ws_norm = os.path.normcase(self.workspace)
+        if not full_norm.startswith(ws_norm):
+            logger.error(
+                "Path check failed: rel=%s full=%s workspace=%s full_norm=%s ws_norm=%s",
+                rel_path, full, self.workspace, full_norm, ws_norm,
+            )
             raise ValueError(f"Path traversal blocked: {rel_path}")
         return full
 
     def _safe_cwd(self, rel_dir: str = ".") -> str:
         """Resolve a working directory within the workspace."""
         cwd = os.path.realpath(os.path.join(self.workspace, rel_dir))
-        if not cwd.startswith(self.workspace):
+        if not os.path.normcase(cwd).startswith(os.path.normcase(self.workspace)):
             raise ValueError(f"Path traversal blocked: {rel_dir}")
         if not os.path.isdir(cwd):
             os.makedirs(cwd, exist_ok=True)
@@ -130,10 +136,29 @@ class ToolExecutor:
         return files
 
     @staticmethod
-    def _truncate(text: str, limit: int = MAX_OUTPUT_SIZE) -> str:
-        """Truncate text with a note if it exceeds the limit."""
+    def _truncate(text: str, limit: int = MAX_OUTPUT_SIZE, keep_tail: bool = False) -> str:
+        """
+        Smart truncation.
+
+        For error output (tracebacks), keeps the tail since that's where
+        the actual error message is.  For normal output, keeps the head.
+
+        Args:
+            text: Text to truncate.
+            limit: Maximum characters.
+            keep_tail: If True, preserve the end (for error output).
+        """
         if len(text) <= limit:
             return text
+        if keep_tail:
+            # Keep first 20% + last 60% — the error is usually at the end
+            head_size = int(limit * 0.2)
+            tail_size = int(limit * 0.6)
+            return (
+                text[:head_size]
+                + f"\n\n... [{len(text) - head_size - tail_size} chars truncated] ...\n\n"
+                + text[-tail_size:]
+            )
         return text[:limit] + f"\n\n... [truncated, {len(text)} chars total]"
 
     # ------------------------------------------------------------------
@@ -309,32 +334,74 @@ class ToolExecutor:
         return {"files": files, "total": len(files)}
 
     def _read_file(self, args: dict) -> dict:
+        """
+        Read a file with optional line-based pagination.
+
+        Supports offset (start line, 0-indexed) and limit (number of lines)
+        for reading specific sections of large files without dumping
+        everything into context.
+        """
         path = self._safe_path(args["path"])
         if not os.path.isfile(path):
             return {"error": f"File not found: {args['path']}"}
-        # Detect binary files before reading
         try:
             with open(path, "r", encoding="utf-8") as f:
                 content = f.read()
         except UnicodeDecodeError:
             size = os.path.getsize(path)
             return {"error": f"Binary file ({size} bytes), cannot read as text: {args['path']}"}
-        return {"content": self._truncate(content, MAX_FILE_READ)}
+
+        lines = content.split("\n")
+        total_lines = len(lines)
+        offset = args.get("offset", 0) or 0
+        limit = args.get("limit")
+
+        # Apply line-based slicing if offset or limit specified
+        start = min(offset, total_lines)
+        end = total_lines
+        if limit is not None:
+            end = min(start + limit, total_lines)
+
+        selected = "\n".join(lines[start:end])
+
+        # Truncate if still too large
+        if len(selected) > MAX_FILE_READ:
+            selected = self._truncate(selected, MAX_FILE_READ)
+
+        result = {"content": selected}
+
+        # Include metadata so the LLM knows about pagination
+        if offset > 0 or limit is not None:
+            result["start_line"] = start + 1  # 1-indexed for display
+            result["end_line"] = end
+            result["total_lines"] = total_lines
+            result["lines_read"] = end - start
+        elif total_lines > 200:
+            # Hint for large files: tell the LLM it can paginate
+            result["total_lines"] = total_lines
+            result["hint"] = "Large file. Use offset/limit to read specific sections."
+
+        return result
 
     def _write_file(self, args: dict) -> dict:
         rel_path = args["path"].replace("\\", "/")
         path = self._safe_path(rel_path)
 
-        # Guardrail: warn if overwriting a generator-created file
-        if rel_path in self._generator_files:
-            return {
-                "error": (
-                    f"'{rel_path}' was created by a BESSER generator. "
-                    "Do NOT overwrite it with write_file — use modify_file "
-                    "to make targeted edits instead. The generator output is "
-                    "tested and reliable; modify it surgically."
-                ),
-            }
+        # Guardrail for small generated files: suggest modify_file instead.
+        # For large files (>200 lines), allow rewriting — it's more efficient
+        # than 20 modify_file calls on a 5000-line file.
+        if rel_path in self._generator_files and os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
+                existing_lines = f.read().count("\n") + 1
+            if existing_lines <= 200:
+                return {
+                    "error": (
+                        f"'{rel_path}' was created by a BESSER generator ({existing_lines} lines). "
+                        "Use modify_file for targeted edits on small generated files."
+                    ),
+                }
+            # Large file — allow rewrite but log it
+            logger.info("Allowing rewrite of large generated file: %s (%d lines)", rel_path, existing_lines)
 
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
@@ -425,7 +492,8 @@ class ToolExecutor:
             )
 
             stdout = self._truncate(result.stdout, MAX_OUTPUT_SIZE // 2)
-            stderr = self._truncate(result.stderr, MAX_OUTPUT_SIZE // 2)
+            # For stderr (errors), keep the tail where the actual error message is
+            stderr = self._truncate(result.stderr, MAX_OUTPUT_SIZE // 2, keep_tail=True)
 
             return {
                 "exit_code": result.returncode,
@@ -464,11 +532,11 @@ class ToolExecutor:
         if os.path.isfile(requirements_txt):
             pip_cmd = f"{sys.executable} -m pip install -r requirements.txt --quiet"
             pip_result = self._run_command({"command": pip_cmd, "working_dir": args.get("working_dir", ".")})
-            results.append({"type": "pip", "result": json.loads(pip_result) if isinstance(pip_result, str) else pip_result})
+            results.append({"type": "pip", "result": pip_result})
 
         if os.path.isfile(package_json):
             npm_result = self._run_command({"command": "npm install --quiet", "working_dir": args.get("working_dir", ".")})
-            results.append({"type": "npm", "result": json.loads(npm_result) if isinstance(npm_result, str) else npm_result})
+            results.append({"type": "npm", "result": npm_result})
 
         if not results:
             return {"error": "No requirements.txt or package.json found. Specify a custom install command."}

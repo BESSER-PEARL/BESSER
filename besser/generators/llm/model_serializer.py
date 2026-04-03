@@ -190,9 +190,11 @@ def serialize_gui_model(gui_model) -> dict[str, Any] | None:
     for module in gui_model.modules:
         screens = []
         for screen in module.screens:
+            # Screen uses view_elements (from ViewContainer parent class)
+            elements = getattr(screen, "view_elements", None) or getattr(screen, "view_components", None) or set()
             screen_data: dict[str, Any] = {
                 "name": screen.name,
-                "components": _serialize_components(screen.view_components),
+                "components": _serialize_components(elements),
             }
             if hasattr(screen, "is_main_page") and screen.is_main_page:
                 screen_data["is_main_page"] = True
@@ -223,9 +225,10 @@ def _serialize_components(components) -> list[dict]:
             comp_data["data_source"] = {
                 "class": _type_name(ds.source_class) if hasattr(ds, "source_class") and ds.source_class else None,
             }
-        # Nested components (containers)
-        if hasattr(comp, "view_components") and comp.view_components:
-            comp_data["children"] = _serialize_components(comp.view_components)
+        # Nested components (containers use view_elements)
+        children = getattr(comp, "view_elements", None) or getattr(comp, "view_components", None)
+        if children:
+            comp_data["children"] = _serialize_components(children)
         result.append(comp_data)
     return result
 

@@ -101,15 +101,20 @@ from run_helper import run_generator
 run_generator(
     model=blog_model,
     output_dir="./output/blog_backend",
+    provider="openai",
+    llm_model="gpt-5.4",
     instructions="""
-    Build a production-ready FastAPI backend for this blog platform:
+     Build a production-ready FastAPI backend AND a React frontend for this blog:
 
-    1. Use PostgreSQL as the database
-    2. Add JWT authentication (login with email + password, register endpoint)
-    3. Add pagination to all list endpoints (limit/offset)
-    4. Add a search endpoint for posts (search by title)
-    5. Only post authors can edit/delete their own posts
-    6. Include requirements.txt with all dependencies
-    7. Include a Dockerfile for deployment
+      Backend:
+      1. Use PostgreSQL, JWT auth, pagination, search, author-only edit/delete
+
+      Frontend (write from scratch with React + Vite + Tailwind):
+      2. Login/register pages
+      3. Post list with search
+      4. Create/edit post form
+      5. Comment section
+      6. Include Dockerfile for frontend (nginx)
+      7. docker-compose with postgres + backend + frontend
     """,
 )

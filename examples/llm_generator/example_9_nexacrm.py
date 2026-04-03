@@ -26,7 +26,16 @@ print("Loading NexaCRM BUML model...")
 project_file = os.path.join(os.path.dirname(__file__), "class_diagram_project.py")
 namespace = {}
 with open(project_file, "r", encoding="utf-8") as f:
-    exec(f.read(), namespace)
+    code = f.read()
+
+# The structural model is named "user_model" but the GUI code references "domain_model"
+# Inject the alias before executing
+code = code.replace(
+    "###############\n#  GUI MODEL  #",
+    "domain_model = user_model\n\n###############\n#  GUI MODEL  #",
+    1,
+)
+exec(code, namespace)
 
 domain_model = namespace["user_model"]
 gui_model = namespace.get("gui_model")

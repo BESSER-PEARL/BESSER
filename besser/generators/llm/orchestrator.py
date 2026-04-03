@@ -884,23 +884,42 @@ class LLMOrchestrator:
                 "Paste the actual error/traceback from your terminal."
             )
 
-        # Check if we already tried to fix this exact error
-        error_signature = error_message.strip()[:200]
+        # Check if we already tried to fix this exact error.
+        # Extract the actual error line (last meaningful line), not the
+        # traceback boilerplate which looks similar across different errors.
+        lines = [l.strip() for l in error_message.strip().splitlines() if l.strip()]
+        error_line = ""
+        for line in reversed(lines):
+            # Skip traceback frame lines and empty lines
+            if line and not line.startswith(("File ", "^", "Traceback", "---")):
+                error_line = line[:200]
+                break
+        if not error_line:
+            error_line = error_message.strip()[:200]
+
+        already_tried = False
         for prev in self._previous_errors:
-            if prev in error_signature or error_signature in prev:
-                return (
-                    "I already tried to fix this error. If it persists, "
-                    "the issue is likely in your environment, not the code.\n"
-                    "Try: docker compose down -v && docker compose up --build"
-                )
-        self._previous_errors.append(error_signature)
+            if prev == error_line:
+                already_tried = True
+                break
+        self._previous_errors.append(error_line)
 
         if self._start_time is None:
             self._start_time = time.monotonic()
 
+        retry_note = ""
+        if already_tried:
+            retry_note = (
+                "\n\nIMPORTANT: I already tried to fix this same error before but it persists. "
+                "This strongly suggests it's an ENVIRONMENT issue, not a code bug. "
+                "Do NOT modify code again. Just explain what the user needs to do "
+                "in their environment (restart, rebuild, clear cache, reset database, etc.).\n"
+            )
+
         fix_prompt = (
             "The user ran the generated code and got this error:\n\n"
             f"```\n{error_message}\n```\n\n"
+            f"{retry_note}"
             "FIRST: Analyze whether this is a CODE bug or an ENVIRONMENT issue.\n\n"
             "If ENVIRONMENT (stale DB, old Docker volume, wrong env var, port conflict):\n"
             "→ Do NOT modify code. Just explain what the user should do.\n\n"

@@ -47,9 +47,20 @@ def run_generator(model, instructions: str, output_dir: str,
         provider=provider,
     )
 
-    print(f"Model: {model.name}")
-    print(f"LLM:   {generator.llm_client.model}")
-    print(f"Output: {output_dir}")
+    # Show which API key is being used (masked)
+    key = getattr(generator.llm_client, '_client', None)
+    print("-" * 50)
+    print(key)
+    if key and hasattr(key, 'api_key'):
+        raw = str(key.api_key)
+        masked = raw[:8] + "..." + raw[-4:] if len(raw) > 12 else "***"
+    else:
+        masked = "(unknown)"
+    print(f"Model:    {model.name}")
+    print(f"LLM:      {generator.llm_client.model}")
+    print(f"Provider: {provider}")
+    print(f"API key:  {masked}")
+    print(f"Output:   {output_dir}")
     print()
     print("Generating... (streaming enabled)")
     print("-" * 50)

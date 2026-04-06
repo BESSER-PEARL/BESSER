@@ -604,6 +604,10 @@ class Property(TypedElement):
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
         self.is_navigable: bool = is_navigable
+        
+        self.__is_id = False
+        self.__is_optional = False        
+        
         self.is_id: bool = is_id
         self.is_read_only: bool = is_read_only
         self.is_optional: bool = is_optional
@@ -664,7 +668,7 @@ class Property(TypedElement):
     @is_id.setter
     def is_id(self, is_id: bool):
         """bool: Set whether the property is an id."""
-        if is_id and self.is_optional:
+        if is_id is True and self.__is_optional is True:
             raise ValueError("A property cannot be both an identifier and optional.")
         self.__is_id = is_id
 
@@ -686,7 +690,7 @@ class Property(TypedElement):
     @is_optional.setter
     def is_optional(self, is_optional: bool):
         """bool: Set whether the property is optional."""
-        if is_optional and self.is_id:
+        if is_optional is True and self.__is_id is True:
             raise ValueError("A property cannot be both an identifier and optional.")
         self.__is_optional = is_optional
 

@@ -1,0 +1,143 @@
+"""
+Export Service
+
+Handles exporting instances to various formats.
+"""
+
+import json
+from typing import Dict, List, Any
+from services.instance_manager import instance_manager
+
+
+class ExportService:
+    """Service for exporting instances to different formats."""
+    
+    def export_to_json(self) -> Dict[str, Any]:
+        """
+        Export all instances to JSON format.
+        
+        Returns:
+            Dictionary containing all instances organized by class
+        """
+        all_instances = instance_manager.get_all_instances()
+        
+        # Organize by class
+        export_data = {
+            "model_name": "{{ model.name }}",
+            "instances": {}
+        }
+        
+        for instance in all_instances:
+            class_name = instance["class_name"]
+            if class_name not in export_data["instances"]:
+                export_data["instances"][class_name] = []
+            export_data["instances"][class_name].append(instance)
+        
+        return export_data
+    
+    def export_to_python(self) -> str:
+        """
+        Export all instances as Python code.
+        
+        Returns:
+            Python code string that recreates the instances
+        """
+        all_instances = instance_manager.get_all_instances()
+        
+        lines = [
+            "# Auto-generated instance definitions",
+            "# {{ model.name }} Domain Model Instances",
+            "",
+            "from metamodel.domain_classes import *",
+            "",
+            "# Create instances",
+            ""
+        ]
+        
+        # Create instance objects
+        instance_vars = {}
+        for instance in all_instances:
+            class_name = instance["class_name"]
+            instance_name = instance["instance_name"]
+            var_name = f"{instance_name.replace(' ', '_').replace('-', '_')}"
+            instance_vars[instance["id"]] = var_name
+            
+            # Create instance
+            lines.append(f"{var_name} = {class_name}(")
+            
+            # Add attributes
+            for attr_name, attr_value in instance["attributes"].items():
+                if isinstance(attr_value, str):
+                    lines.append(f"    {attr_name}=\"{attr_value}\",")
+                else:
+                    lines.append(f"    {attr_name}={attr_value},")
+            
+            lines.append(")")
+            lines.append("")
+        
+        # Create links
+        lines.append("# Create associations (links)")
+        lines.append("")
+        
+        for instance in all_instances:
+            if instance["links"]:
+                var_name = instance_vars[instance["id"]]
+                for link in instance["links"]:
+                    target_var = instance_vars.get(link["target_id"])
+                    if target_var:
+                        assoc_name = link["association_name"]
+                        lines.append(f"{var_name}.{assoc_name} = {target_var}")
+        
+        return "\n".join(lines)
+    
+    def export_to_buml(self) -> str:
+        """
+        Export all instances as BUML Object Model code.
+        
+        Returns:
+            BUML Python code that creates Object instances
+        """
+        all_instances = instance_manager.get_all_instances()
+        
+        lines = [
+            "# Auto-generated BUML Object Model",
+            "# {{ model.name }} Instance Model",
+            "",
+            "from besser.BUML.metamodel.object import Object, AttributeLink, DataValue",
+            "from besser.BUML.metamodel.structural import DomainModel",
+            "",
+            "# Note: You need to import or define your original domain model classes",
+            "# For this example, we assume the classes are available",
+            "",
+            "# Create object instances",
+            ""
+        ]
+        
+        # Create Object instances
+        for instance in all_instances:
+            class_name = instance["class_name"]
+            instance_name = instance["instance_name"]
+            var_name = f"{instance_name.replace(' ', '_').replace('-', '_')}_obj"
+            
+            lines.append(f"# {instance_name} ({class_name})")
+            lines.append(f"{var_name} = Object(")
+            lines.append(f"    name=\"{instance_name}\",")
+            lines.append(f"    classifier={class_name}  # Reference to the Class from domain model")
+            lines.append(")")
+            lines.append("")
+            
+            # Add attribute links
+            for attr_name, attr_value in instance["attributes"].items():
+                lines.append(f"# Set {attr_name} attribute")
+                if isinstance(attr_value, str):
+                    lines.append(f"{var_name}.{attr_name} = \"{attr_value}\"")
+                else:
+                    lines.append(f"{var_name}.{attr_name} = {attr_value}")
+            
+            lines.append("")
+        
+        return "\n".join(lines)
+
+
+# Singleton instance
+export_service = ExportService()

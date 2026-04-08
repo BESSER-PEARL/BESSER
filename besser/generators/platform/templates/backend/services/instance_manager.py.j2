@@ -1,0 +1,161 @@
+"""
+Instance Manager Service
+
+Manages in-memory storage and operations for domain model instances.
+"""
+
+from typing import Dict, List, Optional, Any
+from uuid import uuid4
+from metamodel.domain_classes import {% for cls in classes %}{{ cls.name }}{% if not loop.last %}, {% endif %}{% endfor %}
+
+
+class InstanceManager:
+    """
+    Manages instances of domain model classes.
+    
+    This service maintains an in-memory store of all instances and provides
+    CRUD operations for managing them.
+    """
+    
+    def __init__(self):
+        """Initialize the instance manager with empty storage."""
+        # Storage: {class_name: {instance_id: instance_data}}
+        self.instances: Dict[str, Dict[str, Dict[str, Any]]] = {
+            {%- for cls in classes %}
+            "{{ cls.name }}": {},
+            {%- endfor %}
+        }
+        
+        # Class mapping for creating instances
+        self.class_map = {
+            {%- for cls in classes %}
+            "{{ cls.name }}": {{ cls.name }},
+            {%- endfor %}
+        }
+    
+    def create_instance(self, class_name: str, instance_name: str, attributes: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Create a new instance of a domain model class.
+        
+        Args:
+            class_name: Name of the class to instantiate
+            instance_name: Name/identifier for the instance
+            attributes: Dictionary of attribute values
+        
+        Returns:
+            Dictionary representation of the created instance
+        
+        Raises:
+            ValueError: If class_name is invalid
+        """
+        if class_name not in self.class_map:
+            raise ValueError(f"Unknown class: {class_name}")
+        
+        instance_id = str(uuid4())
+        
+        instance_data = {
+            "id": instance_id,
+            "class_name": class_name,
+            "instance_name": instance_name,
+            "attributes": attributes,
+            "links": []
+        }
+        
+        self.instances[class_name][instance_id] = instance_data
+        
+        return instance_data
+    
+    def get_instance(self, class_name: str, instance_id: str) -> Optional[Dict[str, Any]]:
+        """Get a specific instance by class name and ID."""
+        if class_name not in self.instances:
+            return None
+        return self.instances[class_name].get(instance_id)
+    
+    def get_instances_by_class(self, class_name: str) -> Optional[List[Dict[str, Any]]]:
+        """Get all instances of a specific class."""
+        if class_name not in self.instances:
+            return None
+        return list(self.instances[class_name].values())
+    
+    def get_all_instances(self) -> List[Dict[str, Any]]:
+        """Get all instances across all classes."""
+        all_instances = []
+        for class_instances in self.instances.values():
+            all_instances.extend(class_instances.values())
+        return all_instances
+    
+    def update_instance(self, class_name: str, instance_id: str, attributes: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update an existing instance's attributes."""
+        instance = self.get_instance(class_name, instance_id)
+        if instance is None:
+            return None
+        
+        instance["attributes"].update(attributes)
+        return instance
+    
+    def delete_instance(self, class_name: str, instance_id: str) -> bool:
+        """Delete an instance."""
+        if class_name not in self.instances:
+            return False
+        
+        if instance_id in self.instances[class_name]:
+            # Remove all links involving this instance
+            self._remove_instance_links(class_name, instance_id)
+            del self.instances[class_name][instance_id]
+            return True
+        
+        return False
+    
+    def create_link(self, source_class: str, source_id: str, target_class: str, target_id: str, association_name: str):
+        """Create a link (association) between two instances."""
+        source_instance = self.get_instance(source_class, source_id)
+        target_instance = self.get_instance(target_class, target_id)
+        
+        if source_instance is None:
+            raise ValueError(f"Source instance not found: {source_class}#{source_id}")
+        if target_instance is None:
+            raise ValueError(f"Target instance not found: {target_class}#{target_id}")
+        
+        link_data = {
+            "association_name": association_name,
+            "target_class": target_class,
+            "target_id": target_id
+        }
+        
+        if link_data not in source_instance["links"]:
+            source_instance["links"].append(link_data)
+    
+    def delete_link(self, source_class: str, source_id: str, target_class: str, target_id: str, association_name: str):
+        """Delete a link between two instances."""
+        source_instance = self.get_instance(source_class, source_id)
+        
+        if source_instance is None:
+            raise ValueError(f"Source instance not found: {source_class}#{source_id}")
+        
+        link_data = {
+            "association_name": association_name,
+            "target_class": target_class,
+            "target_id": target_id
+        }
+        
+        if link_data in source_instance["links"]:
+            source_instance["links"].remove(link_data)
+    
+    def _remove_instance_links(self, class_name: str, instance_id: str):
+        """Remove all links involving a specific instance."""
+        # Remove links from other instances pointing to this one
+        for cls_instances in self.instances.values():
+            for instance in cls_instances.values():
+                instance["links"] = [
+                    link for link in instance["links"]
+                    if not (link["target_class"] == class_name and link["target_id"] == instance_id)
+                ]
+    
+    def clear_all(self):
+        """Clear all instances (useful for testing/reset)."""
+        for class_name in self.instances:
+            self.instances[class_name].clear()
+
+
+# Singleton instance
+instance_manager = InstanceManager()

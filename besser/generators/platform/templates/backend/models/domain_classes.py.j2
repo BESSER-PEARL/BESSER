@@ -1,0 +1,52 @@
+"""
+Domain Model Classes for {{ model.name }}
+
+Auto-generated Python classes representing the domain model.
+These classes are used to create and manage instances.
+"""
+
+from typing import Optional, List, Set, Any
+from datetime import datetime, date, time
+
+
+# Domain Model Classes
+{% for cls in classes %}
+
+class {{ cls.name }}:
+    """
+    {{ cls.name }} class from {{ model.name }} domain model.
+    
+    Attributes:
+{% for attr in cls.attributes | union(cls.inherited_attributes()) %}
+        {{ attr.name }} ({{ attr.type.name }}): {% if attr.type.name %}{{ attr.type.name }} attribute{% endif %}
+{% endfor %}
+    """
+    
+    def __init__(self{% for attr in cls.attributes | union(cls.inherited_attributes()) %}, {{ attr.name | safe_var_name }}: Optional[{{ attr.type | python_type }}] = None{% endfor %}):
+        """Initialize {{ cls.name }} instance."""
+{% for attr in cls.attributes | union(cls.inherited_attributes()) %}
+        self.{{ attr.name | safe_var_name }} = {{ attr.name | safe_var_name }}
+{% endfor %}
+        
+        # Association references
+{% for end in cls.all_association_ends() %}
+        self.{{ end.name | safe_var_name }}: {% if end.multiplicity.max == 1 %}Optional['{{ end.type.name }}']{% else %}List['{{ end.type.name }}']{% endif %} = {% if end.multiplicity.max == 1 %}None{% else %}[]{% endif %}
+
+{% endfor %}
+    
+    def to_dict(self) -> dict:
+        """Convert instance to dictionary."""
+        return {
+            "class_name": "{{ cls.name }}",
+{% for attr in cls.attributes | union(cls.inherited_attributes()) %}
+            "{{ attr.name }}": self.{{ attr.name | safe_var_name }},
+{% endfor %}
+{% for end in cls.all_association_ends() %}
+            "{{ end.name }}": [obj.to_dict() if hasattr(obj, 'to_dict') else str(obj) for obj in (self.{{ end.name | safe_var_name }} if isinstance(self.{{ end.name | safe_var_name }}, list) else [self.{{ end.name | safe_var_name }}] if self.{{ end.name | safe_var_name }} else [])],
+{% endfor %}
+        }
+    
+    def __repr__(self) -> str:
+        return f"{{ cls.name }}({% for attr in cls.attributes | union(cls.inherited_attributes()) %}{{ attr.name }}={self.{{ attr.name | safe_var_name }}!r}{% if not loop.last %}, {% endif %}{% endfor %})"
+
+{% endfor %}

@@ -1,0 +1,116 @@
+"""
+Pydantic Schemas for Instance API
+
+Defines request and response models for the REST API.
+"""
+
+from pydantic import BaseModel, Field
+from typing import Dict, List, Any, Optional
+from datetime import date, time, datetime
+
+
+class InstanceCreate(BaseModel):
+    """Schema for creating a new instance."""
+    class_name: str = Field(..., description="Name of the class to instantiate")
+    instance_name: str = Field(..., description="Name/identifier for the instance")
+    attributes: Dict[str, Any] = Field(default_factory=dict, description="Attribute values")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "class_name": "Book",
+                "instance_name": "book1",
+                "attributes": {
+                    "title": "The Great Gatsby",
+                    "pages": 180
+                }
+            }
+        }
+    }
+
+
+class InstanceUpdate(BaseModel):
+    """Schema for updating an existing instance."""
+    attributes: Dict[str, Any] = Field(..., description="Attribute values to update")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "attributes": {
+                    "title": "Updated Title",
+                    "pages": 200
+                }
+            }
+        }
+    }
+
+
+class LinkData(BaseModel):
+    """Schema for a link in an instance response."""
+    association_name: str
+    target_class: str
+    target_id: str
+
+
+class InstanceResponse(BaseModel):
+    """Schema for instance response."""
+    id: str = Field(..., description="Unique instance ID")
+    class_name: str = Field(..., description="Name of the class")
+    instance_name: str = Field(..., description="Name/identifier of the instance")
+    attributes: Dict[str, Any] = Field(default_factory=dict, description="Attribute values")
+    links: List[LinkData] = Field(default_factory=list, description="Association links")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "id": "123e4567-e89b-12d3-a456-426614174000",
+                "class_name": "Book",
+                "instance_name": "book1",
+                "attributes": {
+                    "title": "The Great Gatsby",
+                    "pages": 180
+                },
+                "links": []
+            }
+        }
+    }
+
+
+class LinkCreate(BaseModel):
+    """Schema for creating a link between instances."""
+    source_class: str = Field(..., description="Source instance class name")
+    source_id: str = Field(..., description="Source instance ID")
+    target_class: str = Field(..., description="Target instance class name")
+    target_id: str = Field(..., description="Target instance ID")
+    association_name: str = Field(..., description="Name of the association/relationship")
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "source_class": "Library",
+                "source_id": "123e4567-e89b-12d3-a456-426614174000",
+                "target_class": "Book",
+                "target_id": "456e7890-e89b-12d3-a456-426614174111",
+                "association_name": "books"
+            }
+        }
+    }
+
+{% for cls in classes %}
+
+class {{ cls.name }}Schema(BaseModel):
+    """Pydantic schema for {{ cls.name }} class."""
+{% for attr in cls.attributes | union(cls.inherited_attributes()) %}
+    {{ attr.name | safe_var_name }}: Optional[{{ attr.type | python_type }}] = None
+{% endfor %}
+    
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+{% for attr in cls.attributes | union(cls.inherited_attributes()) %}
+                "{{ attr.name }}": {% if attr.type.name.lower() in ['string', 'str'] %}"example value"{% elif attr.type.name.lower() in ['int', 'integer'] %}0{% elif attr.type.name.lower() in ['float', 'double'] %}0.0{% elif attr.type.name.lower() in ['bool', 'boolean'] %}False{% else %}None{% endif %}{% if not loop.last %},{% endif %}
+{% endfor %}
+            }
+        }
+    }
+{% endfor %}

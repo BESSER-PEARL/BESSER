@@ -1,0 +1,343 @@
+/**
+ * InstanceNode Component
+ * Visual representation of a domain model instance with SVG icon
+ */
+{% raw %}
+import React from 'react';
+import { Handle, Position } from 'reactflow';
+import type { BaseInstance, ClassMetadata } from '../types/models';
+
+interface InstanceNodeProps {
+  data: {
+    instance: BaseInstance;
+    classMetadata: ClassMetadata;
+    onEdit: () => void;
+    onDelete: () => void;
+  };
+}
+
+export const InstanceNode: React.FC<InstanceNodeProps> = ({ data }) => {
+  const { instance, classMetadata, onEdit, onDelete } = data;
+  const [isHovered, setIsHovered] = React.useState(false);
+
+  return (
+    <div
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      style={{
+        position: 'relative',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        minWidth: '100px',
+      }}
+    >
+      {/* 4 Fixed Connection Handles - Source */}
+      <Handle
+        type="source"
+        position={Position.Top}
+        id="top"
+        style={{ background: 'hsl(192 80% 30%)', width: '10px', height: '10px', top: '-5px' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id="right"
+        style={{ background: 'hsl(192 80% 30%)', width: '10px', height: '10px', right: '-5px' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        id="bottom"
+        style={{ background: 'hsl(192 80% 30%)', width: '10px', height: '10px', bottom: '-5px' }}
+      />
+      <Handle
+        type="source"
+        position={Position.Left}
+        id="left"
+        style={{ background: 'hsl(192 80% 30%)', width: '10px', height: '10px', left: '-5px' }}
+      />
+      
+      {/* 4 Fixed Connection Handles - Target */}
+      <Handle
+        type="target"
+        position={Position.Top}
+        id="top-target"
+        style={{ background: 'hsl(192 80% 50%)', width: '8px', height: '8px', top: '-4px', opacity: 0 }}
+      />
+      <Handle
+        type="target"
+        position={Position.Right}
+        id="right-target"
+        style={{ background: 'hsl(192 80% 50%)', width: '8px', height: '8px', right: '-4px', opacity: 0 }}
+      />
+      <Handle
+        type="target"
+        position={Position.Bottom}
+        id="bottom-target"
+        style={{ background: 'hsl(192 80% 50%)', width: '8px', height: '8px', bottom: '-4px', opacity: 0 }}
+      />
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="left-target"
+        style={{ background: 'hsl(192 80% 50%)', width: '8px', height: '8px', left: '-4px', opacity: 0 }}
+      />
+
+      {/* Icon or Elegant Box */}
+      {classMetadata.icon ? (
+        <div
+          style={{
+            width: '60px',
+            height: '60px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            transition: 'all 0.2s',
+            transform: isHovered ? 'scale(1.1)' : 'scale(1)',
+            position: 'relative',
+            zIndex: 1,
+          }}
+          onClick={onEdit}
+        >
+          <div
+            style={{
+              width: '100%',
+              height: '100%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'hsl(192 80% 30%)',
+            }}
+            dangerouslySetInnerHTML={{ __html: classMetadata.icon }}
+          />
+        </div>
+      ) : (
+        <div
+          style={{
+            minWidth: '160px',
+            padding: '12px',
+            border: '2px solid hsl(192 80% 30%)',
+            borderRadius: '8px',
+            background: 'white',
+            boxShadow: isHovered ? '0 6px 16px rgba(0,0,0,0.2)' : '0 2px 8px rgba(0,0,0,0.1)',
+            transition: 'all 0.2s',
+            transform: isHovered ? 'scale(1.05)' : 'scale(1)',
+            cursor: 'pointer',
+            position: 'relative',
+            zIndex: 1,
+          }}
+          onClick={onEdit}
+        >
+          {/* Header */}
+          <div
+            style={{
+              background: 'hsl(192 80% 20%)',
+              color: 'white',
+              padding: '6px 10px',
+              margin: '-12px -12px 8px -12px',
+              borderRadius: '6px 6px 0 0',
+              fontWeight: 600,
+              textAlign: 'center',
+              fontSize: '12px',
+              letterSpacing: '0.3px',
+            }}
+          >
+            {instance.class_name}
+          </div>
+
+          {/* Instance Name */}
+          <div
+            style={{
+              fontSize: '13px',
+              fontWeight: 700,
+              marginBottom: '8px',
+              textAlign: 'center',
+              color: 'hsl(220 25% 10%)',
+            }}
+          >
+            {instance.instance_name}
+          </div>
+
+          {/* Abbreviated Attributes */}
+          {Object.entries(instance.attributes).slice(0, 2).map(([key, value]) => (
+            <div
+              key={key}
+              style={{
+                fontSize: '10px',
+                padding: '4px',
+                borderBottom: '1px solid hsl(210 18% 86%)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                gap: '8px',
+              }}
+            >
+              <span style={{ fontWeight: 600, color: 'hsl(215 12% 44%)' }}>{key}:</span>
+              <span style={{ color: 'hsl(220 25% 10%)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {String(value || '—')}
+              </span>
+            </div>
+          ))}
+          {Object.entries(instance.attributes).length > 2 && (
+            <div style={{ fontSize: '10px', color: 'hsl(215 12% 44%)', textAlign: 'center', marginTop: '4px', fontStyle: 'italic' }}>
+              +{Object.entries(instance.attributes).length - 2} more
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Instance Name Label (only for icon view) */}
+      {classMetadata.icon && (
+        <>
+          <div
+            style={{
+              marginTop: '10px',
+              fontSize: '12px',
+              fontWeight: 700,
+              color: 'hsl(220 25% 10%)',
+              textAlign: 'center',
+              maxWidth: '120px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              background: 'white',
+              padding: '4px 8px',
+              borderRadius: '4px',
+              border: '1px solid hsl(210 18% 86%)',
+            }}
+          >
+            {instance.instance_name}
+          </div>
+
+          {/* Class Name Badge */}
+          <div
+            style={{
+              fontSize: '9px',
+              fontWeight: 600,
+              color: 'hsl(192 80% 40%)',
+              textAlign: 'center',
+              marginTop: '4px',
+              textTransform: 'uppercase',
+              letterSpacing: '0.5px',
+            }}
+          >
+            {instance.class_name}
+          </div>
+        </>
+      )}
+
+      {/* Hover Details Card */}
+      {isHovered && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'white',
+            border: '2px solid hsl(192 80% 30%)',
+            borderRadius: '8px',
+            padding: '12px',
+            minWidth: '220px',
+            maxWidth: '300px',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
+            zIndex: 1000,
+            pointerEvents: 'auto',
+          }}
+        >
+          {/* Attributes */}
+          {Object.entries(instance.attributes).length > 0 ? (
+            <div>
+              <div
+                style={{
+                  fontSize: '10px',
+                  fontWeight: 700,
+                  color: 'hsl(192 80% 30%)',
+                  marginBottom: '8px',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                }}
+              >
+                Attributes
+              </div>
+              {Object.entries(instance.attributes).map(([key, value]) => (
+                <div
+                  key={key}
+                  style={{
+                    fontSize: '11px',
+                    padding: '4px 6px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: '12px',
+                    backgroundColor: 'hsl(48 30% 97%)',
+                    borderRadius: '4px',
+                    marginBottom: '4px',
+                  }}
+                >
+                  <span style={{ fontWeight: 600, color: 'hsl(215 12% 44%)' }}>{key}:</span>
+                  <span style={{ color: 'hsl(220 25% 10%)', wordBreak: 'break-word' }}>
+                    {String(value || '—')}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: '11px', color: 'hsl(215 12% 44%)', fontStyle: 'italic', marginBottom: '8px' }}>
+              No attributes defined
+            </div>
+          )}
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit();
+              }}
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                background: 'hsl(192 80% 20%)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                fontWeight: 600,
+                transition: 'background 0.2s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'hsl(192 80% 15%)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'hsl(192 80% 20%)')}
+            >
+              ✏️ Edit
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              style={{
+                flex: 1,
+                padding: '8px 12px',
+                background: 'hsl(4 76% 50%)',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '11px',
+                fontWeight: 600,
+                transition: 'background 0.2s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'hsl(4 76% 45%)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'hsl(4 76% 50%)')}
+            >
+              🗑️ Delete
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+{% endraw %}

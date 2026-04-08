@@ -1,0 +1,15 @@
+"""
+Domain model classes.
+"""
+
+from .domain_classes import (
+{% for cls in classes %}
+    {{ cls.name }},
+{% endfor %}
+)
+
+__all__ = [
+{% for cls in classes %}
+    "{{ cls.name }}",
+{% endfor %}
+]

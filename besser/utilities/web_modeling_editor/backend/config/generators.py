@@ -19,6 +19,7 @@ from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.react import ReactGenerator
 from besser.generators.flutter import FlutterGenerator
 from besser.generators.terraform import TerraformGenerator
+from besser.generators.platform import PlatformGenerator
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -184,6 +185,15 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         requires_class_diagram=False
     ),
 
+    # Platform generator (generates full-stack instance editor)
+    "platform": GeneratorInfo(
+        generator_class=PlatformGenerator,
+        output_type="zip",
+        file_extension=".zip",
+        category="platform",
+        requires_class_diagram=True
+    ),
+
 }
 
 # Neural network generators are conditionally registered since they
@@ -246,6 +256,8 @@ def get_filename_for_generator(generator_type: str, base_name: str = "output") -
         return "pytorch_nn.py"
     elif generator_type == "tensorflow":
         return "tf_nn.py"
+    elif generator_type == "platform":
+        return "instance_editor_platform.zip"
     else:
         return f"{generator_type}_output{info.file_extension}"
 

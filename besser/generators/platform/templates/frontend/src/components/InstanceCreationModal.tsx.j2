@@ -1,0 +1,249 @@
+/**
+ * InstanceCreationModal Component
+ * Elegant modal for creating new instances with all attributes
+ */
+{% raw %}
+import React, { useState } from 'react';
+import type { ClassMetadata } from '../types/models';
+
+interface InstanceCreationModalProps {
+  classMetadata: ClassMetadata;
+  onSubmit: (instanceName: string, attributes: Record<string, any>) => void;
+  onCancel: () => void;
+}
+
+export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
+  classMetadata,
+  onSubmit,
+  onCancel,
+}) => {
+  const [instanceName, setInstanceName] = useState('');
+  const [attributes, setAttributes] = useState<Record <string, any>>(() => {
+    const initial: Record<string, any> = {};
+    classMetadata.attributes.forEach(attr => {
+      initial[attr.name] = '';
+    });
+    return initial;
+  });
+
+  const getInputType = (attrType: string): string => {
+    const lowerType = attrType.toLowerCase();
+    if (lowerType.includes('int') || lowerType.includes('number')) return 'number';
+    if (lowerType.includes('date')) return 'date';
+    if (lowerType.includes('datetime')) return 'datetime-local';
+    if (lowerType.includes('time')) return 'time';
+    if (lowerType.includes('bool')) return 'checkbox';
+    if (lowerType.includes('email')) return 'email';
+    return 'text';
+  };
+
+  const handleSubmit = () => {
+    if (!instanceName.trim()) {
+      alert('Please provide an instance name');
+      return;
+    }
+    onSubmit(instanceName, attributes);
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0, 0, 0, 0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 10000,
+      }}
+      onClick={onCancel}
+    >
+      <div
+        style={{
+          background: 'white',
+          borderRadius: '12px',
+          padding: '0',
+          minWidth: '450px',
+          maxWidth: '600px',
+          maxHeight: '80vh',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div
+          style={{
+            padding: '24px',
+            borderBottom: '1px solid hsl(210 18% 86%)',
+            background: 'hsl(48 30% 97%)',
+            borderRadius: '12px 12px 0 0',
+          }}
+        >
+          <h3 style={{ margin: '0 0 8px 0', fontSize: '20px', fontWeight: 700, color: 'hsl(220 25% 10%)' }}>
+            Create {classMetadata.name}
+          </h3>
+          <p style={{ margin: 0, fontSize: '13px', color: 'hsl(215 12% 44%)' }}>
+            Fill in the details for the new instance
+          </p>
+        </div>
+
+        {/* Content */}
+        <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
+          {/* Instance Name */}
+          <div style={{ marginBottom: '24px' }}>
+            <label
+              style={{
+                display: 'block',
+                marginBottom: '8px',
+                fontWeight: 600,
+                fontSize: '14px',
+                color: 'hsl(220 25% 10%)',
+              }}
+            >
+              Instance Name *
+            </label>
+            <input
+              type="text"
+              value={instanceName}
+              onChange={(e) => setInstanceName(e.target.value)}
+              placeholder="Enter instance name"
+              autoFocus
+              style={{
+                width: '100%',
+                padding: '12px',
+                border: '2px solid hsl(210 18% 86%)',
+                borderRadius: '8px',
+                fontSize: '14px',
+                transition: 'border-color 0.2s',
+                outline: 'none',
+              }}
+              onFocus={(e) => e.currentTarget.style.borderColor = 'hsl(192 80% 42%)'}
+              onBlur={(e) => e.currentTarget.style.borderColor = 'hsl(210 18% 86%)'}
+            />
+          </div>
+
+          {/* Attributes */}
+          {classMetadata.attributes.length > 0 && (
+            <>
+              <h4 style={{ marginBottom: '16px', fontSize: '15px', fontWeight: 600, color: 'hsl(220 25% 10%)' }}>
+                Attributes
+              </h4>
+              {classMetadata.attributes.map((attr) => {
+                const inputType = getInputType(attr.type);
+                return (
+                  <div key={attr.name} style={{ marginBottom: '18px' }}>
+                    <label
+                      style={{
+                        display: 'block',
+                        marginBottom: '8px',
+                        fontWeight: 600,
+                        fontSize: '13px',
+                        color: 'hsl(220 25% 10%)',
+                      }}
+                    >
+                      {attr.name}
+                      <span style={{ color: 'hsl(215 12% 44%)', fontWeight: 400, marginLeft: '6px', fontSize: '12px' }}>
+                        ({attr.type})
+                      </span>
+                    </label>
+                    {inputType === 'checkbox' ? (
+                      <input
+                        type="checkbox"
+                        checked={attributes[attr.name] === true || attributes[attr.name] === 'true'}
+                        onChange={(e) =>
+                          setAttributes((prev) => ({ ...prev, [attr.name]: e.target.checked }))
+                        }
+                        style={{
+                          width: '20px',
+                          height: '20px',
+                          cursor: 'pointer',
+                        }}
+                      />
+                    ) : (
+                      <input
+                        type={inputType}
+                        value={String(attributes[attr.name] || '')}
+                        onChange={(e) => {
+                          const value = inputType === 'number' ? parseFloat(e.target.value) || '' : e.target.value;
+                          setAttributes((prev) => ({ ...prev, [attr.name]: value }));
+                        }}
+                        placeholder={`Enter ${attr.name}`}
+                        style={{
+                          width: '100%',
+                          padding: '12px',
+                          border: '2px solid hsl(210 18% 86%)',
+                          borderRadius: '8px',
+                          fontSize: '14px',
+                          transition: 'border-color 0.2s',
+                          outline: 'none',
+                        }}
+                        onFocus={(e) => e.currentTarget.style.borderColor = 'hsl(192 80% 42%)'}
+                        onBlur={(e) => e.currentTarget.style.borderColor = 'hsl(210 18% 86%)'}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div
+          style={{
+            padding: '20px 24px',
+            borderTop: '1px solid hsl(210 18% 86%)',
+            background: 'hsl(48 30% 97%)',
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: '12px',
+            borderRadius: '0 0 12px 12px',
+          }}
+        >
+          <button
+            onClick={onCancel}
+            style={{
+              padding: '10px 20px',
+              background: 'hsl(210 18% 86%)',
+              color: 'hsl(220 25% 10%)',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: 600,
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'hsl(210 18% 76%)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'hsl(210 18% 86%)')}
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleSubmit}
+            style={{
+              padding: '10px 20px',
+              background: 'hsl(192 80% 20%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              fontWeight: 600,
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'hsl(192 80% 15%)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'hsl(192 80% 20%)')}
+          >
+            Create Instance
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+{% endraw %}

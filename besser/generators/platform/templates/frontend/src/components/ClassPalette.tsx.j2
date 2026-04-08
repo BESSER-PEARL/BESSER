@@ -1,0 +1,153 @@
+/**
+ * ClassPalette Component
+ * Palette showing available classes for creating instances
+ */
+{% raw %}
+import React, { useState } from 'react';
+import type { ClassMetadata } from '../types/models';
+import * as api from '../api/instances';
+import './ClassPalette.css';
+
+interface ClassPaletteProps {
+  classes: ClassMetadata[];
+  onInstanceCreated: () => void;
+}
+
+export const ClassPalette: React.FC<ClassPaletteProps> = ({
+  classes,
+  onInstanceCreated,
+}) => {
+  const [isCreating, setIsCreating] = useState(false);
+  const [selectedClass, setSelectedClass] = useState<ClassMetadata | null>(null);
+  const [instanceName, setInstanceName] = useState('');
+  const [attributes, setAttributes] = useState<Record<string, any>>({});
+
+  const handleCreateClick = (classMetadata: ClassMetadata) => {
+    setSelectedClass(classMetadata);
+    setIsCreating(true);
+    setInstanceName('');
+    
+    // Initialize attributes with empty values
+    const initialAttrs: Record<string, any> = {};
+    classMetadata.attributes.forEach((attr) => {
+      initialAttrs[attr.name] = '';
+    });
+    setAttributes(initialAttrs);
+  };
+
+  const handleCreate = async () => {
+    if (!selectedClass || !instanceName) {
+      alert('Please provide an instance name');
+      return;
+    }
+
+    try {
+      await api.createInstance({
+        class_name: selectedClass.name,
+        instance_name: instanceName,
+        attributes,
+      });
+      
+      setIsCreating(false);
+      setSelectedClass(null);
+      onInstanceCreated();
+    } catch (error) {
+      console.error('Failed to create instance:', error);
+      alert('Failed to create instance');
+    }
+  };
+
+  const handleDragStart = (e: React.DragEvent, classMetadata: ClassMetadata) => {
+    e.dataTransfer.setData('className', classMetadata.name);
+    e.dataTransfer.effectAllowed = 'copy';
+  };
+
+  return (
+    <div className="class-palette">
+      <div className="palette-header">
+        <h3>Classes</h3>
+        <p>Drag classes to canvas or click to create</p>
+      </div>
+
+      {/* Class List */}
+      {!isCreating && (
+        <div className="class-list">
+          {classes.map((classMetadata) => (
+            <div
+              key={classMetadata.name}
+              className="class-item"
+              draggable
+              onDragStart={(e) => handleDragStart(e, classMetadata)}
+              onClick={() => handleCreateClick(classMetadata)}
+            >
+              {classMetadata.icon ? (
+                <div
+                  className="class-icon"
+                  style={{ color: 'hsl(192 80% 30%)', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  dangerouslySetInnerHTML={{ __html: classMetadata.icon }}
+                />
+              ) : (
+                <div className="class-icon">\u25a2</div>
+              )}
+              <div className="class-info">
+                <div className="class-name">{classMetadata.name}</div>
+                <div className="class-attrs">
+                  {classMetadata.attributes.length} attributes
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Create Instance Form */}
+      {isCreating && selectedClass && (
+        <div className="creation-form">
+          <h4>Create {selectedClass.name}</h4>
+
+          <div className="form-group">
+            <label>Instance Name *</label>
+            <input
+              type="text"
+              value={instanceName}
+              onChange={(e) => setInstanceName(e.target.value)}
+              placeholder="Enter instance name"
+            />
+          </div>
+
+          {selectedClass.attributes.map((attr) => (
+            <div key={attr.name} className="form-group">
+              <label>
+                {attr.name} ({attr.type})
+              </label>
+              <input
+                type="text"
+                value={attributes[attr.name] || ''}
+                onChange={(e) =>
+                  setAttributes((prev) => ({ ...prev, [attr.name]: e.target.value }))
+                }
+                placeholder={`Enter ${attr.name}`}
+              />
+            </div>
+          ))}
+
+          <div className="form-actions">
+            <button onClick={handleCreate} className="btn btn-primary">
+              Create
+            </button>
+            <button
+              onClick={() => {
+                setIsCreating(false);
+                setSelectedClass(null);
+              }}
+              className="btn btn-secondary"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+{% endraw %}

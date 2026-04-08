@@ -1,0 +1,126 @@
+/**
+ * Instance API
+ * Handles all API calls related to domain model instances
+ */
+
+import { apiClient } from './client';
+import type {
+  BaseInstance,
+  InstanceCreateRequest,
+  InstanceUpdateRequest,
+  LinkCreateRequest,
+  ExportJsonResponse,
+} from '../types/models';
+
+/**
+ * Create a new instance
+ */
+export const createInstance = async (data: InstanceCreateRequest): Promise<BaseInstance> => {
+  const response = await apiClient.post<BaseInstance>('/instances/', data);
+  return response.data;
+};
+
+/**
+ * Get all instances
+ */
+export const getAllInstances = async (): Promise<BaseInstance[]> => {
+  const response = await apiClient.get<BaseInstance[]>('/instances/');
+  return response.data;
+};
+
+/**
+ * Get instances by class name
+ */
+export const getInstancesByClass = async (className: string): Promise<BaseInstance[]> => {
+  const response = await apiClient.get<BaseInstance[]>(`/instances/${className}`);
+  return response.data;
+};
+
+/**
+ * Get a specific instance
+ */
+export const getInstance = async (className: string, instanceId: string): Promise<BaseInstance> => {
+  const response = await apiClient.get<BaseInstance>(`/instances/${className}/${instanceId}`);
+  return response.data;
+};
+
+/**
+ * Update an instance
+ */
+export const updateInstance = async (
+  className: string,
+  instanceId: string,
+  data: InstanceUpdateRequest
+): Promise<BaseInstance> => {
+  const response = await apiClient.put<BaseInstance>(
+    `/instances/${className}/${instanceId}`,
+    data
+  );
+  return response.data;
+};
+
+/**
+ * Delete an instance
+ */
+export const deleteInstance = async (className: string, instanceId: string): Promise<void> => {
+  await apiClient.delete(`/instances/${className}/${instanceId}`);
+};
+
+/**
+ * Create a link between instances
+ */
+export const createLink = async (data: LinkCreateRequest): Promise<void> => {
+  await apiClient.post('/instances/links', data);
+};
+
+/**
+ * Delete a link between instances
+ */
+export const deleteLink = async (
+  sourceClass: string,
+  sourceId: string,
+  targetClass: string,
+  targetId: string,
+  associationName: string
+): Promise<void> => {
+  await apiClient.delete('/instances/links', {
+    params: {
+      source_class: sourceClass,
+      source_id: sourceId,
+      target_class: targetClass,
+      target_id: targetId,
+      association_name: associationName,
+    },
+  });
+};
+
+/**
+ * Clear all instances
+ */
+export const clearAllInstances = async (): Promise<void> => {
+  await apiClient.delete('/instances/');
+};
+
+/**
+ * Export instances as JSON
+ */
+export const exportAsJson = async (): Promise<ExportJsonResponse> => {
+  const response = await apiClient.get<ExportJsonResponse>('/export/json');
+  return response.data;
+};
+
+/**
+ * Export instances as Python code
+ */
+export const exportAsPython = async (): Promise<string> => {
+  const response = await apiClient.get<string>('/export/python');
+  return response.data;
+};
+
+/**
+ * Export instances as BUML code
+ */
+export const exportAsBuml = async (): Promise<string> => {
+  const response = await apiClient.get<string>('/export/buml');
+  return response.data;
+};

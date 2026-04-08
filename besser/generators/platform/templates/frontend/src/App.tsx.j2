@@ -1,0 +1,210 @@
+/**
+ * Main App Component
+ * {{ model.name }} Instance Editor
+ */
+{% raw %}
+import { useState, useEffect } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { InstanceCanvas } from './components/InstanceCanvas';
+import { ClassPalette } from './components/ClassPalette';
+import { DOMAIN_CLASSES } from './types/models';
+import type { BaseInstance } from './types/models';
+import * as api from './api/instances';
+
+const queryClient = new QueryClient();
+
+function AppContent() {
+  const [instances, setInstances] = useState<BaseInstance[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  const loadInstances = async () => {
+    setLoading(true);
+    try {
+      const data = await api.getAllInstances();
+      setInstances(data);
+    } catch (error) {
+      console.error('Failed to load instances:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadInstances();
+  }, []);
+
+  const handleInstanceUpdate = async (instance: BaseInstance) => {
+    try {
+      await api.updateInstance(instance.class_name, instance.id, {
+        attributes: instance.attributes,
+      });
+      await loadInstances();
+    } catch (error) {
+      console.error('Failed to update instance:', error);
+      alert('Failed to update instance');
+    }
+  };
+
+  const handleInstanceDelete = async (className: string, instanceId: string) => {
+    if (!confirm('Are you sure you want to delete this instance?')) {
+      return;
+    }
+
+    try {
+      await api.deleteInstance(className, instanceId);
+      await loadInstances();
+    } catch (error) {
+      console.error('Failed to delete instance:', error);
+      alert('Failed to delete instance');
+    }
+  };
+
+  const handleLinkCreate = async (sourceId: string, targetId: string, label: string) => {
+    // Find source and target instances
+    const source = instances.find((i) => i.id === sourceId);
+    const target = instances.find((i) => i.id === targetId);
+
+    if (!source || !target) {
+      alert('Invalid source or target');
+      return;
+    }
+
+    try {
+      await api.createLink({
+        source_class: source.class_name,
+        source_id: sourceId,
+        target_class: target.class_name,
+        target_id: targetId,
+        association_name: label,
+      });
+      await loadInstances();
+    } catch (error) {
+      console.error('Failed to create link:', error);
+      alert('Failed to create link');
+    }
+  };
+
+  const handleInstanceCreate = async (className: string, position: { x: number; y: number }) => {
+    // This is now just a callback to reload instances after creation
+    // The actual creation happens in the modal
+    await loadInstances();
+  };
+
+  const handleExportJson = async () => {
+    try {
+      const data = await api.exportAsJson();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'instances.json';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export JSON:', error);
+      alert('Failed to export JSON');
+    }
+  };
+
+  const handleExportPython = async () => {
+    try {
+      const code = await api.exportAsPython();
+      const blob = new Blob([code], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'instances.py';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Failed to export Python:', error);
+      alert('Failed to export Python');
+    }
+  };
+
+  const handleClearAll = async () => {
+    if (!confirm('Are you sure you want to clear all instances?')) {
+      return;
+    }
+
+    try {
+      await api.clearAllInstances();
+      await loadInstances();
+    } catch (error) {
+      console.error('Failed to clear instances:', error);
+      alert('Failed to clear instances');
+    }
+  };
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'hsl(48 30% 97%)' }}>
+      {/* Toolbar */}
+      <div
+        style={{
+          background: 'white',
+          borderBottom: '1px solid hsl(210 18% 86%)',
+          padding: '16px 24px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+        }}
+      >
+{% endraw %}
+        <h1 style={{ '{{' }} margin: 0, fontSize: '22px', fontWeight: 700, color: 'hsl(220 25% 10%)', fontFamily: 'Sora, sans-serif' {{ '}}' }}>{{ model.name }} Instance Editor</h1>
+{% raw %}
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button
+            onClick={loadInstances}
+            disabled={loading}
+            className="toolbar-btn"
+          >
+            {loading ? 'Loading...' : 'Refresh'}
+          </button>
+          <button
+            onClick={handleExportJson}
+            className="toolbar-btn success"
+          >
+            Export JSON
+          </button>
+          <button
+            onClick={handleExportPython}
+            className="toolbar-btn warning"
+          >
+            Export Python
+          </button>
+          <button
+            onClick={handleClearAll}
+            className="toolbar-btn danger"
+          >
+            Clear All
+          </button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+        <ClassPalette classes={DOMAIN_CLASSES} onInstanceCreated={loadInstances} />
+        <InstanceCanvas
+          instances={instances}
+          availableClasses={DOMAIN_CLASSES}
+          onInstanceUpdate={handleInstanceUpdate}
+          onInstanceDelete={handleInstanceDelete}
+          onLinkCreate={handleLinkCreate}
+          onInstanceCreate={handleInstanceCreate}
+        />
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppContent />
+    </QueryClientProvider>
+  );
+}
+
+export default App;
+{% endraw %}

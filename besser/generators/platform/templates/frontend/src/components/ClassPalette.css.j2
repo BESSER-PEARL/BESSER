@@ -1,0 +1,176 @@
+.class-palette {
+  width: 280px;
+  background: hsl(48 30% 97%);
+  border-right: 1px solid hsl(210 18% 86%);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.palette-header {
+  padding: 20px;
+  border-bottom: 1px solid hsl(210 18% 86%);
+  background: white;
+}
+
+.palette-header h3 {
+  margin: 0 0 8px 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: hsl(220 25% 10%);
+  font-family: 'Sora', sans-serif;
+}
+
+.palette-header p {
+  margin: 0;
+  font-size: 13px;
+  color: hsl(215 12% 44%);
+  line-height: 1.4;
+}
+
+.class-list {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.class-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: white;
+  border: 2px solid hsl(192 80% 20%);
+  border-radius: 8px;
+  cursor: grab;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.class-item:hover {
+  background: hsl(196 42% 93%);
+  border-color: hsl(192 80% 42%);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.class-item:active {
+  cursor: grabbing;
+  transform: translateY(0);
+}
+
+.class-icon {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: hsl(192 80% 20%);
+  color: white;
+  font-size: 24px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+
+.class-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.class-name {
+  font-weight: 600;
+  font-size: 15px;
+  color: hsl(220 25% 10%);
+  margin-bottom: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.class-attrs {
+  font-size: 12px;
+  color: hsl(215 12% 44%);
+}
+
+.creation-form {
+  padding: 20px;
+  background: white;
+  border-radius: 8px;
+  margin: 16px;
+  border: 1px solid hsl(210 18% 86%);
+}
+
+.creation-form h4 {
+  margin: 0 0 16px 0;
+  color: hsl(220 25% 10%);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: hsl(220 25% 10%);
+}
+
+.form-group input,
+.form-group textarea {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid hsl(210 18% 86%);
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 0.2s;
+}
+
+.form-group input:focus,
+.form-group textarea:focus {
+  outline: none;
+  border-color: hsl(192 80% 42%);
+  box-shadow: 0 0 0 3px hsl(196 42% 93%);
+}
+
+.form-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.btn {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-primary {
+  background: hsl(192 80% 20%);
+  color: white;
+}
+
+.btn-primary:hover {
+  background: hsl(192 80% 42%);
+}
+
+.btn-secondary {
+  background: hsl(210 22% 94%);
+  color: hsl(220 25% 10%);
+}
+
+.btn-secondary:hover {
+  background: hsl(210 18% 86%);
+}

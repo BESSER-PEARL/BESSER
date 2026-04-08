@@ -1,0 +1,3 @@
+"""
+Platform generator tests package.
+"""

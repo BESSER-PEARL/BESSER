@@ -1,0 +1,325 @@
+/**
+ * InstanceCanvas Component
+ * Main canvas for creating and managing instances using ReactFlow
+ */
+{% raw %}
+import React, { useCallback, useState } from 'react';
+import ReactFlow, {
+  Node,
+  Edge,
+  Controls,
+  Background,
+  useNodesState,
+  useEdgesState,
+  addEdge,
+  Connection,
+  ConnectionMode,
+  Panel,
+} from 'reactflow';
+import 'reactflow/dist/style.css';
+import { InstanceNode } from './InstanceNode';
+import { PropertyEditor } from './PropertyEditor';
+import { AssociationSelector } from './AssociationSelector';
+import { InstanceCreationModal } from './InstanceCreationModal';
+import type { BaseInstance, ClassMetadata } from '../types/models';
+
+const nodeTypes = {
+  instance: InstanceNode,
+};
+
+interface InstanceCanvasProps {
+  instances: BaseInstance[];
+  availableClasses: ClassMetadata[];
+  onInstanceUpdate: (instance: BaseInstance) => void;
+  onInstanceDelete: (className: string, instanceId: string) => void;
+  onLinkCreate: (sourceId: string, targetId: string, label: string) => void;
+  onInstanceCreate: (className: string, position: { x: number; y: number }) => void;
+}
+
+export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
+  instances,
+  availableClasses,
+  onInstanceUpdate,
+  onInstanceDelete,
+  onLinkCreate,
+  onInstanceCreate,
+}) => {
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [selectedInstance, setSelectedInstance] = useState<BaseInstance | null>(null);
+  const [pendingConnection, setPendingConnection] = useState<{
+    sourceId: string;
+    targetId: string;
+    sourceClass: string;
+    targetClass: string;
+  } | null>(null);
+  
+  // Store node positions to preserve them across updates
+  const nodePositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map());
+  
+  // State for instance creation modal
+  const [createInstanceModal, setCreateInstanceModal] = useState<{
+    className: string;
+    position: { x: number; y: number };
+  } | null>(null);
+
+  // Handle drop event for creating instances
+  const onDrop = useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const className = event.dataTransfer.getData('className');
+      if (!className) return;
+
+      const reactFlowBounds = event.currentTarget.getBoundingClientRect();
+      const position = {
+        x: event.clientX - reactFlowBounds.left - 100,
+        y: event.clientY - reactFlowBounds.top - 50,
+      };
+
+      // Show elegant modal instead of prompt
+      setCreateInstanceModal({ className, position });
+    },
+    []
+  );
+
+  const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+  }, []);
+
+  // Convert instances to ReactFlow nodes
+  React.useEffect(() => {
+    const flowNodes: Node[] = instances.map((instance, index) => {
+      const classMetadata = availableClasses.find(c => c.name === instance.class_name);
+      
+      // Use stored position or calculate new one
+      const storedPosition = nodePositionsRef.current.get(instance.id);
+      const position = storedPosition || { x: 100 + (index % 5) * 250, y: 100 + Math.floor(index / 5) * 200 };
+      
+      // Store position for future updates
+      if (!storedPosition) {
+        nodePositionsRef.current.set(instance.id, position);
+      }
+      
+      return {
+        id: instance.id,
+        type: 'instance',
+        position,
+        data: {
+          instance,
+          classMetadata: classMetadata!,
+          onEdit: () => setSelectedInstance(instance),
+          onDelete: () => onInstanceDelete(instance.class_name, instance.id),
+        },
+      };
+    });
+
+    setNodes(flowNodes);
+
+    // Create edges from links
+    const flowEdges: Edge[] = instances.flatMap((instance) =>
+      instance.links.map((link) => ({
+        id: `${instance.id}-${link.target_id}-${link.association_name}`,
+        source: instance.id,
+        target: link.target_id,
+        label: link.association_name,
+        type: 'default',
+        animated: false,
+      }))
+    );
+
+    setEdges(flowEdges);
+  }, [instances, setNodes, setEdges]);
+
+  // Update stored positions when nodes move
+  const handleNodesChange = React.useCallback(
+    (changes: any[]) => {
+      changes.forEach((change) => {
+        if (change.type === 'position' && change.position) {
+          nodePositionsRef.current.set(change.id, change.position);
+        }
+      });
+      onNodesChange(changes);
+    },
+    [onNodesChange]
+  );
+
+  const onConnect = useCallback(
+    (connection: Connection) => {
+      if (connection.source && connection.target) {
+        const sourceInstance = instances.find((i) => i.id === connection.source);
+        const targetInstance = instances.find((i) => i.id === connection.target);
+        
+        if (sourceInstance && targetInstance) {
+          const sourceClass = availableClasses.find(c => c.name === sourceInstance.class_name);
+          const validAssociations = sourceClass?.associations.filter(
+            assoc => assoc.targetClass === targetInstance.class_name
+          ) || [];
+          
+          // If only one association, auto-select it
+          if (validAssociations.length === 1) {
+            onLinkCreate(connection.source, connection.target, validAssociations[0].name);
+          } else {
+            // Multiple associations, show selector
+            setPendingConnection({
+              sourceId: connection.source,
+              targetId: connection.target,
+              sourceClass: sourceInstance.class_name,
+              targetClass: targetInstance.class_name,
+            });
+          }
+        }
+      }
+    },
+    [instances, availableClasses, onLinkCreate]
+  );
+
+  const handleAssociationSelect = (associationName: string) => {
+    if (pendingConnection) {
+      onLinkCreate(pendingConnection.sourceId, pendingConnection.targetId, associationName);
+    }
+    setPendingConnection(null);
+  };
+
+  // Validate connections based on metamodel
+  const isValidConnection = useCallback(
+    (connection: Connection) => {
+      if (!connection.source || !connection.target) return false;
+      
+      const sourceInstance = instances.find((i) => i.id === connection.source);
+      const targetInstance = instances.find((i) => i.id === connection.target);
+      
+      if (!sourceInstance || !targetInstance) return false;
+      
+      // Get source class metadata
+      const sourceClass = availableClasses.find(c => c.name === sourceInstance.class_name);
+      if (!sourceClass) return false;
+      
+      // Check if at least one association exists between these classes
+      const hasAssociation = sourceClass.associations.some(
+        a => a.targetClass === targetInstance.class_name
+      );
+      
+      return hasAssociation;
+    },
+    [instances, availableClasses]
+  );
+
+  const handleUpdateInstance = async (updatedInstance: BaseInstance) => {
+    await onInstanceUpdate(updatedInstance);
+    setSelectedInstance(null);
+  };
+
+  const handleCreateFromModal = async (instanceName: string, attributes: Record<string, any>) => {
+    if (!createInstanceModal) return;
+    
+    try {
+      // Call the API to create instance
+      await fetch('http://localhost:8000/instances', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          class_name: createInstanceModal.className,
+          instance_name: instanceName,
+          attributes,
+        }),
+      });
+      
+      // Reload instances
+      onInstanceCreate(createInstanceModal.className, createInstanceModal.position);
+    } catch (error) {
+      console.error('Failed to create instance:', error);
+    }
+    setCreateInstanceModal(null);
+  };
+
+  return (
+    <div style={{ width: '100%', height: '100vh', display: 'flex' }}>
+      <div style={{ flex: 1 }} onDrop={onDrop} onDragOver={onDragOver}>
+        <ReactFlow
+          nodes={nodes}
+          edges={edges}
+          onNodesChange={handleNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          isValidConnection={isValidConnection}
+          nodeTypes={nodeTypes}
+          connectionMode={ConnectionMode.Loose}
+          fitView
+        >
+          <Controls />
+          <Background />
+          <Panel position="top-left">
+            <div style={{ background: 'white', padding: '12px 16px', borderRadius: '8px', border: '1px solid hsl(210 18% 86%)', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+{% endraw %}
+              <h3 style={{ '{{' }} margin: '0 0 4px 0', fontSize: '15px', fontWeight: 600, color: 'hsl(220 25% 10%)' {{ '}}' }}>{{ model.name }} Instances</h3>
+{% raw %}
+              <p style={{ margin: 0, fontSize: '13px', color: 'hsl(215 12% 44%)' }}>Total: {instances.length}</p>
+            </div>
+          </Panel>
+          
+          <Panel position="bottom-right">
+            <a
+              href="https://editor.besser-pearl.org"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'block',
+                background: 'white',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                border: '2px solid hsl(192 80% 30%)',
+                boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
+                textDecoration: 'none',
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'scale(1.05)';
+                e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = 'scale(1)';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
+              }}
+            >
+              <div style={{ fontSize: '18px', fontWeight: 700, color: 'hsl(192 80% 30%)', letterSpacing: '0.5px' }}>
+                BESSER
+              </div>
+              <div style={{ fontSize: '9px', color: 'hsl(215 12% 44%)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Powered by
+              </div>
+            </a>
+          </Panel>
+        </ReactFlow>
+      </div>
+
+      {selectedInstance && (
+        <PropertyEditor
+          instance={selectedInstance}
+          classMetadata={availableClasses.find(c => c.name === selectedInstance.class_name)!}
+          onSave={handleUpdateInstance}
+          onClose={() => setSelectedInstance(null)}
+        />
+      )}
+
+      {pendingConnection && (
+        <AssociationSelector
+          sourceClass={pendingConnection.sourceClass}
+          targetClass={pendingConnection.targetClass}
+          availableClasses={availableClasses}
+          onSelect={handleAssociationSelect}
+          onCancel={() => setPendingConnection(null)}
+        />
+      )}
+
+      {createInstanceModal && (
+        <InstanceCreationModal
+          classMetadata={availableClasses.find(c => c.name === createInstanceModal.className)!}
+          onSubmit={handleCreateFromModal}
+          onCancel={() => setCreateInstanceModal(null)}
+        />
+      )}
+    </div>
+  );
+};
+{% endraw %}

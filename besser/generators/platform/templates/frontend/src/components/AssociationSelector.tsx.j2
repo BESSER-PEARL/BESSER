@@ -1,0 +1,145 @@
+/**
+ * AssociationSelector Component
+ * Modal for selecting which association to create between two instances
+ */
+{% raw %}
+import React from 'react';
+import type { ClassMetadata, AssociationMetadata } from '../types/models';
+
+interface AssociationSelectorProps {
+  sourceClass: string;
+  targetClass: string;
+  availableClasses: ClassMetadata[];
+  onSelect: (associationName: string) => void;
+  onCancel: () => void;
+}
+
+export const AssociationSelector: React.FC<AssociationSelectorProps> = ({
+  sourceClass,
+  targetClass,
+  availableClasses,
+  onSelect,
+  onCancel,
+}) => {
+  const sourceClassMetadata = availableClasses.find(c => c.name === sourceClass);
+  
+  // Find associations from source to target
+  const validAssociations: AssociationMetadata[] = sourceClassMetadata?.associations.filter(
+    assoc => assoc.targetClass === targetClass
+  ) || [];
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        background: 'rgba(0, 0, 0, 0.5)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 10000,
+      }}
+      onClick={onCancel}
+    >
+      <div
+        style={{
+          background: 'white',
+          borderRadius: '12px',
+          padding: '24px',
+          minWidth: '400px',
+          maxWidth: '600px',
+          boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 style={{ margin: '0 0 16px 0', fontSize: '18px', fontWeight: 700, color: 'hsl(220 25% 10%)' }}>
+          Select Association
+        </h3>
+        
+        <p style={{ margin: '0 0 20px 0', fontSize: '13px', color: 'hsl(215 12% 44%)' }}>
+          Choose which association to create between <strong>{sourceClass}</strong> and <strong>{targetClass}</strong>:
+        </p>
+
+        {validAssociations.length === 0 ? (
+          <div
+            style={{
+              padding: '20px',
+              background: 'hsl(4 76% 95%)',
+              border: '1px solid hsl(4 76% 80%)',
+              borderRadius: '8px',
+              marginBottom: '20px',
+            }}
+          >
+            <p style={{ margin: 0, fontSize: '13px', color: 'hsl(4 76% 30%)' }}>
+              ❌ No associations exist between <strong>{sourceClass}</strong> and <strong>{targetClass}</strong> in the metamodel.
+            </p>
+          </div>
+        ) : (
+          <div style={{ marginBottom: '20px' }}>
+            {validAssociations.map((assoc) => (
+              <button
+                key={assoc.name}
+                onClick={() => onSelect(assoc.name)}
+                style={{
+                  width: '100%',
+                  padding: '16px',
+                  marginBottom: '12px',
+                  background: 'hsl(48 30% 97%)',
+                  border: '2px solid hsl(192 80% 30%)',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'all 0.2s',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'hsl(192 80% 95%)';
+                  e.currentTarget.style.borderColor = 'hsl(192 80% 20%)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'hsl(48 30% 97%)';
+                  e.currentTarget.style.borderColor = 'hsl(192 80% 30%)';
+                }}
+              >
+                <div style={{ fontSize: '15px', fontWeight: 700, color: 'hsl(220 25% 10%)', marginBottom: '6px' }}>
+                  {assoc.name}
+                </div>
+                <div style={{ fontSize: '12px', color: 'hsl(215 12% 44%)' }}>
+                  {sourceClass} → {targetClass}
+                </div>
+                <div style={{ fontSize: '11px', color: 'hsl(192 80% 30%)', marginTop: '6px', fontWeight: 600 }}>
+                  Multiplicity: {assoc.multiplicity.min}..{assoc.multiplicity.max === 9999 ? '*' : assoc.multiplicity.max}
+                  {assoc.targetEndName && ` (${assoc.targetEndName})`}
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button
+            onClick={onCancel}
+            style={{
+              padding: '10px 20px',
+              background: 'hsl(210 18% 86%)',
+              color: 'hsl(220 25% 10%)',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '13px',
+              fontWeight: 600,
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.background = 'hsl(210 18% 76%)')}
+            onMouseLeave={(e) => (e.currentTarget.style.background = 'hsl(210 18% 86%)')}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+{% endraw %}

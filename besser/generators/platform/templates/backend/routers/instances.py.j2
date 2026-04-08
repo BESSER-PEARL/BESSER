@@ -1,0 +1,145 @@
+"""
+Instance Management Router
+
+Handles CRUD operations for domain model instances.
+"""
+
+from fastapi import APIRouter, HTTPException, status
+from typing import List, Dict, Any
+from schemas.instance_schemas import (
+    InstanceCreate,
+    InstanceUpdate,
+    InstanceResponse,
+    LinkCreate
+)
+from services.instance_manager import instance_manager
+
+router = APIRouter()
+
+
+@router.post("/", response_model=InstanceResponse, status_code=status.HTTP_201_CREATED)
+async def create_instance(instance_data: InstanceCreate):
+    """Create a new instance of a domain model class."""
+    try:
+        instance = instance_manager.create_instance(
+            class_name=instance_data.class_name,
+            instance_name=instance_data.instance_name,
+            attributes=instance_data.attributes
+        )
+        return instance
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.get("/", response_model=List[InstanceResponse])
+async def get_all_instances():
+    """Get all instances across all classes."""
+    return instance_manager.get_all_instances()
+
+
+@router.get("/{class_name}", response_model=List[InstanceResponse])
+async def get_instances_by_class(class_name: str):
+    """Get all instances of a specific class."""
+    instances = instance_manager.get_instances_by_class(class_name)
+    if instances is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Class '{class_name}' not found"
+        )
+    return instances
+
+
+@router.get("/{class_name}/{instance_id}", response_model=InstanceResponse)
+async def get_instance(class_name: str, instance_id: str):
+    """Get a specific instance by class name and instance ID."""
+    instance = instance_manager.get_instance(class_name, instance_id)
+    if instance is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Instance '{instance_id}' of class '{class_name}' not found"
+        )
+    return instance
+
+
+@router.put("/{class_name}/{instance_id}", response_model=InstanceResponse)
+async def update_instance(class_name: str, instance_id: str, instance_data: InstanceUpdate):
+    """Update an existing instance."""
+    try:
+        instance = instance_manager.update_instance(
+            class_name=class_name,
+            instance_id=instance_id,
+            attributes=instance_data.attributes
+        )
+        if instance is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Instance '{instance_id}' of class '{class_name}' not found"
+            )
+        return instance
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.delete("/{class_name}/{instance_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_instance(class_name: str, instance_id: str):
+    """Delete an instance."""
+    success = instance_manager.delete_instance(class_name, instance_id)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Instance '{instance_id}' of class '{class_name}' not found"
+        )
+    return None
+
+
+@router.post("/links", status_code=status.HTTP_201_CREATED)
+async def create_link(link_data: LinkCreate):
+    """Create a link (association) between two instances."""
+    try:
+        instance_manager.create_link(
+            source_class=link_data.source_class,
+            source_id=link_data.source_id,
+            target_class=link_data.target_class,
+            target_id=link_data.target_id,
+            association_name=link_data.association_name
+        )
+        return {"message": "Link created successfully"}
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.delete("/links", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_link(
+    source_class: str,
+    source_id: str,
+    target_class: str,
+    target_id: str,
+    association_name: str
+):
+    """Delete a link between two instances."""
+    try:
+        instance_manager.delete_link(
+            source_class=source_class,
+            source_id=source_id,
+            target_class=target_class,
+            target_id=target_id,
+            association_name=association_name
+        )
+        return None
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+
+
+@router.delete("/", status_code=status.HTTP_204_NO_CONTENT)
+async def clear_all_instances():
+    """Clear all instances (useful for testing/reset)."""
+    instance_manager.clear_all()
+    return None

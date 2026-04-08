@@ -1,0 +1,248 @@
+/**
+ * PropertyEditor Component
+ * Panel for editing instance attributes
+ */
+{% raw %}
+import React, { useState } from 'react';
+import type { BaseInstance, ClassMetadata } from '../types/models';
+
+interface PropertyEditorProps {
+  instance: BaseInstance;
+  classMetadata: ClassMetadata;
+  onSave: (instance: BaseInstance) => void;
+  onClose: () => void;
+}
+
+export const PropertyEditor: React.FC<PropertyEditorProps> = ({
+  instance,
+  classMetadata,
+  onSave,
+  onClose,
+}) => {
+  const [instanceName, setInstanceName] = useState(instance.instance_name);
+  const [attributes, setAttributes] = useState(instance.attributes);
+
+  const getInputType = (attrType: string): string => {
+    const lowerType = attrType.toLowerCase();
+    if (lowerType.includes('int') || lowerType.includes('number')) return 'number';
+    if (lowerType.includes('date')) return 'date';
+    if (lowerType.includes('datetime')) return 'datetime-local';
+    if (lowerType.includes('time')) return 'time';
+    if (lowerType.includes('bool')) return 'checkbox';
+    if (lowerType.includes('email')) return 'email';
+    return 'text';
+  };
+
+  const handleAttributeChange = (key: string, value: any) => {
+    setAttributes((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = () => {
+    onSave({
+      ...instance,
+      instance_name: instanceName,
+      attributes,
+    });
+  };
+
+  return (
+    <div
+      style={{
+        width: '340px',
+        background: 'white',
+        borderLeft: '1px solid hsl(210 18% 86%)',
+        padding: '0',
+        overflowY: 'auto',
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100%',
+      }}
+    >
+      {/* Header */}
+      <div
+        style={{
+          padding: '20px',
+          borderBottom: '1px solid hsl(210 18% 86%)',
+          background: 'hsl(48 30% 97%)',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+          }}
+        >
+          <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'hsl(220 25% 10%)' }}>
+            Edit Instance
+          </h3>
+          <button
+            onClick={onClose}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              fontSize: '24px',
+              cursor: 'pointer',
+              color: 'hsl(215 12% 44%)',
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </div>
+        <div style={{ marginTop: '8px', fontSize: '13px', color: 'hsl(215 12% 44%)' }}>
+          {instance.class_name}
+        </div>
+      </div>
+
+      {/* Content */}
+      <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
+        {/* Instance Name */}
+        <div style={{ marginBottom: '24px' }}>
+          <label
+            style={{
+              display: 'block',
+              marginBottom: '8px',
+              fontWeight: 600,
+              fontSize: '14px',
+              color: 'hsl(220 25% 10%)',
+            }}
+          >
+            Instance Name
+          </label>
+          <input
+            type="text"
+            value={instanceName}
+            onChange={(e) => setInstanceName(e.target.value)}
+            style={{
+              width: '100%',
+              padding: '10px',
+              border: '1px solid hsl(210 18% 86%)',
+              borderRadius: '6px',
+              fontSize: '14px',
+              transition: 'border-color 0.2s',
+            }}
+            onFocus={(e) => e.currentTarget.style.borderColor = 'hsl(192 80% 42%)'}
+            onBlur={(e) => e.currentTarget.style.borderColor = 'hsl(210 18% 86%)'}
+          />
+        </div>
+
+        {/* Attributes */}
+        <h4 style={{ marginBottom: '16px', fontSize: '15px', fontWeight: 600, color: 'hsl(220 25% 10%)' }}>
+          Attributes
+        </h4>
+        {classMetadata.attributes.length === 0 && (
+          <p style={{ color: 'hsl(215 12% 44%)', fontSize: '13px', fontStyle: 'italic' }}>
+            No attributes defined
+          </p>
+        )}
+        {classMetadata.attributes.map((attrMeta) => {
+          const inputType = getInputType(attrMeta.type);
+          const currentValue = attributes[attrMeta.name] || '';
+          
+          return (
+            <div key={attrMeta.name} style={{ marginBottom: '18px' }}>
+              <label
+                style={{
+                  display: 'block',
+                  marginBottom: '8px',
+                  fontWeight: 600,
+                  fontSize: '13px',
+                  color: 'hsl(220 25% 10%)',
+                }}
+              >
+                {attrMeta.name}
+                <span style={{ color: 'hsl(215 12% 44%)', fontWeight: 400, marginLeft: '6px', fontSize: '12px' }}>
+                  ({attrMeta.type})
+                </span>
+              </label>
+              {inputType === 'checkbox' ? (
+                <input
+                  type="checkbox"
+                  checked={currentValue === true || currentValue === 'true'}
+                  onChange={(e) => handleAttributeChange(attrMeta.name, e.target.checked)}
+                  style={{
+                    width: '20px',
+                    height: '20px',
+                    cursor: 'pointer',
+                  }}
+                />
+              ) : (
+                <input
+                  type={inputType}
+                  value={String(currentValue)}
+                  onChange={(e) => {
+                    const value = inputType === 'number' ? parseFloat(e.target.value) || '' : e.target.value;
+                    handleAttributeChange(attrMeta.name, value);
+                  }}
+                  placeholder={`Enter ${attrMeta.name}`}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid hsl(210 18% 86%)',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    transition: 'border-color 0.2s',
+                  }}
+                  onFocus={(e) => e.currentTarget.style.borderColor = 'hsl(192 80% 42%)'}
+                  onBlur={(e) => e.currentTarget.style.borderColor = 'hsl(210 18% 86%)'}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Footer Actions */}
+      <div
+        style={{
+          padding: '20px',
+          borderTop: '1px solid hsl(210 18% 86%)',
+          background: 'hsl(48 30% 97%)',
+        }}
+      >
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button
+            onClick={handleSave}
+            style={{
+              flex: 1,
+              padding: '12px',
+              background: 'hsl(192 80% 20%)',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '14px',
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'hsl(192 80% 42%)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'hsl(192 80% 20%)'}
+          >
+            Save Changes
+          </button>
+          <button
+            onClick={onClose}
+            style={{
+              flex: 1,
+              padding: '12px',
+              background: 'hsl(210 22% 94%)',
+              color: 'hsl(220 25% 10%)',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '14px',
+              transition: 'background 0.2s',
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.background = 'hsl(210 18% 86%)'}
+            onMouseLeave={(e) => e.currentTarget.style.background = 'hsl(210 22% 94%)'}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+{% endraw %}

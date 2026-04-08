@@ -1,0 +1,51 @@
+"""
+Export Router
+
+Handles exporting instances to various formats (JSON, Python code).
+"""
+
+from fastapi import APIRouter, HTTPException, Response
+from fastapi.responses import FileResponse, JSONResponse
+from services.export_service import export_service
+import tempfile
+import os
+
+router = APIRouter()
+
+
+@router.get("/json")
+async def export_as_json():
+    """Export all instances as JSON."""
+    try:
+        json_data = export_service.export_to_json()
+        return JSONResponse(content=json_data)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/python")
+async def export_as_python():
+    """Export all instances as Python code."""
+    try:
+        python_code = export_service.export_to_python()
+        return Response(
+            content=python_code,
+            media_type="text/plain",
+            headers={"Content-Disposition": "attachment; filename=instances.py"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/buml")
+async def export_as_buml():
+    """Export all instances as BUML object model code."""
+    try:
+        buml_code = export_service.export_to_buml()
+        return Response(
+            content=buml_code,
+            media_type="text/plain",
+            headers={"Content-Disposition": "attachment; filename=object_model.py"}
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

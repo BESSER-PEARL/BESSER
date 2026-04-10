@@ -16,16 +16,44 @@ class SQLAlchemyGenerator(GeneratorInterface):
     """
 
     TYPES = {
-        "int": "Integer",
-        "str": "String(100)",
-        "float": "Float",
-        "bool": "Boolean",
-        "time": "Time",
-        "date": "Date",
-        "datetime": "DateTime",
+        "int": "Integer_",
+        "str": "String_(100)",
+        "float": "Float_",
+        "bool": "Boolean_",
+        "time": "Time_",
+        "date": "Date_",
+        "datetime": "DateTime_",
     }
 
     VALID_DBMS = {"sqlite", "postgresql", "mysql", "mssql", "mariadb", "oracle"}
+    
+    # Reserved names that conflict with template imports and definitions.
+    # These names cannot be used for classes, enumerations, attributes, or associations.
+    RESERVED_NAMES = {
+        # Core template definitions
+        "Base",              # Defined in template as DeclarativeBase subclass
+        "Enum",              # SQLAlchemy Enum class (required by SQL generator's isinstance check)
+        
+        # SQLAlchemy import aliases (underscore suffix)
+        "Table_",           # sqlalchemy.Table
+        "Column_",          # sqlalchemy.Column
+        "ForeignKey_",      # sqlalchemy.ForeignKey
+        "Mapped_",          # sqlalchemy.orm.Mapped
+        
+        # SQLAlchemy type aliases (underscore suffix)
+        "Boolean_",         # sqlalchemy.Boolean
+        "String_",          # sqlalchemy.String
+        "Integer_",         # sqlalchemy.Integer
+        "Float_",           # sqlalchemy.Float
+        "Date_",            # sqlalchemy.Date
+        "Time_",            # sqlalchemy.Time
+        "DateTime_",        # sqlalchemy.DateTime
+        "Text_",            # sqlalchemy.Text
+        
+        # Typing module aliases (underscore suffix)
+        "List_",            # typing.List
+        "Optional_",        # typing.Optional
+    }
 
     def __init__(self, model: DomainModel, output_dir: str = None):
         super().__init__(model, output_dir)
@@ -85,6 +113,46 @@ class SQLAlchemyGenerator(GeneratorInterface):
                 concrete_parents.append(class_.name)
         return concrete_parents
 
+    def validate_model(self):
+        """
+        Validates that the model doesn't use reserved names for classes, enumerations, or attributes.
+        
+        Raises:
+            ValueError: If any reserved names are found in the model.
+        """
+        conflicts = []
+        
+        # Check class names
+        for cls in self.model.get_classes():
+            if cls.name in self.RESERVED_NAMES:
+                conflicts.append(f"Class name '{cls.name}' is reserved and cannot be used.")
+            
+            # Check attribute names within classes
+            for attr in cls.attributes:
+                if attr.name in self.RESERVED_NAMES:
+                    conflicts.append(
+                        f"Attribute name '{attr.name}' in class '{cls.name}' is reserved and cannot be used."
+                    )
+        
+        # Check enumeration names
+        for enum in self.model.get_enumerations():
+            if enum.name in self.RESERVED_NAMES:
+                conflicts.append(f"Enumeration name '{enum.name}' is reserved and cannot be used.")
+        
+        # Check association names
+        for association in self.model.associations:
+            if association.name in self.RESERVED_NAMES:
+                conflicts.append(f"Association name '{association.name}' is reserved and cannot be used.")
+        
+        if conflicts:
+            error_message = "SQLAlchemy code generation failed due to reserved name conflicts:\n" + "\n".join(
+                f"  - {conflict}" for conflict in conflicts
+            )
+            error_message += (
+                f"\n\nReserved names that cannot be used: {', '.join(sorted(self.RESERVED_NAMES))}."
+            )
+            raise ValueError(error_message)
+
     def generate(self, dbms: str = "sqlite"):
         """
         Generates SQLAlchemy code based on the provided B-UML model and saves it to the specified
@@ -102,6 +170,9 @@ class SQLAlchemyGenerator(GeneratorInterface):
         """
         if dbms not in self.VALID_DBMS:
             raise ValueError(f"Invalid DBMS. Valid options are {', '.join(self.VALID_DBMS)}.")
+        
+        # Validate the model for reserved name conflicts
+        self.validate_model()
 
         classes, asso_classes = self.separate_classes()
         concrete_parents = self.get_concrete_table_inheritance()

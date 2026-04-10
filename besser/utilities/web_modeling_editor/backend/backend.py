@@ -40,6 +40,7 @@ from fastapi.responses import StreamingResponse, Response
 # BESSER utilities
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
+from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 from besser.utilities.buml_code_builder.project_builder import project_to_code
 from besser.generators.agents.baf_generator import GenerationMode
 
@@ -161,7 +162,7 @@ def get_api_root():
             "generate": "/besser_api/generate-output",
             "deploy": "/besser_api/deploy-app", 
             "export_buml": "/besser_api/export-buml",
-            "export_project": "/besser_api/export-project_as_buml",
+            "export_project": "/besser_api/export-project-as-buml",
             "get_project_json_model": "/besser_api/get-project-json-model",
             "get_single_json_model": "/besser_api/get-single-json-model",
             "validate_diagram": "/besser_api/validate-diagram",
@@ -1124,10 +1125,15 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
         )
 
     # Process the NN diagram to BUML
-    nn_model = process_nn_diagram(json_data)
+    try:
+        nn_model = process_nn_diagram(json_data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     # Extract config options - generation_type can be 'subclassing' or 'sequential'
     generation_type = config.get('generation_type', 'subclassing') if config else 'subclassing'
+    if generation_type not in ('subclassing', 'sequential'):
+        raise HTTPException(status_code=400, detail=f"Invalid generation_type '{generation_type}'. Must be 'subclassing' or 'sequential'.")
 
     # Create generator instance based on type
     if generator_type == "pytorch":
@@ -1244,14 +1250,12 @@ def _create_file_response(temp_dir: str, generator_type: str):
     with open(output_file_path, "rb") as f:
         file_content = f.read()
 
-    # Use the proper filename from config
-    proper_filename = get_filename_for_generator(generator_type)
     cleanup_temp_resources(temp_dir)
     
     return Response(
         content=file_content,
         media_type="text/plain",
-        headers={"Content-Disposition": f'attachment; filename="{proper_filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )
 
 
@@ -1341,7 +1345,7 @@ async def deploy_app(input_data: DiagramInput):
 
 
 
-@app.post("/besser_api/export-project_as_buml")
+@app.post("/besser_api/export-project-as-buml")
 async def export_project_as_buml(input_data: ProjectInput = Body(...)):
     try:
         buml_project = json_to_buml_project(input_data)
@@ -1449,6 +1453,22 @@ async def export_buml(input_data: DiagramInput):
                 headers={
                     "Content-Disposition": "attachment; filename=agent_buml.py"
                 },
+            )
+
+        elif elements_data.get("type") == "NNDiagram":
+            try:
+                nn_model = process_nn_diagram(json_data)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
+            output_file_path = os.path.join(temp_dir, "nn_model.py")
+            nn_model_to_code(nn_model, output_file_path)
+            with open(output_file_path, "rb") as f:
+                file_content = f.read()
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            return Response(
+                content=file_content,
+                media_type="text/plain",
+                headers={"Content-Disposition": "attachment; filename=nn_model.py"},
             )
 
         else:

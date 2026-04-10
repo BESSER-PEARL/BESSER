@@ -23,30 +23,8 @@ from besser.BUML.metamodel.nn import (
     LayerNormLayer,
     BatchNormLayer,
 )
-
-
-def sanitize_name(name: str) -> str:
-    """
-    Sanitize a name to be valid for BUML NamedElement.
-
-    Args:
-        name (str): The original name
-
-    Returns:
-        str: Sanitized name safe for NamedElement
-    """
-    if not name:
-        return "unnamed"
-
-    # Replace spaces with underscores
-    sanitized = name.replace(' ', '_')
-    # Replace hyphens with underscores
-    sanitized = sanitized.replace('-', '_')
-
-    if not sanitized:
-        return "unnamed"
-
-    return sanitized
+import bisect
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
 
 
 def get_element_attribute(element: dict, attr_key: str, elements: dict, default=None):
@@ -462,14 +440,15 @@ def process_nn_diagram(json_data):
         ordered_modules = topological_sort(all_module_ids, outgoing_connections)
 
         # Add modules in order
+        container_refs_dict = dict(container_refs)
         for module_id in ordered_modules:
             if module_id in container_layers:
                 nn.add_layer(container_layers[module_id])
             elif module_id in container_tensor_ops:
                 nn.add_tensor_op(container_tensor_ops[module_id])
-            elif module_id in dict(container_refs):
+            elif module_id in container_refs_dict:
                 # This is an NNReference - add the referenced NN as sub_nn
-                ref_name = dict(container_refs).get(module_id)
+                ref_name = container_refs_dict.get(module_id)
                 if ref_name and ref_name in nn_by_name:
                     nn.add_sub_nn(nn_by_name[ref_name])
 
@@ -519,7 +498,8 @@ def topological_sort(module_ids, outgoing_connections):
                     in_degree[target_id] += 1
 
     # Find all nodes with in-degree 0 (first layers - no incoming from other modules)
-    queue = [mid for mid, deg in in_degree.items() if deg == 0]
+    # Sort for deterministic ordering when multiple nodes share in-degree 0
+    queue = sorted(mid for mid, deg in in_degree.items() if deg == 0)
     result = []
 
     while queue:
@@ -531,7 +511,7 @@ def topological_sort(module_ids, outgoing_connections):
             if target_id in in_degree:
                 in_degree[target_id] -= 1
                 if in_degree[target_id] == 0:
-                    queue.append(target_id)
+                    bisect.insort(queue, target_id)
 
     # Add any remaining nodes (handles disconnected components or cycles)
     for mid in module_ids:
@@ -543,23 +523,24 @@ def topological_sort(module_ids, outgoing_connections):
 
 # Layer creation functions
 
-def create_conv1d_layer(element, elements):
-    """Create a Conv1D layer from element data."""
+def _create_conv_layer(element, elements, conv_class, default_stride):
+    """Create a convolutional layer (Conv1D, Conv2D, or Conv3D) from element data."""
+    class_name = conv_class.__name__
     name = get_element_attribute(element, 'NameAttribute', elements)
     if not name:
-        raise ValueError("Conv1D layer missing mandatory 'name' attribute")
+        raise ValueError(f"{class_name} layer missing mandatory 'name' attribute")
 
     kernel_dim_raw = get_element_attribute(element, 'KernelDimAttribute', elements)
     kernel_dim = parse_list_of_ints(kernel_dim_raw)
     if kernel_dim is None:
-        raise ValueError(f"Conv1D layer '{name}' missing mandatory 'kernel_dim' attribute")
+        raise ValueError(f"{class_name} layer '{name}' missing mandatory 'kernel_dim' attribute")
 
     out_channels_raw = get_element_attribute(element, 'OutChannelsAttribute', elements)
     out_channels = parse_tuple_or_int(out_channels_raw)
     if out_channels is None:
-        raise ValueError(f"Conv1D layer '{name}' missing mandatory 'out_channels' attribute")
+        raise ValueError(f"{class_name} layer '{name}' missing mandatory 'out_channels' attribute")
 
-    layer = Conv1D(
+    layer = conv_class(
         name=sanitize_name(name),
         kernel_dim=kernel_dim,
         out_channels=out_channels,
@@ -569,7 +550,7 @@ def create_conv1d_layer(element, elements):
     # Optional attributes
     stride = get_element_attribute(element, 'StrideDimAttribute', elements)
     if stride is not None:
-        layer.stride_dim = parse_list_of_ints(stride, [1])
+        layer.stride_dim = parse_list_of_ints(stride, default_stride)
 
     in_channels = get_element_attribute(element, 'InChannelsAttribute', elements)
     if in_channels is not None:
@@ -605,134 +586,21 @@ def create_conv1d_layer(element, elements):
         layer.permute_out = parse_tuple_or_int(permute_out)
 
     return layer
+
+
+def create_conv1d_layer(element, elements):
+    """Create a Conv1D layer from element data."""
+    return _create_conv_layer(element, elements, Conv1D, [1])
 
 
 def create_conv2d_layer(element, elements):
     """Create a Conv2D layer from element data."""
-    name = get_element_attribute(element, 'NameAttribute', elements)
-    if not name:
-        raise ValueError("Conv2D layer missing mandatory 'name' attribute")
-
-    kernel_dim_raw = get_element_attribute(element, 'KernelDimAttribute', elements)
-    kernel_dim = parse_list_of_ints(kernel_dim_raw)
-    if kernel_dim is None:
-        raise ValueError(f"Conv2D layer '{name}' missing mandatory 'kernel_dim' attribute")
-
-    out_channels_raw = get_element_attribute(element, 'OutChannelsAttribute', elements)
-    out_channels = parse_tuple_or_int(out_channels_raw)
-    if out_channels is None:
-        raise ValueError(f"Conv2D layer '{name}' missing mandatory 'out_channels' attribute")
-
-    layer = Conv2D(
-        name=sanitize_name(name),
-        kernel_dim=kernel_dim,
-        out_channels=out_channels,
-    )
-    layer._set_attrs = set()
-
-    # Optional attributes
-    stride = get_element_attribute(element, 'StrideDimAttribute', elements)
-    if stride is not None:
-        layer.stride_dim = parse_list_of_ints(stride, [1, 1])
-
-    in_channels = get_element_attribute(element, 'InChannelsAttribute', elements)
-    if in_channels is not None:
-        layer.in_channels = parse_tuple_or_int(in_channels)
-
-    padding = get_element_attribute(element, 'PaddingAmountAttribute', elements)
-    if padding is not None:
-        layer.padding_amount = parse_tuple_or_int(padding, 0)
-
-    padding_type = get_element_attribute(element, 'PaddingTypeAttribute', elements)
-    if padding_type:
-        layer.padding_type = padding_type
-
-    actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
-    if actv_func:
-        layer.actv_func = actv_func
-
-    name_module_input = get_element_attribute(element, 'NameModuleInputAttribute', elements)
-    if name_module_input:
-        layer.name_module_input = name_module_input
-
-    input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
-    if input_reused is not None:
-        layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
-
-    permute_in = get_element_attribute(element, 'PermuteInAttribute', elements)
-    if permute_in:
-        layer.permute_in = parse_tuple_or_int(permute_in)
-
-    permute_out = get_element_attribute(element, 'PermuteOutAttribute', elements)
-    if permute_out:
-        layer.permute_out = parse_tuple_or_int(permute_out)
-
-    return layer
+    return _create_conv_layer(element, elements, Conv2D, [1, 1])
 
 
 def create_conv3d_layer(element, elements):
     """Create a Conv3D layer from element data."""
-    name = get_element_attribute(element, 'NameAttribute', elements)
-    if not name:
-        raise ValueError("Conv3D layer missing mandatory 'name' attribute")
-
-    kernel_dim_raw = get_element_attribute(element, 'KernelDimAttribute', elements)
-    kernel_dim = parse_list_of_ints(kernel_dim_raw)
-    if kernel_dim is None:
-        raise ValueError(f"Conv3D layer '{name}' missing mandatory 'kernel_dim' attribute")
-
-    out_channels_raw = get_element_attribute(element, 'OutChannelsAttribute', elements)
-    out_channels = parse_tuple_or_int(out_channels_raw)
-    if out_channels is None:
-        raise ValueError(f"Conv3D layer '{name}' missing mandatory 'out_channels' attribute")
-
-    layer = Conv3D(
-        name=sanitize_name(name),
-        kernel_dim=kernel_dim,
-        out_channels=out_channels,
-    )
-    layer._set_attrs = set()
-
-    # Optional attributes (same pattern as Conv2D)
-    stride = get_element_attribute(element, 'StrideDimAttribute', elements)
-    if stride is not None:
-        layer.stride_dim = parse_list_of_ints(stride, [1, 1, 1])
-
-    in_channels = get_element_attribute(element, 'InChannelsAttribute', elements)
-    if in_channels is not None:
-        layer.in_channels = parse_tuple_or_int(in_channels)
-
-    padding = get_element_attribute(element, 'PaddingAmountAttribute', elements)
-    if padding is not None:
-        layer.padding_amount = parse_tuple_or_int(padding, 0)
-
-    padding_type = get_element_attribute(element, 'PaddingTypeAttribute', elements)
-    if padding_type:
-        layer.padding_type = padding_type
-
-    actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
-    if actv_func:
-        layer.actv_func = actv_func
-
-    name_module_input = get_element_attribute(element, 'NameModuleInputAttribute', elements)
-    if name_module_input:
-        layer.name_module_input = name_module_input
-
-    input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
-    if input_reused is not None:
-        layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
-
-    permute_in = get_element_attribute(element, 'PermuteInAttribute', elements)
-    if permute_in:
-        layer.permute_in = parse_tuple_or_int(permute_in)
-
-    permute_out = get_element_attribute(element, 'PermuteOutAttribute', elements)
-    if permute_out:
-        layer.permute_out = parse_tuple_or_int(permute_out)
-
-    return layer
+    return _create_conv_layer(element, elements, Conv3D, [1, 1, 1])
 
 
 def create_pooling_layer(element, elements):
@@ -811,18 +679,19 @@ def create_pooling_layer(element, elements):
     return layer
 
 
-def create_rnn_layer(element, elements):
-    """Create a SimpleRNNLayer from element data."""
+def _create_rnn_like_layer(element, elements, rnn_class):
+    """Create an RNN-like layer (SimpleRNNLayer, LSTMLayer, or GRULayer) from element data."""
+    class_name = rnn_class.__name__
     name = get_element_attribute(element, 'NameAttribute', elements)
     if not name:
-        raise ValueError("RNNLayer missing mandatory 'name' attribute")
+        raise ValueError(f"{class_name} missing mandatory 'name' attribute")
 
     hidden_size_raw = get_element_attribute(element, 'HiddenSizeAttribute', elements)
     hidden_size = parse_tuple_or_int(hidden_size_raw)
     if hidden_size is None:
-        raise ValueError(f"RNNLayer '{name}' missing mandatory 'hidden_size' attribute")
+        raise ValueError(f"{class_name} '{name}' missing mandatory 'hidden_size' attribute")
 
-    layer = SimpleRNNLayer(
+    layer = rnn_class(
         name=sanitize_name(name),
         hidden_size=hidden_size,
     )
@@ -867,116 +736,19 @@ def create_rnn_layer(element, elements):
     return layer
 
 
+def create_rnn_layer(element, elements):
+    """Create a SimpleRNNLayer from element data."""
+    return _create_rnn_like_layer(element, elements, SimpleRNNLayer)
+
+
 def create_lstm_layer(element, elements):
     """Create an LSTMLayer from element data."""
-    name = get_element_attribute(element, 'NameAttribute', elements)
-    if not name:
-        raise ValueError("LSTMLayer missing mandatory 'name' attribute")
-
-    hidden_size_raw = get_element_attribute(element, 'HiddenSizeAttribute', elements)
-    hidden_size = parse_tuple_or_int(hidden_size_raw)
-    if hidden_size is None:
-        raise ValueError(f"LSTMLayer '{name}' missing mandatory 'hidden_size' attribute")
-
-    layer = LSTMLayer(
-        name=sanitize_name(name),
-        hidden_size=hidden_size,
-    )
-    layer._set_attrs = set()
-
-    # Optional attributes (same as RNN)
-    return_type = get_element_attribute(element, 'ReturnTypeAttribute', elements)
-    if return_type:
-        layer.return_type = return_type
-
-    input_size = get_element_attribute(element, 'InputSizeAttribute', elements)
-    if input_size is not None:
-        layer.input_size = parse_tuple_or_int(input_size)
-
-    bidirectional = get_element_attribute(element, 'BidirectionalAttribute', elements)
-    if bidirectional is not None:
-        layer.bidirectional = parse_bool(bidirectional)
-        layer._set_attrs.add('bidirectional')
-
-    dropout = get_element_attribute(element, 'DropoutAttribute', elements)
-    if dropout is not None:
-        layer.dropout = parse_float(dropout, 0.0)
-
-    batch_first = get_element_attribute(element, 'BatchFirstAttribute', elements)
-    if batch_first is not None:
-        layer.batch_first = parse_bool(batch_first)
-        layer._set_attrs.add('batch_first')
-
-    actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
-    if actv_func:
-        layer.actv_func = actv_func
-
-    name_module_input = get_element_attribute(element, 'NameModuleInputAttribute', elements)
-    if name_module_input:
-        layer.name_module_input = name_module_input
-
-    input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
-    if input_reused is not None:
-        layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
-
-    return layer
+    return _create_rnn_like_layer(element, elements, LSTMLayer)
 
 
 def create_gru_layer(element, elements):
     """Create a GRULayer from element data."""
-    name = get_element_attribute(element, 'NameAttribute', elements)
-    if not name:
-        raise ValueError("GRULayer missing mandatory 'name' attribute")
-
-    hidden_size_raw = get_element_attribute(element, 'HiddenSizeAttribute', elements)
-    hidden_size = parse_tuple_or_int(hidden_size_raw)
-    if hidden_size is None:
-        raise ValueError(f"GRULayer '{name}' missing mandatory 'hidden_size' attribute")
-
-    layer = GRULayer(
-        name=sanitize_name(name),
-        hidden_size=hidden_size,
-    )
-    layer._set_attrs = set()
-
-    # Optional attributes (same as RNN)
-    return_type = get_element_attribute(element, 'ReturnTypeAttribute', elements)
-    if return_type:
-        layer.return_type = return_type
-
-    input_size = get_element_attribute(element, 'InputSizeAttribute', elements)
-    if input_size is not None:
-        layer.input_size = parse_tuple_or_int(input_size)
-
-    bidirectional = get_element_attribute(element, 'BidirectionalAttribute', elements)
-    if bidirectional is not None:
-        layer.bidirectional = parse_bool(bidirectional)
-        layer._set_attrs.add('bidirectional')
-
-    dropout = get_element_attribute(element, 'DropoutAttribute', elements)
-    if dropout is not None:
-        layer.dropout = parse_float(dropout, 0.0)
-
-    batch_first = get_element_attribute(element, 'BatchFirstAttribute', elements)
-    if batch_first is not None:
-        layer.batch_first = parse_bool(batch_first)
-        layer._set_attrs.add('batch_first')
-
-    actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
-    if actv_func:
-        layer.actv_func = actv_func
-
-    name_module_input = get_element_attribute(element, 'NameModuleInputAttribute', elements)
-    if name_module_input:
-        layer.name_module_input = name_module_input
-
-    input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
-    if input_reused is not None:
-        layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
-
-    return layer
+    return _create_rnn_like_layer(element, elements, GRULayer)
 
 
 def create_linear_layer(element, elements):

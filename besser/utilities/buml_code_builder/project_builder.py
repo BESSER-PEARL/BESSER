@@ -19,7 +19,7 @@ from besser.utilities.buml_code_builder.domain_model_builder import (
 )
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
-from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
+from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code, _name_to_var
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -179,11 +179,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             content_str = file_content
             f.write(content_str)
             f.write("\n\n")
-            # Use the same variable naming logic as nn_model_builder
-            nn_var_name = nn_model.name.replace(' ', '_').replace('-', '_').lower()
-            if nn_var_name and nn_var_name[0].isdigit():
-                nn_var_name = 'nn_' + nn_var_name
-            models.append(nn_var_name if nn_var_name else 'nn_model')
+            models.append(_name_to_var(nn_model.name))
 
         if sm != "":
             f.write(sm)

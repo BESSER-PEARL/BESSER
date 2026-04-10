@@ -185,20 +185,12 @@ def _write_all_sub_nns(f, sub_nns: list, sub_nn_vars: dict, written: set = None)
 
 def _write_layer(f, layer, var_name: str):
     """Write a layer definition."""
-    if isinstance(layer, Conv1D):
-        _write_conv1d(f, layer, var_name)
-    elif isinstance(layer, Conv2D):
-        _write_conv2d(f, layer, var_name)
-    elif isinstance(layer, Conv3D):
-        _write_conv3d(f, layer, var_name)
+    if isinstance(layer, (Conv1D, Conv2D, Conv3D)):
+        _write_conv(f, layer, var_name)
     elif isinstance(layer, PoolingLayer):
         _write_pooling(f, layer, var_name)
-    elif isinstance(layer, SimpleRNNLayer):
-        _write_rnn(f, layer, var_name)
-    elif isinstance(layer, LSTMLayer):
-        _write_lstm(f, layer, var_name)
-    elif isinstance(layer, GRULayer):
-        _write_gru(f, layer, var_name)
+    elif isinstance(layer, (SimpleRNNLayer, LSTMLayer, GRULayer)):
+        _write_rnn_like(f, layer, var_name)
     elif isinstance(layer, LinearLayer):
         _write_linear(f, layer, var_name)
     elif isinstance(layer, FlattenLayer):
@@ -215,17 +207,9 @@ def _write_layer(f, layer, var_name: str):
         f.write(f"# Unknown layer type: {type(layer).__name__}\n")
 
 
-def _format_optional(name: str, value, default=None, quote_str=True):
-    """Format an optional parameter for output."""
-    if value is None or value == default:
-        return ""
-    if isinstance(value, str) and quote_str:
-        return f", {name}='{value}'"
-    return f", {name}={value}"
-
-
-def _write_conv1d(f, layer: Conv1D, var_name: str):
-    """Write Conv1D layer definition."""
+def _write_conv(f, layer, var_name: str):
+    """Write a convolutional layer (Conv1D, Conv2D, or Conv3D) definition."""
+    class_name = type(layer).__name__
     params = [
         f"name='{layer.name}'",
         f"kernel_dim={layer.kernel_dim}",
@@ -250,65 +234,7 @@ def _write_conv1d(f, layer: Conv1D, var_name: str):
     if layer.permute_out:
         params.append(f"permute_out={layer.permute_out}")
 
-    f.write(f"{var_name} = Conv1D({', '.join(params)})\n")
-
-
-def _write_conv2d(f, layer: Conv2D, var_name: str):
-    """Write Conv2D layer definition."""
-    params = [
-        f"name='{layer.name}'",
-        f"kernel_dim={layer.kernel_dim}",
-        f"out_channels={layer.out_channels}",
-    ]
-    if layer.in_channels:
-        params.append(f"in_channels={layer.in_channels}")
-    if layer.stride_dim:
-        params.append(f"stride_dim={layer.stride_dim}")
-    if layer.padding_amount:
-        params.append(f"padding_amount={layer.padding_amount}")
-    if layer.padding_type and layer.padding_type != "valid":
-        params.append(f"padding_type='{layer.padding_type}'")
-    if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
-    if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
-    if _is_attr_set(layer, 'input_reused'):
-        params.append(f"input_reused={layer.input_reused}")
-    if layer.permute_in:
-        params.append(f"permute_in={layer.permute_in}")
-    if layer.permute_out:
-        params.append(f"permute_out={layer.permute_out}")
-
-    f.write(f"{var_name} = Conv2D({', '.join(params)})\n")
-
-
-def _write_conv3d(f, layer: Conv3D, var_name: str):
-    """Write Conv3D layer definition."""
-    params = [
-        f"name='{layer.name}'",
-        f"kernel_dim={layer.kernel_dim}",
-        f"out_channels={layer.out_channels}",
-    ]
-    if layer.in_channels:
-        params.append(f"in_channels={layer.in_channels}")
-    if layer.stride_dim:
-        params.append(f"stride_dim={layer.stride_dim}")
-    if layer.padding_amount:
-        params.append(f"padding_amount={layer.padding_amount}")
-    if layer.padding_type and layer.padding_type != "valid":
-        params.append(f"padding_type='{layer.padding_type}'")
-    if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
-    if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
-    if _is_attr_set(layer, 'input_reused'):
-        params.append(f"input_reused={layer.input_reused}")
-    if layer.permute_in:
-        params.append(f"permute_in={layer.permute_in}")
-    if layer.permute_out:
-        params.append(f"permute_out={layer.permute_out}")
-
-    f.write(f"{var_name} = Conv3D({', '.join(params)})\n")
+    f.write(f"{var_name} = {class_name}({', '.join(params)})\n")
 
 
 def _write_pooling(f, layer: PoolingLayer, var_name: str):
@@ -342,8 +268,9 @@ def _write_pooling(f, layer: PoolingLayer, var_name: str):
     f.write(f"{var_name} = PoolingLayer({', '.join(params)})\n")
 
 
-def _write_rnn(f, layer: SimpleRNNLayer, var_name: str):
-    """Write SimpleRNNLayer definition."""
+def _write_rnn_like(f, layer, var_name: str):
+    """Write an RNN-like layer (SimpleRNNLayer, LSTMLayer, or GRULayer) definition."""
+    class_name = type(layer).__name__
     params = [
         f"name='{layer.name}'",
         f"hidden_size={layer.hidden_size}",
@@ -365,59 +292,7 @@ def _write_rnn(f, layer: SimpleRNNLayer, var_name: str):
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
 
-    f.write(f"{var_name} = SimpleRNNLayer({', '.join(params)})\n")
-
-
-def _write_lstm(f, layer: LSTMLayer, var_name: str):
-    """Write LSTMLayer definition."""
-    params = [
-        f"name='{layer.name}'",
-        f"hidden_size={layer.hidden_size}",
-    ]
-    if layer.input_size:
-        params.append(f"input_size={layer.input_size}")
-    if layer.return_type:
-        params.append(f"return_type='{layer.return_type}'")
-    if _is_attr_set(layer, 'bidirectional'):
-        params.append(f"bidirectional={layer.bidirectional}")
-    if layer.dropout:
-        params.append(f"dropout={layer.dropout}")
-    if _is_attr_set(layer, 'batch_first'):
-        params.append(f"batch_first={layer.batch_first}")
-    if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
-    if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
-    if _is_attr_set(layer, 'input_reused'):
-        params.append(f"input_reused={layer.input_reused}")
-
-    f.write(f"{var_name} = LSTMLayer({', '.join(params)})\n")
-
-
-def _write_gru(f, layer: GRULayer, var_name: str):
-    """Write GRULayer definition."""
-    params = [
-        f"name='{layer.name}'",
-        f"hidden_size={layer.hidden_size}",
-    ]
-    if layer.input_size:
-        params.append(f"input_size={layer.input_size}")
-    if layer.return_type:
-        params.append(f"return_type='{layer.return_type}'")
-    if _is_attr_set(layer, 'bidirectional'):
-        params.append(f"bidirectional={layer.bidirectional}")
-    if layer.dropout:
-        params.append(f"dropout={layer.dropout}")
-    if _is_attr_set(layer, 'batch_first'):
-        params.append(f"batch_first={layer.batch_first}")
-    if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
-    if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
-    if _is_attr_set(layer, 'input_reused'):
-        params.append(f"input_reused={layer.input_reused}")
-
-    f.write(f"{var_name} = GRULayer({', '.join(params)})\n")
+    f.write(f"{var_name} = {class_name}({', '.join(params)})\n")
 
 
 def _write_linear(f, layer: LinearLayer, var_name: str):

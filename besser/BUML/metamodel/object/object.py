@@ -6,6 +6,7 @@ from besser.BUML.metamodel.structural import (
     Type,
     Association,
     PrimitiveDataType,
+    Enumeration,
     UNLIMITED_MAX_MULTIPLICITY,
 )
 
@@ -502,6 +503,8 @@ class ObjectModel(NamedElement):
         self._validate_unique_object_names(errors)
         self._validate_links(errors)
         self._validate_multiplicities(errors)
+        self._validate_enum_values(errors)
+        self._validate_object_completeness(warnings)
 
         result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
         if errors and raise_exception:
@@ -581,6 +584,32 @@ class ObjectModel(NamedElement):
                         f"{self._format_multiplicity(assoc_end)} for association end '{assoc_end.name}' "
                         f"of association '{assoc_end.owner.name}' (found {current} link"
                         f"{'s' if current != 1 else ''})."
+                    )
+
+    def _validate_object_completeness(self, warnings: list[str]):
+        """Warn about objects with no attribute values defined."""
+        for obj in self.__objects:
+            if not obj.slots:
+                warnings.append(
+                    f"Object '{obj.name_}' of class '{obj.classifier.name}' has no attribute values defined."
+                )
+
+    def _validate_enum_values(self, errors: list[str]):
+        """Validate that enumeration attribute values are valid literals of their enumeration."""
+        for obj in self.__objects:
+            for slot in obj.slots:
+                data_value = slot.value
+                if not isinstance(data_value.classifier, Enumeration):
+                    continue
+                enum = data_value.classifier
+                valid_names = {literal.name for literal in enum.literals}
+                value = data_value.value
+                value_name = value.name if hasattr(value, 'name') else str(value)
+                if value_name not in valid_names:
+                    errors.append(
+                        f"Object '{obj.name_}' has invalid value '{value_name}' "
+                        f"for attribute '{slot.attribute.name}' of enumeration '{enum.name}'. "
+                        f"Valid values are: {', '.join(sorted(valid_names))}."
                     )
 
     @staticmethod

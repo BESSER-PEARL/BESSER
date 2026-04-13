@@ -624,4 +624,7 @@ def process_agent_diagram(json_data):
                 existing_desc = agent.metadata.description or ""
                 agent.metadata.description = f"{existing_desc}\n{comment_text}" if existing_desc else comment_text
 
+    # Validate the agent model at build time so all callers get validation for free
+    agent.validate(raise_exception=True)
+
     return agent

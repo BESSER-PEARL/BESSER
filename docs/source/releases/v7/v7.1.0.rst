@@ -1,0 +1,62 @@
+Version 7.1.0
+=============
+
+Bug fix and quality-of-life release: resolves 13 issues across BESSER, the Web Modeling Editor, and the Modeling Agent, with improvements to validation, deployment, GitHub sync, and the AI-assisted modeling experience.
+
+Highlights
+----------
+
+- **Deserialization fix**: Pickle roundtrip for models with enumerations no longer crashes (`#490 <https://github.com/BESSER-PEARL/BESSER/issues/490>`_).
+- **SQLAlchemy reserved keyword handling**: Class names like ``List``, ``Table``, ``Column`` no longer collide with SQLAlchemy imports (`#489 <https://github.com/BESSER-PEARL/BESSER/issues/489>`_, `PR #491 <https://github.com/BESSER-PEARL/BESSER/pull/491>`_).
+- **Agent validation at build time**: State/intent name collisions are caught early, preventing Render deployment crashes (`WME #101 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/101>`_).
+- **GitHub sync improvements**: B-UML models stored alongside JSON, filename tracks project renames, cross-tab sync (`WME #99 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/99>`_, `WME #100 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/100>`_, `WME #93 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/93>`_).
+- **Vibe modeling agent fixes**: Object name duplication, class rename artifacts, and deletion failures resolved (`WME #95 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/95>`_, `WME #96 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/96>`_, `WME #98 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/98>`_).
+- **Validation improvements**: Real error messages shown instead of generic placeholders, multiplicity and enum checks added (`#487 <https://github.com/BESSER-PEARL/BESSER/issues/487>`_).
+
+Bug Fixes
+---------
+
+BESSER Core
+~~~~~~~~~~~
+
+- **Fix Enumeration deserialization recursion** (`#490 <https://github.com/BESSER-PEARL/BESSER/issues/490>`_): ``Enumeration.__getattr__`` now uses ``object.__getattribute__`` to avoid infinite recursion during pickle deserialization -- same pattern as ``Object.__getattr__`` in v7.0.0.
+
+- **Fix SQLAlchemy reserved keyword conflicts** (`#489 <https://github.com/BESSER-PEARL/BESSER/issues/489>`_, `PR #491 <https://github.com/BESSER-PEARL/BESSER/pull/491>`_): All SQLAlchemy imports aliased with underscore suffixes to prevent class name collisions. Added ``validate_model()`` with clear error messages. Added ``enum`` (lowercase) to reserved names.
+
+- **Add enum value validation in object diagrams** (`#487 <https://github.com/BESSER-PEARL/BESSER/issues/487>`_): ``ObjectModel.validate()`` now checks that enumeration attribute values are valid literals. Added completeness warnings for objects with no attributes.
+
+- **Add multiplicity validation in domain model**: ``DomainModel.validate()`` now checks min/max multiplicity constraints on all association ends.
+
+- **Fix validation error messages**: Validation router now passes actual error messages to the frontend instead of generic placeholders. Hyphens in association names, invalid multiplicities, and other construction errors now show specific details.
+
+Web Modeling Editor Backend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- **Fix Render deployment crash with agents** (`WME #101 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/101>`_): ``process_agent_diagram()`` now validates at build time. GitHub deploy only processes agent diagrams when the GUI uses agent components.
+
+- **Store B-UML models on GitHub sync** (`WME #100 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/100>`_): ``save_project_to_github`` and deploy endpoints now export ``domain_model.py`` and ``agent_model.py`` into a ``buml/`` directory alongside the project JSON.
+
+- **Merge PR #102**: Type-specific input controls for attribute default values -- enum dropdowns, number inputs, date/time pickers, boolean dropdowns.
+
+Web Modeling Editor Frontend
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- **Fix vibe agent class deletion** (`WME #95 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/95>`_): ``removeElement()`` now throws an error when the target class isn't found, instead of silently returning the unchanged model.
+
+- **Fix vibe agent object name duplication** (`WME #98 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/98>`_): Frontend strips ``: ClassName`` from objectName before concatenating. Modeling agent prompts and schema enforce proper instance naming.
+
+- **Fix JSON filename on project rename** (`WME #99 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/99>`_): ``saveProjectToGitHub()`` derives the file path from the current project name at save time.
+
+- **Fix GitHub cross-tab sync** (`WME #93 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/93>`_): Added ``storage`` event listener so linked repo state syncs across browser tabs.
+
+- **Fix GUI table column overflow**: Added scrolling to columns manager panel when many columns are configured.
+
+- **Fix composition relationships in GUI tables**: ``getEndsByClassId()`` now handles ``ClassComposition`` and ``ClassAggregation`` relationship types.
+
+- **Update method behaviour tooltip** (`WME #94 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/94>`_): Changed from "Python code editor" to "code behaviour".
+
+
+Documentation
+-------------
+
+- Added GitHub Integration section to the frontend user guide covering connecting, saving, loading previously synced projects, and commit history (`WME #92 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/92>`_).

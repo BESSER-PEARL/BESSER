@@ -30,6 +30,11 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_agent_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.config import get_generator_info
+from besser.utilities.buml_code_builder import (
+    domain_model_to_code,
+    gui_model_to_code,
+    agent_model_to_code,
+)
 
 
 # Create router
@@ -152,18 +157,20 @@ async def deploy_webapp_to_github(
             buml_model
         )
 
-        # Check for agent diagram — only process if the model contains actual elements
+        # Only process agent diagram if the GUI actually uses agent components
         agent_model = None
         agent_config = None
-        agent_diagram_data = _get_active("AgentDiagram")
-        agent_model_data = agent_diagram_data.get("model", {}) if agent_diagram_data else {}
-        if agent_model_data and agent_model_data.get("elements"):
-            agent_model = process_agent_diagram(agent_diagram_data)
-            # Try diagram-level config first, fall back to project settings config
-            settings = body.get("settings", {}) or {}
-            settings_config = settings.get("config") or {}
-            agent_config = agent_diagram_data.get("config") or settings_config
-            logger.debug("Resolved agent_config: %s", json.dumps(agent_config, indent=2, default=str) if agent_config else 'None')
+        has_agent_components = _has_agent_components(gui_model)
+        if has_agent_components:
+            agent_diagram_data = _get_active("AgentDiagram")
+            agent_model_data = agent_diagram_data.get("model", {}) if agent_diagram_data else {}
+            if agent_model_data and agent_model_data.get("elements"):
+                agent_model = process_agent_diagram(agent_diagram_data)
+                # Try diagram-level config first, fall back to project settings config
+                settings = body.get("settings", {}) or {}
+                settings_config = settings.get("config") or {}
+                agent_config = agent_diagram_data.get("config") or settings_config
+                logger.debug("Resolved agent_config: %s", json.dumps(agent_config, indent=2, default=str) if agent_config else 'None')
 
         # Generate web app
         with tempfile.TemporaryDirectory(prefix=f"besser_github_{uuid.uuid4().hex}_") as temp_dir:
@@ -227,6 +234,25 @@ async def deploy_webapp_to_github(
                     logger.debug("Non-critical: failed to update repository metadata", exc_info=True)
 
             repo_url = f"https://github.com/{username}/{repo_name}"
+
+            # Export raw B-UML models so the project can be maintained without the web editor
+            buml_dir = os.path.join(temp_dir, "buml")
+            os.makedirs(buml_dir, exist_ok=True)
+            try:
+                domain_model_to_code(model=buml_model, file_path=os.path.join(buml_dir, "domain_model.py"))
+                gui_model_to_code(model=gui_model, file_path=os.path.join(buml_dir, "gui_model.py"), domain_model=buml_model)
+                if agent_model:
+                    agent_model_to_code(agent_model, os.path.join(buml_dir, "agent_model.py"))
+            except Exception:
+                logger.warning("Failed to export B-UML models — continuing without them", exc_info=True)
+
+            # Store the raw JSON diagrams as well
+            try:
+                json_path = os.path.join(buml_dir, "diagrams.json")
+                with open(json_path, "w", encoding="utf-8") as f:
+                    json.dump(diagrams, f, indent=2, default=str)
+            except Exception:
+                logger.warning("Failed to export diagram JSON — continuing without it", exc_info=True)
 
             # Add README before push so everything lands in one commit
             readme_path = os.path.join(temp_dir, "README.md")
@@ -315,6 +341,96 @@ def _sanitize_repo_name(name: str) -> str:
         name = f"besser-app-{uuid.uuid4().hex[:8]}"
 
     return name
+
+
+async def _export_buml_files_to_repo(
+    github, owner: str, repo: str, branch: str,
+    json_file_path: str, project_data: dict, commit_message: str,
+):
+    """Export raw B-UML Python files alongside the project JSON in the repo.
+
+    Non-blocking: logs warnings on failure but never raises.
+    """
+    import tempfile
+
+    # Determine the buml directory next to the JSON file
+    base_dir = json_file_path.rsplit("/", 1)[0] + "/" if "/" in json_file_path else ""
+    buml_dir = f"{base_dir}buml"
+
+    diagrams = project_data.get("diagrams", {})
+
+    # Helper to get active diagram for a type
+    current_indices = project_data.get("currentDiagramIndices", {})
+
+    def _get_active(diagram_type: str):
+        value = diagrams.get(diagram_type)
+        if isinstance(value, list):
+            idx = current_indices.get(diagram_type, 0)
+            return value[idx] if 0 <= idx < len(value) else (value[0] if value else None)
+        return value
+
+    exports: list[tuple[str, str]] = []  # (repo_path, content)
+
+    try:
+        class_diagram_data = _get_active("ClassDiagram")
+        if class_diagram_data and class_diagram_data.get("model"):
+            buml_model = process_class_diagram(class_diagram_data)
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+                domain_model_to_code(model=buml_model, file_path=f.name)
+            with open(f.name, "r", encoding="utf-8") as fh:
+                exports.append((f"{buml_dir}/domain_model.py", fh.read()))
+            os.unlink(f.name)
+    except Exception:
+        logger.warning("Failed to export domain model B-UML", exc_info=True)
+
+    try:
+        agent_data = _get_active("AgentDiagram")
+        if agent_data and agent_data.get("model", {}).get("elements"):
+            agent_model = process_agent_diagram(agent_data)
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+                agent_model_to_code(agent_model, f.name)
+            with open(f.name, "r", encoding="utf-8") as fh:
+                exports.append((f"{buml_dir}/agent_model.py", fh.read()))
+            os.unlink(f.name)
+    except Exception:
+        logger.warning("Failed to export agent model B-UML", exc_info=True)
+
+    # Push each B-UML file to the repo
+    for repo_path, content in exports:
+        try:
+            await github.create_or_update_file(
+                owner=owner,
+                repo_name=repo,
+                file_path=repo_path,
+                content=content,
+                commit_message=f"{commit_message} [B-UML export]",
+                branch=branch,
+            )
+        except Exception:
+            logger.warning("Failed to push %s to GitHub", repo_path, exc_info=True)
+
+
+def _has_agent_components(gui_model) -> bool:
+    """Check if the GUI model contains any agent components."""
+    from besser.BUML.metamodel.gui.dashboard import AgentComponent
+    from besser.BUML.metamodel.gui import ViewContainer
+
+    if not gui_model or not gui_model.modules:
+        return False
+
+    def _check_container(container) -> bool:
+        for element in (container.view_elements or []):
+            if isinstance(element, AgentComponent):
+                return True
+            if isinstance(element, ViewContainer) and _check_container(element):
+                return True
+        return False
+
+    for module in gui_model.modules:
+        for screen in (module.screens or []):
+            if _check_container(screen):
+                return True
+    return False
 
 
 def _add_deployment_configs(
@@ -744,6 +860,12 @@ async def save_project_to_github(
             content=project_json,
             commit_message=request.commit_message,
             branch=request.branch
+        )
+
+        # Also export raw B-UML models alongside the JSON
+        await _export_buml_files_to_repo(
+            github, request.owner, request.repo, request.branch,
+            request.file_path, request.project_data, request.commit_message,
         )
 
         return SaveProjectResponse(

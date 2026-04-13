@@ -1,7 +1,6 @@
 # Generated from BOCL.g4 by ANTLR 4.13.1
 # encoding: utf-8
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
 	from typing import TextIO
@@ -3091,7 +3090,7 @@ class BOCLParser ( Parser ):
 
 
     def sempred(self, localctx:RuleContext, ruleIndex:int, predIndex:int):
-        if self._predicates == None:
+        if self._predicates is None:
             self._predicates = dict()
         self._predicates[15] = self.expression_sempred
         pred = self._predicates.get(ruleIndex, None)

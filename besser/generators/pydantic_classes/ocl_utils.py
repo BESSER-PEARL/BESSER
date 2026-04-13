@@ -20,7 +20,7 @@ from besser.BUML.metamodel.ocl.ocl import (
     OperationCallExpression, PropertyCallExpression,
     IntegerLiteralExpression, RealLiteralExpression,
     StringLiteralExpression, BooleanLiteralExpression,
-    DateLiteralExpression, InfixOperator, LoopExp
+    DateLiteralExpression, InfixOperator
 )
 
 
@@ -74,7 +74,7 @@ def parse_ocl_constraint(constraint, domain_model) -> Optional[Dict[str, Any]]:
         # If tree extraction failed, try fallback
         return _fallback_parse(constraint.expression)
         
-    except Exception as e:
+    except Exception:
         # Fallback to regex parsing if OCL parser fails
         return _fallback_parse(constraint.expression)
 

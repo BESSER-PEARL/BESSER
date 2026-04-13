@@ -3,10 +3,7 @@ from besser.BUML.metamodel.ocl.ocl import (
     IntegerLiteralExpression, RealLiteralExpression,
     BooleanLiteralExpression, StringLiteralExpression,
     DateLiteralExpression, InfixOperator, TypeExp, VariableExp,
-    CollectionLiteralExp, CollectionItem, SetType, BagType,
-    SequenceType, OrderedSetType,
 )
-from besser.BUML.metamodel.structural.structural import Property
 from .BOCLVisitor import BOCLVisitor
 from .BOCLParser import BOCLParser
 
@@ -90,7 +87,7 @@ class BOCLVisitorImpl(BOCLVisitor):
 
     # --- Dot postfix ---
     def visitDotNavigation(self, ctx: BOCLParser.DotNavigationContext):
-        source = self.visit(ctx.expression())
+        self.visit(ctx.expression())
         name = ctx.ID().getText()
         # Resolve as property in context class or iterator context
         prop = self._resolve_property(name)

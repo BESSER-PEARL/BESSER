@@ -140,9 +140,10 @@ async def validate_diagram(input_data: DiagramInput):
 
         elif diagram_type == "AgentDiagram":
             try:
-                agent_model = process_agent_diagram(input_data.model_dump())
+                # process_agent_diagram validates at build time; the returned
+                # model is unused here — we only care whether validation raised.
+                process_agent_diagram(input_data.model_dump())
             except ValueError as e:
-                # process_agent_diagram validates at build time; collect errors for display
                 validation_errors.extend(str(e).splitlines())
 
         elif diagram_type == "GUINoCodeDiagram":

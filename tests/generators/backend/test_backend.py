@@ -136,8 +136,8 @@ def test_simple_generator(simple_model, tmpdir):
     sqlalchemy_markers = [
         "class name1(Base):",
         "__tablename__ = \"name1\"",
-        "id: Mapped[int] = mapped_column(primary_key=True)",
-        "attr1: Mapped[int] = mapped_column(Integer)"
+        "id: Mapped_[int] = mapped_column(primary_key=True)",
+        "attr1: Mapped_[int] = mapped_column(Integer_)"
     ]
     
     for marker in sqlalchemy_markers:
@@ -180,7 +180,7 @@ def test_relationship_fk_placement(relationship_model, tmpdir):
     assert "class Sensor(Base):" in sqlalchemy_code
     # When multiplicity.min > 0, nullable is not explicitly set (defaults to False)
     # When multiplicity.min == 0, nullable=True is explicitly set
-    assert "dt_id: Mapped[int] = mapped_column(ForeignKey(\"digitaltwin.id\")" in sqlalchemy_code
+    assert "dt_id: Mapped_[int] = mapped_column(ForeignKey_(\"digitaltwin.id\")" in sqlalchemy_code
     # Verify it's NOT nullable (shouldn't have nullable=True)
     sensor_section = sqlalchemy_code.split("class Sensor(Base):")[1].split("class ")[0]
     assert "dt_id" in sensor_section
@@ -191,7 +191,7 @@ def test_relationship_fk_placement(relationship_model, tmpdir):
     # Test 3: DigitalTwin should have p_asset_id FK (1:1 mandatory)
     assert "class DigitalTwin(Base):" in sqlalchemy_code
     # For 1:1 mandatory relationships, nullable is not explicitly set (defaults to False), but unique=True is set
-    assert "p_asset_id: Mapped[int] = mapped_column(ForeignKey(\"physicalasset.id\")" in sqlalchemy_code
+    assert "p_asset_id: Mapped_[int] = mapped_column(ForeignKey_(\"physicalasset.id\")" in sqlalchemy_code
     # Verify it has unique=True for 1:1 relationship
     digitaltwin_section = sqlalchemy_code.split("class DigitalTwin(Base):")[1].split("class ")[0]
     p_asset_id_line = [line for line in digitaltwin_section.split('\n') if 'p_asset_id' in line and 'mapped_column' in line][0]
@@ -321,13 +321,13 @@ def test_no_circular_dependency(relationship_model, tmpdir):
 
     # DigitalTwin should only reference PhysicalAsset (can be created second)
     digitaltwin_class = sqlalchemy_code.split("class DigitalTwin(Base):")[1].split("class ")[0] if "class DigitalTwin(Base):" in sqlalchemy_code else sqlalchemy_code.split("class DigitalTwin(Base):")[1].split("#---")[0]
-    assert "ForeignKey(\"physicalasset.id\")" in digitaltwin_class
-    assert "ForeignKey(\"sensor.id\")" not in digitaltwin_class, "DigitalTwin should not reference Sensor"
+    assert "ForeignKey_(\"physicalasset.id\")" in digitaltwin_class
+    assert "ForeignKey_(\"sensor.id\")" not in digitaltwin_class, "DigitalTwin should not reference Sensor"
 
     # Sensor should only reference DigitalTwin (can be created third)
     sensor_class = sqlalchemy_code.split("class Sensor(Base):")[1].split("class ")[0] if "class Sensor(Base):" in sqlalchemy_code else sqlalchemy_code.split("class Sensor(Base):")[1].split("#---")[0]
-    assert "ForeignKey(\"digitaltwin.id\")" in sensor_class
-    assert "ForeignKey(\"physicalasset.id\")" not in sensor_class, "Sensor should not reference PhysicalAsset"
+    assert "ForeignKey_(\"digitaltwin.id\")" in sensor_class
+    assert "ForeignKey_(\"physicalasset.id\")" not in sensor_class, "Sensor should not reference PhysicalAsset"
 
 
 def test_pydantic_formatting(relationship_model, tmpdir):

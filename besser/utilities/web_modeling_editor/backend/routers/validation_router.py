@@ -139,10 +139,12 @@ async def validate_diagram(input_data: DiagramInput):
                     seen.add(sn)
 
         elif diagram_type == "AgentDiagram":
-            agent_model = process_agent_diagram(input_data.model_dump())
-            validation_result = agent_model.validate(raise_exception=False)
-            validation_errors.extend(validation_result.get("errors", []))
-            validation_warnings.extend(validation_result.get("warnings", []))
+            try:
+                # process_agent_diagram validates at build time; the returned
+                # model is unused here — we only care whether validation raised.
+                process_agent_diagram(input_data.model_dump())
+            except ValueError as e:
+                validation_errors.extend(str(e).splitlines())
 
         elif diagram_type == "GUINoCodeDiagram":
             return {
@@ -162,10 +164,11 @@ async def validate_diagram(input_data: DiagramInput):
     except ValueError as e:
         # Construction validation errors (from BUML creation setters)
         logger.warning("Construction validation error: %s", e)
-        validation_errors.append("A validation error occurred during diagram construction. Please check your diagram for invalid values.")
-    except Exception:
+        validation_errors.extend(str(e).splitlines())
+    except Exception as e:
         logger.exception("Unexpected error during diagram conversion/validation")
-        validation_errors.append("An unexpected error occurred during validation.")
+        error_msg = str(e).strip()
+        validation_errors.append(error_msg if error_msg else "An unexpected error occurred during validation.")
 
     # Step 2: If BUML model created successfully AND it's a diagram with OCL support
     ocl_results = None

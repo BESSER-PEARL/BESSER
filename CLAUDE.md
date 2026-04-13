@@ -263,12 +263,22 @@ To add a new generator:
 
 ## Frontend Integration
 
-The frontend lives at `besser/utilities/web_modeling_editor/frontend` (git submodule).
+The frontend lives at `besser/utilities/web_modeling_editor/frontend` (git submodule pointing to `BESSER-PEARL/BESSER-WEB-MODELING-EDITOR`, branch `main`). It has its own `CLAUDE.md` with detailed instructions for working in the frontend codebase.
 
-**Important**:
-- Frontend code can be modified when necessary (features, bug fixes, improvements)
-- Keep TypeScript/React tooling consistent with upstream (`npm install`, `npm test`)
-- Update OpenAPI schemas when changing backend API contracts
+```bash
+# Initialize the submodule (first time)
+git submodule update --init --recursive
+
+# Update to latest frontend
+cd besser/utilities/web_modeling_editor/frontend
+git pull origin main
+cd ../../../..
+git add besser/utilities/web_modeling_editor/frontend
+```
+
+**Cross-repo changes**: If modifying both frontend and backend, implement each side in its respective repo, update the submodule pointer, and link both PRs with notes on merge order.
+
+**Backend API contract**: If you change backend endpoints or request/response shapes, coordinate with the frontend's `shared/api/` layer.
 
 ## Testing Approach
 

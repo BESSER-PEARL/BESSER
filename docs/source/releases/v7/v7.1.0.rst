@@ -12,6 +12,7 @@ Highlights
 - **GitHub sync improvements**: B-UML models stored alongside JSON, filename tracks project renames, cross-tab sync (`WME #99 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/99>`_, `WME #100 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/100>`_, `WME #93 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/93>`_).
 - **Vibe modeling agent fixes**: Object name duplication, class rename artifacts, and deletion failures resolved (`WME #95 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/95>`_, `WME #96 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/96>`_, `WME #98 <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR/issues/98>`_).
 - **Validation improvements**: Real error messages shown instead of generic placeholders, multiplicity and enum checks added (`#487 <https://github.com/BESSER-PEARL/BESSER/issues/487>`_).
+- **B-OCL grammar rewrite**: New visitor-pattern OCL parser replaces the legacy listener implementation, fixing parser hangs, infinite loops, and tight coupling (`B-OCL #9 <https://github.com/BESSER-PEARL/B-OCL-Interpreter/issues/9>`_).
 
 Bug Fixes
 ---------
@@ -28,6 +29,20 @@ BESSER Core
 - **Add multiplicity validation in domain model**: ``DomainModel.validate()`` now checks min/max multiplicity constraints on all association ends.
 
 - **Fix validation error messages**: Validation router now passes actual error messages to the frontend instead of generic placeholders. Hyphens in association names, invalid multiplicities, and other construction errors now show specific details.
+
+B-OCL Grammar & Parser
+~~~~~~~~~~~~~~~~~~~~~~
+
+Major rewrite of the Object Constraint Language (OCL) parser, addressing 6 critical design flaws (`B-OCL #9 <https://github.com/BESSER-PEARL/B-OCL-Interpreter/issues/9>`_):
+
+- **Parser hangs on bad input**: New grammar with proper precedence hierarchy + custom ``BOCLErrorListener`` that collects errors immediately. Malformed input now produces clear error messages in <4ms instead of hanging up to 60s.
+- **Left recursion fixed**: ANTLR4's built-in precedence climbing replaces indirect left recursion through ``expression?`` patterns.
+- **Atomic IF-THEN-ELSE-ENDIF**: Single rule enforces all four keywords appear together. Standalone ``else`` is no longer syntactically valid.
+- **Visitor pattern**: New ``BOCLVisitorImpl`` (~350 lines) replaces the legacy listener pipeline (``BOCLListener`` + ``RootHandler`` + ``FactoryInstance``, ~1700 lines total). Grammar changes no longer break the evaluator.
+- **Removed legacy classes**: ``ConstraintRoot``, ``FactoryInstance``, ``InitRoot``, ``OCLParserWrapper``, ``PostConditionRoot``, ``PreConditionRoot``, ``RootHandler``, and ``comparison_operator_checker`` are removed in favor of the new visitor + evaluator pipeline (lives in the ``bocl`` package).
+- **New files in BESSER**: ``besser/BUML/notations/ocl/visitor.py``, ``error_handling.py``, ``BOCLVisitor.py`` (generated visitor base class), regenerated grammar files.
+- **Comprehensive OCL tests**: New university model test suite covering complex constraints, navigation, collection operations, and edge cases.
+- **B-OCL-Interpreter package**: Released as ``bocl`` v1.0.0 on PyPI, now a proper external dependency (added to ``requirements.txt``).
 
 Web Modeling Editor Backend
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~

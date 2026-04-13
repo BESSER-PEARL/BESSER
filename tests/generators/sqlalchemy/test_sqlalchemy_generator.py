@@ -247,3 +247,119 @@ def test_booktype_book_association(generated_sqlalchemy_module):
     book_titles = {b.title for b in bt_db.books}
     assert "Book1" in book_titles
     assert "Book2" in book_titles
+
+def test_reserved_name_validation_class():
+    """Test that reserved class names raise a ValueError with a clear message."""
+    from besser.BUML.metamodel.structural import DomainModel, Class
+    
+    # Create a model with a reserved class name
+    model = DomainModel(name="test_model")
+    reserved_class = Class(name="Base")  # Reserved name
+    model.add_type(reserved_class)
+    
+    generator = SQLAlchemyGenerator(model=model)
+    
+    with pytest.raises(ValueError) as exc_info:
+        generator.generate(dbms="sqlite")
+    
+    error_message = str(exc_info.value)
+    assert "Base" in error_message
+    assert "reserved" in error_message.lower()
+    assert "cannot be used" in error_message.lower()
+
+
+def test_reserved_name_validation_attribute():
+    """Test that reserved attribute names raise a ValueError with a clear message."""
+    from besser.BUML.metamodel.structural import DomainModel, Class, Property, PrimitiveDataType, Multiplicity
+    
+    # Create a model with a class containing a reserved attribute name
+    model = DomainModel(name="test_model")
+    base_class = Class(name="MyClass")
+    reserved_attr = Property(name="Base", type=PrimitiveDataType("str"), multiplicity=Multiplicity(1, 1))
+    base_class.attributes = {reserved_attr}
+    model.add_type(base_class)
+    
+    generator = SQLAlchemyGenerator(model=model)
+    
+    with pytest.raises(ValueError) as exc_info:
+        generator.generate(dbms="sqlite")
+    
+    error_message = str(exc_info.value)
+    assert "Base" in error_message
+    assert "MyClass" in error_message
+    assert "reserved" in error_message.lower()
+
+
+def test_reserved_name_validation_enumeration():
+    """Test that reserved enumeration names raise a ValueError with a clear message."""
+    from besser.BUML.metamodel.structural import DomainModel, Enumeration, EnumerationLiteral
+    
+    # Create a model with a reserved enumeration name
+    model = DomainModel(name="test_model")
+    literal1 = EnumerationLiteral(name="VALUE1")
+    literal2 = EnumerationLiteral(name="VALUE2")
+    reserved_enum = Enumeration(name="Enum", literals={literal1, literal2})
+    model.add_type(reserved_enum)
+    
+    generator = SQLAlchemyGenerator(model=model)
+    
+    with pytest.raises(ValueError) as exc_info:
+        generator.generate(dbms="sqlite")
+    
+    error_message = str(exc_info.value)
+    assert "Enum" in error_message
+    assert "reserved" in error_message.lower()
+
+
+def test_non_reserved_names_allowed():
+    """Test that non-underscore SQLAlchemy type names are allowed as class names."""
+    from besser.BUML.metamodel.structural import DomainModel, Class, Property, PrimitiveDataType, Multiplicity
+    
+    # These names (without underscores) are allowed because the imports use underscore aliases
+    model = DomainModel(name="test_model")
+    
+    # Class named "Table" should work (import uses Table_)
+    table_class = Class(name="Table")
+    model.add_type(table_class)
+    
+    # Class named "Column" should work (import uses Column_)
+    column_class = Class(name="Column")
+    model.add_type(column_class)
+    
+    # Class named "Boolean" should work (import uses Boolean_)
+    boolean_class = Class(name="Boolean")
+    attr1 = Property(name="value", type=PrimitiveDataType("bool"), multiplicity=Multiplicity(1, 1))
+    boolean_class.attributes = {attr1}
+    model.add_type(boolean_class)
+    
+    # Class named "String" should work (import uses String_)
+    string_class = Class(name="String")
+    model.add_type(string_class)
+    
+    # Class named "Integer" should work (import uses Integer_)
+    integer_class = Class(name="Integer")
+    model.add_type(integer_class)
+    
+    generator = SQLAlchemyGenerator(model=model)
+    
+    # Should not raise any validation errors
+    generator.validate_model()  # This should pass without errors
+
+
+def test_reserved_underscore_aliases():
+    """Test that underscore-aliased names are properly reserved."""
+    from besser.BUML.metamodel.structural import DomainModel, Class
+    
+    # Test that underscore variants are reserved
+    model = DomainModel(name="test_model")
+    reserved_class = Class(name="Boolean_")  # Reserved: underscore alias
+    model.add_type(reserved_class)
+    
+    generator = SQLAlchemyGenerator(model=model)
+    
+    with pytest.raises(ValueError) as exc_info:
+        generator.generate(dbms="sqlite")
+    
+    error_message = str(exc_info.value)
+    assert "Boolean_" in error_message
+    assert "reserved" in error_message.lower()

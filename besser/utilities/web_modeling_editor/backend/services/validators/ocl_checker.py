@@ -1,6 +1,31 @@
+from antlr4 import InputStream, CommonTokenStream
 from bocl.OCLWrapper import OCLWrapper
-from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
+from besser.BUML.notations.ocl.BOCLLexer import BOCLLexer
+from besser.BUML.notations.ocl.BOCLParser import BOCLParser
+from besser.BUML.notations.ocl.error_handling import BOCLErrorListener, BOCLSyntaxError
 import re
+
+
+def _parse_only(expression: str) -> None:
+    """Run the OCL lexer + parser for syntax validation without evaluating.
+
+    Raises BOCLSyntaxError if the expression is syntactically invalid.
+    """
+    input_stream = InputStream(expression)
+    lexer = BOCLLexer(input_stream)
+    lexer.removeErrorListeners()
+    error_listener = BOCLErrorListener()
+    lexer.addErrorListener(error_listener)
+
+    stream = CommonTokenStream(lexer)
+    parser = BOCLParser(stream)
+    parser.removeErrorListeners()
+    parser.addErrorListener(error_listener)
+
+    parser.oclFile()
+
+    if error_listener.has_errors():
+        raise BOCLSyntaxError(error_listener.errors)
 
 def extract_context_class_name(expression):
     """Extract the context class name from an OCL expression"""
@@ -58,12 +83,15 @@ def check_ocl_constraint(domain_model, object_model = None):
         for constraint in domain_model.constraints:
             try:
                 if object_model is None:
-                    # Syntax-check only: try to parse and visit (no evaluation)
+                    # Syntax-check only — parse without evaluation since there
+                    # are no object instances to evaluate against.
                     try:
-                        parser.evaluate(constraint)
+                        _parse_only(constraint.expression)
                         valid_constraints.append(f"✅ '{constraint.expression}'")
-                    except BOCLSyntaxError:
-                        invalid_constraints.append(f"❌ '{constraint.expression}' - Error: Invalid OCL syntax")
+                    except BOCLSyntaxError as syntax_err:
+                        invalid_constraints.append(
+                            f"❌ '{constraint.expression}' - Error: Invalid OCL syntax: {syntax_err}"
+                        )
                 else:
                     # Check if there are instances of the context class in the object model
                     context_class_name = extract_context_class_name(constraint.expression)

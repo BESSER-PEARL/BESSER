@@ -33,6 +33,7 @@ class SQLAlchemyGenerator(GeneratorInterface):
         # Core template definitions
         "Base",              # Defined in template as DeclarativeBase subclass
         "Enum",              # SQLAlchemy Enum class (required by SQL generator's isinstance check)
+        "enum",              # Python enum module imported at top of generated code
         
         # SQLAlchemy import aliases (underscore suffix)
         "Table_",           # sqlalchemy.Table

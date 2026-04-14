@@ -1,9 +1,9 @@
 from abc import ABC
 from enum import Enum
 import json
-from typing import Any, Callable, Optional, Union
+from typing import Any, Callable, Optional
 
-from besser.BUML.metamodel.state_machine.state_machine import Action, Transition, Event, Condition, StateMachine, State, Session, TransitionBuilder
+from besser.BUML.metamodel.state_machine.state_machine import Action, Event, Condition, StateMachine, State, Session, TransitionBuilder
 from besser.BUML.metamodel.structural import NamedElement
 
 
@@ -87,6 +87,80 @@ class RAGReply(Action):
 
     def __repr__(self):
         return f"RAGReply(rag_db_name={self.rag_db_name!r}, prompt={self.prompt!r})"
+
+
+class DBReply(Action):
+    """Primitive action that represents fetching information from a database.
+
+    Args:
+        db_selection_type (str): Database selection mode. Supported values are ``default`` and ``custom``.
+        db_custom_name (str, optional): Custom database identifier used when ``db_selection_type`` is ``custom``.
+        db_query_mode (str): Query execution mode. Supported values are ``llm_query`` and ``sql``.
+        db_operation (str): SQL operation restriction. Supported values are ``any``, ``select``, ``insert``,
+            ``update`` and ``delete``.
+        db_sql_query (str, optional): SQL query to run when ``db_query_mode`` is ``sql``.
+
+    Attributes:
+        db_selection_type (str): Whether the default application database or a named custom database is used.
+        db_custom_name (str | None): Name of the custom database when applicable.
+        db_query_mode (str): How the query will be produced at runtime.
+        db_operation (str): Which DB handler method must be used when executing the query.
+        db_sql_query (str | None): Raw SQL query when SQL mode is selected.
+    """
+
+    VALID_SELECTION_TYPES = {"default", "custom"}
+    VALID_QUERY_MODES = {"llm_query", "sql"}
+    VALID_OPERATIONS = {"any", "select", "insert", "update", "delete"}
+
+    def __init__(
+            self,
+            db_selection_type: str = "default",
+            db_custom_name: Optional[str] = None,
+            db_query_mode: str = "llm_query",
+            db_operation: str = "any",
+            db_sql_query: Optional[str] = None,
+    ):
+        super().__init__()
+
+        normalized_selection_type = (db_selection_type or "default").strip().lower()
+        if normalized_selection_type not in self.VALID_SELECTION_TYPES:
+            raise ValueError(
+                f"Unsupported db_selection_type '{db_selection_type}'. "
+                f"Expected one of {sorted(self.VALID_SELECTION_TYPES)}."
+            )
+
+        normalized_query_mode = (db_query_mode or "llm_query").strip().lower()
+        if normalized_query_mode not in self.VALID_QUERY_MODES:
+            raise ValueError(
+                f"Unsupported db_query_mode '{db_query_mode}'. "
+                f"Expected one of {sorted(self.VALID_QUERY_MODES)}."
+            )
+
+        normalized_operation = (db_operation or "any").strip().lower()
+        if normalized_operation not in self.VALID_OPERATIONS:
+            raise ValueError(
+                f"Unsupported db_operation '{db_operation}'. "
+                f"Expected one of {sorted(self.VALID_OPERATIONS)}."
+            )
+
+        normalized_custom_name = (db_custom_name or "").strip() or None
+
+        self.db_selection_type: str = normalized_selection_type
+        self.db_custom_name: Optional[str] = normalized_custom_name
+        self.db_query_mode: str = normalized_query_mode
+        self.db_operation: str = normalized_operation
+        self.db_sql_query: Optional[str] = db_sql_query
+
+    def __repr__(self):
+        return (
+            "DBReply("
+            f"db_selection_type={self.db_selection_type!r}, "
+            f"db_custom_name={self.db_custom_name!r}, "
+            f"db_query_mode={self.db_query_mode!r}, "
+            f"db_operation={self.db_operation!r}, "
+            f"db_sql_query={self.db_sql_query!r}"
+            ")"
+        )
 
 
 class IntentClassifierConfiguration(ABC):
@@ -188,7 +262,7 @@ class LLMIntentClassifierConfiguration(IntentClassifierConfiguration):
     def __init__(
             self,
             llm_suite: LLMSuite,
-            parameters: dict = {},
+            parameters: dict = None,
             use_intent_descriptions: bool = False,
             use_training_sentences: bool = False,
             use_entity_descriptions: bool = False,
@@ -196,7 +270,7 @@ class LLMIntentClassifierConfiguration(IntentClassifierConfiguration):
     ):
         super().__init__()
         self.llm_suite: str = llm_suite.value
-        self.parameters: dict = parameters
+        self.parameters: dict = parameters if parameters is not None else {}
         self.use_intent_descriptions: bool = use_intent_descriptions
         self.use_training_sentences: bool = use_training_sentences
         self.use_entity_descriptions: bool = use_entity_descriptions
@@ -258,7 +332,7 @@ class LLMWrapper(ABC):
             session (Session): the user session
             parameters (dict): the LLM parameters. If none is provided, the RAG's default value will be used
             system_message (str): system message to give high priority context to the LLM
-       
+
         Returns:
             str: the LLM output
         """
@@ -1094,15 +1168,15 @@ class AgentState(State):
     def go_to(self, dest: 'AgentState') -> None:
         """Create a new `auto` transition on this state.
 
-        This transition needs no event to be triggered, which means that when the agent moves to a state 
-        that has an `auto` transition, the agent will move to the transition's destination state 
+        This transition needs no event to be triggered, which means that when the agent moves to a state
+        that has an `auto` transition, the agent will move to the transition's destination state
         unconditionally without waiting for user input. This transition cannot be combined with other
         transitions.
 
         Args:
             dest (AgentState): the destination state
         """
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=Auto())
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=None, conditions=[Auto()])
         transition_builder.go_to(dest)
 
     def when_intent_matched(self, intent: Intent) -> TransitionBuilder:
@@ -1121,13 +1195,13 @@ class AgentState(State):
         self.intents.append(intent)
         event: ReceiveTextEvent = ReceiveTextEvent()
         condition: Condition = IntentMatcher(intent)
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[condition])
         return transition_builder
 
     def when_no_intent_matched(self) -> TransitionBuilder:
         event: ReceiveTextEvent = ReceiveTextEvent()
         condition: Condition = IntentMatcher(Intent("fallback_intent"))
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[condition])
         return transition_builder
 
     def when_variable_matches_operation(
@@ -1150,7 +1224,7 @@ class AgentState(State):
             TransitionBuilder: the transition builder
         """
         condition: Condition = VariableOperationMatcher(var_name, operation, target)
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, conditions=condition)
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, conditions=[condition])
         return transition_builder
 
     def when_file_received(self, allowed_types: list[str] or str = None) -> TransitionBuilder:
@@ -1164,8 +1238,30 @@ class AgentState(State):
             TransitionBuilder: the transition builder
         """
         event = ReceiveFileEvent()
-        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=FileTypeMatcher(allowed_types))
+        transition_builder: TransitionBuilder = TransitionBuilder(source=self, event=event, conditions=[FileTypeMatcher(allowed_types)])
         return transition_builder
+
+    def when_event(self, event: Event) -> TransitionBuilder:
+        """Start the definition of a transition triggered by a custom event.
+
+        Args:
+            event (Event): Event instance used to trigger the transition.
+
+        Returns:
+            TransitionBuilder: the transition builder
+        """
+        return TransitionBuilder(source=self, event=event)
+
+    def when_condition(self, condition: Condition) -> TransitionBuilder:
+        """Start the definition of a transition triggered by a custom condition.
+
+        Args:
+            condition (Condition): Condition instance evaluated by the transition.
+
+        Returns:
+            TransitionBuilder: the transition builder
+        """
+        return TransitionBuilder(source=self, conditions=[condition])
 
 
 class Agent(StateMachine):
@@ -1307,9 +1403,9 @@ class Agent(StateMachine):
         if new_state in self.states:
             raise ValueError(f"Duplicated state in agent ({new_state.name})")
         if initial and self.initial_state():
-            raise ValueError(f"A agent must have exactly 1 initial state")
+            raise ValueError("A agent must have exactly 1 initial state")
         if not initial and not self.states:
-            raise ValueError(f"The first state of a agent must be initial")
+            raise ValueError("The first state of a agent must be initial")
         self.states.append(new_state)
         return new_state
 

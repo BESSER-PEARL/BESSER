@@ -1,4 +1,3 @@
-import string
 import datetime
 from typing import Union
 from besser.BUML.metamodel.structural import (
@@ -12,12 +11,12 @@ from besser.BUML.metamodel.structural import (
 
 class AttributeLink():
     """An attribute link is a named slot in an instance, which holds the value of an attribute
-    
+
     Args:
         name (str): the name of the attribute link
         value (DataValue): the value of the attribute.
         attribute (Property): the attribute or property from the structural metamodel.
-    
+
     Attributes:
         name (str): inherited from NamedElement, represents the name of the attribute link.
         value (DataValue): the value of the attribute.
@@ -36,7 +35,7 @@ class AttributeLink():
     @value.setter
     def value(self, value: "DataValue"):
         """DataValue: Set the value of the attribute.
-        
+
         Raises:
             TypeError: If the value's classifier type does not match the attribute's type.
         """
@@ -61,7 +60,7 @@ class AttributeLink():
 
 class Instance(NamedElement):
     """The instance defines an entity to which a set of operations can be applied and which has a state that stores the effects of the operations.
-    
+
     Args:
         name (str): the name of the instance
         classifier (Type): the classifier of the instance. It could be for example a Class or a PrimitiveDataType of the structural metamodel.
@@ -165,17 +164,26 @@ class Object(Instance):
 
     def __getattr__(self, item):
         """Get the value of an attribute or link end by its name."""
-        for attr in self.__slots:
+        # Use object.__getattribute__ for internal access to avoid recursive
+        # __getattr__ calls when the mangled attributes don't exist yet.
+        try:
+            slots = object.__getattribute__(self, "_Object__slots")
+        except AttributeError:
+            raise AttributeError(item)
+
+        for attr in slots:
             if attr.attribute.name == item:
                 return attr.value.value
 
         if item == "name":
-            return self.name_
+            return object.__getattribute__(self, "_name")
 
         matches = [le.object for le in self.link_ends() if le.name == item]
         if not matches:
+            obj_name = object.__getattribute__(self, "_name")
+            classifier = object.__getattribute__(self, "_Instance__classifier")
             raise AttributeError(
-                f"'{self.name_}' object, instance of the '{self.classifier.name}' class, "
+                f"'{obj_name}' object, instance of the '{classifier.name}' class, "
                 f"has no attribute or link '{item}'"
             )
 
@@ -273,18 +281,18 @@ class Object(Instance):
 
 class DataValue(Instance):
     """ An DataValue represent the value of a property or attribute of an Object.
-    
+
     Args:
         classifier (Type): the classifier of the DataValue. It could be for example a Class or a PrimitiveDataType of the structural metamodel.
         value: value of the property Instance.
-    
+
     Attributes:
         classifier (Type): Inherited from Instance, represents the classifier of the DataValue instance.
         value: value of the property Instance.
     """
 
     def __init__(self, classifier: Type, value, name=""):
-        super().__init__(name, classifier)
+        super().__init__(name or f"_datavalue_{id(value)}", classifier)
         self.value = value
 
     @property
@@ -327,7 +335,7 @@ class LinkEnd(NamedElement):
         association_end (Property): the end represeted by the LinkEnd
         object (Object): the object pointed to by the LinkEnd
         owner (Link): the Link that owns this LinkEnd
-    
+
     Attributes:
         name (str): inherited from NamedElement, represents the name of the LinkEnd
         association_end (Property): the end of the link
@@ -361,12 +369,12 @@ class LinkEnd(NamedElement):
     def object(self, object: Object):
         """Object: Method to set the object"""
         self.__object = object
-    
+
     @property
     def owner(self):
         """Link: Method to retrieve the owner link"""
         return self._owner
-    
+
     @owner.setter
     def owner(self, owner: "Link"):
         """Link: Method to set the owner link"""
@@ -384,7 +392,7 @@ class Link(NamedElement):
         name (str): the name of the Link
         association (Association): the Association that represents the Link
         connections: list of link ends.
-    
+
     Attributes:
         name (str): inherited from NamedElement, represents the name of the Link
         association (Association): the Association that represents the Link
@@ -395,7 +403,7 @@ class Link(NamedElement):
         super().__init__(name)
         self.association: Association = association
         self.connections: list[LinkEnd] = connections
-    
+
     @property
     def association(self):
         """Association: Method to retrieve the association"""
@@ -436,7 +444,7 @@ class ObjectModel(NamedElement):
     Args:
         name (str): the name of the object model
         objects (set[Object]): set of objects in the model
-    
+
     Attributes:
         name (str): inherited from NamedElement, represents the name of the model
         objects (set[Object]): set of objects in the model

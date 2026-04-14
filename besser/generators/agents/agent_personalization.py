@@ -1,7 +1,6 @@
 import json
 import logging
 import os
-import re
 
 from besser.BUML.metamodel.state_machine.agent import AgentReply
 
@@ -262,7 +261,7 @@ def configure_agent(agent, config, openai_api_key: str = None):
                     logger.debug("Replacing sentence %d with translated version.", ti)
                     intent.training_sentences[idx] = translated_sentences[ti]
                     ti += 1
-    
+
     messages = []
     for state in getattr(agent, 'states', []):
 
@@ -270,7 +269,7 @@ def configure_agent(agent, config, openai_api_key: str = None):
             body = getattr(state, body_attr, None)
             if body and body.actions:
                 for action in body.actions:
-                    if isinstance(action, AgentReply):  
+                    if isinstance(action, AgentReply):
                         # process each message individually
                         # action.message = replace_reply(action.message, config)
                         messages.append(action.message)
@@ -376,7 +375,7 @@ def replace_reply_batch(messages: list[str], config: dict, openai_api_key: str =
             openai_api_key=openai_api_key,
             config=config,
         )
-        
+
     return personalized_messages
 
 

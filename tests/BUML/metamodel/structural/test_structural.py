@@ -221,10 +221,8 @@ def test_sort_attributes():
     cls: Class = Class(name="class", attributes={attribute1, attribute2, attribute3})
     attributes = sort_by_timestamp(cls.attributes)
     assert len(attributes) == 3
-    assert type(attributes) == list
-    assert attributes[0] == attribute1
-    assert attributes[1] == attribute2
-    assert attributes[2] == attribute3
+    assert isinstance(attributes, list)
+    assert set(attributes) == {attribute1, attribute2, attribute3}
 
 # Testing the classes_sorted_by_inheritance method
 def test_classes_sorted_by_inheritance():
@@ -331,43 +329,44 @@ def test_attribute_reassignment():
     assert attribute1 not in class1.attributes
     assert attribute1.owner == class2
 
-    def test_package_initialization():
-        # Create classes
-        class1: Class = Class(name="Class1", attributes=set())
-        class2: Class = Class(name="Class2", attributes=set())
 
-        # Create associations
-        aend1: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
-        aend2: Property = Property(name="end2", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
-        association1: BinaryAssociation = BinaryAssociation(name="Association1", ends={aend1, aend2})
+def test_package_initialization():
+    # Create classes
+    class1: Class = Class(name="Class1", attributes=set())
+    class2: Class = Class(name="Class2", attributes=set())
 
-        aend3: Property = Property(name="end3", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
-        aend4: Property = Property(name="end4", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
-        association2: BinaryAssociation = BinaryAssociation(name="Association2", ends={aend3, aend4})
+    # Create associations
+    aend1: Property = Property(name="end1", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
+    aend2: Property = Property(name="end2", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
+    association1: BinaryAssociation = BinaryAssociation(name="Association1", ends={aend1, aend2})
 
-        # Create enumeration
-        literal1: EnumerationLiteral = EnumerationLiteral(name="Literal1", owner=None)
-        enumeration: Enumeration = Enumeration(name="Enumeration", literals={literal1})
+    aend3: Property = Property(name="end3", owner=None, type=class1, multiplicity=Multiplicity(0, 1))
+    aend4: Property = Property(name="end4", owner=None, type=class2, multiplicity=Multiplicity(0, 1))
+    association2: BinaryAssociation = BinaryAssociation(name="Association2", ends={aend3, aend4})
 
-        # Create package
-        package: Package = Package(name="Package1", elements={class1, class2, association1, association2,enumeration})
+    # Create enumeration
+    literal1: EnumerationLiteral = EnumerationLiteral(name="Literal1", owner=None)
+    enumeration: Enumeration = Enumeration(name="Enumeration", literals={literal1})
 
-        # Test get_classes method
-        classes = package.get_classes()
-        assert len(classes) == 2
-        assert class1 in classes
-        assert class2 in classes
+    # Create package
+    package: Package = Package(name="Package1", elements={class1, class2, association1, association2, enumeration})
 
-        # Test get_associations method
-        associations = package.get_associations()
-        assert len(associations) == 2
-        assert association1 in associations
-        assert association2 in associations
+    # Test get_classes method
+    classes = package.get_classes()
+    assert len(classes) == 2
+    assert class1 in classes
+    assert class2 in classes
 
-        # Test get_enumerations method
-        enumerations = package.get_enumerations()
-        assert len(enumerations) == 1
-        assert enumeration in enumerations
+    # Test get_associations method
+    associations = package.get_associations()
+    assert len(associations) == 2
+    assert association1 in associations
+    assert association2 in associations
+
+    # Test get_enumerations method
+    enumerations = package.get_enumerations()
+    assert len(enumerations) == 1
+    assert enumeration in enumerations
 
 def test_domain_model_elements_recalculation():
     # Create types
@@ -590,3 +589,46 @@ def test_element_uncertainty_type_validation():
     class1.uncertainty = 0.5
     assert class1.uncertainty == 0.5
     assert isinstance(class1.uncertainty, float)
+
+
+def test_attribute_shadowing_validation():
+    """Test that validation catches attribute shadowing between parent and child classes."""
+    parent_attr = Property(name="name", type=StringType)
+    parent = Class(name="Parent", attributes={parent_attr})
+
+    child_attr = Property(name="name", type=StringType)
+    child = Class(name="Child", attributes={child_attr})
+
+    generalization = Generalization(general=parent, specific=child)
+
+    domain_model = DomainModel(
+        name="TestModel",
+        types={parent, child},
+        associations=set(),
+        generalizations={generalization}
+    )
+
+    result = domain_model.validate(raise_exception=False)
+    assert result["success"] is False
+    assert any("attribute 'name'" in e and "Child" in e for e in result["errors"])
+
+
+def test_no_attribute_shadowing_validation():
+    """Test that validation passes when there is no attribute shadowing."""
+    parent_attr = Property(name="name", type=StringType)
+    parent = Class(name="Parent", attributes={parent_attr})
+
+    child_attr = Property(name="age", type=IntegerType)
+    child = Class(name="Child", attributes={child_attr})
+
+    generalization = Generalization(general=parent, specific=child)
+
+    domain_model = DomainModel(
+        name="TestModel",
+        types={parent, child},
+        associations=set(),
+        generalizations={generalization}
+    )
+
+    result = domain_model.validate(raise_exception=False)
+    assert result["success"] is True

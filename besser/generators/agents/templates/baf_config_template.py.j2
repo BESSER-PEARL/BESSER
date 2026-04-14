@@ -1,52 +1,75 @@
-[agent]
-agent.check_transitions.delay = 2
+agent:
+  check_transitions_delay: 5
 
-[websocket_platform]
-websocket.host = localhost
-websocket.port = 8765
-streamlit.host = localhost
-streamlit.port = 5000
+nlp:
+  language: en
+  region: US
+  timezone: Europe/Madrid
+  pre_processing: True
+  intent_threshold: 0.4
+  huggingface:
+    token: YOUR-TOKEN
+  openai:
+    api_key: YOUR-API-KEY
+  replicate:
+    api_key: YOUR-API-KEY
 
-[telegram_platform]
-telegram.token = YOUR-BOT-TOKEN
+platforms:
+  websocket:
+    host: localhost
+    port: 8765
+    streamlit:
+      host: localhost
+      port: 5000
+      chat:
+        size: 16
+        font: sans
+        line_spacing: 1.5
+        alignment: left
+        color: inherit
+        contrast: medium
+  telegram:
+    token: YOUR-BOT-TOKEN
+  github:
+    personal_token: YOUR-PERSONAL-TOKEN
+    webhook_token: YOUR-WEBHOOK-TOKEN
+    webhook_port: 8901
+  gitlab:
+    personal_token: YOUR-PERSONAL-TOKEN
+    webhook_token: YOUR-WEBHOOK-TOKEN
+    webhook_port: 8901
+  a2a:
+    port: 8000
 
-[github_platform]
-github.personal_token = GITHUB-PERSONAL-TOKEN
-github.webhook_token = WEBHOOK-TOKEN
-github.webhook_port = 8901
-
-[gitlab_platform]
-gitlab.personal_token = GITLAB-PERSONAL-TOKEN
-gitlab.webhook_token = WEBHOOK-TOKEN
-gitlab.webhook_port = 8901
-
-[a2a_platform]
-a2a.port = 8000
-
-[nlp]
-nlp.language = en
-nlp.region = US
-nlp.timezone = Europe/Madrid
-nlp.pre_processing = True
-nlp.intent_threshold = 0.4
-nlp.openai.api_key = YOUR-API-KEY
-nlp.hf.api_key = YOUR-API-KEY
-nlp.replicate.api_key = YOUR-API-KEY
-
-[db]
-db.monitoring = False
-db.monitoring.dialect = postgresql
-db.monitoring.host = localhost
-db.monitoring.port = 5432
-db.monitoring.database = mydatabase
-db.monitoring.username = myuser
-db.monitoring.password = mypassword
-
-[streamlit_db]
-db.streamlit = False
-db.streamlit.dialect = postgresql
-db.streamlit.host = localhost
-db.streamlit.port = 5432
-db.streamlit.database = mydatabase
-db.streamlit.username = myuser
-db.streamlit.password = mypassword
+db:
+  monitoring:
+    enabled: True
+    dialect: postgresql
+    host: YOUR-DB-HOST
+    port: 5432
+    database: YOUR-DB-NAME
+    username: YOUR-DB-USERNAME
+    password: YOUR-DB-PASSWORD
+  streamlit:
+    enabled: True
+    dialect: postgresql
+    host: YOUR-DB-HOST
+    port: 5432
+    database: YOUR-DB-NAME
+    username: YOUR-DB-USERNAME
+    password: YOUR-DB-PASSWORD
+  sql:
+    - db1:
+        dialect: postgresql
+        host: YOUR-DB-HOST
+        port: 5432
+        database: YOUR-DB-NAME
+        username: YOUR-DB-USERNAME
+        password: YOUR-DB-PASSWORD
+    - db2:
+        dialect: postgresql
+        host: YOUR-DB-HOST
+        port: 5432
+        database: YOUR-DB-NAME
+        username: YOUR-DB-USERNAME
+        password: YOUR-DB-PASSWORD

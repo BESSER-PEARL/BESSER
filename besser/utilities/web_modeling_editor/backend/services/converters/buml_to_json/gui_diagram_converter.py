@@ -3,9 +3,12 @@ GUI Diagram converter module for BUML to JSON conversion.
 Reconstructs GrapesJS-compatible JSON structures from BUML GUI models.
 """
 from __future__ import annotations
+import logging
 import re
 import uuid
 from typing import Any, Dict, Iterable, List, Optional, Sequence
+
+logger = logging.getLogger(__name__)
 from besser.BUML.metamodel.gui import (
     Button,
     ButtonActionType,
@@ -30,7 +33,6 @@ from besser.BUML.metamodel.gui.binding import DataBinding
 from besser.BUML.metamodel.gui.dashboard import (
     AgentComponent,
     BarChart,
-    Column,
     FieldColumn,
     LookupColumn,
     ExpressionColumn,
@@ -45,11 +47,13 @@ from besser.BUML.metamodel.gui.events_actions import (
     Create,
     Delete,
     Event,
+    Parameter,
     Read,
     Transition,
     Update,
 )
-from besser.BUML.metamodel.gui.style import Alignment, Layout, LayoutType, PositionType, Styling
+from besser.BUML.metamodel.gui.graphical_ui import InputFieldType
+from besser.BUML.metamodel.gui.style import Alignment, Color, Layout, LayoutType, Position, PositionType, Size, Styling, UnitSize
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -69,7 +73,7 @@ def gui_buml_to_json(buml_content: str) -> Dict[str, Any]:
     try:
         return _serialize_gui_model(gui_model)
     except Exception as exc:  # pragma: no cover - defensive fallback
-        print(f"[gui_buml_to_json] Failed to serialize GUI model: {exc}")
+        logger.error("Failed to serialize GUI model: %s", exc)
         return _empty_gui_project()
 def extract_gui_section(content: str) -> str:
     """
@@ -95,7 +99,7 @@ def parse_gui_buml_content(content: str) -> Optional[Dict[str, Any]]:
     try:
         return gui_buml_to_json(content)
     except Exception as exc:  # pragma: no cover - defensive fallback
-        print(f"[parse_gui_buml_content] Could not parse GUI BUML content: {exc}")
+        logger.error("Could not parse GUI BUML content: %s", exc)
         return None
 # ---------------------------------------------------------------------------
 # Parsing helpers
@@ -103,7 +107,22 @@ def parse_gui_buml_content(content: str) -> Optional[Dict[str, Any]]:
 def _parse_gui_model(content: str) -> Optional[GUIModel]:
     """Execute BUML GUI python content and return the first GUIModel found."""
     safe_globals: Dict[str, Any] = {
-        "__builtins__": __builtins__,
+        "__builtins__": {
+            "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
+            "str": str,
+            "int": int,
+            "float": float,
+            "bool": bool,
+            "len": len,
+            "range": range,
+            "True": True,
+            "False": False,
+            "None": None,
+            "print": lambda *a, **kw: None,  # no-op to prevent info leakage
+        },
         "GUIModel": GUIModel,
         "Module": Module,
         "Screen": Screen,
@@ -136,21 +155,44 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         "Update": Update,
         "Delete": Delete,
         "Event": Event,
+        "Parameter": Parameter,
         "DataBinding": DataBinding,
         "Styling": Styling,
+        "Size": Size,
+        "Position": Position,
+        "Color": Color,
+        "UnitSize": UnitSize,
         "Layout": Layout,
         "LayoutType": LayoutType,
         "Alignment": Alignment,
         "PositionType": PositionType,
+        "InputFieldType": InputFieldType,
         "domain_model": None,
         "set": set,
         "list": list,
         "tuple": tuple,
         "dict": dict,
     }
+    # Strip import lines -- all required types are in safe_globals already.
+    # Handle multi-line imports (e.g. from ... import (\n    ...\n))
+    cleaned_lines = []
+    in_import_block = False
+    for line in content.splitlines():
+        stripped = line.lstrip()
+        if in_import_block:
+            if ")" in line:
+                in_import_block = False
+            continue
+        if stripped.startswith(("import ", "from ")):
+            if "(" in line and ")" not in line:
+                in_import_block = True
+            continue
+        cleaned_lines.append(line)
+    cleaned_content = "\n".join(cleaned_lines)
+
     local_vars: Dict[str, Any] = {}
     try:
-        exec(content, safe_globals, local_vars)
+        exec(cleaned_content, safe_globals, local_vars)
     except Exception as exc:
         raise ValueError(f"Failed to execute GUI BUML content: {exc}") from exc
     gui_candidates = [
@@ -179,7 +221,7 @@ def _serialize_gui_model(gui_model: GUIModel) -> Dict[str, Any]:
             pages.append(page)
     if not pages:
         return _empty_gui_project()
-    styles = _denormalize_styles(getattr(gui_model, "_style_entries", []))
+    styles = _denormalize_styles(getattr(gui_model, "style_entries", None) or [])
     return {
         "pages": pages,
         "styles": styles,
@@ -347,26 +389,26 @@ def _apply_button_attributes(button: Button, attrs: Dict[str, Any]) -> None:
             target_screen_attr = _resolve_target_screen_id(button)
             if target_screen_attr:
                 attrs["target-screen"] = target_screen_attr
-    
+
     # Handle method execution configuration
     if hasattr(button, 'method_entity') and button.method_entity:
         attrs["data-method-entity"] = button.method_entity.name if hasattr(button.method_entity, 'name') else str(button.method_entity)
     elif hasattr(button, '_method_entity_name') and button._method_entity_name:
         attrs["data-method-entity"] = button._method_entity_name
-    
+
     if hasattr(button, 'method_name') and button.method_name:
         attrs["data-method-name"] = button.method_name
-    
+
     if hasattr(button, 'method_entity_id') and button.method_entity_id is not None:
         attrs["data-method-entity-id"] = str(button.method_entity_id)
-    
+
     if hasattr(button, 'method_parameters') and button.method_parameters:
         import json
         attrs["data-method-parameters"] = json.dumps(button.method_parameters)
-    
+
     if hasattr(button, 'is_instance_method'):
         attrs["instance-method"] = "true" if button.is_instance_method else "false"
-    
+
     crud_entity = attrs.get("crud-entity") or attrs.get("data-crud-entity")
     if not crud_entity:
         crud_entity = _resolve_crud_target(button)

@@ -211,7 +211,7 @@ def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"
 
     available_types = [d_type.name for d_type in data_types]
 
-    prompt = f""" 
+    prompt = f"""
     Prompt for AI Agent:
 
     Task: Transform a knowledge graph into a class diagram.
@@ -238,12 +238,12 @@ def kg_to_plantuml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"
     All parameters from methods must be named and typed, as follows 'method(parm_name : int)'
     All associations must have different names
     If associations are named the same in graph, modify their name so they are different in the generated model
-    
+
     Goal: Generate a class diagram that can fully represent the structure and behavior implied by the knowledge graph, suitable for PlantUML rendering.
 
     IMPORTANT: Output ONLY the PlantUML code. Do not include explanations or metadata.
     """
-    
+
     headers = {
         "Content-Type": "application/json",
         "Authorization": "Bearer " + openai_token
@@ -333,7 +333,7 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
 
     available_types = [d_type.name for d_type in data_types]
 
-    prompt = f""" 
+    prompt = f"""
     Prompt for AI Agent:
 
     Task: Transform a knowledge graph into a class diagram.
@@ -351,7 +351,7 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
     If it represents a behavior or action (e.g., (Person, canDrive, Car)), create a method in the corresponding class. The method name can be derived from the relation, with parameters inferred from the target node if applicable.
     If it connects an instance to a class, ignore it.
 
-    Output format: 
+    Output format:
     Return ONLY a JSON object with this structure:
         {{
         "systemName": "SystemName",
@@ -379,8 +379,8 @@ def kg_to_buml(kg_path: str, openai_token: str, openai_model: str = "gpt-4o"):
             }}
         ]
         }}
-    
-    
+
+
     - All identified classes
     - Attributes and methods for each class
     - Associations between classes with cardinality where derivable

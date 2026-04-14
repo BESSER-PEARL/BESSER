@@ -9,10 +9,10 @@ def determine_connection_direction(source_bounds, target_bounds):
     """Determine the best connection directions between two elements."""
     source_center = calculate_center_point(source_bounds)
     target_center = calculate_center_point(target_bounds)
-    
+
     dx = target_center['x'] - source_center['x']
     dy = target_center['y'] - source_center['y']
-    
+
     # Si les éléments sont principalement alignés horizontalement
     if abs(dx) > abs(dy):
         if dx > 0:
@@ -52,8 +52,7 @@ def calculate_connection_points(element_bounds, direction):
 def calculate_path_points(source_point, target_point, source_dir, target_dir):
     """Calculate intermediate points for the relationship path."""
     points = [source_point]
-    offset = 30  # Distance minimale pour les détours
-    
+
     # Calculer les points intermédiaires en fonction des directions
     if source_dir == "Right" and target_dir == "Left":
         mid_x = (source_point['x'] + target_point['x']) / 2
@@ -87,7 +86,7 @@ def calculate_path_points(source_point, target_point, source_dir, target_dir):
         points.extend([
             {'x': source_point['x'], 'y': target_point['y']}
         ])
-    
+
     points.append(target_point)
     return points
 
@@ -95,13 +94,13 @@ def calculate_relationship_bounds(path_points):
     """Calculate the bounding box that contains all path points with padding."""
     x_coords = [p['x'] for p in path_points]
     y_coords = [p['y'] for p in path_points]
-    
+
     padding = 10  # Ajouter un peu d'espace autour du chemin
     min_x = min(x_coords) - padding
     max_x = max(x_coords) + padding
     min_y = min(y_coords) - padding
     max_y = max(y_coords) + padding
-    
+
     return {
         'x': min_x,
         'y': min_y,

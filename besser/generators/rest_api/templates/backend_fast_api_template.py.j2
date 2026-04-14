@@ -277,14 +277,21 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
 {% for association in class.associations %}
     {% if association.ends|length == 2 and association.name not in ns.processed_associations %}
         {% set lns = namespace(end1=None, end2=None) %}
-        {% for end in association.ends %}
-            {% set lns.end1 = end if end.type.name == class.name else lns.end1 %}
-            {% set lns.end2 = end if end.type.name != class.name else lns.end2 %}
-        {% endfor %}
+        {% set ends_list = association.ends | list %}
+        {% if ends_list[0].type.name == ends_list[1].type.name %}
+            {% set lns.end1 = ends_list[1] %}
+            {% set lns.end2 = ends_list[0] %}
+        {% else %}
+            {% for end in association.ends %}
+                {% set lns.end1 = end if end.type.name == class.name else lns.end1 %}
+                {% set lns.end2 = end if end.type.name != class.name else lns.end2 %}
+            {% endfor %}
+        {% endif %}
         {% set class1_name = lns.end1.type.name %}
         {% set class2_name = lns.end2.type.name %}
         {% set name_end1 = lns.end1.name %}
         {% set name_end2 = lns.end2.name %}
+        {% if lns.end2.is_navigable %}
         {% if lns.end1.multiplicity.max > 1 and lns.end2.multiplicity.max > 1 %}
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), lns.end2.multiplicity.min, lns.end2.multiplicity.max)) %}
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max > 1 %}
@@ -295,6 +302,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
         {% elif lns.end1.multiplicity.max == 1 and lns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, lns.end2.multiplicity.min, name_end2, association.name)) %}
         {% endif %}
+        {% endif %}
     {% endif %}
 {% endfor %}
 {# Include inherited associations from parent classes #}
@@ -302,14 +310,21 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
 {% for association in parent.associations %}
     {% if association.ends|length == 2 %}
         {% set plns = namespace(end1=None, end2=None) %}
-        {% for end in association.ends %}
-            {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
-            {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
-        {% endfor %}
+        {% set ends_list = association.ends | list %}
+        {% if ends_list[0].type.name == ends_list[1].type.name %}
+            {% set plns.end1 = ends_list[1] %}
+            {% set plns.end2 = ends_list[0] %}
+        {% else %}
+            {% for end in association.ends %}
+                {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+            {% endfor %}
+        {% endif %}
         {% set class1_name = plns.end1.type.name %}
         {% set class2_name = plns.end2.type.name %}
         {% set name_end1 = plns.end1.name %}
         {% set name_end2 = plns.end2.name %}
+        {% if plns.end2.is_navigable %}
         {% if plns.end1.multiplicity.max > 1 and plns.end2.multiplicity.max > 1 %}
             {% do ns.end_name_multiple.append((class1_name, class2_name, name_end1, name_end2, association.name.lower(), plns.end2.multiplicity.min, plns.end2.multiplicity.max)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max > 1 %}
@@ -319,6 +334,7 @@ async def BAL_reduce(sequence:list, reduce_fn, aggregator) -> any:
             {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
         {% elif plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 %}
             {% do ns.end_name_one.append((class2_name, plns.end2.multiplicity.min, name_end2, association.name)) %}
+        {% endif %}
         {% endif %}
     {% endif %}
 {% endfor %}
@@ -524,10 +540,16 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% for association in parent.associations %}
         {% if association.ends|length == 2 %}
             {% set plns = namespace(end1=None, end2=None) %}
-            {% for end in association.ends %}
-                {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
-                {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
-            {% endfor %}
+            {% set ends_list = association.ends | list %}
+            {% if ends_list[0].type.name == ends_list[1].type.name %}
+                {% set plns.end1 = ends_list[1] %}
+                {% set plns.end2 = ends_list[0] %}
+            {% else %}
+                {% for end in association.ends %}
+                    {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                    {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+                {% endfor %}
+            {% endif %}
             {%- if (plns.end1.multiplicity.max == 1 or plns.end1.multiplicity.max > 1) and plns.end2.multiplicity.max == 1 -%}
                 {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
                 {% if parent_has_fk %}
@@ -592,10 +614,16 @@ async def create_{{ class.name | lower}}({{ class.name | lower}}_data: {{ class.
     {% for association in parent.associations %}
         {% if association.ends|length == 2 %}
             {% set plns = namespace(end1=None, end2=None) %}
-            {% for end in association.ends %}
-                {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
-                {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
-            {% endfor %}
+            {% set ends_list = association.ends | list %}
+            {% if ends_list[0].type.name == ends_list[1].type.name %}
+                {% set plns.end1 = ends_list[1] %}
+                {% set plns.end2 = ends_list[0] %}
+            {% else %}
+                {% for end in association.ends %}
+                    {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                    {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+                {% endfor %}
+            {% endif %}
             {%- if plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 -%}
                 {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
                 {% if parent_has_fk %}
@@ -727,10 +755,16 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% for association in parent.associations %}
                 {% if association.ends|length == 2 %}
                     {% set plns = namespace(end1=None, end2=None) %}
-                    {% for end in association.ends %}
-                        {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
-                        {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
-                    {% endfor %}
+                    {% set ends_list = association.ends | list %}
+                    {% if ends_list[0].type.name == ends_list[1].type.name %}
+                        {% set plns.end1 = ends_list[1] %}
+                        {% set plns.end2 = ends_list[0] %}
+                    {% else %}
+                        {% for end in association.ends %}
+                            {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                            {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+                        {% endfor %}
+                    {% endif %}
                     {%- if (plns.end1.multiplicity.max == 1 or plns.end1.multiplicity.max > 1) and plns.end2.multiplicity.max == 1 -%}
                         {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
                         {% if parent_has_fk and plns.end2.multiplicity.min == 1 %}
@@ -773,10 +807,16 @@ async def bulk_create_{{ class.name | lower}}(items: list[{{ class.name }}Create
             {% for association in parent.associations %}
                 {% if association.ends|length == 2 %}
                     {% set plns = namespace(end1=None, end2=None) %}
-                    {% for end in association.ends %}
-                        {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
-                        {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
-                    {% endfor %}
+                    {% set ends_list = association.ends | list %}
+                    {% if ends_list[0].type.name == ends_list[1].type.name %}
+                        {% set plns.end1 = ends_list[1] %}
+                        {% set plns.end2 = ends_list[0] %}
+                    {% else %}
+                        {% for end in association.ends %}
+                            {% set plns.end1 = end if end.type.name == parent.name else plns.end1 %}
+                            {% set plns.end2 = end if end.type.name != parent.name else plns.end2 %}
+                        {% endfor %}
+                    {% endif %}
                     {%- if plns.end1.multiplicity.max == 1 and plns.end2.multiplicity.max == 1 -%}
                         {%- set parent_has_fk = (fkeys.get(association.name, [''])[0] == parent.name) -%}
                         {% if parent_has_fk %}

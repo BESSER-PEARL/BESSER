@@ -65,16 +65,12 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {% endif %}
     {%- for association in class.associations %}
         {%- if association.ends|length == 2 %}
-            {%- set ns.end1 = none %}
-            {%- set ns.end2 = none %}
-            {%- for end in association.ends %}
-                {%- if end.type.name == class.name %}
-                    {%- set ns.end1 = end %}
-                {%- else %}
-                    {%- set ns.end2 = end %}
-                {%- endif %}
-            {%- endfor %}
-            {%- if ns.end1 and ns.end2 %}
+            {%- set ends_list = association.ends | list %}
+            {%- set is_self_assoc = (ends_list[0].type.name == ends_list[1].type.name) %}
+            {%- if is_self_assoc %}
+                {%- for i in range(2) %}
+                    {%- set ns.end1 = ends_list[(i + 1) % 2] %}
+                    {%- set ns.end2 = ends_list[i] %}
                 {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
                     {%- if nested_creations %}
                         {%- if backend %}
@@ -82,12 +78,22 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
     {% set ns.has_field = true %}
                         {% endif %}
                         {%- if not backend %}
+                            {%- if ns.end2.multiplicity.min == 0 %}
+    {{ ns.end2.name }}: Optional[Set["{{ ns.end2.type.name }}"]] = None  # N:M Relationship (optional)
+    {% set ns.has_field = true %}
+                            {%- else %}
     {{ ns.end2.name }}: Set["{{ ns.end2.type.name }}"]  # N:M Relationship
     {% set ns.has_field = true %}
+                            {%- endif %}
                         {%- endif %}
                     {%- else %}
+                        {%- if ns.end2.multiplicity.min == 0 %}
+    {{ ns.end2.name }}: Optional[List[int]] = None  # N:M Relationship (optional)
+    {% set ns.has_field = true %}
+                        {%- else %}
     {{ ns.end2.name }}: List[int]  # N:M Relationship
     {% set ns.has_field = true %}
+                        {%- endif %}
                     {% endif %}
                 {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
                     {%- if backend %}
@@ -102,16 +108,26 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                             {% endif %}
                         {%- endif %}
                     {% else %}
+                        {%- if ns.end2.multiplicity.min == 0 %}
+    {{ ns.end2.name }}: Optional["{{ ns.end2.type.name }}"] = None  # N:1 Relationship (optional)
+    {% set ns.has_field = true %}
+                        {%- else %}
     {{ ns.end2.name }}: "{{ ns.end2.type.name }}"  # N:1 Relationship
     {% set ns.has_field = true %}
+                        {%- endif %}
                     {% endif %}
                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
                     {%- if backend %}
     {{ ns.end2.name }}: Optional[List[int]] = None  # 1:N Relationship
     {% set ns.has_field = true %}
                     {% else %}
+                        {%- if ns.end2.multiplicity.min == 0 %}
+    {{ ns.end2.name }}: Optional[List["{{ ns.end2.type.name }}"]] = None  # 1:N Relationship (optional)
+    {% set ns.has_field = true %}
+                        {%- else %}
     {{ ns.end2.name }}: List["{{ ns.end2.type.name }}"]  # 1:N Relationship
     {% set ns.has_field = true %}
+                        {%- endif %}
                     {% endif %}
                 {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
                     {%- if backend %}
@@ -134,10 +150,116 @@ class {{ class.name }}{% if backend %}Create{% endif %}{% if class.parents() %}(
                             {% endif %}
                         {%- endif %}
                     {% else %}
+                        {%- if ns.end2.multiplicity.min == 0 %}
+    {{ ns.end2.name }}: Optional["{{ ns.end2.type.name }}"] = None  # 1:1 Relationship (optional)
+    {% set ns.has_field = true %}
+                        {%- else %}
     {{ ns.end2.name }}: "{{ ns.end2.type.name }}"  # 1:1 Relationship
     {% set ns.has_field = true %}
+                        {%- endif %}
                     {% endif %}
                 {%- endif %}
+                {%- endfor %}
+            {%- else %}
+            {%- set ns.end1 = none %}
+            {%- set ns.end2 = none %}
+            {%- for end in association.ends %}
+                {%- if end.type.name == class.name %}
+                    {%- set ns.end1 = end %}
+                {%- else %}
+                    {%- set ns.end2 = end %}
+                {%- endif %}
+            {%- endfor %}
+            {%- if ns.end1 and ns.end2 and ns.end2.is_navigable %}
+                {%- if ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max > 1 %}
+                    {%- if nested_creations %}
+                        {%- if backend %}
+    {{ ns.end2.name }}: Optional[List[Union["{{ ns.end2.type.name }}Create", int]]] = None  # N:M Relationship
+    {% set ns.has_field = true %}
+                        {% endif %}
+                        {%- if not backend %}
+                            {%- if ns.end2.multiplicity.min == 0 %}
+    {{ ns.end2.name }}: Optional[Set["{{ ns.end2.type.name }}"]] = None  # N:M Relationship (optional)
+    {% set ns.has_field = true %}
+                            {%- else %}
+    {{ ns.end2.name }}: Set["{{ ns.end2.type.name }}"]  # N:M Relationship
+    {% set ns.has_field = true %}
+                            {%- endif %}
+                        {%- endif %}
+                    {%- else %}
+                        {%- if ns.end2.multiplicity.min == 0 %}
+    {{ ns.end2.name }}: Optional[List[int]] = None  # N:M Relationship (optional)
+    {% set ns.has_field = true %}
+                        {%- else %}
+    {{ ns.end2.name }}: List[int]  # N:M Relationship
+    {% set ns.has_field = true %}
+                        {%- endif %}
+                    {% endif %}
+                {%- elif ns.end1.multiplicity.max > 1 and ns.end2.multiplicity.max == 1 %}
+                    {%- if backend %}
+                        {%- set has_fk = (fkeys.get(association.name, [''])[0] == class.name) -%}
+                        {%- if has_fk %}
+                            {%- if ns.end2.multiplicity.min > 0 %}
+    {{ ns.end2.name }}: int  # N:1 Relationship (mandatory)
+    {% set ns.has_field = true %}
+                            {% else %}
+    {{ ns.end2.name }}: Optional[int] = None  # N:1 Relationship (optional)
+    {% set ns.has_field = true %}
+                            {% endif %}
+                        {%- endif %}
+                    {% else %}
+                        {%- if ns.end2.multiplicity.min == 0 %}
+    {{ ns.end2.name }}: Optional["{{ ns.end2.type.name }}"] = None  # N:1 Relationship (optional)
+    {% set ns.has_field = true %}
+                        {%- else %}
+    {{ ns.end2.name }}: "{{ ns.end2.type.name }}"  # N:1 Relationship
+    {% set ns.has_field = true %}
+                        {%- endif %}
+                    {% endif %}
+                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max > 1 %}
+                    {%- if backend %}
+    {{ ns.end2.name }}: Optional[List[int]] = None  # 1:N Relationship
+    {% set ns.has_field = true %}
+                    {% else %}
+                        {%- if ns.end2.multiplicity.min == 0 %}
+    {{ ns.end2.name }}: Optional[List["{{ ns.end2.type.name }}"]] = None  # 1:N Relationship (optional)
+    {% set ns.has_field = true %}
+                        {%- else %}
+    {{ ns.end2.name }}: List["{{ ns.end2.type.name }}"]  # 1:N Relationship
+    {% set ns.has_field = true %}
+                        {%- endif %}
+                    {% endif %}
+                {%- elif ns.end1.multiplicity.max == 1 and ns.end2.multiplicity.max == 1 %}
+                    {%- if backend %}
+                        {%- set has_fk = (fkeys.get(association.name, [''])[0] == class.name) -%}
+                        {%- if has_fk %}
+                            {%- if ns.end2.multiplicity.min > 0 %}
+    {{ ns.end2.name }}: int  # 1:1 Relationship (mandatory)
+    {% set ns.has_field = true %}
+                            {% else %}
+    {{ ns.end2.name }}: Optional[int] = None  # 1:1 Relationship (optional)
+    {% set ns.has_field = true %}
+                            {% endif %}
+                        {%- else %}
+                            {%- if ns.end2.multiplicity.min > 0 %}
+    {{ ns.end2.name }}: int  # 1:1 Relationship (mandatory)
+    {% set ns.has_field = true %}
+                            {% else %}
+    {{ ns.end2.name }}: Optional[int] = None  # 1:1 Relationship (optional)
+    {% set ns.has_field = true %}
+                            {% endif %}
+                        {%- endif %}
+                    {% else %}
+                        {%- if ns.end2.multiplicity.min == 0 %}
+    {{ ns.end2.name }}: Optional["{{ ns.end2.type.name }}"] = None  # 1:1 Relationship (optional)
+    {% set ns.has_field = true %}
+                        {%- else %}
+    {{ ns.end2.name }}: "{{ ns.end2.type.name }}"  # 1:1 Relationship
+    {% set ns.has_field = true %}
+                        {%- endif %}
+                    {% endif %}
+                {%- endif %}
+            {%- endif %}
             {%- endif %}
         {%- endif %}
     {%- endfor %}

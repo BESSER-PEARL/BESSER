@@ -39,13 +39,16 @@ that repository, then the submodule pointer updated in BESSER.
 
   - **Enable an existing diagram type** (already implemented in the editor package): wire it into the webapp project
     model, sidebar, and import/export flows. See
-    ``packages/webapp/src/main/components/project/ADDING_NEW_DIAGRAM_TYPE.md`` in the WME repo.
+    ``packages/webapp2/src/main/features/project/ADDING_NEW_DIAGRAM_TYPE.md`` in the WME repo.
   - **Add a brand-new diagram/DSL**: extend the editor package first (diagram type, element types, renderers, palette
     previews, translations, property editors), then wire it into the webapp.
 * Frontend (WME repo): update the editor package and webapp to expose the new diagram type and UI affordances. Follow
   existing React/TypeScript patterns and add Storybook demos if available.
-* Backend (BESSER): expose REST/WS endpoints, validation routes, and persistence logic under
-  ``besser/utilities/web_modeling_editor/backend``. Align FastAPI/Flask schemas with the BUML definitions.
+* Backend (BESSER): add or update endpoints in the appropriate router under
+  ``besser/utilities/web_modeling_editor/backend/routers/`` (e.g., ``generation_router.py`` for
+  code generation, ``conversion_router.py`` for import/export). Use the
+  ``@handle_endpoint_errors`` decorator for consistent error handling. Align Pydantic schemas
+  with the BUML definitions.
 * Sync contracts: keep JSON element/relationship types, OpenAPI schemas, and TypeScript types consistent across the two
   repos so import/export and validation remain stable.
 * Reference guide: `WME - Adding a New Diagram Type <https://besser.readthedocs.io/projects/besser-web-modeling-editor/en/latest/contributing/new-diagram-guide/index.html>`_.
@@ -65,7 +68,7 @@ that repository, then the submodule pointer updated in BESSER.
 
 * Run the WME backend locally (``python besser/utilities/web_modeling_editor/backend/backend.py``; defaults to port
   9000).
-* Run the WME frontend locally (``npm run start:webapp`` in the WME repo or submodule) and confirm the new palette
+* Run the WME frontend locally (``npm run dev`` in the WME repo or submodule) and confirm the new palette
   items, properties, and serialization work against the backend.
 * Run automated checks: ``python -m pytest`` for BESSER; ``npm run lint`` and ``npm run build:webapp`` for WME.
 

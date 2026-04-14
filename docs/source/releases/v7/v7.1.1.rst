@@ -1,0 +1,39 @@
+Version 7.1.1
+=============
+
+Patch release: fixes the Render deployment pipeline for WebApps that include an agent. All changes are scoped to the agent generator, its templates, and the GitHub/Render deploy integration — no metamodel or API changes.
+
+Highlights
+----------
+
+- **BAF upgrade**: generated agents now target ``besser-agentic-framework==4.3.2``, which ships the new ``baf.*`` import namespace that the agent template already uses.
+- **Config format migration**: generated agents read ``config.yaml`` instead of ``config.ini`` (BAF 4.3.x dropped INI support).
+- **Render deploy fixes**: agents deployed via the editor's GitHub integration now start cleanly on Render free tier — WebSocket binds to ``0.0.0.0:$PORT``, placeholder monitoring DB is disabled, embedded Streamlit UI is disabled, and OpenAI key handling matches the selected intent recognition technology.
+
+Bug Fixes
+---------
+
+Agent Generator & Templates
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+- **BAF 4.3.2 upgrade**: the generated agent's ``requirements`` / Render ``buildCommand`` now pins ``besser-agentic-framework[llms]==4.3.2``. The template-side import rename from ``besser.agent.*`` to ``baf.*`` was already in place but was broken on 4.2.3 because that version still shipped the old namespace, causing ``ModuleNotFoundError: No module named 'baf'`` at agent startup.
+- **config.yaml migration**: the agent README template (``readme.txt.j2``) and the BAF generator tests now reference ``config.yaml`` instead of ``config.ini``, matching the file that ``baf_config_template.py.j2`` actually emits.
+
+Render Deployment Pipeline
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The ``github_deploy_api.py`` service that generates ``render.yaml`` for agent-enabled WebApps had several issues that are now fixed:
+
+- **WebSocket port binding**: the previous ``startCommand`` used ``sed`` patterns anchored to flat ``key = value`` lines (``^websocket\.host = ...``), but the real config file is nested YAML. The sed calls silently matched zero lines, so BAF started on ``localhost:8765`` and Render's port scanner killed the service with ``No open ports detected on 0.0.0.0``. Replaced the sed chain with a single inline Python patcher that loads ``config.yaml`` with PyYAML (already a BAF dependency), rewrites ``platforms.websocket.host`` to ``0.0.0.0`` and ``platforms.websocket.port`` to ``$PORT``, then writes it back.
+- **Monitoring DB crash on startup**: the default config template ships with ``db.monitoring.enabled: True`` and ``db.monitoring.host: YOUR-DB-HOST``. On Render with no external Postgres attached, BAF tried to resolve the literal host and crashed with ``psycopg2.OperationalError: could not translate host name "YOUR-DB-HOST" to address``. The patcher now flips ``db.monitoring.enabled`` and ``db.streamlit.enabled`` to ``False`` at container start.
+- **Embedded Streamlit UI disabled**: ``use_websocket_platform(use_ui=True)`` was hardcoded in ``baf_agent_template.py.j2``, spawning a Streamlit subprocess on port 5000. Render free tier only exposes the one ``$PORT`` per service, so the embedded UI was both unreachable and wasting ~200 MB on the 512 MB free instance. The patcher rewrites ``use_ui=True`` to ``use_ui=False`` in the generated agent script at container start.
+- **OpenAI key handling split by intent recognition technology**: classical intent recognition does not call OpenAI, so the Render deploy no longer prompts for an ``OPENAI_API_KEY`` env var when ``intentRecognitionTechnology == 'classical'``. The LLM IC path still injects ``OPENAI_API_KEY`` into ``config.yaml`` at container start. The classical IC build still pre-installs ``torch==2.6.0+cpu`` from the PyTorch CPU wheel index so the build fits within Render free tier's disk budget.
+
+Upgrade Notes
+-------------
+
+If you are regenerating and redeploying an existing agent-enabled WebApp:
+
+- Any ``config.ini`` files in old exports are no longer used — delete them and let the generator emit a fresh ``config.yaml``.
+- Existing Render services stuck on BAF 4.2.3 will need a fresh deploy to pick up both the 4.3.2 upgrade and the new ``startCommand``. The ``render.yaml`` file in your GitHub repo will be rewritten on the next ``deploy-app`` call from the editor.
+- Render free tier still exposes only one port per service. If you rely on the embedded Streamlit chat UI locally, it still works — the rewrite only takes effect inside the container at deploy time, not in the generated source tree.

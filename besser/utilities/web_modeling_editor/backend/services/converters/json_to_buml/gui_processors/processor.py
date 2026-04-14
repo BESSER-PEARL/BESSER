@@ -625,31 +625,27 @@ def process_gui_diagram(gui_diagram, class_model, domain_model):
     dashboard_module = Module(name=module_name, screens=set(screen_list))
     gui_model.modules = {dashboard_module}
 
-    # Normalize style entries for template compatibility
-    # Convert dictionary selectors to strings and add proper CSS prefixes
-    normalized_styles = []
-    for style_entry in gui_model_json.get("styles", []):
-        normalized_entry = dict(style_entry)  # Copy the entry
-        selectors = normalized_entry.get("selectors", [])
-        normalized_selectors = []
-        for selector in selectors:
-            if isinstance(selector, dict):
-                # Extract name from dictionary selector (class names from GrapesJS)
-                name = selector.get("name")
-                if name:
-                    # Add . prefix for class selectors (if not already prefixed)
-                    if not name.startswith(('.', '#', '*', '[')):
-                        name = f".{name}"
-                    normalized_selectors.append(name)
-            elif isinstance(selector, str):
-                # Preserve as-is (already has #id or .class prefix)
-                normalized_selectors.append(selector)
-        normalized_entry["selectors"] = normalized_selectors
-        # Only include entries with valid selectors
-        if normalized_selectors:
-            normalized_styles.append(normalized_entry)
-
-    # Store normalized style entries as a proper model attribute
-    gui_model.style_entries = normalized_styles
+    # style_entries is only used for the editor round-trip (buml_to_json),
+    # not by any code generator. All styling is already captured in per-component
+    # Styling objects via build_style_map/resolve_component_styling.
+    # TODO: rebuild styles from per-component Styling in buml_to_json, then remove this field entirely.
+    # normalized_styles = []
+    # for style_entry in gui_model_json.get("styles", []):
+    #     normalized_entry = dict(style_entry)
+    #     selectors = normalized_entry.get("selectors", [])
+    #     normalized_selectors = []
+    #     for selector in selectors:
+    #         if isinstance(selector, dict):
+    #             name = selector.get("name")
+    #             if name:
+    #                 if not name.startswith(('.', '#', '*', '[')):
+    #                     name = f".{name}"
+    #                 normalized_selectors.append(name)
+    #         elif isinstance(selector, str):
+    #             normalized_selectors.append(selector)
+    #     normalized_entry["selectors"] = normalized_selectors
+    #     if normalized_selectors:
+    #         normalized_styles.append(normalized_entry)
+    # gui_model.style_entries = normalized_styles
 
     return gui_model

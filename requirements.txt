@@ -19,3 +19,4 @@ oracledb>=3.4.1
 psycopg2-binary>=2.9.10
 pymysql>=1.1.1
 pyodbc>=5.2.0
+bocl==1.0.0

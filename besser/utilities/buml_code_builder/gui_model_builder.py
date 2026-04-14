@@ -357,14 +357,14 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write("# GUI Model\n")
         module_vars = [safe_var_name(m.name) for m in sorted(model.modules, key=lambda m: m.name)]
 
-        # Write style_entries if present
-        style_entries = getattr(model, 'style_entries', None) or []
-        if style_entries:
-            f.write("import json as _json\n")
-            # Serialize style entries as JSON for readability
-            import json
-            style_json = json.dumps(style_entries, ensure_ascii=False, indent=4)
-            f.write(f"_style_entries = _json.loads('''{style_json}''')\n\n")
+        # style_entries is only used for the editor round-trip (GrapesJS),
+        # not by any code generator. Skipping it from the export.
+        # style_entries = getattr(model, 'style_entries', None) or []
+        # if style_entries:
+        #     f.write("import json as _json\n")
+        #     import json
+        #     style_json = json.dumps(style_entries, ensure_ascii=False, indent=4)
+        #     f.write(f"_style_entries = _json.loads('''{style_json}''')\n\n")
 
         f.write(f"{model_var_name} = GUIModel(\n")
         f.write(f'    name="{_escape_string(model.name)}",\n')
@@ -372,11 +372,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_
         f.write(f'    versionCode="{_escape_string(model.versionCode)}",\n')
         f.write(f'    versionName="{_escape_string(model.versionName)}",\n')
         f.write(f'    modules={{{", ".join(module_vars)}}},\n')
-        f.write(f'    description="{_escape_string(model.description)}",\n')
-        if style_entries:
-            f.write('    style_entries=_style_entries\n')
-        else:
-            f.write('    style_entries=[]\n')
+        f.write(f'    description="{_escape_string(model.description)}"\n')
         f.write(")\n")
 
     print(f"GUI model code saved to {file_path}")

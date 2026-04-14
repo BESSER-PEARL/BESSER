@@ -337,9 +337,10 @@ async def deploy_webapp_to_github(
                 deployment_urls["live_backend"] = (
                     f"https://{app_host}-backend-{existing_suffix}.onrender.com"
                 )
-                # Render auto-sync handles the redeploy; no need to send the user
-                # back through "Create Blueprint". Point them at the dashboard.
-                deployment_urls["render_dashboard"] = "https://dashboard.render.com/"
+                # Point the user at the blueprint list so they can click into
+                # their project's blueprint and hit "Manual Sync" — the single
+                # reliable button that redeploys every service at once.
+                deployment_urls["render_dashboard"] = "https://dashboard.render.com/blueprints"
 
             action = "updated" if reused_repo else "created"
             return DeployToGitHubResponse(

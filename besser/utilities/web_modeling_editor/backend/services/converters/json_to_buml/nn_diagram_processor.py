@@ -992,10 +992,10 @@ def create_tensor_op(element, elements):
             if val.startswith('[') and val.endswith(']'):
                 val = val[1:-1]
             # Split by comma and strip whitespace and quotes from each layer name
-            layers_of_tensors = [l.strip().strip("'\"") for l in val.split(',') if l.strip()]
+            layers_of_tensors = [layer.strip().strip("'\"") for layer in val.split(',') if layer.strip()]
         elif isinstance(layers_of_tensors_raw, list):
             # Also strip quotes from list items
-            layers_of_tensors = [l.strip("'\"") if isinstance(l, str) else l for l in layers_of_tensors_raw]
+            layers_of_tensors = [layer.strip("'\"") if isinstance(layer, str) else layer for layer in layers_of_tensors_raw]
 
     reshape_dim = get_element_attribute(element, 'ReshapeDimAttribute', elements)
     if reshape_dim is not None:

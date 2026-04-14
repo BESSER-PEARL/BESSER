@@ -287,6 +287,11 @@ def process_nn_diagram(json_data):
         project_data = json_data.get('project', {})
         diagrams = project_data.get('diagrams', {})
         nn_diagram_data = diagrams.get('NNDiagram', {})
+        if isinstance(nn_diagram_data, list):
+            nn_diagram_data = nn_diagram_data[0]
+        else:
+            raise ValueError("nn_diagram_data must be a list")
+
         title = nn_diagram_data.get('title', 'Neural_Network')
         model_data = nn_diagram_data.get('model', {})
     else:

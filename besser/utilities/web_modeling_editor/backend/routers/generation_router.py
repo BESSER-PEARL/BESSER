@@ -47,6 +47,7 @@ from besser.utilities.web_modeling_editor.backend.constants.user_buml_model impo
 
 # Backend services - Other services
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+    collect_agents_from_diagrams,
     extract_openai_api_key,
     normalize_personalization_mapping,
     handle_multi_language_generation,
@@ -381,34 +382,37 @@ async def _handle_web_app_project_generation(input_data: ProjectInput, generator
 
         gui_model = process_gui_diagram(gui_diagram.model, class_diagram.model, buml_model)
 
-        # Check if GUI model contains agent components
-        agent_diagram = None
-        agent_model = None
+        # Collect every AgentDiagram in the project if the GUI uses agent components.
+        # The frontend dropdown enumerates all agents, so the generator must
+        # satisfy any binding — we don't filter to the active reference here.
+        agent_models = []
+        agent_configs = {}
         has_agent_components = _check_for_agent_components(gui_model)
 
-        agent_config = None
         if has_agent_components:
-            # Use the GUI diagram's per-diagram reference for AgentDiagram
-            agent_diagram = input_data.get_referenced_diagram(gui_diagram, "AgentDiagram")
-            if agent_diagram and agent_diagram.model:
-                # Process agent diagram to BUML
-                # process_agent_diagram expects the full diagram structure with title, config, and model
-                agent_diagram_dict = agent_diagram.model_dump()
-                if agent_diagram_dict and isinstance(agent_diagram_dict, dict):
-                    agent_model = process_agent_diagram(agent_diagram_dict)
-                    # Try diagram-level config first, then project-level agentConfig, then project config
-                    project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
-                    agent_config = agent_diagram_dict.get('config') or agent_diagram.config or project_agent_config or config
-                    logger.debug("[WebApp agent] resolved agent_config: %s", json.dumps(sanitize_config(agent_config), indent=2, default=str) if agent_config else 'None')
-                else:
-                    logger.warning("AgentDiagram data is invalid. Agent components will not be functional.")
-            else:
-                logger.warning("GUI contains agent components but no AgentDiagram found. Agent components will not be functional.")
+            project_agent_config = config.get('agentConfig') if isinstance(config, dict) else None
+            default_cfg = project_agent_config or config
+            agent_models, agent_configs = collect_agents_from_diagrams(
+                input_data.diagrams.get("AgentDiagram", []),
+                default_config=default_cfg,
+            )
+            for name, cfg in agent_configs.items():
+                logger.debug("[WebApp agent] resolved config for %s: %s",
+                             name,
+                             json.dumps(sanitize_config(cfg), indent=2, default=str) if cfg else 'None')
+            if not agent_models:
+                logger.warning(
+                    "GUI contains agent components but no AgentDiagram was found. "
+                    "Agent components will not be functional."
+                )
 
         # Generate Web App TypeScript project
         generator_class = generator_info.generator_class
 
-        return await _generate_web_app(buml_model, gui_model, generator_class, config, temp_dir, agent_model, agent_config)
+        return await _generate_web_app(
+            buml_model, gui_model, generator_class, config, temp_dir,
+            agent_models=agent_models, agent_configs=agent_configs,
+        )
 
 
 def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
@@ -926,9 +930,17 @@ def _check_container_for_agent_components(container):
                 return True
     return False
 
-async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str, agent_model=None, agent_config=None):
-    """Generate web application files. Optionally includes agent model if agent components are present."""
-    generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir, agent_model=agent_model, agent_config=agent_config)
+async def _generate_web_app(buml_model, gui_model, generator_class, config: dict, temp_dir: str,
+                            agent_models=None, agent_configs=None):
+    """Generate web application files.
+
+    Supports multi-agent projects: ``agent_models`` is a list and each is emitted
+    under ``agents/<slug>/`` in the generated output.
+    """
+    generator_instance = generator_class(
+        buml_model, gui_model, output_dir=temp_dir,
+        agent_models=agent_models, agent_configs=agent_configs,
+    )
     await asyncio.to_thread(generator_instance.generate)
     return _create_zip_response(temp_dir, "web_app")
 

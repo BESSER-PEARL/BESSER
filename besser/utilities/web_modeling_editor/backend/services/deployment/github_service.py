@@ -356,7 +356,7 @@ A full-stack web application generated from visual models using the [BESSER Web 
 ```
 frontend/          React + TypeScript frontend (Vite)
 backend/           FastAPI Python backend
-agent/             BESSER conversational agent (if included)
+agents/<name>/     BESSER conversational agents (one subfolder per agent, if any)
 render.yaml        Render deployment config
 docker-compose.yml Local development setup
 ```

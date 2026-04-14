@@ -503,16 +503,37 @@ def _add_deployment_configs(
             # Classical IC needs PyTorch CPU + scikit-learn, plus [llms] for unconditional imports in generated code
             # Single pip call with --extra-index-url so PyTorch CPU resolves from the wheel index while the rest comes from PyPI
             build_cmd = (
-                "pip install torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms]==4.2.3 "
+                "pip install torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms]==4.3.2 "
                 "--extra-index-url https://download.pytorch.org/whl/cpu "
                 '&& python -c "import nltk; nltk.download(\'punkt\', quiet=True); nltk.download(\'punkt_tab\', quiet=True)"'
             )
         else:
             # LLM-based IC (default)
             build_cmd = (
-                "pip install besser-agentic-framework[llms]==4.2.3 "
+                "pip install besser-agentic-framework[llms]==4.3.2 "
                 '&& python -c "import nltk; nltk.download(\'punkt\', quiet=True); nltk.download(\'punkt_tab\', quiet=True)"'
             )
+
+        # Patch config.yaml + agent script at container start.
+        # - Bind websocket to 0.0.0.0:$PORT so Render's port scanner sees it
+        # - Disable monitoring + streamlit DB (no external DB on free tier, template ships with YOUR-DB-HOST placeholder)
+        # - Inject OPENAI_API_KEY into config.yaml only when present (classical IC path has no env var)
+        # - Flip use_ui=True → use_ui=False in the agent script so the embedded Streamlit thread doesn't spin up
+        #   (unreachable on free tier since only $PORT is exposed, and it wastes RAM on the 512 MB instance).
+        yaml_patch = (
+            "import yaml, os, re, pathlib; "
+            "c = yaml.safe_load(open('config.yaml')); "
+            "c['platforms']['websocket']['host'] = '0.0.0.0'; "
+            "c['platforms']['websocket']['port'] = int(os.environ['PORT']); "
+            "c['db']['monitoring']['enabled'] = False; "
+            "c['db']['streamlit']['enabled'] = False; "
+            "c['nlp']['openai']['api_key'] = os.environ.get('OPENAI_API_KEY') or c['nlp']['openai'].get('api_key', ''); "
+            "yaml.safe_dump(c, open('config.yaml','w')); "
+            f"p = pathlib.Path('{agent_script}'); "
+            "p.write_text(re.sub(r'use_ui=True', 'use_ui=False', p.read_text()))"
+        )
+        start_cmd = f'cd agent && python -c "{yaml_patch}" && python -u {agent_script}'
+        extra_env_vars = "" if ic_tech == "classical" else "\n      - key: OPENAI_API_KEY\n        sync: false"
 
         agent_service_config = f"""
   # Agent Service (Free tier - WebSocket-based AI agent)
@@ -521,12 +542,10 @@ def _add_deployment_configs(
     runtime: python
     plan: free
     buildCommand: {build_cmd}
-    startCommand: cd agent && sed -i 's/^websocket\\.host = .*/websocket.host = 0.0.0.0/' config.ini && sed -i "s/^websocket\\.port = .*/websocket.port = $PORT/" config.ini && sed -i "s/^nlp\\.openai\\.api_key = .*/nlp.openai.api_key = $OPENAI_API_KEY/" config.ini && python -u {agent_script}
+    startCommand: {start_cmd}
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.9
-      - key: OPENAI_API_KEY
-        sync: false
+        value: 3.11.9{extra_env_vars}
 """
         render_config += agent_service_config
 

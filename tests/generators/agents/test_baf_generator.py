@@ -74,7 +74,7 @@ def test_baf_generator_generate(agent_model, tmpdir):
 
 
 def test_baf_generator_creates_config(agent_model, tmpdir):
-    """Test that generate() creates a config.ini file."""
+    """Test that generate() creates a config.yaml file."""
     output_dir = tmpdir.mkdir("output")
     generator = BAFGenerator(
         model=agent_model,

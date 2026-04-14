@@ -433,7 +433,11 @@ class Enumeration(DataType):
         self.literals.add(literal)
 
     def __getattr__(self, name):
-        for literal in self.literals:
+        try:
+            literals = object.__getattribute__(self, "_Enumeration__literals")
+        except AttributeError:
+            raise AttributeError(name)
+        for literal in literals:
             if literal.name == name:
                 return literal
         raise AttributeError(f"{name} is not a valid literal of {self.name}")
@@ -2109,6 +2113,7 @@ class DomainModel(Model):
 
         self._validate_generalizations(errors)
         self._validate_associations(errors)
+        self._validate_multiplicities(errors)
         self._validate_constraints(errors)
         self._validate_circular_inheritance(errors)
         self._validate_attribute_shadowing(errors)
@@ -2140,6 +2145,27 @@ class DomainModel(Model):
                     errors.append(
                         f"Association '{association.name}' has end '{end.name}' "
                         f"referencing type '{end.type.name}' which is not in the domain model '{self.name}'."
+                    )
+
+    def _validate_multiplicities(self, errors: list[str]):
+        """Validate that multiplicities on association ends and attributes are well-formed."""
+        for association in self.__associations:
+            for end in association.ends:
+                mult = end.multiplicity
+                if mult.min < 0:
+                    errors.append(
+                        f"Association '{association.name}', end '{end.name}': "
+                        f"min multiplicity ({mult.min}) cannot be negative."
+                    )
+                if mult.max <= 0:
+                    errors.append(
+                        f"Association '{association.name}', end '{end.name}': "
+                        f"max multiplicity ({mult.max}) must be greater than 0."
+                    )
+                if mult.min > mult.max:
+                    errors.append(
+                        f"Association '{association.name}', end '{end.name}': "
+                        f"min multiplicity ({mult.min}) cannot exceed max ({mult.max})."
                     )
 
     def _validate_constraints(self, errors: list[str]):

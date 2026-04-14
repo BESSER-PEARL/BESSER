@@ -127,8 +127,8 @@ def test_backend_generator_full_uml(tmpdir):
     # SQLAlchemy: inheritance + FK + join table
     assert "class Employee(Person):" in sqlalchemy_code
     assert "class Manager(Employee):" in sqlalchemy_code
-    assert "department_id: Mapped[int] = mapped_column(ForeignKey(\"department.id\")" in sqlalchemy_code
-    assert "managerproject = Table(" in sqlalchemy_code
+    assert "department_id: Mapped_[int] = mapped_column(ForeignKey_(\"department.id\")" in sqlalchemy_code
+    assert "managerproject = Table_(" in sqlalchemy_code
 
     # REST API: constructor uses inherited attributes
     assert "name=manager_data.name" in api_code
@@ -255,8 +255,8 @@ def test_backend_generator_full_uml_and_implem(tmpdir):
     # SQLAlchemy: inheritance + FK + join table
     assert "class Employee(Person):" in sqlalchemy_code
     assert "class Manager(Employee):" in sqlalchemy_code
-    assert "department_id: Mapped[int] = mapped_column(ForeignKey(\"department.id\")" in sqlalchemy_code
-    assert "managerproject = Table(" in sqlalchemy_code
+    assert "department_id: Mapped_[int] = mapped_column(ForeignKey_(\"department.id\")" in sqlalchemy_code
+    assert "managerproject = Table_(" in sqlalchemy_code
 
     # REST API: constructor uses inherited attributes
     assert "name=manager_data.name" in api_code

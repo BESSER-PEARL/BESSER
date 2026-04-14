@@ -1,4 +1,4 @@
-import React, { CSSProperties, useEffect, useState, useRef } from "react";
+import React, { CSSProperties, useEffect, useMemo, useState, useRef } from "react";
 
 interface Props {
   id: string;
@@ -20,8 +20,28 @@ export const AgentComponent: React.FC<Props> = ({
   const wsRef = useRef<WebSocket | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Get agent URL from environment or use default
-  const agentUrl = import.meta.env.VITE_AGENT_URL || "ws://localhost:8765";
+  // GUI components store ``agent-name`` verbatim from the diagram title (e.g.
+  // "Library Agent"), but BUML Agent names — and therefore the JSON map keys
+  // — are Python-safe identifiers ("Library_Agent"). We do one normalization:
+  // space→underscore. Backend emits exactly one canonical key per agent, so
+  // this lookup is deterministic.
+  const agentUrl = useMemo(() => {
+    const raw = import.meta.env.VITE_AGENT_URLS as string | undefined;
+    if (raw && agentName) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          const key = agentName in parsed ? agentName : agentName.replace(/\s+/g, "_");
+          if (parsed[key]) {
+            return parsed[key] as string;
+          }
+        }
+      } catch {
+        // Fall through to the single-URL variable if the map can't be parsed.
+      }
+    }
+    return import.meta.env.VITE_AGENT_URL || "ws://localhost:8765";
+  }, [agentName]);
 
   useEffect(() => {
     setIsConnecting(true);

@@ -35,6 +35,10 @@ from besser.utilities.buml_code_builder import (
     gui_model_to_code,
     agent_model_to_code,
 )
+from besser.generators.web_app.web_app_generator import agent_slug
+from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
+    collect_agents_from_diagrams,
+)
 
 
 # Create router
@@ -134,6 +138,15 @@ async def deploy_webapp_to_github(
                 return value[idx] if 0 <= idx < len(value) else (value[0] if value else {})
             return value or {}
 
+        def _get_all(diagram_type: str) -> list:
+            """Return every diagram dict of the given type (normalized to a list)."""
+            value = diagrams.get(diagram_type)
+            if isinstance(value, list):
+                return [v for v in value if v]
+            if value:
+                return [value]
+            return []
+
         class_diagram_data = _get_active("ClassDiagram")
         gui_diagram_data = _get_active("GUINoCodeDiagram")
 
@@ -157,20 +170,24 @@ async def deploy_webapp_to_github(
             buml_model
         )
 
-        # Only process agent diagram if the GUI actually uses agent components
-        agent_model = None
-        agent_config = None
+        # Collect every AgentDiagram in the project (multi-agent support).
+        # Uniqueness enforcement and BUML conversion live in the shared helper.
+        agent_models: list = []
+        agent_configs: dict = {}
         has_agent_components = _has_agent_components(gui_model)
         if has_agent_components:
-            agent_diagram_data = _get_active("AgentDiagram")
-            agent_model_data = agent_diagram_data.get("model", {}) if agent_diagram_data else {}
-            if agent_model_data and agent_model_data.get("elements"):
-                agent_model = process_agent_diagram(agent_diagram_data)
-                # Try diagram-level config first, fall back to project settings config
-                settings = body.get("settings", {}) or {}
-                settings_config = settings.get("config") or {}
-                agent_config = agent_diagram_data.get("config") or settings_config
-                logger.debug("Resolved agent_config: %s", json.dumps(agent_config, indent=2, default=str) if agent_config else 'None')
+            settings = body.get("settings", {}) or {}
+            settings_config = settings.get("config") or {}
+            agent_models, agent_configs = collect_agents_from_diagrams(
+                _get_all("AgentDiagram"),
+                default_config=settings_config,
+            )
+            for name, cfg in agent_configs.items():
+                logger.debug(
+                    "Resolved agent_config for %s: %s",
+                    name,
+                    json.dumps(cfg, indent=2, default=str) if cfg else 'None',
+                )
 
         # Generate web app
         with tempfile.TemporaryDirectory(prefix=f"besser_github_{uuid.uuid4().hex}_") as temp_dir:
@@ -180,8 +197,8 @@ async def deploy_webapp_to_github(
                 buml_model,
                 gui_model,
                 output_dir=temp_dir,
-                agent_model=agent_model,
-                agent_config=agent_config
+                agent_models=agent_models,
+                agent_configs=agent_configs,
             )
             generator.generate()
 
@@ -189,9 +206,8 @@ async def deploy_webapp_to_github(
             _add_deployment_configs(
                 temp_dir,
                 repo_name,
-                has_agent=agent_model is not None,
-                agent_entrypoint=agent_model.name if agent_model is not None else None,
-                agent_config=agent_config
+                agent_models=agent_models,
+                agent_configs=agent_configs,
             )
 
             # Determine whether to reuse an existing repo or create a new one
@@ -241,8 +257,9 @@ async def deploy_webapp_to_github(
             try:
                 domain_model_to_code(model=buml_model, file_path=os.path.join(buml_dir, "domain_model.py"))
                 gui_model_to_code(model=gui_model, file_path=os.path.join(buml_dir, "gui_model.py"), domain_model=buml_model)
-                if agent_model:
-                    agent_model_to_code(agent_model, os.path.join(buml_dir, "agent_model.py"))
+                for ag in agent_models:
+                    slug = agent_slug(ag.name)
+                    agent_model_to_code(ag, os.path.join(buml_dir, f"agent_model_{slug}.py"))
             except Exception:
                 logger.warning("Failed to export B-UML models — continuing without them", exc_info=True)
 
@@ -384,13 +401,25 @@ async def _export_buml_files_to_repo(
         logger.warning("Failed to export domain model B-UML", exc_info=True)
 
     try:
-        agent_data = _get_active("AgentDiagram")
-        if agent_data and agent_data.get("model", {}).get("elements"):
+        # Walk every AgentDiagram (not just the active one) so a multi-agent project
+        # exports one buml/agent_model_<slug>.py per agent.
+        agent_diagrams_raw = diagrams.get("AgentDiagram")
+        if isinstance(agent_diagrams_raw, list):
+            agent_diagrams = [a for a in agent_diagrams_raw if a]
+        elif agent_diagrams_raw:
+            agent_diagrams = [agent_diagrams_raw]
+        else:
+            agent_diagrams = []
+
+        for agent_data in agent_diagrams:
+            if not (agent_data and agent_data.get("model", {}).get("elements")):
+                continue
             agent_model = process_agent_diagram(agent_data)
+            slug = agent_slug(agent_model.name)
             with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
                 agent_model_to_code(agent_model, f.name)
             with open(f.name, "r", encoding="utf-8") as fh:
-                exports.append((f"{buml_dir}/agent_model.py", fh.read()))
+                exports.append((f"{buml_dir}/agent_model_{slug}.py", fh.read()))
             os.unlink(f.name)
     except Exception:
         logger.warning("Failed to export agent model B-UML", exc_info=True)
@@ -436,10 +465,9 @@ def _has_agent_components(gui_model) -> bool:
 def _add_deployment_configs(
     directory: str,
     app_name: str,
-    has_agent: bool = False,
-    agent_entrypoint: str | None = None,
+    agent_models: list | None = None,
+    agent_configs: dict | None = None,
     service_suffix: str | None = None,
-    agent_config: dict | None = None
 ):
     """
     Add Render deployment configuration (only free platform for full-stack auto-deploy).
@@ -447,14 +475,26 @@ def _add_deployment_configs(
     Args:
         directory: Path to generated app directory
         app_name: Application name
-        has_agent: Whether the app includes an agent service
+        agent_models: List of BUML Agent models; one Render service block is emitted
+            per entry, matching the ``agents/<slug>/`` directory layout produced by
+            :class:`WebAppGenerator`.
+        agent_configs: Mapping of ``agent.name`` -> config dict. Used to pick the
+            intent-recognition technology per agent.
+        service_suffix: Optional override for the 6-char unique suffix in service names.
     """
-    # Render configuration - Full stack (backend + frontend + optional agent)
+    agent_models = list(agent_models or [])
+    agent_configs = dict(agent_configs or {})
+    has_agent = bool(agent_models)
+
+    # Render configuration - Full stack (backend + frontend + optional agents)
     if not service_suffix:
         service_suffix = uuid.uuid4().hex[:6]
-    backend_service_name = f"{app_name}-backend-{service_suffix}"
-    frontend_service_name = f"{app_name}-frontend-{service_suffix}"
-    agent_service_name = f"{app_name}-agent-{service_suffix}"
+    # Render rewrites underscores to dashes in service hostnames, so we do the
+    # same conversion here — otherwise the ``VITE_API_URL`` / ``VITE_AGENT_URLS``
+    # values baked into ``.env.production`` point at hostnames that don't resolve.
+    app_host = app_name.replace("_", "-")
+    backend_service_name = f"{app_host}-backend-{service_suffix}"
+    frontend_service_name = f"{app_host}-frontend-{service_suffix}"
 
     render_config = f"""services:
   # Backend API (Free tier - 750 hours/month, spins down after 15 min idle)
@@ -490,18 +530,33 @@ def _add_deployment_configs(
         destination: /index.html
 """
 
-    # Add agent service if the app includes an agent
-    if has_agent:
-        agent_script = f"{agent_entrypoint}.py" if agent_entrypoint else "Agent_Diagram.py"
+    # Build one Render service block per agent. Each agent lives under ``agents/<slug>/``
+    # in the generated repo, so the startCommand cd's into that directory.
+    #
+    # Slug vs hostname: Render silently rewrites underscores to dashes in service
+    # hostnames (e.g. ``my_agent`` → ``my-agent.onrender.com``). If we put an
+    # underscore-slug straight into ``name:`` the DNS record ends up on a dashed
+    # URL while our generated ``VITE_AGENT_URLS`` map still points at the
+    # underscored one — every WebSocket connection then fails even though the
+    # service is happily running. So we keep the underscore slug for the
+    # filesystem layout (Python-friendly directory / script names) and build a
+    # separate dash-slug for the Render service name and the URLs we hand to the
+    # React frontend.
+    agent_service_names: list[str] = []
+    for agent in agent_models:
+        slug = agent_slug(agent.name)           # underscores, filesystem-safe
+        host_slug = slug.replace("_", "-")               # dashes, Render-hostname-safe
+        agent_service_name = f"{app_host}-{host_slug}-agent-{service_suffix}"
+        agent_service_names.append(agent_service_name)
+        agent_script = f"{agent.name}.py"
 
-        # Determine IC technology from agent config
-        ic_tech = None
-        if agent_config and isinstance(agent_config, dict):
-            ic_tech = agent_config.get("intentRecognitionTechnology")
+        cfg = agent_configs.get(agent.name) or {}
+        ic_tech = cfg.get("intentRecognitionTechnology") if isinstance(cfg, dict) else None
 
         if ic_tech == "classical":
             # Classical IC needs PyTorch CPU + scikit-learn, plus [llms] for unconditional imports in generated code
-            # Single pip call with --extra-index-url so PyTorch CPU resolves from the wheel index while the rest comes from PyPI
+            # Single pip call with --extra-index-url so PyTorch CPU resolves from the wheel index while the rest comes from PyPI.
+            # BAFGenerator does NOT emit a requirements.txt, so everything has to be pinned inline here.
             build_cmd = (
                 "pip install torch==2.6.0+cpu scikit-learn==1.6.1 besser-agentic-framework[llms]==4.3.2 "
                 "--extra-index-url https://download.pytorch.org/whl/cpu "
@@ -532,11 +587,11 @@ def _add_deployment_configs(
             f"p = pathlib.Path('{agent_script}'); "
             "p.write_text(re.sub(r'use_ui=True', 'use_ui=False', p.read_text()))"
         )
-        start_cmd = f'cd agent && python -c "{yaml_patch}" && python -u {agent_script}'
+        start_cmd = f'cd agents/{slug} && python -c "{yaml_patch}" && python -u {agent_script}'
         extra_env_vars = "" if ic_tech == "classical" else "\n      - key: OPENAI_API_KEY\n        sync: false"
 
-        agent_service_config = f"""
-  # Agent Service (Free tier - WebSocket-based AI agent)
+        render_config += f"""
+  # Agent Service: {agent.name} (Free tier - WebSocket-based AI agent)
   - type: web
     name: {agent_service_name}
     runtime: python
@@ -547,25 +602,38 @@ def _add_deployment_configs(
       - key: PYTHON_VERSION
         value: 3.11.9{extra_env_vars}
 """
-        render_config += agent_service_config
 
     render_path = os.path.join(directory, "render.yaml")
     with open(render_path, "w") as f:
         f.write(render_config)
 
-    # Create .env.production for frontend with backend URL (and agent URL if applicable)
+    # Build a per-agent URL map keyed by the BUML ``agent.name`` (Python-safe
+    # identifier, e.g. "Library_Agent"). The generated React AgentComponent
+    # normalizes its ``agent-name`` prop with a single space→underscore pass
+    # before lookup, so one canonical key per agent is enough.
+    # ``VITE_AGENT_URL`` stays as a back-compat pointer at the first agent.
+    prod_agent_urls: dict[str, str] = {}
+    local_agent_urls: dict[str, str] = {}
+    for i, (agent, svc_name) in enumerate(zip(agent_models, agent_service_names)):
+        prod_agent_urls[agent.name] = f"wss://{svc_name}.onrender.com"
+        local_agent_urls[agent.name] = f"ws://localhost:{8765 + i}"
+
     env_production = f"""# Production environment variables
 # Backend API URL - Update this with your deployed backend URL
 VITE_API_URL=https://{backend_service_name}.onrender.com
 """
 
     if has_agent:
-        env_production += f"""# Agent WebSocket URL - Update this with your deployed agent URL
-VITE_AGENT_URL=wss://{agent_service_name}.onrender.com
+        first_agent = agent_models[0].name
+        # Wrap the JSON map in single quotes so dotenv treats the whole thing as
+        # a literal string regardless of the inner double quotes in the JSON.
+        env_production += f"""# Agent WebSocket URLs
+VITE_AGENT_URL={prod_agent_urls[first_agent]}
+VITE_AGENT_URLS='{json.dumps(prod_agent_urls)}'
 """
 
     env_production += """
-# For local development, use: http://localhost:8000 (backend) and ws://localhost:8765 (agent)
+# For local development, use: http://localhost:8000 (backend) and ws://localhost:8765+ (agents)
 """
 
     env_prod_path = os.path.join(directory, "frontend", ".env.production")
@@ -578,7 +646,9 @@ VITE_API_URL=http://localhost:8000
 """
 
     if has_agent:
-        env_local += """VITE_AGENT_URL=ws://localhost:8765
+        first_agent = agent_models[0].name
+        env_local += f"""VITE_AGENT_URL={local_agent_urls[first_agent]}
+VITE_AGENT_URLS='{json.dumps(local_agent_urls)}'
 """
 
     env_local_path = os.path.join(directory, "frontend", ".env")

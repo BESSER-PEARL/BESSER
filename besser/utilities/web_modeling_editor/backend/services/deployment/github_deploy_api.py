@@ -5,6 +5,7 @@ This endpoint generates a web app and pushes it to a GitHub repository
 in the user's account, enabling one-click deployment to platforms like Render.
 """
 
+import hashlib
 import logging
 import os
 import re
@@ -476,13 +477,38 @@ async def _export_buml_files_to_repo(
             logger.warning("Failed to push %s to GitHub", repo_path, exc_info=True)
 
 
+# Render caps service hostnames at this many characters; longer names are
+# silently truncated at dash boundaries, dropping the trailing suffix and
+# breaking the URLs we bake into ``.env.production``.
+_RENDER_HOSTNAME_MAX = 40
+
 # Matches the ``name: <app>-backend-<suffix>`` line emitted by
 # ``_add_deployment_configs`` so redeploys can recover the prior suffix and
-# avoid minting a fresh set of Render services on every push.
+# avoid minting a fresh set of Render services on every push. Also matches the
+# ``besser-<hash>`` fallback form so overflow repos still reuse stable names.
 _RENDER_BACKEND_NAME_RE = re.compile(
     r"^\s*name:\s*\S+-backend-([a-f0-9]{4,16})\s*$",
     re.MULTILINE,
 )
+
+
+def _fit_service_name(readable: str, stable_key: str, max_length: int = _RENDER_HOSTNAME_MAX) -> str:
+    """Return a Render-safe service name derived from ``readable``.
+
+    Render caps service hostnames at 40 chars and truncates longer ones at
+    dash boundaries — which silently eats the random suffix we rely on for
+    uniqueness, so two agents in the same project end up at the same URL.
+
+    When ``readable`` is over budget we fall back to ``besser-<12 hex chars>``
+    where the hex is ``sha1(stable_key)``. ``stable_key`` must not include the
+    per-deploy random suffix: it's a function of ``(app_name, role, slug)`` so
+    the hashed name stays identical across redeploys of the same repo, which
+    is what lets Render update the existing service in place.
+    """
+    if len(readable) <= max_length:
+        return readable
+    digest = hashlib.sha1(stable_key.encode("utf-8")).hexdigest()[:12]
+    return f"besser-{digest}"
 
 
 async def _read_existing_service_suffix(github, owner: str, repo_name: str) -> Optional[str]:
@@ -573,8 +599,14 @@ def _add_deployment_configs(
     # same conversion here — otherwise the ``VITE_API_URL`` / ``VITE_AGENT_URLS``
     # values baked into ``.env.production`` point at hostnames that don't resolve.
     app_host = app_name.replace("_", "-")
-    backend_service_name = f"{app_host}-backend-{service_suffix}"
-    frontend_service_name = f"{app_host}-frontend-{service_suffix}"
+    backend_service_name = _fit_service_name(
+        f"{app_host}-backend-{service_suffix}",
+        stable_key=f"{app_name}:backend",
+    )
+    frontend_service_name = _fit_service_name(
+        f"{app_host}-frontend-{service_suffix}",
+        stable_key=f"{app_name}:frontend",
+    )
 
     render_config = f"""services:
   # Backend API (Free tier - 750 hours/month, spins down after 15 min idle)
@@ -626,7 +658,10 @@ def _add_deployment_configs(
     for agent in agent_models:
         slug = agent_slug(agent.name)           # underscores, filesystem-safe
         host_slug = slug.replace("_", "-")               # dashes, Render-hostname-safe
-        agent_service_name = f"{app_host}-{host_slug}-agent-{service_suffix}"
+        agent_service_name = _fit_service_name(
+            f"{app_host}-{host_slug}-agent-{service_suffix}",
+            stable_key=f"{app_name}:agent:{slug}",
+        )
         agent_service_names.append(agent_service_name)
         agent_script = f"{agent.name}.py"
 

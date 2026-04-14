@@ -151,6 +151,23 @@ async def validate_diagram(input_data: DiagramInput):
                 "errors": [],
                 "warnings": []
             }
+
+        elif diagram_type == "NNDiagram":
+            return {
+                "isValid": True,
+                "message": "\u2705 NN diagram is valid",
+                "errors": [],
+                "warnings": []
+            }
+
+        elif diagram_type == "QuantumCircuitDiagram":
+            return {
+                "isValid": True,
+                "message": "\u2705 Quantum Circuit diagram is valid",
+                "errors": [],
+                "warnings": []
+            }
+
         else:
             return {
                 "isValid": False,

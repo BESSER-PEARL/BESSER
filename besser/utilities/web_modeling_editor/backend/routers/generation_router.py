@@ -352,7 +352,7 @@ async def generate_code_output(input_data: DiagramInput):
 
         # Handle neural network generators
         if generator_info.category == "neural_network":
-            return await _generate_nn(json_data, generator_type, generator_info.generator_class, temp_dir)
+            return await _generate_nn(json_data, generator_type, generator_info.generator_class, input_data.config, temp_dir)
 
         if generator_info.category == "object_model":
             diagram_type = _get_diagram_type(json_data)
@@ -883,7 +883,7 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
         return _create_file_response(temp_dir, "jsonschema")
 
 
-async def _generate_nn(json_data: dict, generator_type: str, generator_class, temp_dir: str):
+async def _generate_nn(json_data: dict, generator_type: str, generator_class, config: dict, temp_dir: str):
     """Generate neural network code (PyTorch or TensorFlow)."""
     if generator_class is None:
         raise HTTPException(
@@ -895,10 +895,30 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, te
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    generator_instance = generator_class(nn_model, output_dir=temp_dir)
+    generation_type = config.get("generation_type", "subclassing") if config else "subclassing"
+    if generator_type == "tensorflow":
+        generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type)
+    else:
+        channel_last = config.get("channel_last", False) if config else False
+        generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type, channel_last=channel_last)
     await asyncio.to_thread(generator_instance.generate)
 
-    return _create_file_response(temp_dir, generator_type)
+    # Build filename with architecture type, e.g. pytorch_nn_subclassing.py / tf_nn_subclassing.py
+    prefix = "tf" if generator_type == "tensorflow" else "pytorch"
+    download_filename = f"{prefix}_nn_{generation_type}.py"
+
+    files = os.listdir(temp_dir)
+    if not files:
+        raise ValueError(f"{generator_type} generation failed: No output files were created.")
+    output_file_path = _safe_path(temp_dir, sorted(files)[0])
+    with open(output_file_path, "rb") as f:
+        file_content = f.read()
+
+    return Response(
+        content=file_content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{download_filename}"'},
+    )
 
 
 async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_dir: str):

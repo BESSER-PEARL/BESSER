@@ -7,6 +7,7 @@ in the user's account, enabling one-click deployment to platforms like Render.
 
 import logging
 import os
+import re
 import uuid
 import tempfile
 import json
@@ -73,6 +74,10 @@ class DeployToGitHubResponse(BaseModel):
     deployment_urls: dict
     files_uploaded: int
     message: str
+    # True on the very first deploy to a repo (no previous ``render.yaml`` found),
+    # False on every subsequent deploy. The frontend uses this to pick the right
+    # "next action" button — create-blueprint vs. open-live-site.
+    is_first_deploy: bool = True
 
 
 @router.post("/deploy-webapp", response_model=DeployToGitHubResponse)
@@ -189,6 +194,14 @@ async def deploy_webapp_to_github(
                     json.dumps(cfg, indent=2, default=str) if cfg else 'None',
                 )
 
+        # Try to reuse the service suffix from a previous deployment so
+        # redeploys don't create a fresh set of zombie Render services.
+        # On a brand-new repo (or if the existing render.yaml can't be read)
+        # ``_add_deployment_configs`` will fall back to a random UUID suffix —
+        # that's the right behavior for a first deploy since the hostname is
+        # not yet taken on Render.
+        existing_suffix = await _read_existing_service_suffix(github, username, repo_name)
+
         # Generate web app
         with tempfile.TemporaryDirectory(prefix=f"besser_github_{uuid.uuid4().hex}_") as temp_dir:
             generator_info = get_generator_info("web_app")
@@ -208,6 +221,7 @@ async def deploy_webapp_to_github(
                 repo_name,
                 agent_models=agent_models,
                 agent_configs=agent_configs,
+                service_suffix=existing_suffix,
             )
 
             # Determine whether to reuse an existing repo or create a new one
@@ -303,8 +317,29 @@ async def deploy_webapp_to_github(
                     detail="Failed to create GitHub commit for generated files."
                 )
 
-            # Get deployment URLs
+            # Build deployment URLs. On a redeploy (existing_suffix was reused)
+            # Render's blueprint webhook picks up the push automatically — the
+            # user doesn't need to click "Create Blueprint" again. In that case
+            # we also surface a direct link to the live frontend so the dialog
+            # can jump straight there instead of sending them back through the
+            # blueprint-creation flow.
             deployment_urls = github.get_deployment_urls(username, repo_name)
+            is_first_deploy = existing_suffix is None
+            app_host = repo_name.replace("_", "-")
+            # Mirror the suffix fallback used inside ``_add_deployment_configs``:
+            # if this was a first deploy we can't know the suffix the generator
+            # rolled, so we only populate the live URL on redeploys where it's
+            # stable. The frontend falls back to the ``render`` URL otherwise.
+            if existing_suffix:
+                deployment_urls["live_frontend"] = (
+                    f"https://{app_host}-frontend-{existing_suffix}.onrender.com"
+                )
+                deployment_urls["live_backend"] = (
+                    f"https://{app_host}-backend-{existing_suffix}.onrender.com"
+                )
+                # Render auto-sync handles the redeploy; no need to send the user
+                # back through "Create Blueprint". Point them at the dashboard.
+                deployment_urls["render_dashboard"] = "https://dashboard.render.com/"
 
             action = "updated" if reused_repo else "created"
             return DeployToGitHubResponse(
@@ -314,7 +349,8 @@ async def deploy_webapp_to_github(
                 owner=username,
                 deployment_urls=deployment_urls,
                 files_uploaded=push_results["total_files"],
-                message=f"Successfully {action} repository and pushed {push_results['total_files']} files"
+                message=f"Successfully {action} repository and pushed {push_results['total_files']} files",
+                is_first_deploy=is_first_deploy,
             )
 
     except HTTPException:
@@ -439,6 +475,44 @@ async def _export_buml_files_to_repo(
             logger.warning("Failed to push %s to GitHub", repo_path, exc_info=True)
 
 
+# Matches the ``name: <app>-backend-<suffix>`` line emitted by
+# ``_add_deployment_configs`` so redeploys can recover the prior suffix and
+# avoid minting a fresh set of Render services on every push.
+_RENDER_BACKEND_NAME_RE = re.compile(
+    r"^\s*name:\s*\S+-backend-([a-f0-9]{4,16})\s*$",
+    re.MULTILINE,
+)
+
+
+async def _read_existing_service_suffix(github, owner: str, repo_name: str) -> Optional[str]:
+    """Return the suffix used by the repo's current render.yaml, if any.
+
+    Tries ``main`` then ``master`` as the default branch. Any failure
+    (repo not found, render.yaml absent, parse miss, network error) returns
+    ``None`` so the caller falls back to minting a fresh suffix.
+    """
+    for branch in ("main", "master"):
+        try:
+            result = await github.get_file_content(owner, repo_name, "render.yaml", branch=branch)
+        except Exception:
+            logger.debug(
+                "[GitHub deploy] error reading render.yaml from %s/%s@%s",
+                owner, repo_name, branch, exc_info=True,
+            )
+            continue
+        if not result or not result.get("content"):
+            continue
+        match = _RENDER_BACKEND_NAME_RE.search(result["content"])
+        if match:
+            suffix = match.group(1)
+            logger.info(
+                "[GitHub deploy] reusing existing service suffix %s from %s/%s@%s",
+                suffix, owner, repo_name, branch,
+            )
+            return suffix
+    return None
+
+
 def _has_agent_components(gui_model) -> bool:
     """Check if the GUI model contains any agent components."""
     from besser.BUML.metamodel.gui.dashboard import AgentComponent
@@ -486,7 +560,12 @@ def _add_deployment_configs(
     agent_configs = dict(agent_configs or {})
     has_agent = bool(agent_models)
 
-    # Render configuration - Full stack (backend + frontend + optional agents)
+    # Render configuration - Full stack (backend + frontend + optional agents).
+    # ``service_suffix`` should be a stable token per repo so redeploys update
+    # the existing services instead of creating a fresh set every time.
+    # Callers are expected to pass a reused suffix extracted from the repo's
+    # previous render.yaml; if they don't, we fall back to a random UUID here
+    # (first-deploy path — no preexisting Render hostname to collide with).
     if not service_suffix:
         service_suffix = uuid.uuid4().hex[:6]
     # Render rewrites underscores to dashes in service hostnames, so we do the

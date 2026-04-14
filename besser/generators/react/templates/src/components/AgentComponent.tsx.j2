@@ -44,16 +44,40 @@ export const AgentComponent: React.FC<Props> = ({
   }, [agentName]);
 
   useEffect(() => {
-    setIsConnecting(true);
-    try {
-      const ws = new WebSocket(agentUrl);
+    // Auto-reconnect with linear-then-capped backoff. Needed because Render
+    // free-tier services sleep after 15 min of idle and take 1–5 minutes to
+    // cold-start (classical intent classifiers retrain on every boot). Without
+    // a retry loop, the first WebSocket attempt during a cold start fails
+    // immediately and the component stays "Disconnected" until the user
+    // manually refreshes.
+    //
+    // Schedule: 2s, 4s, 6s, ... capped at 30s per attempt. Up to 60 attempts
+    // (~26 min total) before we give up — comfortably longer than any real
+    // BAF cold start. ``cancelled`` flips on cleanup so we stop retrying
+    // after unmount (including React strict-mode double-mount).
+    let cancelled = false;
+    let retry = 0;
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const connect = () => {
+      if (cancelled) return;
+      setIsConnecting(true);
+
+      let ws: WebSocket;
+      try {
+        ws = new WebSocket(agentUrl);
+      } catch (error) {
+        console.error("Failed to open WebSocket:", error);
+        scheduleRetry();
+        return;
+      }
       wsRef.current = ws;
 
       ws.onopen = () => {
+        retry = 0;
         setIsConnected(true);
         setIsConnecting(false);
         console.log("Connected to agent:", agentName, "at", agentUrl);
-        console.log("WebSocket readyState:", ws.readyState);
       };
 
       ws.onmessage = (event) => {
@@ -63,7 +87,7 @@ export const AgentComponent: React.FC<Props> = ({
           // Handle BESSER agent message format
           // Expected format: { action: 'agent_reply_str', message: '...' }
           let messageText = '';
-          
+
           if (payload.action === 'agent_reply_str' && payload.message) {
             messageText = payload.message;
           } else if (payload.action === 'agent_reply_markdown' && payload.message) {
@@ -77,7 +101,7 @@ export const AgentComponent: React.FC<Props> = ({
             // If no recognized format, stringify the whole payload
             messageText = JSON.stringify(payload);
           }
-          
+
           setMessages((prev) => [
             ...prev,
             {
@@ -102,25 +126,48 @@ export const AgentComponent: React.FC<Props> = ({
 
       ws.onerror = (error) => {
         console.error("WebSocket error:", error);
-        console.log("WebSocket readyState on error:", ws.readyState);
-        setIsConnecting(false);
       };
 
       ws.onclose = (event) => {
         setIsConnected(false);
-        setIsConnecting(false);
-        console.log("Disconnected from agent. Code:", event.code, "Reason:", event.reason, "Clean:", event.wasClean);
-      };
-
-      return () => {
-        if (wsRef.current) {
-          wsRef.current.close();
+        console.log(
+          "Disconnected from agent. Code:",
+          event.code,
+          "Reason:",
+          event.reason,
+          "Clean:",
+          event.wasClean,
+        );
+        if (!cancelled) {
+          scheduleRetry();
+        } else {
+          setIsConnecting(false);
         }
       };
-    } catch (error) {
-      console.error("Failed to connect to agent:", error);
-      setIsConnecting(false);
-    }
+    };
+
+    const scheduleRetry = () => {
+      retry += 1;
+      if (retry > 60) {
+        // Give up after ~30 minutes of backoff — well past any realistic cold start.
+        setIsConnecting(false);
+        return;
+      }
+      const delay = Math.min(30000, 2000 * retry);
+      setIsConnecting(true);
+      retryTimer = setTimeout(connect, delay);
+    };
+
+    connect();
+
+    return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
   }, [agentName, agentUrl]);
 
   // Scroll to bottom when new messages arrive

@@ -729,6 +729,10 @@ async def transform_agent_model_json(input_data: DiagramInput):
             except ValueError:
                 pass
         cleanup_temp_resources(temp_dir)
+@app.post("/besser_api/transform-agent-model-json")
+async def transform_agent_model_json_alias(input_data: DiagramInput):
+    """Backward-compatible alias for transform endpoint using kebab-case path."""
+    return await transform_agent_model_json(input_data)
 
 
 async def _handle_object_diagram_generation(

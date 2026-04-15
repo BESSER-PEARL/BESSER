@@ -1,6 +1,5 @@
 # Generated from ./PlantUML.g4 by ANTLR 4.13.1
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
     from typing import TextIO
@@ -181,22 +180,22 @@ class PlantUMLLexer(Lexer):
     modeNames = [ "DEFAULT_MODE" ]
 
     literalNames = [ "<INVALID>",
-            "'skinparam'", "'groupInheritance'", "'class'", "'{'", "'}'", 
-            "'abstract'", "':'", "'--'", "'<'", "'>'", "'o'", "'<|--'", 
-            "'--|>'", "'extends'", "'..'", "'('", "','", "')'", "'='", "'enum'", 
-            "'#'", "'-'", "'~'", "'+'", "'int'", "'float'", "'str'", "'string'", 
-            "'bool'", "'time'", "'date'", "'datetime'", "'timedelta'", "'{static}'", 
+            "'skinparam'", "'groupInheritance'", "'class'", "'{'", "'}'",
+            "'abstract'", "':'", "'--'", "'<'", "'>'", "'o'", "'<|--'",
+            "'--|>'", "'extends'", "'..'", "'('", "','", "')'", "'='", "'enum'",
+            "'#'", "'-'", "'~'", "'+'", "'int'", "'float'", "'str'", "'string'",
+            "'bool'", "'time'", "'date'", "'datetime'", "'timedelta'", "'{static}'",
             "'{abstract}'", "'@startuml'", "'@enduml'", "'*'", "'\"'" ]
 
     symbolicNames = [ "<INVALID>",
             "Start", "End", "ID", "INT", "FLOAT", "ASTK", "WS", "NL", "D_QUOTE" ]
 
-    ruleNames = [ "T__0", "T__1", "T__2", "T__3", "T__4", "T__5", "T__6", 
-                  "T__7", "T__8", "T__9", "T__10", "T__11", "T__12", "T__13", 
-                  "T__14", "T__15", "T__16", "T__17", "T__18", "T__19", 
-                  "T__20", "T__21", "T__22", "T__23", "T__24", "T__25", 
-                  "T__26", "T__27", "T__28", "T__29", "T__30", "T__31", 
-                  "T__32", "T__33", "T__34", "Start", "End", "ID", "INT", 
+    ruleNames = [ "T__0", "T__1", "T__2", "T__3", "T__4", "T__5", "T__6",
+                  "T__7", "T__8", "T__9", "T__10", "T__11", "T__12", "T__13",
+                  "T__14", "T__15", "T__16", "T__17", "T__18", "T__19",
+                  "T__20", "T__21", "T__22", "T__23", "T__24", "T__25",
+                  "T__26", "T__27", "T__28", "T__29", "T__30", "T__31",
+                  "T__32", "T__33", "T__34", "Start", "End", "ID", "INT",
                   "FLOAT", "ASTK", "WS", "NL", "D_QUOTE" ]
 
     grammarFileName = "PlantUML.g4"

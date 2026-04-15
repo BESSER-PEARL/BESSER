@@ -121,14 +121,14 @@ def test_backend_generator_full_uml(tmpdir):
     # Pydantic: relationship fields
     assert "department: int  # N:1 Relationship (mandatory)" in pydantic_code
     assert "employees: Optional[List[int]] = None  # 1:N Relationship" in pydantic_code
-    assert "projects: List[int]  # N:M Relationship" in pydantic_code
-    assert "managers: List[int]  # N:M Relationship" in pydantic_code
+    assert "projects: Optional[List[int]] = None  # N:M Relationship (optional)" in pydantic_code
+    assert "managers: Optional[List[int]] = None  # N:M Relationship (optional)" in pydantic_code
 
     # SQLAlchemy: inheritance + FK + join table
     assert "class Employee(Person):" in sqlalchemy_code
     assert "class Manager(Employee):" in sqlalchemy_code
-    assert "department_id: Mapped[int] = mapped_column(ForeignKey(\"department.id\")" in sqlalchemy_code
-    assert "managerproject = Table(" in sqlalchemy_code
+    assert "department_id: Mapped_[int] = mapped_column(ForeignKey_(\"department.id\")" in sqlalchemy_code
+    assert "managerproject = Table_(" in sqlalchemy_code
 
     # REST API: constructor uses inherited attributes
     assert "name=manager_data.name" in api_code
@@ -249,14 +249,14 @@ def test_backend_generator_full_uml_and_implem(tmpdir):
     # Pydantic: relationship fields
     assert "department: int  # N:1 Relationship (mandatory)" in pydantic_code
     assert "employees: Optional[List[int]] = None  # 1:N Relationship" in pydantic_code
-    assert "projects: List[int]  # N:M Relationship" in pydantic_code
-    assert "managers: List[int]  # N:M Relationship" in pydantic_code
+    assert "projects: Optional[List[int]] = None  # N:M Relationship (optional)" in pydantic_code
+    assert "managers: Optional[List[int]] = None  # N:M Relationship (optional)" in pydantic_code
 
     # SQLAlchemy: inheritance + FK + join table
     assert "class Employee(Person):" in sqlalchemy_code
     assert "class Manager(Employee):" in sqlalchemy_code
-    assert "department_id: Mapped[int] = mapped_column(ForeignKey(\"department.id\")" in sqlalchemy_code
-    assert "managerproject = Table(" in sqlalchemy_code
+    assert "department_id: Mapped_[int] = mapped_column(ForeignKey_(\"department.id\")" in sqlalchemy_code
+    assert "managerproject = Table_(" in sqlalchemy_code
 
     # REST API: constructor uses inherited attributes
     assert "name=manager_data.name" in api_code

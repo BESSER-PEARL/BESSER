@@ -13,9 +13,6 @@ from besser.generators import GeneratorInterface
 from besser.generators.agents.agent_personalization import configure_agent, flatten_agent_config_structure
 
 # BESSER utilities
-from besser.utilities.buml_code_builder import (
-    agent_model_to_code,
-)
 from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
 
 
@@ -141,23 +138,24 @@ class BAFGenerator(GeneratorInterface):
 
             # Persist personalized agent python for downstream conversion
             # removed for current release
-            agent_model_to_code(self.model, personalized_agent_path)
+            # agent_model_to_code(self.model, personalized_agent_path)
+
             # Also emit JSON representation of personalized agent
             # removed for current release, but leaving code here for now to check later when integrating the personalization
+            if False:
+                try:
+                    with open(personalized_agent_path, "r", encoding="utf-8") as f:
+                        personalized_code = f.read()
+                    personalized_json = agent_buml_to_json(personalized_code)
+                    with open(personalized_json_path, "w", encoding="utf-8") as jf:
+                        json.dump(personalized_json, jf, indent=2)
+                    print("Personalized agent JSON generated in the location: " + personalized_json_path)
+                except Exception as conversion_error:
+                    print(f"Failed to convert personalized agent to JSON: {conversion_error}")
 
-            try:
-                with open(personalized_agent_path, "r", encoding="utf-8") as f:
-                    personalized_code = f.read()
-                personalized_json = agent_buml_to_json(personalized_code)
-                with open(personalized_json_path, "w", encoding="utf-8") as jf:
-                    json.dump(personalized_json, jf, indent=2)
-                print("Personalized agent JSON generated in the location: " + personalized_json_path)
-            except Exception as conversion_error:
-                print(f"Failed to convert personalized agent to JSON: {conversion_error}")
+                if not generate_code_assets:
+                    return
 
-            if not generate_code_assets:
-                return
-            
         if config_for_personalization and 'personalizationMapping' in config_for_personalization:
             print("Generating agent with personalization mappings...")
             with open(agent_path, mode="w", encoding="utf-8") as f:
@@ -169,7 +167,7 @@ class BAFGenerator(GeneratorInterface):
                 generated_code = agent_template.render(agent=self.model, config=self.config)
                 f.write(generated_code)
                 print("Agent script generated in the location: " + agent_path)
-        else: 
+        else:
             with open(agent_path, mode="w", encoding="utf-8") as f:
                 generated_code = agent_template.render(agent=self.model, config=self.config, personalization_mapping=[])
                 f.write(generated_code)
@@ -180,7 +178,7 @@ class BAFGenerator(GeneratorInterface):
                 properties = sorted(self.model.properties, key=lambda prop: prop.section)
                 generated_code = config_template.render(properties=properties)
                 f.write(generated_code)
-                print("Agent config file generated in the location: " + config_path)        
+                print("Agent config file generated in the location: " + config_path)
             # Generate readme.txt using the Jinja2 template
             readme_template = env.get_template('readme.txt.j2')
             readme_path = self.build_generation_path(file_name="readme.txt")

@@ -7,36 +7,32 @@ It creates executable Python code that can recreate the GUI model programmatical
 
 import os
 from besser.BUML.metamodel.gui import GUIModel
-from besser.utilities.buml_code_builder.common import safe_class_name
+from besser.utilities.buml_code_builder.common import safe_class_name, _escape_python_string
 from besser.BUML.metamodel.gui.graphical_ui import (
-    ViewComponent,
     ViewContainer,
-    Screen,
-    Module,
     Button,
     Text,
     Image,
     InputField,
     Form,
     Menu,
-    MenuItem,
     DataList,
     Link,
     EmbeddedContent,
-    DataSourceElement,
 )
 from besser.BUML.metamodel.gui.dashboard import (
-    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent
+    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,
+    FieldColumn, LookupColumn, ExpressionColumn, MetricCard
 )
-from besser.BUML.metamodel.gui.events_actions import Event, Transition, Create, Read, Update, Delete
+from besser.BUML.metamodel.gui.events_actions import Transition, Create, Read, Update, Delete
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 
 
 def _escape_string(value: str | None) -> str:
-    """Escape double quotes in strings for safe code generation."""
+    """Escape a string for safe interpolation into generated Python source code."""
     if not value:
         return ""
-    return value.replace('"', '\\"')
+    return _escape_python_string(value)
 
 
 def _get_attr_name(element) -> str | None:
@@ -47,10 +43,10 @@ def _get_attr_name(element) -> str | None:
 def safe_var_name(name: str) -> str:
     """
     Convert a name to a safe Python variable name.
-    
+
     Args:
         name: Original name
-        
+
     Returns:
         Safe variable name
     """
@@ -67,16 +63,152 @@ def safe_var_name(name: str) -> str:
     return safe_name.strip('_').lower() or "unnamed"
 
 
-def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
+def _build_styling_expr(styling):
+    """Build an inline Styling(...) expression string. Returns None if no meaningful styles."""
+    if not styling:
+        return None
+
+    parts = []
+
+    # Size
+    size = getattr(styling, 'size', None)
+    if size:
+        size_params = []
+        for attr in ('width', 'height', 'padding', 'margin', 'font_size', 'line_height',
+                      'font_weight', 'font_family', 'font_style', 'text_decoration', 'text_transform',
+                      'letter_spacing', 'word_spacing', 'white_space', 'word_break',
+                      'min_width', 'max_width', 'min_height', 'max_height',
+                      'padding_top', 'padding_right', 'padding_bottom', 'padding_left',
+                      'margin_top', 'margin_right', 'margin_bottom', 'margin_left'):
+            val = getattr(size, attr, None)
+            if val:
+                size_params.append(f'{attr}="{_escape_string(val)}"')
+        if getattr(size, 'unit_size', None):
+            size_params.append(f'unit_size=UnitSize.{size.unit_size.name}')
+        if size_params:
+            parts.append(f'size=Size({", ".join(size_params)})')
+
+    # Position
+    pos = getattr(styling, 'position', None)
+    if pos:
+        pos_params = []
+        if getattr(pos, 'p_type', None):
+            pos_params.append(f'p_type=PositionType.{pos.p_type.name}')
+        if getattr(pos, 'alignment', None):
+            alignment_val = pos.alignment
+            if hasattr(alignment_val, 'name'):
+                pos_params.append(f'alignment=Alignment.{alignment_val.name}')
+        for attr in ('top', 'left', 'right', 'bottom'):
+            val = getattr(pos, attr, None)
+            if val:
+                pos_params.append(f'{attr}="{_escape_string(val)}"')
+        if getattr(pos, 'z_index', None) is not None:
+            pos_params.append(f'z_index={pos.z_index}')
+        for attr in ('display', 'overflow', 'overflow_x', 'overflow_y', 'visibility',
+                      'cursor', 'box_sizing', 'transform', 'transition', 'animation', 'filter'):
+            val = getattr(pos, attr, None)
+            if val:
+                pos_params.append(f'{attr}="{_escape_string(val)}"')
+        if pos_params:
+            parts.append(f'position=Position({", ".join(pos_params)})')
+
+    # Color
+    color = getattr(styling, 'color', None)
+    if color:
+        color_params = []
+        for attr in ('background_color', 'text_color', 'border_color', 'opacity',
+                      'line_color', 'bar_color', 'color_palette', 'primary_color',
+                      'border_radius', 'border_width', 'border_style', 'border',
+                      'border_top', 'border_right', 'border_bottom', 'border_left',
+                      'box_shadow', 'text_shadow',
+                      'background_image', 'background_size', 'background_position', 'background_repeat'):
+            val = getattr(color, attr, None)
+            if val:
+                color_params.append(f'{attr}="{_escape_string(val)}"')
+        if color_params:
+            parts.append(f'color=Color({", ".join(color_params)})')
+
+    # Layout
+    layout = getattr(styling, 'layout', None)
+    if layout:
+        layout_params = []
+        if getattr(layout, 'layout_type', None):
+            layout_params.append(f'layout_type=LayoutType.{layout.layout_type.name}')
+        for attr in ('flex_direction', 'justify_content', 'align_items', 'flex_wrap',
+                      'grid_template_columns', 'grid_template_rows', 'grid_gap', 'gap',
+                      'flex', 'flex_grow', 'flex_shrink', 'flex_basis', 'order', 'align_self'):
+            val = getattr(layout, attr, None)
+            if val:
+                layout_params.append(f'{attr}="{_escape_string(val)}"')
+        if layout_params:
+            parts.append(f'layout=Layout({", ".join(layout_params)})')
+
+    if not parts:
+        return None
+    return f'Styling({", ".join(parts)})'
+
+
+def _build_metadata_kwargs(component):
+    """Build keyword argument strings for metadata fields. Returns list of param strings."""
+    params = []
+    cid = getattr(component, 'component_id', None)
+    if cid:
+        params.append(f'component_id="{_escape_string(cid)}"')
+    tag = getattr(component, 'tag_name', None)
+    if tag:
+        params.append(f'tag_name="{_escape_string(tag)}"')
+    do = getattr(component, 'display_order', None)
+    if do is not None:
+        params.append(f'display_order={do}')
+    classes = getattr(component, 'css_classes', None)
+    if classes:
+        classes_str = '", "'.join(_escape_string(c) for c in classes if c)
+        if classes_str:
+            params.append(f'css_classes=["{classes_str}"]')
+    attrs = getattr(component, 'custom_attributes', None)
+    if attrs:
+        items = []
+        for k, v in attrs.items():
+            if isinstance(v, str):
+                items.append(f'"{_escape_string(k)}": "{_escape_string(v)}"')
+            elif v is None:
+                items.append(f'"{_escape_string(k)}": None')
+            else:
+                items.append(f'"{_escape_string(k)}": {repr(v)}')
+        if items:
+            params.append(f'custom_attributes={{{", ".join(items)}}}')
+    return params
+
+
+def _write_constructor(f, var_name, class_name, params, component):
+    """Write a multi-line constructor call with styling and metadata included."""
+    # Add styling
+    styling_expr = _build_styling_expr(getattr(component, 'styling', None))
+    if styling_expr:
+        params.append(f'styling={styling_expr}')
+    # Add metadata
+    params.extend(_build_metadata_kwargs(component))
+    # Write as multi-line constructor
+    if len(params) <= 3:
+        f.write(f'{var_name} = {class_name}({", ".join(params)})\n')
+    else:
+        f.write(f'{var_name} = {class_name}(\n')
+        for i, p in enumerate(params):
+            comma = ',' if i < len(params) - 1 else ''
+            f.write(f'    {p}{comma}\n')
+        f.write(')\n')
+
+
+def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None, model_var_name: str = "gui_model"):
     """
     Generates Python code for a BUML GUI model and writes it to a specified file.
-    
+
     Args:
         model (GUIModel): The BUML GUI model containing modules, screens, and components
         file_path (str): The path where the generated code will be saved
         domain_model (DomainModel, optional): Structural model to emit before the GUI so that
             data bindings can reference the same `domain_model` variable.
-    
+
     Outputs:
         A Python file containing the code representation of the BUML GUI model
     """
@@ -89,7 +221,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
         file_mode = 'a'
     else:
         file_mode = 'w'
-    
+
     with open(output_path, file_mode, encoding='utf-8') as f:
         if domain_model is not None:
             f.write("\n\n")
@@ -98,7 +230,7 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
         f.write("###############\n")
         f.write("#  GUI MODEL  #\n")
         f.write("###############\n\n")
-        
+
         # Write imports
         f.write("from besser.BUML.metamodel.gui import (\n")
         f.write("    GUIModel, Module, Screen,\n")
@@ -111,59 +243,60 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
         f.write("    UnitSize, PositionType, Alignment\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.dashboard import (\n")
-        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent\n")
+        f.write("    LineChart, BarChart, PieChart, RadarChart, RadialBarChart, Table, AgentComponent,\n")
+        f.write("    Column, FieldColumn, LookupColumn, ExpressionColumn, MetricCard, Series\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.events_actions import (\n")
         f.write("    Event, EventType, Transition, Create, Read, Update, Delete, Parameter\n")
         f.write(")\n")
         f.write("from besser.BUML.metamodel.gui.binding import DataBinding\n")
         f.write("\n")
-        
+
         # Track created variables to avoid duplicates
         created_vars = set()
         # Track pending button events to write after all screens are defined
         pending_button_events = []
-        
+
         # Process each module
         for module_idx, module in enumerate(sorted(model.modules, key=lambda m: m.name)):
             f.write(f"# Module: {module.name}\n")
-            
+
             # Process each screen in the module
             for screen_idx, screen in enumerate(sorted(module.screens, key=lambda s: s.name)):
                 screen_var = safe_var_name(screen.name)
                 if screen_var in created_vars:
                     screen_var = f"{screen_var}_{screen_idx}"
                 created_vars.add(screen_var)
-                
+
                 f.write(f"\n# Screen: {screen.name}\n")
-                
+
                 # Create screen (view_elements is required, will be set after processing children)
-                screen_params = [f'name="{screen.name}"']
-                screen_params.append(f'description="{screen.description}"' if screen.description else 'description=""')
+                screen_params = [f'name="{_escape_string(screen.name)}"']
+                screen_params.append(f'description="{_escape_string(screen.description)}"' if screen.description else 'description=""')
                 screen_params.append('view_elements=set()')  # Required parameter, will be populated later
                 if hasattr(screen, 'is_main_page') and screen.is_main_page:
                     screen_params.append('is_main_page=True')
                 if hasattr(screen, 'route_path') and screen.route_path:
                     screen_params.append(f'route_path="{_escape_string(screen.route_path)}"')
                 if hasattr(screen, 'x_dpi') and screen.x_dpi:
-                    screen_params.append(f'x_dpi="{screen.x_dpi}"')
+                    screen_params.append(f'x_dpi="{_escape_string(screen.x_dpi)}"')
                 if hasattr(screen, 'y_dpi') and screen.y_dpi:
-                    screen_params.append(f'y_dpi="{screen.y_dpi}"')
+                    screen_params.append(f'y_dpi="{_escape_string(screen.y_dpi)}"')
                 if hasattr(screen, 'screen_size') and screen.screen_size:
-                    screen_params.append(f'screen_size="{screen.screen_size}"')
-                
+                    screen_params.append(f'screen_size="{_escape_string(screen.screen_size)}"')
+
                 f.write(f"{screen_var} = Screen({', '.join(screen_params)})\n")
-                
+
                 # Write screen styling if present
                 if screen.styling:
                     _write_styling(f, screen_var, screen.styling, created_vars)
-                
+
                 # Write screen metadata (page_id, component_id for React fidelity)
                 if hasattr(screen, 'page_id') and screen.page_id:
                     f.write(f"{screen_var}.page_id = \"{_escape_string(screen.page_id)}\"\n")
                 if hasattr(screen, 'component_id') and screen.component_id:
                     f.write(f"{screen_var}.component_id = \"{_escape_string(screen.component_id)}\"\n")
-                
+
                 # Process screen elements - preserve original order
                 element_vars = []
                 if hasattr(screen, 'view_elements') and screen.view_elements:
@@ -173,29 +306,33 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
                         elem_var = _write_component(f, elem, created_vars, screen_var, pending_button_events)
                         if elem_var:
                             element_vars.append(elem_var)
-                
+
                 # Assign elements to screen - Screen requires view_elements in __init__ too,
                 # but we set them after creation for code readability
                 if element_vars:
                     f.write(f"{screen_var}.view_elements = {{{', '.join(element_vars)}}}\n")
                 else:
                     f.write(f"{screen_var}.view_elements = set()\n")
-                
+
                 # Set screen layout if present
                 if hasattr(screen, 'layout') and screen.layout:
                     layout_var = _write_layout(f, screen.layout, created_vars, f"{screen_var}_layout")
                     f.write(f"{screen_var}.layout = {layout_var}\n")
-                
+
                 f.write("\n")
-            
+
             # Write deferred button events after all screens are defined
             if pending_button_events:
                 f.write("# Button events and transitions (written after all screens defined to avoid forward references)\n")
                 for button_var, button in pending_button_events:
+                    # Write targetScreen assignment (deferred because target screen may be defined later)
+                    if hasattr(button, 'targetScreen') and button.targetScreen:
+                        target_var = safe_var_name(button.targetScreen.name)
+                        f.write(f"{button_var}.targetScreen = {target_var}\n")
                     if hasattr(button, 'events') and button.events:
                         for event_idx, event in enumerate(button.events):
                             event_var = f"{button_var}_event_{event_idx}"
-                            _write_event(f, event_var, event, created_vars)
+                            _write_event(f, event_var, event, created_vars, button_var)
                             if event_idx == 0:
                                 f.write(f"{button_var}.events = {{{event_var}}}\n")
                             else:
@@ -203,45 +340,55 @@ def gui_model_to_code(model: GUIModel, file_path: str, domain_model=None):
                 f.write("\n")
                 # Clear the pending events for next module
                 pending_button_events.clear()
-            
+
             # Create module with screens
             module_var = safe_var_name(module.name)
             if module_var in created_vars:
                 module_var = f"{module_var}_{module_idx}"
             created_vars.add(module_var)
-            
+
             screen_vars = [safe_var_name(s.name) for s in sorted(module.screens, key=lambda s: s.name)]
             f.write(f"{module_var} = Module(\n")
-            f.write(f'    name="{module.name}",\n')
+            f.write(f'    name="{_escape_string(module.name)}",\n')
             f.write(f'    screens={{{", ".join(screen_vars)}}}\n')
             f.write(")\n\n")
-        
+
         # Create GUI model
         f.write("# GUI Model\n")
         module_vars = [safe_var_name(m.name) for m in sorted(model.modules, key=lambda m: m.name)]
-        f.write("gui_model = GUIModel(\n")
-        f.write(f'    name="{model.name}",\n')
-        f.write(f'    package="{model.package}",\n')
-        f.write(f'    versionCode="{model.versionCode}",\n')
-        f.write(f'    versionName="{model.versionName}",\n')
+
+        # style_entries is only used for the editor round-trip (GrapesJS),
+        # not by any code generator. Skipping it from the export.
+        # style_entries = getattr(model, 'style_entries', None) or []
+        # if style_entries:
+        #     f.write("import json as _json\n")
+        #     import json
+        #     style_json = json.dumps(style_entries, ensure_ascii=False, indent=4)
+        #     f.write(f"_style_entries = _json.loads('''{style_json}''')\n\n")
+
+        f.write(f"{model_var_name} = GUIModel(\n")
+        f.write(f'    name="{_escape_string(model.name)}",\n')
+        f.write(f'    package="{_escape_string(model.package)}",\n')
+        f.write(f'    versionCode="{_escape_string(model.versionCode)}",\n')
+        f.write(f'    versionName="{_escape_string(model.versionName)}",\n')
         f.write(f'    modules={{{", ".join(module_vars)}}},\n')
-        f.write(f'    description="{model.description}"\n')
+        f.write(f'    description="{_escape_string(model.description)}"\n')
         f.write(")\n")
-    
+
     print(f"GUI model code saved to {file_path}")
 
 
 def _write_component(f, component, created_vars, parent_var="", pending_button_events=None):
     """
     Write code for a GUI component.
-    
+
     Args:
         f: File handle
         component: Component to write
         created_vars: Set of created variable names
         parent_var: Parent variable name (optional)
         pending_button_events: List to collect buttons with events for deferred writing
-    
+
     Returns:
         Variable name of the created component
     """
@@ -254,7 +401,7 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
         comp_var = f"{base_var}_{counter}"
         counter += 1
     created_vars.add(comp_var)
-    
+
     # Determine component type and write creation code
     if isinstance(component, Button):
         _write_button(f, comp_var, component, created_vars, pending_button_events)
@@ -275,17 +422,19 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
     elif isinstance(component, EmbeddedContent):
         _write_embedded_content(f, comp_var, component)
     elif isinstance(component, LineChart):
-        _write_line_chart(f, comp_var, component)
+        _write_line_chart(f, comp_var, component, created_vars)
     elif isinstance(component, BarChart):
-        _write_bar_chart(f, comp_var, component)
+        _write_bar_chart(f, comp_var, component, created_vars)
     elif isinstance(component, PieChart):
-        _write_pie_chart(f, comp_var, component)
+        _write_pie_chart(f, comp_var, component, created_vars)
     elif isinstance(component, RadarChart):
-        _write_radar_chart(f, comp_var, component)
+        _write_radar_chart(f, comp_var, component, created_vars)
     elif isinstance(component, RadialBarChart):
-        _write_radial_bar_chart(f, comp_var, component)
+        _write_radial_bar_chart(f, comp_var, component, created_vars)
     elif isinstance(component, Table):
         _write_table(f, comp_var, component)
+    elif isinstance(component, MetricCard):
+        _write_metric_card(f, comp_var, component)
     elif isinstance(component, AgentComponent):
         _write_agent_component(f, comp_var, component)
     elif isinstance(component, ViewContainer):
@@ -303,61 +452,33 @@ def _write_component(f, component, created_vars, parent_var="", pending_button_e
                 child_var = _write_component(f, child, created_vars, comp_var, pending_button_events)
                 if child_var:
                     child_vars.append(child_var)
-            
+
             children_str = f'{{{", ".join(child_vars)}}}' if child_vars else 'set()'
-            f.write(f'{comp_var} = ViewContainer(name="{component.name}", description="{component.description or ""}", view_elements={children_str})\n')
-            
+            f.write(f'{comp_var} = ViewContainer(name="{_escape_string(component.name)}", description="{_escape_string(component.description or "")}", view_elements={children_str})\n')
+
             if hasattr(component, 'layout') and component.layout:
                 layout_var = _write_layout(f, component.layout, created_vars, f"{comp_var}_layout")
                 f.write(f'{comp_var}.layout = {layout_var}\n')
         else:
             # Simple ViewComponent with no children
-            f.write(f'{comp_var} = ViewComponent(name="{component.name}", description="{component.description or ""}")\n')
-    
-    # Write styling if present
-    if hasattr(component, 'styling') and component.styling:
-        _write_styling(f, comp_var, component.styling, created_vars)
-    
-    # Write metadata properties if present
-    if hasattr(component, 'display_order'):
-        f.write(f'{comp_var}.display_order = {component.display_order}\n')
-    if hasattr(component, 'component_id') and component.component_id:
-        f.write(f'{comp_var}.component_id = "{_escape_string(component.component_id)}"\n')
-    if hasattr(component, 'component_type') and component.component_type:
-        f.write(f'{comp_var}.component_type = "{_escape_string(component.component_type)}"\n')
-    if hasattr(component, 'tag_name') and component.tag_name:
-        f.write(f'{comp_var}.tag_name = "{_escape_string(component.tag_name)}"\n')
-    if hasattr(component, 'css_classes') and component.css_classes:
-        classes_str = '", "'.join(_escape_string(c) for c in component.css_classes if c)
-        if classes_str:
-            f.write(f'{comp_var}.css_classes = ["{classes_str}"]\n')
-    if hasattr(component, 'custom_attributes') and component.custom_attributes:
-        # Write custom attributes as a dictionary
-        attrs_items = []
-        for k, v in component.custom_attributes.items():
-            if isinstance(v, str):
-                attrs_items.append(f'"{_escape_string(k)}": "{_escape_string(v)}"')
-            elif v is None:
-                attrs_items.append(f'"{_escape_string(k)}": None')
-            else:
-                attrs_items.append(f'"{_escape_string(k)}": {repr(v)}')
-        if attrs_items:
-            f.write(f'{comp_var}.custom_attributes = {{{", ".join(attrs_items)}}}\n')
+            f.write(f'{comp_var} = ViewComponent(name="{_escape_string(component.name)}", description="{_escape_string(component.description or "")}")\n')
+
+    # Styling and metadata are now written by type-specific writers via _write_constructor
 
     return comp_var
 
 
 def _write_button(f, var_name, button, created_vars, pending_button_events):
     """Write code for a Button component."""
-    params = [f'name="{button.name}"']
-    params.append(f'description="{button.description}"' if button.description else 'description=""')
+    params = [f'name="{_escape_string(button.name)}"']
+    params.append(f'description="{_escape_string(button.description)}"' if button.description else 'description=""')
     params.append(f'label="{_escape_string(button.label)}"' if hasattr(button, 'label') and button.label else 'label=""')
-    
+
     if hasattr(button, 'buttonType') and button.buttonType:
         params.append(f'buttonType=ButtonType.{button.buttonType.name}')
     if hasattr(button, 'actionType') and button.actionType:
         params.append(f'actionType=ButtonActionType.{button.actionType.name}')
-    
+
     # Add new button properties for method execution and CRUD
     if hasattr(button, 'method_btn') and button.method_btn:
         # Reference the actual method object using the same naming convention as domain_model_builder
@@ -366,11 +487,11 @@ def _write_button(f, var_name, button, created_vars, pending_button_events):
         method_name = button.method_btn.name.split('(')[0] if '(' in button.method_btn.name else button.method_btn.name
         method_var = f"{class_var}_m_{method_name}"
         params.append(f'method_btn={method_var}')
-    
+
     if hasattr(button, 'entity_class') and button.entity_class:
-        # TODO: Properly reference the class object
-        params.append(f'entity_class=None  # {button.entity_class.name}')
-    
+        entity_var = safe_class_name(button.entity_class.name)
+        params.append(f'entity_class={entity_var}')
+
     if hasattr(button, 'instance_source') and button.instance_source:
         # Handle instance_source as ViewComponent object or string
         if isinstance(button.instance_source, str):
@@ -382,30 +503,32 @@ def _write_button(f, var_name, button, created_vars, pending_button_events):
         else:
             # Fallback: convert to string
             params.append(f'instance_source="{_escape_string(str(button.instance_source))}"')
-    
+
     if hasattr(button, 'is_instance_method') and button.is_instance_method:
         params.append(f'is_instance_method={button.is_instance_method}')
-    
+
     if hasattr(button, 'confirmation_required') and button.confirmation_required:
         params.append(f'confirmation_required={button.confirmation_required}')
-    
+
     if hasattr(button, 'confirmation_message') and button.confirmation_message:
         params.append(f'confirmation_message="{_escape_string(button.confirmation_message)}"')
-    
-    # Don't write targetScreen here - will be handled via events
-    # This avoids forward reference issues
-    
-    f.write(f'{var_name} = Button({", ".join(params)})\n')
-    
-    # Store button info for later event/action writing (after all screens defined)
-    if hasattr(button, 'events') and button.events:
+
+    # Don't write targetScreen here - deferred to after all screens are defined
+    # to avoid forward reference issues
+
+    _write_constructor(f, var_name, 'Button', params, button)
+
+    # Store button info for later event/action/targetScreen writing (after all screens defined)
+    has_events = hasattr(button, 'events') and button.events
+    has_target = hasattr(button, 'targetScreen') and button.targetScreen
+    if has_events or has_target:
         pending_button_events.append((var_name, button))
 
 
-def _write_event(f, var_name, event, created_vars):
+def _write_event(f, var_name, event, created_vars, triggered_by_var=None):
     """Write code for an Event."""
     created_vars.add(var_name)
-    
+
     # Write actions first
     action_vars = []
     if hasattr(event, 'actions') and event.actions:
@@ -413,17 +536,22 @@ def _write_event(f, var_name, event, created_vars):
             action_var = f"{var_name}_action_{action_idx}"
             _write_action(f, action_var, action, created_vars)
             action_vars.append(action_var)
-    
+
     # Write event
     event_type = f'EventType.{event.event_type.name}' if hasattr(event, 'event_type') and event.event_type else 'EventType.OnClick'
     actions_str = f'{{{", ".join(action_vars)}}}' if action_vars else '{}'
-    f.write(f'{var_name} = Event(name="{event.name}", event_type={event_type}, actions={actions_str})\n')
+    f.write(f'{var_name} = Event(name="{_escape_string(event.name)}", event_type={event_type}, actions={actions_str})\n')
+
+    # Set triggered_by on actions (bidirectional link back to the owning component)
+    if triggered_by_var:
+        for a_var in action_vars:
+            f.write(f'{a_var}.triggered_by = {triggered_by_var}\n')
 
 
 def _write_action(f, var_name, action, created_vars):
     """Write code for an Action."""
     created_vars.add(var_name)
-    
+
     # Extract parameters if present
     params_code = ""
     if hasattr(action, 'parameters') and action.parameters:
@@ -431,62 +559,65 @@ def _write_action(f, var_name, action, created_vars):
         for param_idx, param in enumerate(action.parameters):
             param_var = f"{var_name}_param_{param_idx}"
             created_vars.add(param_var)
-            f.write(f'{param_var} = Parameter(name="{param.name}", value="{param.value if hasattr(param, "value") else ""}")\n')
+            param_type = _escape_string(getattr(param, 'param_type', 'str') or 'str')
+            param_value = _escape_string(param.value if hasattr(param, "value") and param.value is not None else "")
+            f.write(f'{param_var} = Parameter(name="{_escape_string(param.name)}", param_type="{param_type}", value="{param_value}")\n')
             param_vars.append(param_var)
         params_code = f', parameters={{{", ".join(param_vars)}}}'
-    
+
     if isinstance(action, Transition):
         target_screen = 'None  # TODO: Set target_screen reference'
         if hasattr(action, 'target_screen') and action.target_screen:
             target_screen_var = safe_var_name(action.target_screen.name)
             target_screen = f'{target_screen_var}'
-        f.write(f'{var_name} = Transition(name="{action.name}", description="{action.description or ""}", target_screen={target_screen}{params_code})\n')
-    
+        f.write(f'{var_name} = Transition(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_screen={target_screen}{params_code})\n')
+
     elif isinstance(action, Create):
-        target_class = 'None  # TODO: Set target_class reference'
+        target_class = 'None'
         if hasattr(action, 'target_class') and action.target_class:
-            target_class = f'# {action.target_class.name}'
-        f.write(f'{var_name} = Create(name="{action.name}", description="{action.description or ""}", target_class={target_class}{params_code})\n')
-    
+            target_class = safe_class_name(action.target_class.name)
+        f.write(f'{var_name} = Create(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
+
     elif isinstance(action, Read):
-        target_class = 'None  # TODO: Set target_class reference'
+        target_class = 'None'
         if hasattr(action, 'target_class') and action.target_class:
-            target_class = f'# {action.target_class.name}'
-        f.write(f'{var_name} = Read(name="{action.name}", description="{action.description or ""}", target_class={target_class}{params_code})\n')
-    
+            target_class = safe_class_name(action.target_class.name)
+        f.write(f'{var_name} = Read(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
+
     elif isinstance(action, Update):
-        target_class = 'None  # TODO: Set target_class reference'
+        target_class = 'None'
         if hasattr(action, 'target_class') and action.target_class:
-            target_class = f'# {action.target_class.name}'
-        f.write(f'{var_name} = Update(name="{action.name}", description="{action.description or ""}", target_class={target_class}{params_code})\n')
-    
+            target_class = safe_class_name(action.target_class.name)
+        f.write(f'{var_name} = Update(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
+
     elif isinstance(action, Delete):
-        target_class = 'None  # TODO: Set target_class reference'
+        target_class = 'None'
         if hasattr(action, 'target_class') and action.target_class:
-            target_class = f'# {action.target_class.name}'
-        f.write(f'{var_name} = Delete(name="{action.name}", description="{action.description or ""}", target_class={target_class}{params_code})\n')
+            target_class = safe_class_name(action.target_class.name)
+        f.write(f'{var_name} = Delete(name="{_escape_string(action.name)}", description="{_escape_string(action.description or "")}", target_class={target_class}{params_code})\n')
 
 
 def _write_text(f, var_name, text):
     """Write code for a Text component."""
-    content = text.content.replace('"', '\\"').replace('\n', '\\n') if hasattr(text, 'content') and text.content else ""
-    f.write(f'{var_name} = Text(name="{text.name}", content="{content}", description="{text.description or ""}")\n')
+    content = _escape_string(text.content) if hasattr(text, 'content') and text.content else ""
+    params = [f'name="{_escape_string(text.name)}"', f'content="{content}"', f'description="{_escape_string(text.description or "")}"']
+    _write_constructor(f, var_name, 'Text', params, text)
 
 
 def _write_image(f, var_name, image):
     """Write code for an Image component."""
-    params = [f'name="{image.name}"', f'description="{image.description or ""}"']
+    params = [f'name="{_escape_string(image.name)}"', f'description="{_escape_string(image.description or "")}"']
     image_source = getattr(image, "source", None)
     if image_source:
         params.append(f'source="{_escape_string(image_source)}"')
-    f.write(f'{var_name} = Image({", ".join(params)})\n')
+    _write_constructor(f, var_name, 'Image', params, image)
 
 
 def _write_link(f, var_name, link):
     """Write code for a Link component."""
     params = [
-        f'name="{link.name}"',
-        f'description="{link.description or ""}"',
+        f'name="{_escape_string(link.name)}"',
+        f'description="{_escape_string(link.description or "")}"',
         f'label="{_escape_string(getattr(link, "label", ""))}"',
     ]
     if getattr(link, "url", None):
@@ -495,34 +626,31 @@ def _write_link(f, var_name, link):
         params.append(f'target="{_escape_string(link.target)}"')
     if getattr(link, "rel", None):
         params.append(f'rel="{_escape_string(link.rel)}"')
-    f.write(f'{var_name} = Link({", ".join(params)})\n')
+    _write_constructor(f, var_name, 'Link', params, link)
 
 
 def _write_embedded_content(f, var_name, embedded):
     """Write code for embedded content components."""
     params = [
-        f'name="{embedded.name}"',
-        f'description="{embedded.description or ""}"',
+        f'name="{_escape_string(embedded.name)}"',
+        f'description="{_escape_string(embedded.description or "")}"',
     ]
     if getattr(embedded, "source", None):
         params.append(f'source="{_escape_string(embedded.source)}"')
     if getattr(embedded, "content_type", None):
         params.append(f'content_type="{_escape_string(embedded.content_type)}"')
-    f.write(f'{var_name} = EmbeddedContent({", ".join(params)})\n')
+    _write_constructor(f, var_name, 'EmbeddedContent', params, embedded)
 
 
 def _write_input_field(f, var_name, input_field):
     """Write code for an InputField component."""
-    params = [f'name="{input_field.name}"']
-    params.append(f'description="{input_field.description or ""}"')
-    
+    params = [f'name="{_escape_string(input_field.name)}"']
+    params.append(f'description="{_escape_string(input_field.description or "")}"')
     if hasattr(input_field, 'field_type') and input_field.field_type:
         params.append(f'field_type=InputFieldType.{input_field.field_type.name}')
-    
     if hasattr(input_field, 'validationRules') and input_field.validationRules:
-        params.append(f'validationRules="{input_field.validationRules}"')
-    
-    f.write(f'{var_name} = InputField({", ".join(params)})\n')
+        params.append(f'validationRules="{_escape_string(input_field.validationRules)}"')
+    _write_constructor(f, var_name, 'InputField', params, input_field)
 
 
 def _write_form(f, var_name, form, created_vars, pending_button_events):
@@ -534,9 +662,20 @@ def _write_form(f, var_name, form, created_vars, pending_button_events):
             field_var = _write_component(f, field, created_vars, var_name, pending_button_events)
             if field_var:
                 field_vars.append(field_var)
-    
+
     fields_str = f'{{{", ".join(field_vars)}}}' if field_vars else '{}'
-    f.write(f'{var_name} = Form(name="{form.name}", description="{form.description or ""}", inputFields={fields_str})\n')
+    params = [f'name="{_escape_string(form.name)}"', f'description="{_escape_string(form.description or "")}"', f'inputFields={fields_str}']
+    _write_constructor(f, var_name, 'Form', params, form)
+
+    # Write form events (e.g. OnSubmit)
+    if hasattr(form, 'events') and form.events:
+        for event_idx, event in enumerate(form.events):
+            event_var = f"{var_name}_event_{event_idx}"
+            _write_event(f, event_var, event, created_vars, var_name)
+            if event_idx == 0:
+                f.write(f"{var_name}.events = {{{event_var}}}\n")
+            else:
+                f.write(f"{var_name}.events.add({event_var})\n")
 
 
 def _write_menu(f, var_name, menu, created_vars):
@@ -556,9 +695,10 @@ def _write_menu(f, var_name, menu, created_vars):
                 params.append(f'rel="{_escape_string(item.rel)}"')
             f.write(f'{item_var} = MenuItem({", ".join(params)})\n')
             item_vars.append(item_var)
-    
+
     items_str = f'{{{", ".join(item_vars)}}}' if item_vars else '{}'
-    f.write(f'{var_name} = Menu(name="{menu.name}", description="{menu.description or ""}", menuItems={items_str})\n')
+    params = [f'name="{_escape_string(menu.name)}"', f'description="{_escape_string(menu.description or "")}"', f'menuItems={items_str}']
+    _write_constructor(f, var_name, 'Menu', params, menu)
 
 
 def _write_data_list(f, var_name, data_list, created_vars):
@@ -573,14 +713,22 @@ def _write_data_list(f, var_name, data_list, created_vars):
             f.write(f'{source_var} = DataSourceElement(name="{source_name}")\n')
             _update_data_source_element(f, source_var, source)
             source_vars.append(source_var)
-    
+
     sources_str = f'{{{", ".join(source_vars)}}}' if source_vars else '{}'
-    f.write(f'{var_name} = DataList(name="{data_list.name}", description="{data_list.description or ""}", list_sources={sources_str})\n')
+    params = [f'name="{_escape_string(data_list.name)}"', f'description="{_escape_string(data_list.description or "")}"', f'list_sources={sources_str}']
+    _write_constructor(f, var_name, 'DataList', params, data_list)
 
 
-def _write_line_chart(f, var_name, chart):
+def _write_line_chart(f, var_name, chart, created_vars=None):
     """Write code for a LineChart component."""
-    params = [f'name="{chart.name}"']
+    if created_vars is None:
+        created_vars = set()
+    # Write series first
+    series_vars = _write_series_list(f, var_name, getattr(chart, 'series', None), created_vars)
+
+    params = [f'name="{_escape_string(chart.name)}"']
+    if series_vars:
+        params.append(f'series=[{", ".join(series_vars)}]')
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -594,26 +742,32 @@ def _write_line_chart(f, var_name, chart):
     if hasattr(chart, 'show_tooltip'):
         params.append(f'show_tooltip={chart.show_tooltip}')
     if hasattr(chart, 'curve_type'):
-        params.append(f'curve_type="{chart.curve_type}"')
+        params.append(f'curve_type="{_escape_string(chart.curve_type)}"')
     if hasattr(chart, 'animate'):
         params.append(f'animate={chart.animate}')
     if hasattr(chart, 'legend_position'):
-        params.append(f'legend_position="{chart.legend_position}"')
+        params.append(f'legend_position="{_escape_string(chart.legend_position)}"')
     if hasattr(chart, 'grid_color'):
-        params.append(f'grid_color="{chart.grid_color}"')
+        params.append(f'grid_color="{_escape_string(chart.grid_color)}"')
     if hasattr(chart, 'dot_size'):
         params.append(f'dot_size={chart.dot_size}')
-    
-    f.write(f'{var_name} = LineChart({", ".join(params)})\n')
-    
-    # Write data binding if present
+
+    _write_constructor(f, var_name, 'LineChart', params, chart)
+
+    # Write top-level data binding if present (in addition to series-level bindings)
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
-def _write_bar_chart(f, var_name, chart):
+def _write_bar_chart(f, var_name, chart, created_vars=None):
     """Write code for a BarChart component."""
-    params = [f'name="{chart.name}"']
+    if created_vars is None:
+        created_vars = set()
+    series_vars = _write_series_list(f, var_name, getattr(chart, 'series', None), created_vars)
+
+    params = [f'name="{_escape_string(chart.name)}"']
+    if series_vars:
+        params.append(f'series=[{", ".join(series_vars)}]')
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -621,7 +775,7 @@ def _write_bar_chart(f, var_name, chart):
     if hasattr(chart, 'bar_width'):
         params.append(f'bar_width={chart.bar_width}')
     if hasattr(chart, 'orientation'):
-        params.append(f'orientation="{chart.orientation}"')
+        params.append(f'orientation="{_escape_string(chart.orientation)}"')
     if hasattr(chart, 'show_grid'):
         params.append(f'show_grid={chart.show_grid}')
     if hasattr(chart, 'show_legend'):
@@ -633,20 +787,26 @@ def _write_bar_chart(f, var_name, chart):
     if hasattr(chart, 'animate'):
         params.append(f'animate={chart.animate}')
     if hasattr(chart, 'legend_position'):
-        params.append(f'legend_position="{chart.legend_position}"')
+        params.append(f'legend_position="{_escape_string(chart.legend_position)}"')
     if hasattr(chart, 'grid_color'):
-        params.append(f'grid_color="{chart.grid_color}"')
+        params.append(f'grid_color="{_escape_string(chart.grid_color)}"')
     if hasattr(chart, 'bar_gap'):
         params.append(f'bar_gap={chart.bar_gap}')
-    
-    f.write(f'{var_name} = BarChart({", ".join(params)})\n')
+
+    _write_constructor(f, var_name, 'BarChart', params, chart)
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
-def _write_pie_chart(f, var_name, chart):
+def _write_pie_chart(f, var_name, chart, created_vars=None):
     """Write code for a PieChart component."""
-    params = [f'name="{chart.name}"']
+    if created_vars is None:
+        created_vars = set()
+    series_vars = _write_series_list(f, var_name, getattr(chart, 'series', None), created_vars)
+
+    params = [f'name="{_escape_string(chart.name)}"']
+    if series_vars:
+        params.append(f'series=[{", ".join(series_vars)}]')
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -669,15 +829,21 @@ def _write_pie_chart(f, var_name, chart):
         params.append(f'start_angle={chart.start_angle}')
     if hasattr(chart, 'end_angle'):
         params.append(f'end_angle={chart.end_angle}')
-    
-    f.write(f'{var_name} = PieChart({", ".join(params)})\n')
+
+    _write_constructor(f, var_name, 'PieChart', params, chart)
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
-def _write_radar_chart(f, var_name, chart):
+def _write_radar_chart(f, var_name, chart, created_vars=None):
     """Write code for a RadarChart component."""
-    params = [f'name="{chart.name}"']
+    if created_vars is None:
+        created_vars = set()
+    series_vars = _write_series_list(f, var_name, getattr(chart, 'series', None), created_vars)
+
+    params = [f'name="{_escape_string(chart.name)}"']
+    if series_vars:
+        params.append(f'series=[{", ".join(series_vars)}]')
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -691,22 +857,28 @@ def _write_radar_chart(f, var_name, chart):
     if hasattr(chart, 'show_legend'):
         params.append(f'show_legend={chart.show_legend}')
     if hasattr(chart, 'legend_position'):
-        params.append(f'legend_position="{chart.legend_position}"')
+        params.append(f'legend_position="{_escape_string(chart.legend_position)}"')
     if hasattr(chart, 'dot_size'):
         params.append(f'dot_size={chart.dot_size}')
     if hasattr(chart, 'grid_type'):
-        params.append(f'grid_type="{chart.grid_type}"')
+        params.append(f'grid_type="{_escape_string(chart.grid_type)}"')
     if hasattr(chart, 'stroke_width'):
         params.append(f'stroke_width={chart.stroke_width}')
-    
-    f.write(f'{var_name} = RadarChart({", ".join(params)})\n')
+
+    _write_constructor(f, var_name, 'RadarChart', params, chart)
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
-def _write_radial_bar_chart(f, var_name, chart):
+def _write_radial_bar_chart(f, var_name, chart, created_vars=None):
     """Write code for a RadialBarChart component."""
-    params = [f'name="{chart.name}"']
+    if created_vars is None:
+        created_vars = set()
+    series_vars = _write_series_list(f, var_name, getattr(chart, 'series', None), created_vars)
+
+    params = [f'name="{_escape_string(chart.name)}"']
+    if series_vars:
+        params.append(f'series=[{", ".join(series_vars)}]')
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -722,18 +894,18 @@ def _write_radial_bar_chart(f, var_name, chart):
     if hasattr(chart, 'show_legend'):
         params.append(f'show_legend={chart.show_legend}')
     if hasattr(chart, 'legend_position'):
-        params.append(f'legend_position="{chart.legend_position}"')
+        params.append(f'legend_position="{_escape_string(chart.legend_position)}"')
     if hasattr(chart, 'show_tooltip'):
         params.append(f'show_tooltip={chart.show_tooltip}')
-    
-    f.write(f'{var_name} = RadialBarChart({", ".join(params)})\n')
+
+    _write_constructor(f, var_name, 'RadialBarChart', params, chart)
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 
 
 def _write_table(f, var_name, chart):
     """Write code for a Table component."""
-    params = [f'name="{chart.name}"']
+    params = [f'name="{_escape_string(chart.name)}"']
     if hasattr(chart, 'title') and chart.title:
         params.append(f'title="{_escape_string(chart.title)}"')
     if hasattr(chart, 'primary_color') and chart.primary_color:
@@ -746,20 +918,58 @@ def _write_table(f, var_name, chart):
         params.append(f'show_pagination={chart.show_pagination}')
     if hasattr(chart, 'rows_per_page'):
         params.append(f'rows_per_page={chart.rows_per_page}')
+    if hasattr(chart, 'action_buttons'):
+        params.append(f'action_buttons={chart.action_buttons}')
+    # Write column objects before the Table constructor
+    column_var_names = []
     if hasattr(chart, 'columns') and chart.columns:
-        # Handle columns as either strings or Column objects (FieldColumn, LookupColumn, etc.)
-        column_literals = []
-        for col in chart.columns:
-            if col:
-                if isinstance(col, str):
-                    column_literals.append(f'"{_escape_string(col)}"')
+        for i, col in enumerate(chart.columns):
+            if not col:
+                continue
+            col_var = f'{var_name}_col_{i}'
+            if isinstance(col, FieldColumn):
+                field_ref = col.field.name if hasattr(col.field, 'name') else str(col.field)
+                # Reference the Property variable from the domain model
+                # The domain model builder names them: ClassName_attributeName
+                # We need to find which class owns this property
+                binding = getattr(chart, 'data_binding', None)
+                if binding and hasattr(binding, 'domain_concept') and binding.domain_concept:
+                    class_name = binding.domain_concept.name
+                    f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={class_name}_{field_ref})\n')
                 else:
-                    # Column object - represent as string for now
-                    column_literals.append(f'"{_escape_string(str(col))}"')
-        if column_literals:
-            params.append(f'columns=[{", ".join(column_literals)}]')
+                    # Fallback: try to find the property variable by name
+                    f.write(f'{col_var} = FieldColumn(label="{_escape_string(col.label)}", field={field_ref})\n')
+            elif isinstance(col, LookupColumn):
+                # path is an association end Property (defined inline in BinaryAssociation)
+                # field is a Property on the target class
+                path_name = col.path.name if hasattr(col.path, 'name') else str(col.path)
+                field_name = col.field.name if hasattr(col.field, 'name') else str(col.field)
+                # Resolve field: TargetClass_fieldName (e.g. Book_title)
+                path_type = getattr(col.path, 'type', None)
+                if path_type and hasattr(path_type, 'name'):
+                    field_ref = f'{path_type.name}_{field_name}'
+                else:
+                    field_ref = field_name
+                # Path property lives inside a BinaryAssociation's ends, not as a standalone variable.
+                # Generate a runtime lookup via domain_model.
+                path_var = f'{col_var}_path'
+                f.write(f'{path_var} = next(end for assoc in domain_model.associations for end in assoc.ends if end.name == "{_escape_string(path_name)}")\n')
+                f.write(f'{col_var} = LookupColumn(label="{_escape_string(col.label)}", path={path_var}, field={field_ref})\n')
+            elif isinstance(col, ExpressionColumn):
+                f.write(f'{col_var} = ExpressionColumn(label="{_escape_string(col.label)}", expression="{_escape_string(col.expression)}")\n')
+            elif isinstance(col, str):
+                # Legacy string columns — keep as-is
+                column_var_names.append(f'"{_escape_string(col)}"')
+                continue
+            else:
+                column_var_names.append(f'"{_escape_string(str(col))}"')
+                continue
+            column_var_names.append(col_var)
 
-    f.write(f'{var_name} = Table({", ".join(params)})\n')
+    if column_var_names:
+        params.append(f'columns=[{", ".join(column_var_names)}]')
+
+    _write_constructor(f, var_name, 'Table', params, chart)
     if hasattr(chart, 'data_binding') and chart.data_binding:
         _write_data_binding_assignment(f, var_name, chart.data_binding)
 
@@ -775,101 +985,85 @@ def _write_container(f, var_name, container, created_vars, pending_button_events
             child_var = _write_component(f, child, created_vars, var_name, pending_button_events)
             if child_var:
                 child_vars.append(child_var)
-    
-    # Create ViewContainer with view_elements as required parameter
+
+    # Create ViewContainer with all params inline
     children_str = f'{{{", ".join(child_vars)}}}' if child_vars else 'set()'
-    f.write(f'{var_name} = ViewContainer(name="{container.name}", description="{container.description or ""}", view_elements={children_str})\n')
-    
-    # Write styling if present
-    if hasattr(container, 'styling') and container.styling:
-        _write_styling(f, var_name, container.styling, created_vars)
-    
-    # Set layout if present
+    params = [f'name="{_escape_string(container.name)}"', f'description="{_escape_string(container.description or "")}"', f'view_elements={children_str}']
+    _write_constructor(f, var_name, 'ViewContainer', params, container)
+    # Layout is separate from Styling (ViewContainer has its own layout attribute)
     if hasattr(container, 'layout') and container.layout:
         layout_var = _write_layout(f, container.layout, created_vars, f"{var_name}_layout")
         f.write(f'{var_name}.layout = {layout_var}\n')
-    
-    # Write metadata properties if present
-    if hasattr(container, 'display_order'):
-        f.write(f'{var_name}.display_order = {container.display_order}\n')
-    if hasattr(container, 'component_id') and container.component_id:
-        f.write(f'{var_name}.component_id = "{_escape_string(container.component_id)}"\n')
-    if hasattr(container, 'component_type') and container.component_type:
-        f.write(f'{var_name}.component_type = "{_escape_string(container.component_type)}"\n')
-    if hasattr(container, 'tag_name') and container.tag_name:
-        f.write(f'{var_name}.tag_name = "{_escape_string(container.tag_name)}"\n')
-    if hasattr(container, 'css_classes') and container.css_classes:
-        classes_str = '", "'.join(_escape_string(c) for c in container.css_classes if c)
-        if classes_str:
-            f.write(f'{var_name}.css_classes = ["{classes_str}"]\n')
-    if hasattr(container, 'custom_attributes') and container.custom_attributes:
-        # Write custom attributes as a dictionary
-        attrs_items = []
-        for k, v in container.custom_attributes.items():
-            if isinstance(v, str):
-                attrs_items.append(f'"{_escape_string(k)}": "{_escape_string(v)}"')
-            elif v is None:
-                attrs_items.append(f'"{_escape_string(k)}": None')
-            else:
-                attrs_items.append(f'"{_escape_string(k)}": {repr(v)}')
-        if attrs_items:
-            f.write(f'{var_name}.custom_attributes = {{{", ".join(attrs_items)}}}\n')
 
 
-def _write_styling(f, component_var, styling, created_vars):
-    """Write code for Styling object."""
-    styling_var = f"{component_var}_styling"
+def _write_styling_object(f, styling_var, styling, created_vars):
+    """Write code for a Styling object (Size, Position, Color, Layout).
+
+    Returns the styling variable name. Does NOT assign to any component.
+    """
     if styling_var in created_vars:
-        return
+        return styling_var
     created_vars.add(styling_var)
-    
+
     # Write Size, Position, Color objects
     size_var = f"{styling_var}_size"
     pos_var = f"{styling_var}_pos"
     color_var = f"{styling_var}_color"
-    
+
     # Size
     if hasattr(styling, 'size') and styling.size:
         size_params = []
         if hasattr(styling.size, 'width') and styling.size.width:
-            size_params.append(f'width="{styling.size.width}"')
+            size_params.append(f'width="{_escape_string(styling.size.width)}"')
         if hasattr(styling.size, 'height') and styling.size.height:
-            size_params.append(f'height="{styling.size.height}"')
+            size_params.append(f'height="{_escape_string(styling.size.height)}"')
         if hasattr(styling.size, 'padding') and styling.size.padding:
-            size_params.append(f'padding="{styling.size.padding}"')
+            size_params.append(f'padding="{_escape_string(styling.size.padding)}"')
         if hasattr(styling.size, 'margin') and styling.size.margin:
-            size_params.append(f'margin="{styling.size.margin}"')
+            size_params.append(f'margin="{_escape_string(styling.size.margin)}"')
         if hasattr(styling.size, 'font_size') and styling.size.font_size:
-            size_params.append(f'font_size="{styling.size.font_size}"')
+            size_params.append(f'font_size="{_escape_string(styling.size.font_size)}"')
         if hasattr(styling.size, 'line_height') and styling.size.line_height:
-            size_params.append(f'line_height="{styling.size.line_height}"')
+            size_params.append(f'line_height="{_escape_string(styling.size.line_height)}"')
         if hasattr(styling.size, 'unit_size') and styling.size.unit_size:
             size_params.append(f'unit_size=UnitSize.{styling.size.unit_size.name}')
-        
+        # Typography
+        for attr in ('font_weight', 'font_family', 'font_style', 'text_decoration', 'text_transform',
+                      'letter_spacing', 'word_spacing', 'white_space', 'word_break'):
+            val = getattr(styling.size, attr, None)
+            if val:
+                size_params.append(f'{attr}="{_escape_string(val)}"')
+        # Min/max dimensions
+        for attr in ('min_width', 'max_width', 'min_height', 'max_height'):
+            val = getattr(styling.size, attr, None)
+            if val:
+                size_params.append(f'{attr}="{_escape_string(val)}"')
+        # Per-side padding/margin
+        for attr in ('padding_top', 'padding_right', 'padding_bottom', 'padding_left',
+                      'margin_top', 'margin_right', 'margin_bottom', 'margin_left'):
+            val = getattr(styling.size, attr, None)
+            if val:
+                size_params.append(f'{attr}="{_escape_string(val)}"')
+
         if size_params:
             f.write(f'{size_var} = Size({", ".join(size_params)})\n')
         else:
             f.write(f'{size_var} = Size()\n')
     else:
         f.write(f'{size_var} = Size()\n')
-    
+
     # Position
     if hasattr(styling, 'position') and styling.position:
         pos_params = []
         if hasattr(styling.position, 'alignment') and styling.position.alignment:
-            # Check if alignment is an Alignment enum or a string
             alignment_val = styling.position.alignment
             if hasattr(alignment_val, 'name'):
-                # It's an Alignment enum
                 pos_params.append(f'alignment=Alignment.{alignment_val.name}')
             elif isinstance(alignment_val, str):
-                # It's already a string - check if it contains "Alignment."
                 if 'Alignment.' in alignment_val:
-                    # Extract enum name and use it properly
                     enum_name = alignment_val.split('.')[-1]
                     pos_params.append(f'alignment=Alignment.{enum_name}')
                 else:
-                    # Try to map common alignment strings to enum values
                     alignment_map = {
                         'center': 'CENTER',
                         'left': 'LEFT',
@@ -881,102 +1075,214 @@ def _write_styling(f, component_var, styling, created_vars):
                     if mapped:
                         pos_params.append(f'alignment=Alignment.{mapped}')
                     else:
-                        pos_params.append(f'alignment="{alignment_val}"')
+                        pos_params.append(f'alignment="{_escape_string(alignment_val)}"')
         if hasattr(styling.position, 'top') and styling.position.top:
-            pos_params.append(f'top="{styling.position.top}"')
+            pos_params.append(f'top="{_escape_string(styling.position.top)}"')
         if hasattr(styling.position, 'left') and styling.position.left:
-            pos_params.append(f'left="{styling.position.left}"')
+            pos_params.append(f'left="{_escape_string(styling.position.left)}"')
         if hasattr(styling.position, 'right') and styling.position.right:
-            pos_params.append(f'right="{styling.position.right}"')
+            pos_params.append(f'right="{_escape_string(styling.position.right)}"')
         if hasattr(styling.position, 'bottom') and styling.position.bottom:
-            pos_params.append(f'bottom="{styling.position.bottom}"')
+            pos_params.append(f'bottom="{_escape_string(styling.position.bottom)}"')
         if hasattr(styling.position, 'z_index') and styling.position.z_index is not None:
             pos_params.append(f'z_index={styling.position.z_index}')
         if hasattr(styling.position, 'p_type') and styling.position.p_type:
             pos_params.append(f'p_type=PositionType.{styling.position.p_type.name}')
-        
+        # Display, overflow, effects
+        for attr in ('display', 'overflow', 'overflow_x', 'overflow_y', 'visibility',
+                      'cursor', 'box_sizing', 'transform', 'transition', 'animation', 'filter'):
+            val = getattr(styling.position, attr, None)
+            if val:
+                pos_params.append(f'{attr}="{_escape_string(val)}"')
+
         if pos_params:
             f.write(f'{pos_var} = Position({", ".join(pos_params)})\n')
         else:
             f.write(f'{pos_var} = Position()\n')
     else:
         f.write(f'{pos_var} = Position()\n')
-    
+
     # Color
     if hasattr(styling, 'color') and styling.color:
         color_params = []
         if hasattr(styling.color, 'background_color') and styling.color.background_color:
-            color_params.append(f'background_color="{styling.color.background_color}"')
+            color_params.append(f'background_color="{_escape_string(styling.color.background_color)}"')
         if hasattr(styling.color, 'text_color') and styling.color.text_color:
-            color_params.append(f'text_color="{styling.color.text_color}"')
+            color_params.append(f'text_color="{_escape_string(styling.color.text_color)}"')
         if hasattr(styling.color, 'border_color') and styling.color.border_color:
-            color_params.append(f'border_color="{styling.color.border_color}"')
+            color_params.append(f'border_color="{_escape_string(styling.color.border_color)}"')
         if hasattr(styling.color, 'opacity') and styling.color.opacity:
-            color_params.append(f'opacity="{styling.color.opacity}"')
-        
+            color_params.append(f'opacity="{_escape_string(styling.color.opacity)}"')
+        if hasattr(styling.color, 'line_color') and styling.color.line_color:
+            color_params.append(f'line_color="{_escape_string(styling.color.line_color)}"')
+        if hasattr(styling.color, 'bar_color') and styling.color.bar_color:
+            color_params.append(f'bar_color="{_escape_string(styling.color.bar_color)}"')
+        if hasattr(styling.color, 'color_palette') and styling.color.color_palette:
+            color_params.append(f'color_palette="{_escape_string(styling.color.color_palette)}"')
+        if hasattr(styling.color, 'primary_color') and styling.color.primary_color:
+            color_params.append(f'primary_color="{_escape_string(styling.color.primary_color)}"')
+        # Border, shadow, background extras
+        for attr in ('border_radius', 'border_width', 'border_style', 'border',
+                      'border_top', 'border_right', 'border_bottom', 'border_left',
+                      'box_shadow', 'text_shadow',
+                      'background_image', 'background_size', 'background_position', 'background_repeat'):
+            val = getattr(styling.color, attr, None)
+            if val:
+                color_params.append(f'{attr}="{_escape_string(val)}"')
+
         if color_params:
             f.write(f'{color_var} = Color({", ".join(color_params)})\n')
         else:
             f.write(f'{color_var} = Color()\n')
     else:
         f.write(f'{color_var} = Color()\n')
-    
+
     # Styling
     f.write(f'{styling_var} = Styling(size={size_var}, position={pos_var}, color={color_var})\n')
-    
+
     # Set layout if present
     if hasattr(styling, 'layout') and styling.layout:
         layout_var = _write_layout(f, styling.layout, created_vars, f"{styling_var}_layout")
         f.write(f'{styling_var}.layout = {layout_var}\n')
-    
+
+    return styling_var
+
+
+def _write_styling(f, component_var, styling, created_vars):
+    """Write code for Styling object and assign it to a component."""
+    styling_var = f"{component_var}_styling"
+    _write_styling_object(f, styling_var, styling, created_vars)
     # Assign styling to component
     f.write(f'{component_var}.styling = {styling_var}\n')
 
 
 def _write_agent_component(f, var_name, agent):
     """Write code for an AgentComponent."""
-    params = [f'name="{agent.name}"']
-    params.append(f'description="{agent.description or ""}"')
-    
+    params = [f'name="{_escape_string(agent.name)}"']
+    params.append(f'description="{_escape_string(agent.description or "")}"')
+
     if hasattr(agent, 'agent_name') and agent.agent_name:
         params.append(f'agent_name="{_escape_string(agent.agent_name)}"')
-    
+
     if hasattr(agent, 'agent_title') and agent.agent_title:
         params.append(f'agent_title="{_escape_string(agent.agent_title)}"')
-    
-    f.write(f'{var_name} = AgentComponent({", ".join(params)})\n')
+
+    _write_constructor(f, var_name, 'AgentComponent', params, agent)
+
+
+def _write_metric_card(f, var_name, card):
+    """Write code for a MetricCard component."""
+    params = [f'name="{_escape_string(card.name)}"']
+    if hasattr(card, 'metric_title') and card.metric_title:
+        params.append(f'metric_title="{_escape_string(card.metric_title)}"')
+    if hasattr(card, 'format') and card.format:
+        params.append(f'format="{_escape_string(card.format)}"')
+    if hasattr(card, 'value_color') and card.value_color:
+        params.append(f'value_color="{_escape_string(card.value_color)}"')
+    if hasattr(card, 'value_size') and card.value_size:
+        params.append(f'value_size={card.value_size}')
+    if hasattr(card, 'show_trend'):
+        params.append(f'show_trend={card.show_trend}')
+    if hasattr(card, 'positive_color') and card.positive_color:
+        params.append(f'positive_color="{_escape_string(card.positive_color)}"')
+    if hasattr(card, 'negative_color') and card.negative_color:
+        params.append(f'negative_color="{_escape_string(card.negative_color)}"')
+    if hasattr(card, 'title') and card.title:
+        params.append(f'title="{_escape_string(card.title)}"')
+    if hasattr(card, 'primary_color') and card.primary_color:
+        params.append(f'primary_color="{_escape_string(card.primary_color)}"')
+
+    _write_constructor(f, var_name, 'MetricCard', params, card)
+    if hasattr(card, 'data_binding') and card.data_binding:
+        _write_data_binding_assignment(f, var_name, card.data_binding)
+
+
+def _write_series_list(f, chart_var, series_list, created_vars):
+    """Write code for a list of Series objects and return their variable names."""
+    if not series_list:
+        return []
+    series_var_names = []
+    for idx, series in enumerate(series_list):
+        s_var = f"{chart_var}_series_{idx}"
+        created_vars.add(s_var)
+
+        # Write series data binding first if present
+        binding_var_name = None
+        if hasattr(series, 'data_binding') and series.data_binding:
+            binding_var = f"{s_var}_binding"
+            binding_var_name = _write_data_binding(f, binding_var, series.data_binding)
+
+        # Write series styling if present (inline, without component assignment)
+        styling_ref = "None"
+        if hasattr(series, 'styling') and series.styling:
+            styling_var = f"{s_var}_styling"
+            _write_styling_object(f, styling_var, series.styling, created_vars)
+            styling_ref = styling_var
+
+        s_params = [f'name="{_escape_string(series.name)}"']
+        label = getattr(series, 'label', None)
+        s_params.append(f'label="{_escape_string(label)}"' if label else 'label=None')
+        s_params.append(f'data_binding={binding_var_name if binding_var_name else "None"}')
+        s_params.append(f'styling={styling_ref}')
+        f.write(f'{s_var} = Series({", ".join(s_params)})\n')
+        series_var_names.append(s_var)
+    return series_var_names
+
+
+def _write_data_binding(f, binding_var, binding):
+    """Write code for a DataBinding object and return the variable name, or None."""
+    if not binding:
+        return None
+    domain_name = _get_attr_name(getattr(binding, "domain_concept", None))
+    binding_name = getattr(binding, "name", None)
+    label_name = _get_attr_name(getattr(binding, "label_field", None))
+    data_name = _get_attr_name(getattr(binding, "data_field", None))
+    label_path = getattr(binding, "label_field_path", None)
+    data_path = getattr(binding, "data_field_path", None)
+    filter_expr = getattr(binding, "filter_expression", None)
+
+    if not domain_name:
+        f.write(f"# DataBinding for {binding_var} skipped: no domain concept specified.\n")
+        return None
+
+    escaped_domain = _escape_string(domain_name)
+    f.write("domain_model_ref = globals().get('domain_model') or next((v for k, v in globals().items() if k.startswith('domain_model') and hasattr(v, 'get_class_by_name')), None)\n")
+    f.write(f"{binding_var}_domain = None\n")
+    f.write("if domain_model_ref is not None:\n")
+    f.write(f"    {binding_var}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
+    f.write(f"if {binding_var}_domain:\n")
+
+    # Build DataBinding constructor params
+    binding_params = [f"domain_concept={binding_var}_domain"]
+    if binding_name:
+        binding_params.append(f'name="{_escape_string(binding_name)}"')
+    if label_path:
+        binding_params.append(f'label_field_path="{_escape_string(label_path)}"')
+    if data_path:
+        binding_params.append(f'data_field_path="{_escape_string(data_path)}"')
+    if filter_expr:
+        binding_params.append(f'filter_expression="{_escape_string(filter_expr)}"')
+    f.write(f"    {binding_var} = DataBinding({', '.join(binding_params)})\n")
+
+    if label_name:
+        escaped_label = _escape_string(label_name)
+        f.write(f"    {binding_var}.label_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_label}\"), None)\n")
+    if data_name:
+        escaped_data = _escape_string(data_name)
+        f.write(f"    {binding_var}.data_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_data}\"), None)\n")
+    f.write("else:\n")
+    f.write(f"    # Domain class '{escaped_domain}' not resolved; data binding skipped.\n")
+    f.write(f"    {binding_var} = None\n")
+    return binding_var
 
 
 def _write_data_binding_assignment(f, var_name, binding):
-    if not binding:
-        return
+    """Write a DataBinding and assign it to var_name.data_binding."""
     binding_var = f"{var_name}_binding"
-    domain_name = _get_attr_name(getattr(binding, "domain_concept", None))
-    label_name = _get_attr_name(getattr(binding, "label_field", None))
-    data_name = _get_attr_name(getattr(binding, "data_field", None))
-
-    # DataBinding requires domain_concept as first parameter, so we need to handle missing domain
-    if domain_name:
-        escaped_domain = _escape_string(domain_name)
-        f.write("domain_model_ref = globals().get('domain_model')\n")
-        f.write(f"{binding_var}_domain = None\n")
-        f.write("if domain_model_ref is not None:\n")
-        f.write(f"    {binding_var}_domain = domain_model_ref.get_class_by_name(\"{escaped_domain}\")\n")
-        f.write(f"if {binding_var}_domain:\n")
-        f.write(f"    {binding_var} = DataBinding(domain_concept={binding_var}_domain)\n")
-        if label_name:
-            escaped_label = _escape_string(label_name)
-            f.write(f"    {binding_var}.label_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_label}\"), None)\n")
-        if data_name:
-            escaped_data = _escape_string(data_name)
-            f.write(f"    {binding_var}.data_field = next((attr for attr in {binding_var}_domain.attributes if attr.name == \"{escaped_data}\"), None)\n")
-        f.write("else:\n")
-        f.write(f"    # Domain class '{escaped_domain}' not resolved; data binding skipped.\n")
-        f.write(f"    {binding_var} = None\n")
+    result = _write_data_binding(f, binding_var, binding)
+    if result:
         f.write(f"if {binding_var}:\n")
         f.write(f"    {var_name}.data_binding = {binding_var}\n")
-    else:
-        f.write(f"# DataBinding for {var_name} skipped: no domain concept specified.\n")
 
 
 def _update_data_source_element(f, var_name, source):
@@ -1005,7 +1311,7 @@ def _update_data_source_element(f, var_name, source):
     if not any([domain_name, field_names, label_name, value_name]):
         return
 
-    f.write("domain_model_ref = globals().get('domain_model')\n")
+    f.write("domain_model_ref = globals().get('domain_model') or next((v for k, v in globals().items() if k.startswith('domain_model') and hasattr(v, 'get_class_by_name')), None)\n")
     f.write(f"{var_name}_domain = None\n")
     if domain_name:
         escaped_domain = _escape_string(domain_name)
@@ -1046,30 +1352,35 @@ def _write_layout(f, layout, created_vars, layout_var):
     if layout_var in created_vars:
         return layout_var
     created_vars.add(layout_var)
-    
+
     params = []
     if hasattr(layout, 'layout_type') and layout.layout_type:
         params.append(f'layout_type=LayoutType.{layout.layout_type.name}')
     if hasattr(layout, 'flex_direction') and layout.flex_direction:
-        params.append(f'flex_direction="{layout.flex_direction}"')
+        params.append(f'flex_direction="{_escape_string(layout.flex_direction)}"')
     if hasattr(layout, 'justify_content') and layout.justify_content:
-        params.append(f'justify_content="{layout.justify_content}"')
+        params.append(f'justify_content="{_escape_string(layout.justify_content)}"')
     if hasattr(layout, 'align_items') and layout.align_items:
-        params.append(f'align_items="{layout.align_items}"')
+        params.append(f'align_items="{_escape_string(layout.align_items)}"')
     if hasattr(layout, 'flex_wrap') and layout.flex_wrap:
-        params.append(f'flex_wrap="{layout.flex_wrap}"')
+        params.append(f'flex_wrap="{_escape_string(layout.flex_wrap)}"')
     if hasattr(layout, 'grid_template_columns') and layout.grid_template_columns:
-        params.append(f'grid_template_columns="{layout.grid_template_columns}"')
+        params.append(f'grid_template_columns="{_escape_string(layout.grid_template_columns)}"')
     if hasattr(layout, 'grid_template_rows') and layout.grid_template_rows:
-        params.append(f'grid_template_rows="{layout.grid_template_rows}"')
+        params.append(f'grid_template_rows="{_escape_string(layout.grid_template_rows)}"')
     if hasattr(layout, 'grid_gap') and layout.grid_gap:
-        params.append(f'grid_gap="{layout.grid_gap}"')
+        params.append(f'grid_gap="{_escape_string(layout.grid_gap)}"')
     if hasattr(layout, 'gap') and layout.gap:
-        params.append(f'gap="{layout.gap}"')
-    
+        params.append(f'gap="{_escape_string(layout.gap)}"')
+    # Flex item properties
+    for attr in ('flex', 'flex_grow', 'flex_shrink', 'flex_basis', 'order', 'align_self'):
+        val = getattr(layout, attr, None)
+        if val:
+            params.append(f'{attr}="{_escape_string(val)}"')
+
     if params:
         f.write(f'{layout_var} = Layout({", ".join(params)})\n')
     else:
         f.write(f'{layout_var} = Layout()\n')
-    
+
     return layout_var

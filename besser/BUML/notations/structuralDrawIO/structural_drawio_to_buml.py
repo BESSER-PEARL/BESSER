@@ -6,7 +6,6 @@ and convert them into B-UML model representations. It handles classes, enumerati
 associations, generalizations, attributes, methods and their relationships.
 """
 
-import os
 import re
 import xml.etree.ElementTree as ET
 from besser.BUML.metamodel.structural import (
@@ -18,7 +17,7 @@ from besser.utilities import domain_model_to_code
 # Map primitive type strings to their corresponding type classes
 PRIMITIVE_TYPE_MAPPING = {
     'str': StringType,
-    'string': StringType, 
+    'string': StringType,
     'int': IntegerType,
     'integer': IntegerType,
     'float': FloatType,
@@ -102,7 +101,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
         - classes: Dict mapping class names to attributes/methods
         - enumerations: Dict mapping enum names to literals
         - associations: List of association dictionaries
-        - generalizations: List of generalization dictionaries  
+        - generalizations: List of generalization dictionaries
         - cells: Dict mapping cell IDs to cell data
     """
     try:
@@ -520,7 +519,7 @@ def extract_classes_from_drawio(drawio_file: str) -> tuple:
                     source_assoc['navigable'] = False
                 if association_name_source:
                     source_assoc['association_name'] = association_name_source
-                    
+
                 target_assoc = {
                     'name': target_label,
                     'class': target_class,
@@ -901,14 +900,14 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
                     for param in parameters:
                         param_name = param['name']
                         param_type = param['type']
-                        
+
                         # Si le nom contient encore le type (comme "str sms"), on le sépare
                         if ' ' in param_name:
                             type_str, param_name = param_name.split(' ', 1)
                             # On utilise le type explicite s'il est spécifié
                             if param_type == 'str':
                                 param_type = type_str.lower()
-                        
+
                         if param_type in buml_enumerations:
                             type_obj = buml_enumerations[param_type]
                         elif param_type in classes:
@@ -1043,8 +1042,8 @@ def generate_buml_from_xml(drawio_file: str) -> tuple:
 def is_class_style(style: str, value: str) -> bool:
     """Check if the cell represents a class based on its style and value."""
     return (
-        'swimlane' in style 
-        or '<b>' in value 
+        'swimlane' in style
+        or '<b>' in value
         or (style and 'verticalAlign=top;align=left;overflow=fill' in style)
     )
 
@@ -1060,13 +1059,13 @@ def extract_class_name(cell_value: str) -> str:
         class_match = re.search(r'<b>(.*?)</b>', cell_value)
         if class_match:
             return clean_html_tags(class_match.group(1))
-    
+
     # Handle HTML format with margin-top style
     if 'margin-top:4px' in cell_value:
         class_match = re.search(r'<b>(.*?)</b>', cell_value)
         if class_match:
             return clean_html_tags(class_match.group(1))
-    
+
     return clean_html_tags(cell_value)
 
 def is_enumeration(value: str) -> bool:
@@ -1088,7 +1087,7 @@ def clean_enumeration_name(value: str) -> str:
     """Remove enumeration stereotypes and clean the name."""
     # Handle HTML encoded characters first
     value = value.replace('&lt;', '<').replace('&gt;', '>')
-    
+
     replacements = [
         ("<<Enum>>", ""), ("«Enum»", ""),
         ("<<enum>>", ""), ("«enum»", ""),
@@ -1096,20 +1095,20 @@ def clean_enumeration_name(value: str) -> str:
         ("<<enumeration>>", ""), ("«enumeration»", ""),
         ("Enumeration", ""), ("enumeration", "")
     ]
-    
+
     result = value
     for old, new in replacements:
         result = result.replace(old, new)
-    
+
     # Clean any remaining HTML and whitespace
     result = clean_html_tags(result)
-    
+
     # If there are multiple lines, take the last non-empty line
     if '\n' in result:
         lines = [line.strip() for line in result.split('\n') if line.strip()]
         if lines:
             result = lines[-1]
-    
+
     return result.strip()
 
 def extract_enum_name_from_html(value: str) -> str:
@@ -1123,7 +1122,7 @@ def extract_enum_name_from_html(value: str) -> str:
 def extract_literals_from_html(value: str) -> list:
     """Extract enumeration literals from HTML content."""
     literals = []
-    
+
     # Handle div-separated literals
     if '<div>' in value:
         # Split by div tags and clean each part
@@ -1140,7 +1139,7 @@ def extract_literals_from_html(value: str) -> list:
             clean_literal = clean_html_tags(literal).lstrip('-').strip()
             if clean_literal and not is_enumeration(clean_literal) and clean_literal != '<br>':
                 literals.append(clean_literal)
-    
+
     return literals
 
 def extract_literals_from_cells(root: ET.Element, cell_id: str) -> list:
@@ -1171,14 +1170,14 @@ def parse_parameters(params_str: str) -> list:
         param_list = params_str.split(',')
         for param in param_list:
             param = param.strip()
-            
+
             # Check for default value
             default_value = None
             if '=' in param:
                 param_parts = param.split('=')
                 param = param_parts[0].strip()
                 default_value = param_parts[1].strip().strip('"\'')  # Remove quotes
-            
+
             # Check for type annotation
             if ':' in param:
                 param_name, param_type = param.split(':')
@@ -1196,7 +1195,7 @@ def parse_parameters(params_str: str) -> list:
                 else:
                     param_type = 'str'
                     param_name = param
-                
+
                 parameters.append({
                     'name': param_name.strip(),
                     'type': param_type,
@@ -1207,7 +1206,7 @@ def parse_parameters(params_str: str) -> list:
 def extract_attributes_from_html(value: str) -> list:
     """Extract class attributes from HTML content."""
     attributes = []
-    
+
     # Handle div-separated attributes
     if '<div>' in value:
         parts = value.split('</div>')
@@ -1226,13 +1225,13 @@ def extract_attributes_from_html(value: str) -> list:
         attr_name = attr_parts[0].strip().lstrip('+')
         attr_type = attr_parts[1].strip() if len(attr_parts) > 1 else 'str'
         attributes.append((attr_name, attr_type))
-    
+
     return attributes
 
 def process_class_attributes(cell_value: str) -> list:
     """Process class attributes and return a list of Property objects."""
     properties = []
-    
+
     attributes = extract_attributes_from_html(cell_value)
     for attr_name, attr_type in attributes:
         # Map type strings to actual types
@@ -1246,8 +1245,8 @@ def process_class_attributes(cell_value: str) -> list:
             'datetime': DateTimeType,
             'timedelta': TimeDeltaType
         }
-        
+
         attr_type_obj = type_mapping.get(attr_type, StringType)
         properties.append(Property(name=attr_name, type=attr_type_obj))
-    
+
     return properties

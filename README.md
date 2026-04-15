@@ -47,7 +47,7 @@ If you are interested in developing new code generators or designing BESSER exte
 Run the setup script to create a virtual environment (if not already created), install the requirements, and configure the ``PYTHONPATH``. This ensures compatibility with IDEs (like VSCode) that may not automatically set the ``PYTHONPATH`` for recognizing *besser* as an importable module.
 
     $ python -m venv venv
-    $ venv/Script/activate
+    $ venv/Scripts/activate
     $ pip install -r requirements.txt
 
 ### Step 3: Run an example

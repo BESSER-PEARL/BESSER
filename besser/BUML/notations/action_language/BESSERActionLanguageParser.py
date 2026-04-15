@@ -1,7 +1,6 @@
 # Generated from D:/Projects/BESSER/besser/BUML/notations/action_language/BESSERActionLanguage.g4 by ANTLR 4.13.2
 # encoding: utf-8
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
 	from typing import TextIO
@@ -231,28 +230,28 @@ class BESSERActionLanguageParser ( Parser ):
 
     sharedContextCache = PredictionContextCache()
 
-    literalNames = [ "<INVALID>", "'def'", "'('", "','", "')'", "'->'", 
-                     "':'", "'='", "';'", "'while'", "'do'", "'for'", "'in'", 
-                     "'{'", "'}'", "'if'", "'else'", "'return'", "'[]'", 
-                     "'?'", "'['", "']'", "'any'", "'float'", "'str'", "'int'", 
-                     "'bool'", "'nothing'", "'||'", "'&&'", "'=='", "'!='", 
-                     "'<'", "'<='", "'>'", "'>='", "'instanceof'", "'+'", 
-                     "'-'", "'*'", "'/'", "'%'", "'!'", "'??'", "'.'", "'this'", 
+    literalNames = [ "<INVALID>", "'def'", "'('", "','", "')'", "'->'",
+                     "':'", "'='", "';'", "'while'", "'do'", "'for'", "'in'",
+                     "'{'", "'}'", "'if'", "'else'", "'return'", "'[]'",
+                     "'?'", "'['", "']'", "'any'", "'float'", "'str'", "'int'",
+                     "'bool'", "'nothing'", "'||'", "'&&'", "'=='", "'!='",
+                     "'<'", "'<='", "'>'", "'>='", "'instanceof'", "'+'",
+                     "'-'", "'*'", "'/'", "'%'", "'!'", "'??'", "'.'", "'this'",
                      "'new'", "'true'", "'false'", "'null'", "'::'", "'..'" ]
 
-    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
+    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
                       "ID", "INT", "FLOAT", "WS", "NL", "STR" ]
 
     RULE_function_definition = 0
@@ -316,20 +315,20 @@ class BESSERActionLanguageParser ( Parser ):
     RULE_range_literal = 58
     RULE_symbol = 59
 
-    ruleNames =  [ "function_definition", "parameter", "parameterWithDefault", 
-                   "statements", "cond_loop", "while", "do_while", "for", 
-                   "iterator", "conditional_branch", "block", "condition", 
-                   "assign_target", "explicit_declaration", "assignment", 
-                   "return", "type", "single_type", "sequence_type", "optional_type", 
-                   "function_type", "any_type", "real_type", "string_type", 
-                   "int_type", "bool_type", "nothing", "classifier_type", 
-                   "expression", "ternary", "boolean", "or", "and", "equality", 
-                   "comparison", "instanceof", "arithmetic", "plus_minus", 
-                   "mult_div", "remain", "primary", "selection_expression", 
-                   "field_access", "array_access", "function_call", "atomic", 
-                   "procedure_call", "this", "new", "literal", "single_literal", 
-                   "int_literal", "string_literal", "bool_literal", "real_literal", 
-                   "null_literal", "enum_literal", "sequence_literal", "range_literal", 
+    ruleNames =  [ "function_definition", "parameter", "parameterWithDefault",
+                   "statements", "cond_loop", "while", "do_while", "for",
+                   "iterator", "conditional_branch", "block", "condition",
+                   "assign_target", "explicit_declaration", "assignment",
+                   "return", "type", "single_type", "sequence_type", "optional_type",
+                   "function_type", "any_type", "real_type", "string_type",
+                   "int_type", "bool_type", "nothing", "classifier_type",
+                   "expression", "ternary", "boolean", "or", "and", "equality",
+                   "comparison", "instanceof", "arithmetic", "plus_minus",
+                   "mult_div", "remain", "primary", "selection_expression",
+                   "field_access", "array_access", "function_call", "atomic",
+                   "procedure_call", "this", "new", "literal", "single_literal",
+                   "int_literal", "string_literal", "bool_literal", "real_literal",
+                   "null_literal", "enum_literal", "sequence_literal", "range_literal",
                    "symbol" ]
 
     EOF = Token.EOF
@@ -488,7 +487,7 @@ class BESSERActionLanguageParser ( Parser ):
                         self.match(BESSERActionLanguageParser.T__2)
                         self.state = 125
                         localctx._parameter = self.parameter()
-                        localctx.params.append(localctx._parameter) 
+                        localctx.params.append(localctx._parameter)
                     self.state = 130
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,0,self._ctx)
@@ -1942,7 +1941,7 @@ class BESSERActionLanguageParser ( Parser ):
                         self.match(BESSERActionLanguageParser.T__2)
                         self.state = 274
                         localctx._type = self.type_()
-                        localctx.params_type.append(localctx._type) 
+                        localctx.params_type.append(localctx._type)
                     self.state = 279
                     self._errHandler.sync(self)
                     _alt = self._interp.adaptivePredict(self._input,14,self._ctx)
@@ -2439,7 +2438,7 @@ class BESSERActionLanguageParser ( Parser ):
                     self.state = 323
                     self.match(BESSERActionLanguageParser.T__5)
                     self.state = 324
-                    localctx.elze = self.expression() 
+                    localctx.elze = self.expression()
                 self.state = 330
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,18,self._ctx)
@@ -2567,7 +2566,7 @@ class BESSERActionLanguageParser ( Parser ):
                     self.state = 337
                     self.match(BESSERActionLanguageParser.T__27)
                     self.state = 338
-                    localctx.right = self.and_(0) 
+                    localctx.right = self.and_(0)
                 self.state = 343
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,19,self._ctx)
@@ -2647,7 +2646,7 @@ class BESSERActionLanguageParser ( Parser ):
                     self.state = 348
                     self.match(BESSERActionLanguageParser.T__28)
                     self.state = 349
-                    localctx.right = self.equality(0) 
+                    localctx.right = self.equality(0)
                 self.state = 354
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,20,self._ctx)
@@ -2735,7 +2734,7 @@ class BESSERActionLanguageParser ( Parser ):
                         self._errHandler.reportMatch(self)
                         self.consume()
                     self.state = 360
-                    localctx.right = self.comparison(0) 
+                    localctx.right = self.comparison(0)
                 self.state = 365
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,21,self._ctx)
@@ -2823,7 +2822,7 @@ class BESSERActionLanguageParser ( Parser ):
                         self._errHandler.reportMatch(self)
                         self.consume()
                     self.state = 371
-                    localctx.right = self.instanceof(0) 
+                    localctx.right = self.instanceof(0)
                 self.state = 376
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,22,self._ctx)
@@ -2907,7 +2906,7 @@ class BESSERActionLanguageParser ( Parser ):
                     self.state = 381
                     self.match(BESSERActionLanguageParser.T__35)
                     self.state = 382
-                    localctx.the_type = self.classifier_type() 
+                    localctx.the_type = self.classifier_type()
                 self.state = 387
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,23,self._ctx)
@@ -3043,7 +3042,7 @@ class BESSERActionLanguageParser ( Parser ):
                         self._errHandler.reportMatch(self)
                         self.consume()
                     self.state = 395
-                    localctx.right = self.mult_div(0) 
+                    localctx.right = self.mult_div(0)
                 self.state = 400
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,24,self._ctx)
@@ -3131,7 +3130,7 @@ class BESSERActionLanguageParser ( Parser ):
                         self._errHandler.reportMatch(self)
                         self.consume()
                     self.state = 406
-                    localctx.right = self.remain(0) 
+                    localctx.right = self.remain(0)
                 self.state = 411
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,25,self._ctx)
@@ -3211,7 +3210,7 @@ class BESSERActionLanguageParser ( Parser ):
                     self.state = 416
                     self.match(BESSERActionLanguageParser.T__40)
                     self.state = 417
-                    localctx.right = self.primary(0) 
+                    localctx.right = self.primary(0)
                 self.state = 422
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,26,self._ctx)
@@ -3236,7 +3235,7 @@ class BESSERActionLanguageParser ( Parser ):
         def getRuleIndex(self):
             return BESSERActionLanguageParser.RULE_primary
 
-     
+
         def copyFrom(self, ctx:ParserRuleContext):
             super().copyFrom(ctx)
 
@@ -3454,7 +3453,7 @@ class BESSERActionLanguageParser ( Parser ):
                     self.state = 437
                     self.match(BESSERActionLanguageParser.T__42)
                     self.state = 438
-                    localctx.elze = self.expression() 
+                    localctx.elze = self.expression()
                 self.state = 443
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,28,self._ctx)
@@ -3479,7 +3478,7 @@ class BESSERActionLanguageParser ( Parser ):
         def getRuleIndex(self):
             return BESSERActionLanguageParser.RULE_selection_expression
 
-     
+
         def copyFrom(self, ctx:ParserRuleContext):
             super().copyFrom(ctx)
 
@@ -3704,7 +3703,7 @@ class BESSERActionLanguageParser ( Parser ):
                         self.match(BESSERActionLanguageParser.T__3)
                         pass
 
-             
+
                 self.state = 474
                 self._errHandler.sync(self)
                 _alt = self._interp.adaptivePredict(self._input,32,self._ctx)
@@ -4957,65 +4956,65 @@ class BESSERActionLanguageParser ( Parser ):
     def ternary_sempred(self, localctx:TernaryContext, predIndex:int):
             if predIndex == 0:
                 return self.precpred(self._ctx, 2)
-         
+
 
     def or_sempred(self, localctx:OrContext, predIndex:int):
             if predIndex == 1:
                 return self.precpred(self._ctx, 2)
-         
+
 
     def and_sempred(self, localctx:AndContext, predIndex:int):
             if predIndex == 2:
                 return self.precpred(self._ctx, 2)
-         
+
 
     def equality_sempred(self, localctx:EqualityContext, predIndex:int):
             if predIndex == 3:
                 return self.precpred(self._ctx, 2)
-         
+
 
     def comparison_sempred(self, localctx:ComparisonContext, predIndex:int):
             if predIndex == 4:
                 return self.precpred(self._ctx, 2)
-         
+
 
     def instanceof_sempred(self, localctx:InstanceofContext, predIndex:int):
             if predIndex == 5:
                 return self.precpred(self._ctx, 2)
-         
+
 
     def plus_minus_sempred(self, localctx:Plus_minusContext, predIndex:int):
             if predIndex == 6:
                 return self.precpred(self._ctx, 2)
-         
+
 
     def mult_div_sempred(self, localctx:Mult_divContext, predIndex:int):
             if predIndex == 7:
                 return self.precpred(self._ctx, 2)
-         
+
 
     def remain_sempred(self, localctx:RemainContext, predIndex:int):
             if predIndex == 8:
                 return self.precpred(self._ctx, 2)
-         
+
 
     def primary_sempred(self, localctx:PrimaryContext, predIndex:int):
             if predIndex == 9:
                 return self.precpred(self._ctx, 1)
-         
+
 
     def selection_expression_sempred(self, localctx:Selection_expressionContext, predIndex:int):
             if predIndex == 10:
                 return self.precpred(self._ctx, 3)
-         
+
 
             if predIndex == 11:
                 return self.precpred(self._ctx, 2)
-         
+
 
             if predIndex == 12:
                 return self.precpred(self._ctx, 1)
-         
+
 
 
 

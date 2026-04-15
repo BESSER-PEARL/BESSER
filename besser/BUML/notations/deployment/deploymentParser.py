@@ -1,7 +1,6 @@
 # Generated from ./deployment.g4 by ANTLR 4.13.1
 # encoding: utf-8
 from antlr4 import *
-from io import StringIO
 import sys
 if sys.version_info[1] > 5:
 	from typing import TextIO
@@ -120,34 +119,34 @@ class deploymentParser ( Parser ):
 
     sharedContextCache = PredictionContextCache()
 
-    literalNames = [ "<INVALID>", "'Deployment model'", "'{'", "'applications'", 
-                     "'}'", "'services'", "'containers'", "'deployments'", 
-                     "'regions'", "'clusters'", "'->'", "'name'", "':'", 
-                     "','", "'image'", "'port'", "'cpu_required'", "'m'", 
-                     "'memory_required'", "'Mi'", "'domain_model'", "'target_port'", 
-                     "'protocol'", "'type'", "'app_name'", "'cpu_limit'", 
-                     "'memory_limit'", "'replicas'", "'['", "']'", "'zones'", 
-                     "'public_cluster'", "'number_of_nodes'", "'provider'", 
-                     "'config_file'", "'net_config'", "'networks'", "'subnetworks'", 
-                     "'private_cluster'", "'HTTP'", "'HTTPS'", "'TCP'", 
-                     "'UDP'", "'ALL'", "'lb'", "'ingress'", "'egress'", 
-                     "'google'", "'aws'", "'azure'", "'other'", "'True'", 
+    literalNames = [ "<INVALID>", "'Deployment model'", "'{'", "'applications'",
+                     "'}'", "'services'", "'containers'", "'deployments'",
+                     "'regions'", "'clusters'", "'->'", "'name'", "':'",
+                     "','", "'image'", "'port'", "'cpu_required'", "'m'",
+                     "'memory_required'", "'Mi'", "'domain_model'", "'target_port'",
+                     "'protocol'", "'type'", "'app_name'", "'cpu_limit'",
+                     "'memory_limit'", "'replicas'", "'['", "']'", "'zones'",
+                     "'public_cluster'", "'number_of_nodes'", "'provider'",
+                     "'config_file'", "'net_config'", "'networks'", "'subnetworks'",
+                     "'private_cluster'", "'HTTP'", "'HTTPS'", "'TCP'",
+                     "'UDP'", "'ALL'", "'lb'", "'ingress'", "'egress'",
+                     "'google'", "'aws'", "'azure'", "'other'", "'True'",
                      "'False'" ]
 
-    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>", 
-                      "<INVALID>", "WS", "ML_COMMENT", "SL_COMMENT", "INT", 
+    symbolicNames = [ "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "<INVALID>", "<INVALID>", "<INVALID>",
+                      "<INVALID>", "WS", "ML_COMMENT", "SL_COMMENT", "INT",
                       "ID", "ID_REG", "STRING" ]
 
     RULE_architecture = 0
@@ -167,9 +166,9 @@ class deploymentParser ( Parser ):
     RULE_provider = 14
     RULE_boolean = 15
 
-    ruleNames =  [ "architecture", "application", "service", "container", 
-                   "deployment", "region", "cluster", "publicCluster", "privateCluster", 
-                   "service_list", "deployment_list", "region_list", "protocol", 
+    ruleNames =  [ "architecture", "application", "service", "container",
+                   "deployment", "region", "cluster", "publicCluster", "privateCluster",
+                   "service_list", "deployment_list", "region_list", "protocol",
                    "service_type", "provider", "boolean" ]
 
     EOF = Token.EOF
@@ -320,13 +319,13 @@ class deploymentParser ( Parser ):
             self.match(deploymentParser.T__2)
             self.state = 35
             self.match(deploymentParser.T__1)
-            self.state = 37 
+            self.state = 37
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
                 self.state = 36
                 self.application()
-                self.state = 39 
+                self.state = 39
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==10):
@@ -338,13 +337,13 @@ class deploymentParser ( Parser ):
             self.match(deploymentParser.T__4)
             self.state = 43
             self.match(deploymentParser.T__1)
-            self.state = 45 
+            self.state = 45
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
                 self.state = 44
                 self.service()
-                self.state = 47 
+                self.state = 47
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==10):
@@ -356,13 +355,13 @@ class deploymentParser ( Parser ):
             self.match(deploymentParser.T__5)
             self.state = 51
             self.match(deploymentParser.T__1)
-            self.state = 53 
+            self.state = 53
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
                 self.state = 52
                 self.container()
-                self.state = 55 
+                self.state = 55
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==10):
@@ -374,13 +373,13 @@ class deploymentParser ( Parser ):
             self.match(deploymentParser.T__6)
             self.state = 59
             self.match(deploymentParser.T__1)
-            self.state = 61 
+            self.state = 61
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
                 self.state = 60
                 self.deployment()
-                self.state = 63 
+                self.state = 63
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==10):
@@ -396,13 +395,13 @@ class deploymentParser ( Parser ):
                 self.match(deploymentParser.T__7)
                 self.state = 67
                 self.match(deploymentParser.T__1)
-                self.state = 69 
+                self.state = 69
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 while True:
                     self.state = 68
                     self.region()
-                    self.state = 71 
+                    self.state = 71
                     self._errHandler.sync(self)
                     _la = self._input.LA(1)
                     if not (_la==10):
@@ -416,13 +415,13 @@ class deploymentParser ( Parser ):
             self.match(deploymentParser.T__8)
             self.state = 78
             self.match(deploymentParser.T__1)
-            self.state = 80 
+            self.state = 80
             self._errHandler.sync(self)
             _la = self._input.LA(1)
             while True:
                 self.state = 79
                 self.cluster()
-                self.state = 82 
+                self.state = 82
                 self._errHandler.sync(self)
                 _la = self._input.LA(1)
                 if not (_la==10 or _la==38):

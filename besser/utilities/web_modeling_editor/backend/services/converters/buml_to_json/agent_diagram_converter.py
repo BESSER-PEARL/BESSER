@@ -3,12 +3,14 @@ Agent converter module for BUML to JSON conversion.
 Handles agent diagram processing and function analysis.
 """
 
+import logging
 import uuid
 import ast
-from typing import Dict, Any, List
+from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 from ...utils.layout_calculator import (
-    calculate_center_point,
     determine_connection_direction,
     calculate_connection_points,
     calculate_path_points,
@@ -19,11 +21,11 @@ from ...utils.layout_calculator import (
 def analyze_function_node(node: ast.FunctionDef, source_code: str) -> Dict[str, Any]:
     """
     Analyze a function node to determine its reply type and content.
-    
+
     Args:
         node: AST function definition node
         source_code: Source code of the function
-        
+
     Returns:
         Dictionary with reply type and content information
     """
@@ -94,10 +96,10 @@ def analyze_function_node(node: ast.FunctionDef, source_code: str) -> Dict[str, 
 def agent_buml_to_json(content: str) -> Dict[str, Any]:
     """
     Convert an agent Python file content to JSON format matching the frontend structure.
-    
+
     Args:
         content: Agent model Python code as string
-        
+
     Returns:
         Dictionary representing the agent diagram in JSON format
     """
@@ -118,13 +120,12 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
     states = {}  # name -> state_id mapping
     functions = {}  # name -> function_node mapping
     intents = {}  # name -> intent_id mapping
-    state_machine_name = "Generated_State_Machine"
 
-    
+
     # Track metadata for comments
     state_comments = {}  # state_var -> comment_text
     agent_comment = None  # Agent metadata comment
-    
+
     def _add_action_elements_to_state(state_id: str, action_data: Any, fallback: bool = False) -> None:
         element_type = "AgentStateFallbackBody" if fallback else "AgentStateBody"
         state_key = "fallbackBodies" if fallback else "bodies"
@@ -337,7 +338,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             else:
                                 states_x = -280
                                 states_y += 220
-                                
+
         # Second pass: collect all functions
         states_x = -280
         states_y += 220
@@ -387,7 +388,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 if callable_source:
                     return callable_source
             return condition_ref_name
-        
+
         # Third pass collect all actions
         actions = {}
         for node in ast.walk(tree):
@@ -470,7 +471,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     if action_var in custom_code_actions:
                         function_name = custom_code_actions[action_var]  # e.g., 'action_name'
                         actions[body_var] = function_name  # Store the resolved function name
-        
+
         # Create initial node
         initial_node_id = str(uuid.uuid4())
         elements[initial_node_id] = {
@@ -485,10 +486,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 "height": 45,
             },
         }
-        
+
         # Store the initial node ID for later use with transitions
 
-        
+
         # Second pass: collect states and their configurations
         for node in ast.walk(tree):
             if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
@@ -497,14 +498,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     state_id = str(uuid.uuid4())
                     state_name = var_name  # Default to variable name
                     is_initial = False
-                    
+
                     # Try to extract state name and initial flag from keywords
                     for kw in node.value.keywords:
                         if kw.arg == "name" and isinstance(kw.value, ast.Constant):
                             state_name = kw.value.value
                         elif kw.arg == "initial" and isinstance(kw.value, ast.Constant):
                             is_initial = kw.value.value
-                    
+
                     # Create the state object
                     state_obj = {
                         "id": state_id,
@@ -513,7 +514,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "bodies": [],
                         "fallback_bodies": [],
                     }
-                    
+
                     # Store by variable name for transitions
                     states[var_name] = state_obj
                     # Create element for visualization
@@ -548,7 +549,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             for kw in node.value.keywords:
                                 if kw.arg == "description":
                                     state_comments[state_var] = ast.literal_eval(kw.value)
-                    
+
                     # Also store by state name for body lookup
                     if state_name != var_name:
                         states[state_name] = state_obj
@@ -568,27 +569,27 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "bodies": [],
                         "fallbackBodies": [],
                     }
-                    
+
                     # Update position for next element
                     if states_x < 200:
                         states_x += 490
                     else:
                         states_x = -280
                         states_y += 220
-        
+
         # Find initial state and create initial transition
         initial_state = None
         for state_key, state_info in states.items():
             if state_info["is_initial"]:
                 initial_state = state_info
                 break
-        
+
         # If no initial state is marked, use the first state as fallback
         if not initial_state and states:
             # Get the first state
             first_state_key = next(iter(states))
             initial_state = states[first_state_key]
-            
+
         if initial_state:
             initial_rel_id = str(uuid.uuid4())
             relationships[initial_rel_id] = {
@@ -635,9 +636,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                 ],
                 "isManuallyLayouted": False,
             }
-                                
+
         # Third pass: process state bodies and transitions
-        
+
         for node in ast.walk(tree):
             try:
                 if (
@@ -726,7 +727,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 }
 
                             break
-                        
+
                         if source_state in states and target_state in states:
                             source_element = elements[states[source_state]["id"]]
                             target_element = elements[states[target_state]["id"]]
@@ -800,7 +801,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 "custom": custom_block,
                             }
 
-                    
+
                     # Handle set_body
                     elif node.value.func.attr == "set_body":
                         try:
@@ -817,18 +818,18 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         function_name = body_args[0].value
                                 if not function_name:
                                     continue
-                                
+
                             state_name = node.value.func.value.id
                             if state_name not in states:
                                 continue
-                                
+
                             state = states[state_name]
-                            
+
                             if function_name in functions or (isinstance(actions.get(function_name), str) and actions.get(function_name) in functions):
                                 if (isinstance(actions.get(function_name), str) and actions.get(function_name) in functions):
                                     function_name = actions[function_name]
                                 result = analyze_function_node(functions[function_name]["node"], functions[function_name]["source"])
-                                
+
                                 if result["replyType"] == "text":
                                     for reply in result["replies"]:
                                         body_id = str(uuid.uuid4())
@@ -915,7 +916,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                             "replyType": "text"
                                         }
                                         elements[state["id"]]["bodies"].append(body_id)
-                            
+
 
                             else:
                                 # Fallback if function not found
@@ -933,17 +934,16 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                     },
                                 }
                                 elements[state["id"]]["bodies"].append(body_id)
-                            
+
                         except Exception as e:
-                            import traceback
-                            traceback.print_exc()
+                            logger.error("Error processing agent body: %s", e, exc_info=True)
                             continue
 
                     # Add handling for fallback bodies
                     elif node.value.func.attr == "set_fallback_body":
                         try:
                             # Extract function name from Body('function_name', function_name) pattern
-                            
+
                             function_name = None
                             # Extract function name from Body('function_name', function_name) pattern
                             if isinstance(node.value.args[0], ast.Name):
@@ -958,14 +958,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
 
                                 if not function_name:
                                     continue
-                        
+
 
                             state_name = node.value.func.value.id
                             if state_name not in states:
                                 continue
-                                
+
                             state = states[state_name]
-                            
+
                             mapped_action = actions.get(function_name)
                             if function_name in functions or (isinstance(mapped_action, str) and mapped_action in functions):
                                 if isinstance(mapped_action, str) and mapped_action in functions:
@@ -1020,7 +1020,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         "replyType": "code"
                                     }
                                     elements[state["id"]]["fallbackBodies"].append(body_id)
-                            
+
                             elif function_name in actions:
                                 if actions[function_name] == 'LLMReply':
                                     body_id = str(uuid.uuid4())
@@ -1056,7 +1056,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                         "replyType": "text"
                                     }
                                     elements[state["id"]]["fallbackBodies"].append(body_id)
-                            
+
                             else:
                                 # Fallback if function not found
                                 body_id = str(uuid.uuid4())
@@ -1074,10 +1074,10 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 }
                                 elements[state["id"]]["fallbackBodies"].append(body_id)
                         except Exception as e:
+                            logger.warning("Error processing agent fallback body: %s", e, exc_info=True)
                             continue
             except Exception as e:
-                import traceback
-                traceback.print_exc()
+                logger.error("Error processing agent state machine: %s", e, exc_info=True)
                 continue
         # Find initial state and create initial transition
         initial_state = None
@@ -1085,13 +1085,13 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             if state_info["is_initial"]:
                 initial_state = state_info
                 break
-        
+
         # If no initial state is marked, use the first state as fallback
         if not initial_state and states:
             # Get the first state
             first_state_key = next(iter(states))
             initial_state = states[first_state_key]
-            
+
         if initial_state:
             initial_rel_id = str(uuid.uuid4())
             relationships[initial_rel_id] = {
@@ -1166,7 +1166,7 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             if state_var in states:
                 comment_id = str(uuid.uuid4())
                 state_id = states[state_var]["id"]
-                
+
                 elements[comment_id] = {
                     "id": comment_id,
                     "name": comment_text,
@@ -1179,28 +1179,28 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                         "height": 100,
                     },
                 }
-                
+
                 # Create Link relationship
                 link_id = str(uuid.uuid4())
                 source_element = elements[comment_id]
                 target_element = elements[state_id]
-                
+
                 source_dir, target_dir = determine_connection_direction(
                     source_element["bounds"], target_element["bounds"]
                 )
-                
+
                 source_point = calculate_connection_points(
                     source_element["bounds"], source_dir
                 )
                 target_point = calculate_connection_points(
                     target_element["bounds"], target_dir
                 )
-                
+
                 path_points = calculate_path_points(
                     source_point, target_point, source_dir, target_dir
                 )
                 rel_bounds = calculate_relationship_bounds(path_points)
-                
+
                 relationships[link_id] = {
                     "id": link_id,
                     "name": "",
@@ -1230,9 +1230,9 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     },
                     "isManuallyLayouted": False,
                 }
-                
+
                 comment_y += 130
-                                
+
         return {
             "version": "3.0.0",
             "type": "AgentDiagram",
@@ -1243,8 +1243,8 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
             "assessments": {},
         }
 
-    except Exception as e:
-        # Return an empty diagram on error
+    except Exception:
+        logger.exception("Error converting agent BUML to JSON; returning partial diagram")
         return {
             "version": "3.0.0",
             "type": "AgentDiagram",

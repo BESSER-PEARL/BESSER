@@ -4,7 +4,7 @@ import re
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import (
     DomainModel, IntegerType, StringType, Class,
-    BooleanType, FloatType, Enumeration, DateType,
+    BooleanType, FloatType, DateType,
     DateTimeType, TimeType,
 )
 from besser.generators import GeneratorInterface
@@ -28,10 +28,10 @@ class JSONSchemaGenerator(GeneratorInterface):
     def _get_property_type(self, property_type):
         """
         Maps B-UML types to JSON schema types and returns format when needed.
-        
+
         Args:
             property_type: The B-UML type to map.
-            
+
         Returns:
             tuple: (type, format) where format is None if not applicable
         """
@@ -61,24 +61,24 @@ class JSONSchemaGenerator(GeneratorInterface):
     def _get_property_description(self, attr, prop_type):
         """
         Generate proper description format for Smart Data Models.
-        
+
         Args:
             attr: The attribute object
             prop_type: The JSON schema type
-            
+
         Returns:
             str: Formatted description
         """
         # Map JSON schema types to schema.org URLs
         schema_org_mapping = {
             "integer": "https://schema.org/Number",
-            "number": "https://schema.org/Number", 
+            "number": "https://schema.org/Number",
             "string": "https://schema.org/Text",
             "boolean": "https://schema.org/Boolean"
         }
-        
+
         model_url = schema_org_mapping.get(prop_type, "https://schema.org/Text")
-        
+
         if attr.metadata and attr.metadata.description:
             return f"Property. Model:'{model_url}'. {attr.metadata.description}"
         else:
@@ -87,23 +87,23 @@ class JSONSchemaGenerator(GeneratorInterface):
     def _prepare_smart_data_schema_for_class(self, class_def):
         """
         Prepares schema data for Smart Data format for a specific class.
-        
+
         Args:
             class_def: The class to prepare the schema for.
-            
+
         Returns:
             dict: A dictionary containing the schema data.
         """
         # Build class-specific properties
         class_properties = {}
-        
+
         # Add the mandatory type property
         class_properties["type"] = {
             "type": "string",
             "enum": [class_def.name],
             "description": "Property. NGSI Entity type"
         }
-        
+
         # Process class attributes
         for attr in class_def.attributes:
             prop_type, prop_format = self._get_property_type(attr.type)
@@ -177,7 +177,7 @@ class JSONSchemaGenerator(GeneratorInterface):
             "title": f"Smart Data models - {class_def.name} schema",
             "modelTags": "",
             "description": (
-                class_def.metadata.description if class_def.metadata and class_def.metadata.description 
+                class_def.metadata.description if class_def.metadata and class_def.metadata.description
                 else f"This class represents {class_def.name} for smart data models implementation"
             ),
             "type": "object",
@@ -232,7 +232,7 @@ class JSONSchemaGenerator(GeneratorInterface):
 
                 # Prepare schema data for this class
                 schema_data = self._prepare_smart_data_schema_for_class(class_def)
-                
+
                 # Generate schema.json file
                 file_path = os.path.join(class_dir, "schema.json")
                 with open(file_path, mode="w", encoding='utf-8') as f:
@@ -241,7 +241,7 @@ class JSONSchemaGenerator(GeneratorInterface):
 
                 # Generate all required example files
                 base_example = self.generate_base_example(class_def)
-                
+
                 # example.json (key-value format)
                 example_path = os.path.join(examples_dir, "example.json")
                 with open(example_path, mode="w", encoding='utf-8') as f:
@@ -331,7 +331,7 @@ class JSONSchemaGenerator(GeneratorInterface):
         # Add common Smart Data Model properties
         example.update({
             "name": "example-name",
-            "description": "example-description", 
+            "description": "example-description",
             "dateCreated": "2025-06-25T08:00:00Z",
             "dateModified": "2025-06-30T14:15:00Z",
             "source": "https://example.org/source"
@@ -361,7 +361,7 @@ class JSONSchemaGenerator(GeneratorInterface):
     def generate_normalized_example(self, base_example):
         """Generate NGSI v2 normalized example."""
         normalized = {}
-        
+
         for key, value in base_example.items():
             if key in ["id", "type"]:
                 normalized[key] = value
@@ -374,7 +374,7 @@ class JSONSchemaGenerator(GeneratorInterface):
                     }
                 elif isinstance(value, str) and ("date" in key.lower() or "time" in key.lower()):
                     normalized[key] = {
-                        "type": "DateTime", 
+                        "type": "DateTime",
                         "value": value
                     }
                 elif isinstance(value, bool):
@@ -406,7 +406,7 @@ class JSONSchemaGenerator(GeneratorInterface):
     def generate_normalized_jsonld_example(self, base_example):
         """Generate NGSI-LD normalized example."""
         normalized_jsonld = {}
-        
+
         for key, value in base_example.items():
             if key in ["id", "type"]:
                 normalized_jsonld[key] = value
@@ -434,7 +434,7 @@ class JSONSchemaGenerator(GeneratorInterface):
         normalized_jsonld["@context"] = [
             "https://smartdatamodels.org/context.jsonld"
         ]
-        
+
         return normalized_jsonld
 
     def _get_example_value_for_attribute(self, attr):

@@ -15,7 +15,7 @@ a simplified version of the better known UML, the Unified Modeling Language).
    led by the `Luxembourg Institute of Science and Technology <https://www.list.lu/>`_ with the participation
    of the `Snt/University of Luxembourg <https://www.uni.lu/snt-en/>`_ and open to all your contributions!
 
-BESSER enables users to model, generate, perzonalize and deploy smart and complex software systems. BESSER is
+BESSER enables users to model, generate, personalize and deploy smart and complex software systems. BESSER is
 based around our B-UML language and a number of generators built on top of it (See the high-level architecture below).
 
 .. image:: img/blc.png
@@ -33,8 +33,27 @@ a target technology.
    The editor's frontend is maintained in the `BESSER-WEB-MODELING-EDITOR <https://github.com/BESSER-PEARL/BESSER-WEB-MODELING-EDITOR>`_
    project, included here only as a submodule (``besser/utilities/web_modeling_editor/frontend``) for local deployments.
 
-If you would like to contribute, the :doc:`contributing/index` section now includes a comprehensive onboarding guide
-for humans and automation alike.
+Getting Started
+---------------
+
+Choose your path depending on what you want to do:
+
+**I want to design models visually**
+   Go to `editor.besser-pearl.org <https://editor.besser-pearl.org>`_ and start modeling
+   immediately. See :doc:`web_editor` for details.
+
+**I want to use BESSER as a Python library**
+   Install with ``pip install besser``, then follow the :doc:`installation` guide. Start
+   with the :doc:`buml_language` to learn how to define models in Python, then pick a
+   :doc:`generator <generators>` to produce code.
+
+**I want to contribute to the project**
+   Read the :doc:`contributing/index` section for onboarding, coding standards, and
+   how to add new generators or model types.
+
+**I want to build my own code generator**
+   See :doc:`generators/build_generator` for a step-by-step guide to creating and
+   registering a custom generator.
 
 Contents
 --------
@@ -45,7 +64,6 @@ Contents
    installation
    web_editor
    buml_language
-   besser_action_language
    generators
    utilities
    examples

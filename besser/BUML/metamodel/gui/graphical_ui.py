@@ -332,18 +332,23 @@ class ViewElement(NamedElement):
         visibility: str = "public",
         timestamp: int = None,
         styling: Styling = None,
+        component_id: str = None,
+        tag_name: str = None,
+        css_classes: list = None,
+        custom_attributes: dict = None,
+        display_order: float = None,
+        **kwargs,
     ):
         super().__init__(name, visibility, timestamp)
         self.description: str = description
         self.styling: Styling = styling
         self._owner: "ViewContainer" = None
-        # Store original component metadata for code generation fidelity
-        self.component_id: str | None = None  # Original GrapesJS component ID
-        self.component_type: str | None = None  # Original GrapesJS component type
-        self.tag_name: str | None = None  # HTML tag name
-        self.css_classes: list[str] = []  # CSS class list
-        self.custom_attributes: dict = {}  # Custom HTML attributes
-        self.display_order: int = 0  # Preserve original order from JSON
+        self.component_id: str | None = component_id
+        self.component_type: str | None = None
+        self.tag_name: str | None = tag_name
+        self.css_classes: list[str] = css_classes if css_classes is not None else []
+        self.custom_attributes: dict = custom_attributes if custom_attributes is not None else {}
+        self.display_order: float = display_order
 
     @property
     def description(self) -> str:
@@ -414,13 +419,15 @@ class ViewComponent(ViewElement):
         timestamp: int = None,
         styling: Styling = None,
         data_binding: DataBinding = None,
+        **kwargs,
     ):
         super().__init__(
             name,
             description=description,
             visibility=visibility,
             timestamp=timestamp,
-            styling=styling
+            styling=styling,
+            **kwargs,
         )
         self.data_binding: DataBinding = data_binding
 
@@ -465,12 +472,14 @@ class ViewContainer(ViewElement):
         timestamp: int = None,
         layout: Layout = None,
         styling: Styling = None,
+        **kwargs,
     ):
         super().__init__(
             name,
             description=description,
             timestamp=timestamp,
-            styling=styling
+            styling=styling,
+            **kwargs,
         )
         self.view_elements: set[ViewElement] = view_elements
         self.layout: Layout | None = layout  # Ensure layout is properly stored
@@ -548,6 +557,7 @@ class Screen(ViewContainer):
         layout: Layout = None,
         styling: Styling = None,
         route_path: str | None = None,
+        **kwargs,
     ):
         super().__init__(
             name,
@@ -555,7 +565,8 @@ class Screen(ViewContainer):
             view_elements,
             timestamp,
             layout,
-            styling=styling
+            styling=styling,
+            **kwargs,
         )
         self.x_dpi: str = x_dpi
         self.y_dpi: str = y_dpi
@@ -683,8 +694,8 @@ class DataList(ViewComponent):
         styling (Styling, optional): The styling configuration, which includes size, position, and color settings (default: None).
     """
 
-    def __init__(self, name: str, description: str, list_sources: set[DataSource], visibility: str = "public", timestamp: int = None, styling: Styling = None):
-        super().__init__(name, description, visibility, timestamp, styling=styling)
+    def __init__(self, name: str, description: str, list_sources: set[DataSource], visibility: str = "public", timestamp: int = None, styling: Styling = None, **kwargs):
+        super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
         self.list_sources: set[DataSource] = list_sources
 
     @property
@@ -708,7 +719,7 @@ class DataList(ViewComponent):
 class Button(ViewComponent):
     """
     Represents a button component and encapsulates specific properties of a button, such as its name and label.
-    
+
     Args:
         name (str): The name of the button.
         description (str): The description of the button.
@@ -734,8 +745,8 @@ class Button(ViewComponent):
                  timestamp: int = None, visibility: str = "public", styling: Styling = None,
                  # Legacy parameters (kept for backward compatibility)
                  method_entity: Class = None, method_entity_id = None, method_parameters: dict = None,
-                 method_class: Class = None, method_name: str = None, method = None):
-        super().__init__(name, description, visibility, timestamp, styling=styling)
+                 method_class: Class = None, method_name: str = None, method = None, **kwargs):
+        super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
         self.label = label
         self.buttonType = buttonType
         self.actionType = actionType
@@ -881,8 +892,9 @@ class Link(ViewComponent):
         visibility: str = "public",
         timestamp: int = None,
         styling: Styling = None,
+        **kwargs,
     ):
-        super().__init__(name, description, visibility, timestamp, styling=styling)
+        super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
         self.label = label
         self.url = url
         self.target = target
@@ -937,8 +949,9 @@ class EmbeddedContent(ViewComponent):
         timestamp: int = None,
         styling: Styling = None,
         extra_props: Optional[Dict[str, str]] = None,
+        **kwargs,
     ):
-        super().__init__(name, description, visibility, timestamp, styling=styling)
+        super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
         self.source = source
         self.content_type = content_type
         self.extra_props = extra_props
@@ -1000,12 +1013,14 @@ class Image(ViewComponent):
         timestamp: int = None,
         styling: Styling = None,
         source: str | None = None,
+        **kwargs,
     ):
         super().__init__(
             name,
             description,
             timestamp=timestamp,
-            styling=styling
+            styling=styling,
+            **kwargs,
         )
         self.source = source
 
@@ -1042,8 +1057,8 @@ class InputField(ViewComponent):
         styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
     """
 
-    def __init__(self, name: str, description: str, field_type: InputFieldType, timestamp: int = None, validationRules: str = None, visibility: str = "public", styling: Styling = None):
-        super().__init__(name, description, visibility, timestamp, styling=styling)
+    def __init__(self, name: str, description: str, field_type: InputFieldType, timestamp: int = None, validationRules: str = None, visibility: str = "public", styling: Styling = None, **kwargs):
+        super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
         self.field_type: InputFieldType = field_type
         self.validationRules: str = validationRules
 
@@ -1092,8 +1107,8 @@ class Form(ViewComponent):
         styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
     """
 
-    def __init__(self, name: str, description: str, inputFields: set[InputField], visibility: str = "public", timestamp: int = None, styling: Styling = None):
-        super().__init__(name, description, visibility, timestamp, styling=styling)
+    def __init__(self, name: str, description: str, inputFields: set[InputField], visibility: str = "public", timestamp: int = None, styling: Styling = None, **kwargs):
+        super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
         self.inputFields: set[InputField] = inputFields
 
     @property
@@ -1150,8 +1165,8 @@ class Menu(ViewComponent):
         styling (Styling, optional): The styling configuration for the view element, which includes size, position, and color settings (default: None).
     """
 
-    def __init__(self, name: str, description: str, menuItems: set[MenuItem], visibility: str = "public", timestamp: int = None, styling: Styling = None):
-        super().__init__(name, description, visibility, timestamp, styling=styling)
+    def __init__(self, name: str, description: str, menuItems: set[MenuItem], visibility: str = "public", timestamp: int = None, styling: Styling = None, **kwargs):
+        super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
         self.menuItems: set[MenuItem] = menuItems
 
     @property
@@ -1189,8 +1204,8 @@ class Text(ViewComponent):
     """
 
     def __init__(self, name: str, content: str, description: str = "", visibility: str = "public",
-                 timestamp: int = None, styling: Styling = None):
-        super().__init__(name, description, visibility, timestamp, styling=styling)
+                 timestamp: int = None, styling: Styling = None, **kwargs):
+        super().__init__(name, description, visibility, timestamp, styling=styling, **kwargs)
         self.content = content
 
     @property
@@ -1233,7 +1248,8 @@ class GUIModel(Model):
         screenCompatibility (bool): Indicates whether the model has screen compatibility.
     """
     def __init__(self, name: str, package: str, versionCode: str, versionName: str, modules: set[Module],
-                 description: str, timestamp: int = None, screenCompatibility: bool = False):
+                 description: str, timestamp: int = None, screenCompatibility: bool = False,
+                 style_entries: list = None):
         super().__init__(name, timestamp)
         self.package: str = package
         self.versionCode: str = versionCode
@@ -1241,6 +1257,7 @@ class GUIModel(Model):
         self.description: str = description
         self.modules: set[Module] = modules
         self.screenCompatibility: str = screenCompatibility
+        self.style_entries: list = style_entries if style_entries is not None else []
 
     @property
     def package(self) -> str:

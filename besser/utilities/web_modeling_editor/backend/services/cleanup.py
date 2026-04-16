@@ -21,6 +21,7 @@ _BESSER_TEMP_PREFIXES = (
     "besser_",
     "besser_agent_",
     "besser_csv_",
+    "besser_llm_",
     "user_profile_",
 )
 

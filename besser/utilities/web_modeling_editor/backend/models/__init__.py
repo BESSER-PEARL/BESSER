@@ -7,6 +7,7 @@ from .responses import (
     ProjectExportResponse,
     ValidationResponse,
 )
+from .smart_generation import SmartGenerateRequest
 
 __all__ = [
     'DiagramInput',
@@ -17,4 +18,5 @@ __all__ = [
     'FeedbackResponse',
     'ProjectExportResponse',
     'ValidationResponse',
+    'SmartGenerateRequest',
 ]

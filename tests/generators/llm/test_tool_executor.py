@@ -115,6 +115,108 @@ class TestFileTools:
 
 
 # ======================================================================
+# Path safety — Windows extended-path prefix regression
+# ======================================================================
+
+class TestPathNormalization:
+    """Pin the fix for the Windows ``\\\\?\\`` extended-path prefix bug.
+
+    On Windows with long-path support enabled, ``os.path.realpath`` can
+    return paths with the extended-length ``\\\\?\\`` prefix for
+    resolved child paths but NOT for the workspace root (because the
+    root exists at init time and the child doesn't). A naive
+    ``startswith`` check then fails for legitimate subdirectory writes
+    like ``config/puma.rb`` or ``app/models/author.rb``, which is how
+    a Rails run ended up corrupted with "Path traversal blocked"
+    errors for every subdirectory file.
+    """
+
+    def test_strips_windows_extended_path_prefix(self):
+        from besser.generators.llm.tool_executor import _normalize_path_for_comparison
+
+        # ``\\?\C:\...`` → ``C:\...``
+        assert (
+            _normalize_path_for_comparison("\\\\?\\C:\\Users\\test\\file.txt")
+            == "C:\\Users\\test\\file.txt"
+        )
+
+    def test_strips_unc_extended_path_prefix(self):
+        from besser.generators.llm.tool_executor import _normalize_path_for_comparison
+
+        # ``\\?\UNC\server\share\...`` → ``\\server\share\...``
+        assert (
+            _normalize_path_for_comparison("\\\\?\\UNC\\server\\share\\file.txt")
+            == "\\\\server\\share\\file.txt"
+        )
+
+    def test_passes_regular_paths_through(self):
+        from besser.generators.llm.tool_executor import _normalize_path_for_comparison
+
+        assert _normalize_path_for_comparison("/home/test/file.txt") == "/home/test/file.txt"
+        assert (
+            _normalize_path_for_comparison("C:\\Users\\test\\file.txt")
+            == "C:\\Users\\test\\file.txt"
+        )
+
+    def test_subdirectory_write_works_after_fix(self, executor, tmp_path):
+        """Regression: writing ``config/puma.rb`` (subdir of workspace)
+        must succeed, not raise "Path traversal blocked". This is the
+        exact pattern that was broken in the Rails run."""
+        _call(executor, "write_file", {
+            "path": "config/puma.rb",
+            "content": "# puma config",
+        })
+        result = _call(executor, "read_file", {"path": "config/puma.rb"})
+        assert result["content"] == "# puma config"
+        assert (tmp_path / "config" / "puma.rb").exists()
+
+    def test_deeply_nested_write_works(self, executor, tmp_path):
+        """Another variant: deeply nested paths like
+        ``db/migrate/20240101_create_books.rb`` must work."""
+        _call(executor, "write_file", {
+            "path": "db/migrate/20240101_create_books.rb",
+            "content": "class CreateBooks; end",
+        })
+        assert (tmp_path / "db" / "migrate" / "20240101_create_books.rb").exists()
+
+    def test_actual_traversal_still_blocked(self, executor):
+        """The fix must NOT weaken security: paths escaping the
+        workspace still raise the traversal error."""
+        result = _call(executor, "write_file", {
+            "path": "../escape.txt",
+            "content": "nope",
+        })
+        assert "error" in result
+        assert "traversal" in result["error"].lower() or "Path" in result["error"]
+
+    def test_absolute_path_outside_workspace_blocked(self, executor):
+        """An absolute path to somewhere else on disk must also be blocked."""
+        import tempfile
+        outside = tempfile.gettempdir() + os.sep + "not_the_workspace.txt"
+        result = _call(executor, "write_file", {
+            "path": outside,
+            "content": "nope",
+        })
+        assert "error" in result
+
+    def test_sibling_workspace_prefix_not_matched(self, tmp_path, simple_model):
+        """Regression for the classic startswith trap: a workspace at
+        ``/tmp/besser_llm_abc`` must NOT allow writes to a sibling
+        ``/tmp/besser_llm_abc_DIFFERENT/evil.txt`` — that path starts
+        with the workspace string but isn't actually inside it.
+        """
+        ws = tmp_path / "besser_llm_abc"
+        ws.mkdir()
+        sibling_evil = tmp_path / "besser_llm_abc_DIFFERENT" / "evil.txt"
+        executor_local = ToolExecutor(workspace=str(ws), domain_model=simple_model)
+        result = _call(executor_local, "write_file", {
+            "path": str(sibling_evil),
+            "content": "nope",
+        })
+        assert "error" in result
+
+
+# ======================================================================
 # Execution tools
 # ======================================================================
 

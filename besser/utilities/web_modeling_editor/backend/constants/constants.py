@@ -5,6 +5,15 @@ API_VERSION = "1.0.0"
 TEMP_DIR_PREFIX = "besser_"
 AGENT_TEMP_DIR_PREFIX = "besser_agent_"
 CSV_TEMP_DIR_PREFIX = "besser_csv_"
+LLM_TEMP_DIR_PREFIX = "besser_llm_"
+
+# LLM smart-generation safety caps (server-enforced upper bounds for BYOK runs)
+LLM_MAX_COST_USD_HARD_CAP = 2.0          # max USD spend per run
+LLM_MAX_RUNTIME_SECONDS_HARD_CAP = 900   # max wall-clock per run (15 min)
+LLM_DEFAULT_MAX_COST_USD = 1.0
+LLM_DEFAULT_MAX_RUNTIME_SECONDS = 600
+LLM_DOWNLOAD_TTL_SECONDS = 1800          # how long generated output stays downloadable (30 min)
+LLM_COST_EMITTER_INTERVAL_SECONDS = 2.0  # cadence of the SSE cost ticker
 
 # Output defaults
 OUTPUT_DIR_NAME = "output"

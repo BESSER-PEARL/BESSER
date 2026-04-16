@@ -36,6 +36,86 @@ MAX_OUTPUT_SIZE = 15_000
 # Maximum file content returned by read_file (chars)
 MAX_FILE_READ = 20_000
 
+# Environment variables that are safe to expose to LLM-invoked subprocesses.
+# These are needed for basic tooling to work (PATH for binaries, HOME for
+# tool caches, LANG/LC_* for locale-aware tools, TMPDIR for scratch space,
+# SystemRoot/USERPROFILE on Windows). Everything else — including provider
+# API keys, deployment credentials, SMTP passwords, OAuth secrets — is
+# stripped so the LLM cannot `printenv` them into generated code.
+_SAFE_ENV_ALLOWLIST: frozenset[str] = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL",
+    "LANG", "LC_ALL", "LC_CTYPE",
+    "TMPDIR", "TMP", "TEMP",
+    # Windows
+    "SystemRoot", "SYSTEMROOT", "USERPROFILE", "APPDATA", "LOCALAPPDATA",
+    "COMSPEC", "PATHEXT", "ProgramFiles", "ProgramData",
+    # Python (harmless, often needed by tools)
+    "PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV",
+    # Node (harmless, often needed by tools)
+    "NODE_PATH",
+})
+
+# Variable-name substrings that identify secret-like env vars. Even if
+# a variable is accidentally in the allowlist, names matching these
+# patterns are always stripped.
+_SECRET_SUBSTRINGS: tuple[str, ...] = (
+    "KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL", "PRIVATE",
+    "API_", "AUTH", "CERT", "SESSION",
+)
+
+
+def _normalize_path_for_comparison(path: str) -> str:
+    """Strip the Windows ``\\\\?\\`` extended-path prefix.
+
+    On Windows, ``os.path.realpath`` sometimes returns paths with the
+    ``\\\\?\\`` (or ``\\\\?\\UNC\\``) extended-length prefix, especially
+    when long-path support is enabled at the OS level. This prefix can
+    appear on child paths but NOT on the workspace root (or vice versa)
+    depending on whether the path exists at resolution time. When that
+    happens, a naive ``full.startswith(workspace)`` check fails for
+    legitimate paths inside the workspace and the caller sees a bogus
+    "Path traversal blocked" error — which is how the Rails output
+    ended up missing half its subdirectory files on Windows.
+
+    We strip the prefix from BOTH sides before comparison so the
+    containment check is semantically correct regardless of whether
+    either path has been normalized to extended form.
+
+    No-op on Unix where the prefix doesn't exist.
+    """
+    if path.startswith("\\\\?\\UNC\\"):
+        # Extended form for UNC paths: \\?\UNC\server\share → \\server\share
+        return "\\\\" + path[8:]
+    if path.startswith("\\\\?\\"):
+        # Extended form for local paths: \\?\C:\foo → C:\foo
+        return path[4:]
+    return path
+
+
+def _safe_subprocess_env() -> dict[str, str]:
+    """Return a minimal subprocess environment with secrets stripped.
+
+    Never pass the full ``os.environ`` to an LLM-invoked subprocess —
+    that would leak provider API keys, OAuth secrets, SMTP credentials,
+    and any other server-side configuration. This helper constructs a
+    new environment by copying only allowlisted variables and
+    deliberately drops anything whose name contains a secret-like
+    substring, even if it's in the allowlist.
+    """
+    safe: dict[str, str] = {}
+    for name, value in os.environ.items():
+        if name not in _SAFE_ENV_ALLOWLIST:
+            continue
+        upper = name.upper()
+        if any(substr in upper for substr in _SECRET_SUBSTRINGS):
+            continue
+        safe[name] = value
+    # Ensure PATH exists even if the parent somehow didn't have it.
+    safe.setdefault("PATH", os.defpath)
+    # Suppress .pyc writes — same behaviour as the old `env={**os.environ,...}`.
+    safe["PYTHONDONTWRITEBYTECODE"] = "1"
+    return safe
+
 
 class ToolExecutor:
     """
@@ -61,7 +141,7 @@ class ToolExecutor:
         agent_model: Any = None,
         agent_config: dict | None = None,
     ):
-        self.workspace = os.path.realpath(workspace)
+        self.workspace = _normalize_path_for_comparison(os.path.realpath(workspace))
         self.domain_model = domain_model
         self.gui_model = gui_model
         self.agent_model = agent_model
@@ -92,9 +172,19 @@ class ToolExecutor:
     def _safe_path(self, rel_path: str) -> str:
         """Resolve a relative path within the workspace.  Blocks traversal."""
         full = os.path.realpath(os.path.join(self.workspace, rel_path))
-        full_norm = os.path.normcase(full)
+        # Strip Windows extended-path prefix from BOTH sides — otherwise
+        # a workspace stored as ``C:\...`` and a resolved full path as
+        # ``\\?\C:\...`` (or vice versa) fails the containment check
+        # for legitimate in-workspace paths. See
+        # ``_normalize_path_for_comparison`` for the full rationale.
+        full_cmp = _normalize_path_for_comparison(full)
+        full_norm = os.path.normcase(full_cmp)
         ws_norm = os.path.normcase(self.workspace)
-        if not full_norm.startswith(ws_norm):
+        if not (
+            full_norm == ws_norm
+            or full_norm.startswith(ws_norm + os.sep)
+            or full_norm.startswith(ws_norm + "/")
+        ):
             logger.error(
                 "Path check failed: rel=%s full=%s workspace=%s full_norm=%s ws_norm=%s",
                 rel_path, full, self.workspace, full_norm, ws_norm,
@@ -105,7 +195,14 @@ class ToolExecutor:
     def _safe_cwd(self, rel_dir: str = ".") -> str:
         """Resolve a working directory within the workspace."""
         cwd = os.path.realpath(os.path.join(self.workspace, rel_dir))
-        if not os.path.normcase(cwd).startswith(os.path.normcase(self.workspace)):
+        cwd_cmp = _normalize_path_for_comparison(cwd)
+        cwd_norm = os.path.normcase(cwd_cmp)
+        ws_norm = os.path.normcase(self.workspace)
+        if not (
+            cwd_norm == ws_norm
+            or cwd_norm.startswith(ws_norm + os.sep)
+            or cwd_norm.startswith(ws_norm + "/")
+        ):
             raise ValueError(f"Path traversal blocked: {rel_dir}")
         if not os.path.isdir(cwd):
             os.makedirs(cwd, exist_ok=True)
@@ -488,7 +585,7 @@ class ToolExecutor:
                 capture_output=True,
                 text=True,
                 timeout=COMMAND_TIMEOUT,
-                env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                env=_safe_subprocess_env(),
             )
 
             stdout = self._truncate(result.stdout, MAX_OUTPUT_SIZE // 2)

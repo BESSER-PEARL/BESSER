@@ -260,6 +260,7 @@ def get_api_root():
             "get_json_model_from_image": "/besser_api/get-json-model-from-image",
             "get_json_model_from_kg": "/besser_api/get-json-model-from-kg",
             "transform_agent_model": "/besser_api/transform-agent-model-json",
+            "recommend_agent_config_llm": "/besser_api/recommend-agent-config-llm",
             "feedback": "/besser_api/feedback",
             "check_ocl": "/besser_api/check-ocl (deprecated, use validate-diagram)"
         }

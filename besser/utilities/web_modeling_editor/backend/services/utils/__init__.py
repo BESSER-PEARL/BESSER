@@ -13,6 +13,12 @@ from .resource_manager import (
     cleanup_temp_resources,
     validate_generator,
 )
+from .agent_config_recommendation_utils import (
+    RECOMMENDATION_ALLOWED_VALUES,
+    load_default_agent_recommendation_config,
+    extract_json_object,
+    normalize_recommended_agent_config,
+)
 
 __all__ = [
     "calculate_center_point",
@@ -22,4 +28,8 @@ __all__ = [
     "calculate_relationship_bounds",
     "cleanup_temp_resources",
     "validate_generator",
+    "RECOMMENDATION_ALLOWED_VALUES",
+    "load_default_agent_recommendation_config",
+    "extract_json_object",
+    "normalize_recommended_agent_config",
 ]

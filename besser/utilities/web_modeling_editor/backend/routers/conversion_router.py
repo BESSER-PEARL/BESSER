@@ -627,19 +627,41 @@ async def transform_agent_model_json(input_data: DiagramInput):
 
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
+        generation_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
         generator_instance = generator_class(
             getattr(agent_module, "agent", agent_model),
             config=config,
             openai_api_key=extract_openai_api_key(config),
-            output_dir=temp_dir,
+            output_dir=generation_output_dir,
         )
         generator_instance.generate()
 
-        personalized_json_path = os.path.join(temp_dir, OUTPUT_DIR_NAME, "personalized_agent_model.json")
-        if not os.path.isfile(personalized_json_path):
-            raise HTTPException(status_code=500, detail="personalized_agent_model.json not found after generation")
+        # Some generator implementations still emit files in temp_dir directly.
+        candidate_paths = [
+            os.path.join(generation_output_dir, "personalized_agent_model.json"),
+            os.path.join(temp_dir, "personalized_agent_model.json"),
+        ]
+        personalized_json_path = next((path for path in candidate_paths if os.path.isfile(path)), None)
 
-        personalized_json = await _read_json_file(personalized_json_path)
+        if personalized_json_path:
+            personalized_json = await _read_json_file(personalized_json_path)
+        else:
+            # Fallback: serialize the personalized in-memory model and convert it to JSON.
+            try:
+                personalized_agent_file = os.path.join(temp_dir, "personalized_agent_model.py")
+                agent_model_to_code(generator_instance.model, personalized_agent_file)
+                
+                personalized_buml = await _read_file(personalized_agent_file, "r", encoding="utf-8")
+                personalized_json = agent_buml_to_json(personalized_buml)
+            except Exception as conversion_error:
+                logger.exception("Failed to build fallback personalized agent JSON")
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "personalized_agent_model.json not found after generation "
+                        f"and fallback conversion failed: {conversion_error}"
+                    ),
+                )
 
         return {
             "model": personalized_json,

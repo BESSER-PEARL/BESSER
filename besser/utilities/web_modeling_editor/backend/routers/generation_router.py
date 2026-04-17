@@ -63,6 +63,10 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_re
     extract_json_object,
     normalize_recommended_agent_config,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_manual_mapping_utils import (
+    get_manual_agent_config_mapping,
+    build_manual_mapping_recommendation,
+)
 
 # Backend configuration
 from besser.utilities.web_modeling_editor.backend.config import (
@@ -183,6 +187,44 @@ async def recommend_agent_config_llm(payload: Dict[str, Any] = Body(...)):
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to generate LLM recommendation: {exc}") from exc
+
+
+@router.get("/agent-config-manual-mapping")
+@handle_endpoint_errors("get_agent_config_manual_mapping")
+async def get_agent_config_manual_mapping():
+    """Return the complete rule mapping used for deterministic recommendations."""
+    return {
+        "mapping": get_manual_agent_config_mapping(),
+        "source": "manual_mapping",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/recommend-agent-config-mapping")
+@handle_endpoint_errors("recommend_agent_config_mapping")
+async def recommend_agent_config_mapping(payload: Dict[str, Any] = Body(...)):
+    """Recommend a structured agent configuration using deterministic mapping rules."""
+    user_profile_model = payload.get("userProfileModel")
+    if not isinstance(user_profile_model, dict):
+        raise HTTPException(status_code=400, detail="userProfileModel is required and must be a JSON object")
+
+    user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
+    current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
+
+    profile_document = _generate_user_profile_document(user_profile_model)
+    recommendation = build_manual_mapping_recommendation(
+        user_profile_document=profile_document,
+        user_profile_name=user_profile_name,
+        current_config=current_config,
+    )
+
+    return {
+        "config": recommendation["config"],
+        "matchedRules": recommendation.get("matchedRules", []),
+        "signals": recommendation.get("signals", {}),
+        "source": "manual_mapping",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def generate_agent_files(

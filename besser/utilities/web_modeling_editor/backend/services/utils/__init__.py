@@ -19,6 +19,11 @@ from .agent_config_recommendation_utils import (
     extract_json_object,
     normalize_recommended_agent_config,
 )
+from .agent_config_manual_mapping_utils import (
+    MANUAL_AGENT_CONFIG_MAPPING,
+    get_manual_agent_config_mapping,
+    build_manual_mapping_recommendation,
+)
 
 __all__ = [
     "calculate_center_point",
@@ -32,4 +37,7 @@ __all__ = [
     "load_default_agent_recommendation_config",
     "extract_json_object",
     "normalize_recommended_agent_config",
+    "MANUAL_AGENT_CONFIG_MAPPING",
+    "get_manual_agent_config_mapping",
+    "build_manual_mapping_recommendation",
 ]

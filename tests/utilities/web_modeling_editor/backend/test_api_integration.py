@@ -632,6 +632,53 @@ class TestValidateDiagram:
         assert data["isValid"] is False
         assert any("reference" in err.lower() for err in data["errors"])
 
+    def test_validate_user_diagram_runs_ocl_check(self, monkeypatch):
+        """UserDiagram validation should execute OCL checking with object model context."""
+        from besser.utilities.web_modeling_editor.backend.routers import validation_router as vr
+
+        class _DummyObjectModel:
+            objects = []
+
+            @staticmethod
+            def validate(*args, **kwargs):
+                return {"success": True, "errors": [], "warnings": []}
+
+        observed = {"called": False, "with_object_model": False}
+
+        def _fake_process_object_diagram(_input_data, _domain_model):
+            return _DummyObjectModel()
+
+        def _fake_check_ocl_constraint(_domain_model, object_model=None):
+            observed["called"] = True
+            observed["with_object_model"] = object_model is not None
+            return {
+                "success": True,
+                "message": "OCL executed",
+                "valid_constraints": ["dummy"],
+                "invalid_constraints": [],
+            }
+
+        monkeypatch.setattr(vr, "process_object_diagram", _fake_process_object_diagram)
+        monkeypatch.setattr(vr, "check_ocl_constraint", _fake_check_ocl_constraint)
+
+        payload = {
+            "title": "UserProfile",
+            "model": {
+                "type": "UserDiagram",
+                "elements": {},
+                "relationships": {},
+            },
+        }
+
+        response = client.post("/besser_api/validate-diagram", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+
+        assert observed["called"] is True
+        assert observed["with_object_model"] is True
+        assert data.get("valid_constraints") == ["dummy"]
+        assert data.get("invalid_constraints") == []
+
 
 # ---------------------------------------------------------------------------
 # Export BUML Endpoint -- POST /besser_api/export-buml

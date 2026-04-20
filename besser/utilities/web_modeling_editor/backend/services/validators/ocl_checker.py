@@ -107,6 +107,10 @@ def check_ocl_constraint(domain_model, object_model = None):
         parser = OCLWrapper(domain_model, object_model)
 
         for label, constraint in constraints:
+            description = getattr(constraint, "description", None)
+            # Suffix appended to every message so non-technical users see the
+            # plain-language reason alongside the raw OCL expression.
+            explanation_suffix = f" — {description}" if description else ""
             try:
                 if object_model is None:
                     # No object model -> syntax-only check.
@@ -115,14 +119,18 @@ def check_ocl_constraint(domain_model, object_model = None):
                     # Bare Constraint (legacy or non-OCL languages) still gets
                     # the lex/parse round-trip via _parse_only.
                     if isinstance(constraint, OCLConstraint):
-                        valid_constraints.append(f"✅ {label} '{constraint.expression}'")
+                        valid_constraints.append(
+                            f"✅ {label} '{constraint.expression}'{explanation_suffix}"
+                        )
                     else:
                         try:
                             _parse_only(constraint.expression)
-                            valid_constraints.append(f"✅ {label} '{constraint.expression}'")
+                            valid_constraints.append(
+                                f"✅ {label} '{constraint.expression}'{explanation_suffix}"
+                            )
                         except BOCLSyntaxError as syntax_err:
                             invalid_constraints.append(
-                                f"❌ {label} '{constraint.expression}' - {syntax_err}"
+                                f"❌ {label} '{constraint.expression}' - {syntax_err}{explanation_suffix}"
                             )
                 else:
                     # Evaluate against the object model. Skip if there are no
@@ -138,13 +146,24 @@ def check_ocl_constraint(domain_model, object_model = None):
 
                     result = parser.evaluate(constraint)
                     if result is True:
-                        valid_constraints.append(f"✅ {label} '{constraint.expression}' - Evaluates to: True")
+                        valid_constraints.append(
+                            f"✅ {label} '{constraint.expression}' - Evaluates to: True{explanation_suffix}"
+                        )
                     elif result is False:
-                        invalid_constraints.append(f"❌ {label} '{constraint.expression}' - Constraint violation: Evaluates to False")
+                        # Prefer the natural-language description as the primary
+                        # violation reason when one is provided.
+                        violation_reason = description if description else "Evaluates to False"
+                        invalid_constraints.append(
+                            f"❌ {label} '{constraint.expression}' - Constraint violation: {violation_reason}"
+                        )
                     else:
-                        valid_constraints.append(f"✅ {label} '{constraint.expression}' - Evaluates to: {result}")
+                        valid_constraints.append(
+                            f"✅ {label} '{constraint.expression}' - Evaluates to: {result}{explanation_suffix}"
+                        )
             except Exception as e:
-                invalid_constraints.append(f"❌ {label} '{constraint.expression}' - Error: {str(e)} \n")
+                invalid_constraints.append(
+                    f"❌ {label} '{constraint.expression}' - Error: {str(e)}{explanation_suffix} \n"
+                )
 
         return {
             "success": len(invalid_constraints) == 0,

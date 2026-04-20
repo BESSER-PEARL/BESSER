@@ -62,6 +62,30 @@ def _typeref_name(t) -> str:
     return str(t)
 
 
+def _extract_inline_description(block: str) -> tuple[str, str]:
+    """Split an OCL constraint block into its expression and an inline description.
+
+    OCL supports ``--`` single-line comments. We treat any text following ``--``
+    on a line as a natural-language description of the constraint. The returned
+    expression has the comment stripped so it can be fed to the OCL parser
+    without relying on comment-handling behaviour.
+
+    Returns:
+        tuple[str, str]: ``(expression_without_comments, description_or_empty_string)``.
+    """
+    description_parts: list[str] = []
+    cleaned_lines: list[str] = []
+    for raw_line in block.split('\n'):
+        match = re.search(r'--\s*(.*?)\s*$', raw_line)
+        if match and match.group(1):
+            description_parts.append(match.group(1))
+            raw_line = raw_line[:match.start()].rstrip()
+        cleaned_lines.append(raw_line)
+    cleaned = '\n'.join(cleaned_lines)
+    description = ' '.join(description_parts).strip()
+    return cleaned, description
+
+
 def parse_constraint_text(
     text: str,
     domain_model: DomainModel,
@@ -121,6 +145,7 @@ def process_ocl_constraints(
     ocl_text: str,
     domain_model: DomainModel,
     counter: int,
+    default_description: Optional[str] = None,
 ) -> tuple[list[tuple[str, OCLConstraint, Optional[str], Optional[str]]], list[str]]:
     """Split a textarea blob on ``context`` boundaries and parse each block.
 
@@ -128,6 +153,11 @@ def process_ocl_constraints(
     several `context X (inv|pre|post) ...` blocks pasted together. Each is
     parsed independently; failures are reported as warnings so one bad
     block does not lose the rest of the document.
+
+    Natural-language explanations can be attached to a constraint by either
+    passing ``default_description`` (applied to every constraint extracted
+    from this block) or by embedding an OCL ``--`` comment inline (per
+    constraint). An inline comment always wins over ``default_description``.
 
     Returns:
         ``(routing_tuples, warnings)`` where each routing tuple has the
@@ -146,7 +176,11 @@ def process_ocl_constraints(
         block = block.strip()
         if not block or not block.lower().startswith("context"):
             continue
-        line = block.replace("\n", " ").strip()
+        # Extract inline ``--`` description per block before collapsing
+        # newlines: OCL comments terminate at end-of-line, so newlines must
+        # still be present when we scan for them.
+        cleaned_block, inline_description = _extract_inline_description(block)
+        line = cleaned_block.replace("\n", " ").strip()
         block_idx += 1
 
         try:
@@ -167,6 +201,11 @@ def process_ocl_constraints(
             else:
                 base_method = method_name or class_name
                 constraint.name = f"{base_method}_{_KW_FROM_KIND[kind]}_{counter}_{block_idx}"
+
+        # Inline ``--`` description always wins over the per-element default.
+        description = inline_description or (default_description or None)
+        if description:
+            constraint.description = description
 
         routing.append((kind, constraint, class_name, method_name))
 

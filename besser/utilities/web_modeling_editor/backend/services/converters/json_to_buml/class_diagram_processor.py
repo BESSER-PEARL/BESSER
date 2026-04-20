@@ -776,9 +776,17 @@ def _process_constraints(
         if not text:
             continue
 
+        # Optional natural-language explanation, surfaced by the validator
+        # when a constraint is violated. ``description`` on the JSON element
+        # acts as the default for every constraint extracted from this box;
+        # an inline ``--`` comment inside a specific block always wins.
+        description = element.get("description")
+
         counter += 1
         try:
-            routing, warnings = process_ocl_constraints(text, domain_model, counter)
+            routing, warnings = process_ocl_constraints(
+                text, domain_model, counter, default_description=description,
+            )
         except Exception as e:  # defensive — process_ocl_constraints already swallows most
             all_warnings.append(f"Warning: Error processing OCL element {element_id}: {e}")
             continue

@@ -437,7 +437,13 @@ def domain_model_to_code(
                 f.write(f"    name=\"{_escape_python_string(constraint.name)}\",\n")
                 f.write(f"    context={context_var_name},\n")
                 f.write(f"    expression=\"{_escape_python_string(constraint.expression)}\",\n")
-                f.write(f"    language=\"{_escape_python_string(constraint.language)}\"\n")
+                f.write(f"    language=\"{_escape_python_string(constraint.language)}\"")
+                description = getattr(constraint, 'description', None)
+                if description:
+                    f.write(",\n")
+                    f.write(f"    description=\"{_escape_python_string(description)}\"\n")
+                else:
+                    f.write("\n")
                 f.write(")\n")
             f.write("\n")
 

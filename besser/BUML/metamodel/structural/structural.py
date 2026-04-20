@@ -1666,6 +1666,9 @@ class Constraint(NamedElement):
         context (Class): The class to which the constraint is associated.
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
+        description (str): Optional natural-language explanation shown to end-users when the
+            constraint is violated. Intended for non-technical audiences (e.g. graphical
+            editor users) who may not understand the raw constraint expression.
         timestamp (datetime): Object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the constraint (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
@@ -1675,17 +1678,20 @@ class Constraint(NamedElement):
         context (Class): The class to which the constraint is associated.
         expression (str): The expression or condition defined by the constraint.
         language (str): The language in which the constraint expression is written.
+        description (str): Optional natural-language explanation surfaced on validation failure.
         timestamp (datetime): Inherited from NamedElement; object creation datetime (default is current time).
         metadata (Metadata): Metadata information for the constraint (None as default).
         is_derived (bool): Inherited from NamedElement, indicates whether the element is derived (False as default).
     """
 
-    def __init__(self, name: str, context: Class, expression: Any, language: str, timestamp: datetime = None,
+    def __init__(self, name: str, context: Class, expression: Any, language: str,
+                 description: str = None, timestamp: datetime = None,
                  metadata: Metadata = None, is_derived: bool = False, uncertainty: float = 0.0):
         super().__init__(name, timestamp, metadata, is_derived=is_derived, uncertainty=uncertainty)
         self.context: Class = context
         self.expression: str = expression
         self.language: str = language
+        self.description: str = description
 
     @property
     def context(self) -> Class:
@@ -1717,10 +1723,23 @@ class Constraint(NamedElement):
         """str: Set the language in which the constraint expression is written."""
         self.__language = language
 
+    @property
+    def description(self) -> str:
+        """str: Get the natural-language explanation shown when the constraint is violated."""
+        return self.__description
+
+    @description.setter
+    def description(self, description: str):
+        """str: Set the natural-language explanation shown when the constraint is violated."""
+        if description is not None and not isinstance(description, str):
+            raise TypeError("description must be a string or None")
+        self.__description = description
+
     def __repr__(self):
         return (
             f'Constraint({self.name}, {self.context.name}, {self.language}, {self.expression}, '
-            f'{self.timestamp}, {self.metadata}, is_derived={self.is_derived})'
+            f'description={self.description!r}, {self.timestamp}, {self.metadata}, '
+            f'is_derived={self.is_derived})'
         )
 class Model(NamedElement):
     """A model is the root element. There are different types of models

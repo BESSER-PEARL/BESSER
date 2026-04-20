@@ -614,9 +614,15 @@ def _process_constraints(
     for element_id, element in elements.items():
         if element.get("type") in ["ClassOCLConstraint"]:
             ocl = element.get("constraint")
+            description = element.get("description")
             if ocl:
                 try:
-                    new_constraints, warnings = process_ocl_constraints(ocl, domain_model, constraint_counter)
+                    new_constraints, warnings = process_ocl_constraints(
+                        ocl,
+                        domain_model,
+                        constraint_counter,
+                        default_description=description,
+                    )
                     all_constraints.update(new_constraints)
                     all_warnings.extend(warnings)
                     constraint_counter += 1

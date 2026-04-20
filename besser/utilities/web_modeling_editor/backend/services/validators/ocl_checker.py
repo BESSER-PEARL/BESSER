@@ -81,38 +81,56 @@ def check_ocl_constraint(domain_model, object_model = None):
         parser = OCLWrapper(domain_model, object_model)
 
         for constraint in domain_model.constraints:
+            description = getattr(constraint, "description", None)
+            # Suffix appended to every message so non-technical users see the
+            # plain-language reason alongside the raw OCL expression.
+            explanation_suffix = f" — {description}" if description else ""
             try:
                 if object_model is None:
                     # Syntax-check only — parse without evaluation since there
                     # are no object instances to evaluate against.
                     try:
                         _parse_only(constraint.expression)
-                        valid_constraints.append(f"✅ '{constraint.expression}'")
+                        valid_constraints.append(
+                            f"✅ '{constraint.expression}'{explanation_suffix}"
+                        )
                     except BOCLSyntaxError as syntax_err:
                         invalid_constraints.append(
-                            f"❌ '{constraint.expression}' - Error: Invalid OCL syntax: {syntax_err}"
+                            f"❌ '{constraint.expression}' - Error: Invalid OCL syntax: "
+                            f"{syntax_err}{explanation_suffix}"
                         )
                 else:
                     # Check if there are instances of the context class in the object model
                     context_class_name = extract_context_class_name(constraint.expression)
-                    context_instances = [obj for obj in object_model.objects 
+                    context_instances = [obj for obj in object_model.objects
                                         if hasattr(obj, 'classifier') and obj.classifier.name.lower() == context_class_name.lower()]
 
                     if not context_instances:
                         # No instances of the context class exist, skip evaluation
                         # valid_constraints.append(f"⚠️ '{constraint.expression}' - No instances of '{context_class_name}' found to evaluate constraint")
                         continue
-                    
+
                     # Use evaluate method for OCLWrapper (evaluation with object model)
                     result = parser.evaluate(constraint)
                     if result is True:
-                        valid_constraints.append(f"✅ '{constraint.expression}' - Evaluates to: True")
+                        valid_constraints.append(
+                            f"✅ '{constraint.expression}' - Evaluates to: True{explanation_suffix}"
+                        )
                     elif result is False:
-                        invalid_constraints.append(f"❌ '{constraint.expression}' - Constraint violation: Evaluates to False")
+                        # Prefer the natural-language description as the primary
+                        # violation reason when one is provided.
+                        violation_reason = description if description else "Evaluates to False"
+                        invalid_constraints.append(
+                            f"❌ '{constraint.expression}' - Constraint violation: {violation_reason}"
+                        )
                     else:
-                        valid_constraints.append(f"✅ '{constraint.expression}' - Evaluates to: {result}")
+                        valid_constraints.append(
+                            f"✅ '{constraint.expression}' - Evaluates to: {result}{explanation_suffix}"
+                        )
             except Exception as e:
-                invalid_constraints.append(f"❌ '{constraint.expression}' - Error: {str(e)} \n")
+                invalid_constraints.append(
+                    f"❌ '{constraint.expression}' - Error: {str(e)}{explanation_suffix} \n"
+                )
 
         return {
             "success": len(invalid_constraints) == 0,

@@ -403,6 +403,10 @@ def class_buml_to_json(domain_model):
                 ),
             }
 
+            # Surface natural-language constraint descriptions for the editor
+            if isinstance(type_obj, Constraint) and getattr(type_obj, 'description', None):
+                element_data["description"] = type_obj.description
+
             # Add metadata fields for classes if they exist
             if isinstance(type_obj, Class) and hasattr(type_obj, 'metadata') and type_obj.metadata:
                 if type_obj.metadata.description:

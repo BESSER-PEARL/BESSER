@@ -1,153 +1,67 @@
 /**
  * ClassPalette Component
- * Palette showing available classes for creating instances
+ * Sidebar with draggable class cards for creating new instances.
  */
 {% raw %}
-import React, { useState } from 'react';
+import React from 'react';
+import { GripVertical } from 'lucide-react';
+import { Card } from '@/components/ui/card';
 import type { ClassMetadata } from '../types/models';
-import * as api from '../api/instances';
-import './ClassPalette.css';
 
 interface ClassPaletteProps {
   classes: ClassMetadata[];
   onInstanceCreated: () => void;
 }
 
-export const ClassPalette: React.FC<ClassPaletteProps> = ({
-  classes,
-  onInstanceCreated,
-}) => {
-  const [isCreating, setIsCreating] = useState(false);
-  const [selectedClass, setSelectedClass] = useState<ClassMetadata | null>(null);
-  const [instanceName, setInstanceName] = useState('');
-  const [attributes, setAttributes] = useState<Record<string, any>>({});
-
-  const handleCreateClick = (classMetadata: ClassMetadata) => {
-    setSelectedClass(classMetadata);
-    setIsCreating(true);
-    setInstanceName('');
-    
-    // Initialize attributes with empty values
-    const initialAttrs: Record<string, any> = {};
-    classMetadata.attributes.forEach((attr) => {
-      initialAttrs[attr.name] = '';
-    });
-    setAttributes(initialAttrs);
-  };
-
-  const handleCreate = async () => {
-    if (!selectedClass || !instanceName) {
-      alert('Please provide an instance name');
-      return;
-    }
-
-    try {
-      await api.createInstance({
-        class_name: selectedClass.name,
-        instance_name: instanceName,
-        attributes,
-      });
-      
-      setIsCreating(false);
-      setSelectedClass(null);
-      onInstanceCreated();
-    } catch (error) {
-      console.error('Failed to create instance:', error);
-      alert('Failed to create instance');
-    }
-  };
-
+export const ClassPalette: React.FC<ClassPaletteProps> = ({ classes }) => {
   const handleDragStart = (e: React.DragEvent, classMetadata: ClassMetadata) => {
     e.dataTransfer.setData('className', classMetadata.name);
     e.dataTransfer.effectAllowed = 'copy';
   };
 
   return (
-    <div className="class-palette">
-      <div className="palette-header">
-        <h3>Classes</h3>
-        <p>Drag classes to canvas or click to create</p>
+    <aside className="flex w-72 flex-col overflow-hidden border-r bg-card">
+      <div className="border-b bg-background/60 px-5 py-4">
+        <h3 className="mb-1 font-sans text-base font-bold text-foreground">Classes</h3>
+        <p className="text-xs leading-snug text-muted-foreground">
+          Drag a class onto the canvas to create an instance.
+        </p>
       </div>
 
-      {/* Class List */}
-      {!isCreating && (
-        <div className="class-list">
-          {classes.map((classMetadata) => (
-            <div
-              key={classMetadata.name}
-              className="class-item"
-              draggable
-              onDragStart={(e) => handleDragStart(e, classMetadata)}
-              onClick={() => handleCreateClick(classMetadata)}
-            >
+      <div className="scrollbar-thin flex flex-1 flex-col gap-2 overflow-y-auto p-3">
+        {classes.map((classMetadata) => (
+          <Card
+            key={classMetadata.name}
+            draggable
+            onDragStart={(e) => handleDragStart(e, classMetadata)}
+            className="group flex cursor-grab select-none items-center gap-3 border-2 border-border p-3 transition-all hover:-translate-y-0.5 hover:border-primary hover:shadow-md active:cursor-grabbing active:translate-y-0"
+          >
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
               {classMetadata.icon ? (
                 <div
-                  className="class-icon"
-                  style={{ color: 'hsl(192 80% 30%)', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                  className="flex h-full w-full items-center justify-center [&_svg]:h-7 [&_svg]:w-7"
                   dangerouslySetInnerHTML={{ __html: classMetadata.icon }}
                 />
               ) : (
-                <div className="class-icon">\u25a2</div>
+                <span className="text-lg font-bold">
+                  {classMetadata.name.charAt(0).toUpperCase()}
+                </span>
               )}
-              <div className="class-info">
-                <div className="class-name">{classMetadata.name}</div>
-                <div className="class-attrs">
-                  {classMetadata.attributes.length} attributes
-                </div>
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-foreground">
+                {classMetadata.name}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {classMetadata.attributes.length} attribute
+                {classMetadata.attributes.length === 1 ? '' : 's'}
               </div>
             </div>
-          ))}
-        </div>
-      )}
-
-      {/* Create Instance Form */}
-      {isCreating && selectedClass && (
-        <div className="creation-form">
-          <h4>Create {selectedClass.name}</h4>
-
-          <div className="form-group">
-            <label>Instance Name *</label>
-            <input
-              type="text"
-              value={instanceName}
-              onChange={(e) => setInstanceName(e.target.value)}
-              placeholder="Enter instance name"
-            />
-          </div>
-
-          {selectedClass.attributes.map((attr) => (
-            <div key={attr.name} className="form-group">
-              <label>
-                {attr.name} ({attr.type})
-              </label>
-              <input
-                type="text"
-                value={attributes[attr.name] || ''}
-                onChange={(e) =>
-                  setAttributes((prev) => ({ ...prev, [attr.name]: e.target.value }))
-                }
-                placeholder={`Enter ${attr.name}`}
-              />
-            </div>
-          ))}
-
-          <div className="form-actions">
-            <button onClick={handleCreate} className="btn btn-primary">
-              Create
-            </button>
-            <button
-              onClick={() => {
-                setIsCreating(false);
-                setSelectedClass(null);
-              }}
-              className="btn btn-secondary"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+            <GripVertical className="h-4 w-4 flex-shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100" />
+          </Card>
+        ))}
+      </div>
+    </aside>
   );
 };
 {% endraw %}

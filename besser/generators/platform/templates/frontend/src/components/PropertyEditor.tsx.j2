@@ -1,9 +1,20 @@
 /**
  * PropertyEditor Component
- * Panel for editing instance attributes
+ * shadcn Dialog-based editor for instance attributes.
  */
 {% raw %}
 import React, { useState } from 'react';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import type { BaseInstance, ClassMetadata } from '../types/models';
 
 interface PropertyEditorProps {
@@ -13,6 +24,18 @@ interface PropertyEditorProps {
   onClose: () => void;
 }
 
+const inputTypeFor = (attrType: string): string => {
+  const t = attrType.toLowerCase();
+  if (t.includes('datetime')) return 'datetime-local';
+  if (t.includes('date')) return 'date';
+  if (t.includes('time')) return 'time';
+  if (t.includes('int') || t.includes('number') || t.includes('float') || t.includes('double'))
+    return 'number';
+  if (t.includes('bool')) return 'checkbox';
+  if (t.includes('email')) return 'email';
+  return 'text';
+};
+
 export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   instance,
   classMetadata,
@@ -20,229 +43,94 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   onClose,
 }) => {
   const [instanceName, setInstanceName] = useState(instance.instance_name);
-  const [attributes, setAttributes] = useState(instance.attributes);
-
-  const getInputType = (attrType: string): string => {
-    const lowerType = attrType.toLowerCase();
-    if (lowerType.includes('int') || lowerType.includes('number')) return 'number';
-    if (lowerType.includes('date')) return 'date';
-    if (lowerType.includes('datetime')) return 'datetime-local';
-    if (lowerType.includes('time')) return 'time';
-    if (lowerType.includes('bool')) return 'checkbox';
-    if (lowerType.includes('email')) return 'email';
-    return 'text';
-  };
+  const [attributes, setAttributes] = useState<Record<string, any>>(instance.attributes);
 
   const handleAttributeChange = (key: string, value: any) => {
     setAttributes((prev) => ({ ...prev, [key]: value }));
   };
 
-  const handleSave = () => {
-    onSave({
-      ...instance,
-      instance_name: instanceName,
-      attributes,
-    });
+  const handleSave = (e: React.FormEvent) => {
+    e.preventDefault();
+    onSave({ ...instance, instance_name: instanceName, attributes });
   };
 
   return (
-    <div
-      style={{
-        width: '340px',
-        background: 'white',
-        borderLeft: '1px solid hsl(210 18% 86%)',
-        padding: '0',
-        overflowY: 'auto',
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100%',
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          padding: '20px',
-          borderBottom: '1px solid hsl(210 18% 86%)',
-          background: 'hsl(48 30% 97%)',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-          }}
-        >
-          <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'hsl(220 25% 10%)' }}>
-            Edit Instance
-          </h3>
-          <button
-            onClick={onClose}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              fontSize: '24px',
-              cursor: 'pointer',
-              color: 'hsl(215 12% 44%)',
-              lineHeight: 1,
-            }}
-          >
-            ×
-          </button>
-        </div>
-        <div style={{ marginTop: '8px', fontSize: '13px', color: 'hsl(215 12% 44%)' }}>
-          {instance.class_name}
-        </div>
-      </div>
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-h-[85vh] overflow-hidden p-0 sm:max-w-xl">
+        <form onSubmit={handleSave} className="flex max-h-[85vh] flex-col">
+          <DialogHeader className="border-b bg-accent/40 px-6 py-5">
+            <DialogTitle className="text-xl">Edit Instance</DialogTitle>
+            <DialogDescription>{instance.class_name}</DialogDescription>
+          </DialogHeader>
 
-      {/* Content */}
-      <div style={{ flex: 1, padding: '20px', overflowY: 'auto' }}>
-        {/* Instance Name */}
-        <div style={{ marginBottom: '24px' }}>
-          <label
-            style={{
-              display: 'block',
-              marginBottom: '8px',
-              fontWeight: 600,
-              fontSize: '14px',
-              color: 'hsl(220 25% 10%)',
-            }}
-          >
-            Instance Name
-          </label>
-          <input
-            type="text"
-            value={instanceName}
-            onChange={(e) => setInstanceName(e.target.value)}
-            style={{
-              width: '100%',
-              padding: '10px',
-              border: '1px solid hsl(210 18% 86%)',
-              borderRadius: '6px',
-              fontSize: '14px',
-              transition: 'border-color 0.2s',
-            }}
-            onFocus={(e) => e.currentTarget.style.borderColor = 'hsl(192 80% 42%)'}
-            onBlur={(e) => e.currentTarget.style.borderColor = 'hsl(210 18% 86%)'}
-          />
-        </div>
-
-        {/* Attributes */}
-        <h4 style={{ marginBottom: '16px', fontSize: '15px', fontWeight: 600, color: 'hsl(220 25% 10%)' }}>
-          Attributes
-        </h4>
-        {classMetadata.attributes.length === 0 && (
-          <p style={{ color: 'hsl(215 12% 44%)', fontSize: '13px', fontStyle: 'italic' }}>
-            No attributes defined
-          </p>
-        )}
-        {classMetadata.attributes.map((attrMeta) => {
-          const inputType = getInputType(attrMeta.type);
-          const currentValue = attributes[attrMeta.name] || '';
-          
-          return (
-            <div key={attrMeta.name} style={{ marginBottom: '18px' }}>
-              <label
-                style={{
-                  display: 'block',
-                  marginBottom: '8px',
-                  fontWeight: 600,
-                  fontSize: '13px',
-                  color: 'hsl(220 25% 10%)',
-                }}
-              >
-                {attrMeta.name}
-                <span style={{ color: 'hsl(215 12% 44%)', fontWeight: 400, marginLeft: '6px', fontSize: '12px' }}>
-                  ({attrMeta.type})
-                </span>
-              </label>
-              {inputType === 'checkbox' ? (
-                <input
-                  type="checkbox"
-                  checked={currentValue === true || currentValue === 'true'}
-                  onChange={(e) => handleAttributeChange(attrMeta.name, e.target.checked)}
-                  style={{
-                    width: '20px',
-                    height: '20px',
-                    cursor: 'pointer',
-                  }}
-                />
-              ) : (
-                <input
-                  type={inputType}
-                  value={String(currentValue)}
-                  onChange={(e) => {
-                    const value = inputType === 'number' ? parseFloat(e.target.value) || '' : e.target.value;
-                    handleAttributeChange(attrMeta.name, value);
-                  }}
-                  placeholder={`Enter ${attrMeta.name}`}
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '1px solid hsl(210 18% 86%)',
-                    borderRadius: '6px',
-                    fontSize: '14px',
-                    transition: 'border-color 0.2s',
-                  }}
-                  onFocus={(e) => e.currentTarget.style.borderColor = 'hsl(192 80% 42%)'}
-                  onBlur={(e) => e.currentTarget.style.borderColor = 'hsl(210 18% 86%)'}
-                />
-              )}
+          <div className="scrollbar-thin flex-1 space-y-5 overflow-y-auto px-6 py-5">
+            <div className="space-y-2">
+              <Label htmlFor="edit-instance-name">Instance Name</Label>
+              <Input
+                id="edit-instance-name"
+                value={instanceName}
+                onChange={(e) => setInstanceName(e.target.value)}
+                autoFocus
+              />
             </div>
-          );
-        })}
-      </div>
 
-      {/* Footer Actions */}
-      <div
-        style={{
-          padding: '20px',
-          borderTop: '1px solid hsl(210 18% 86%)',
-          background: 'hsl(48 30% 97%)',
-        }}
-      >
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            onClick={handleSave}
-            style={{
-              flex: 1,
-              padding: '12px',
-              background: 'hsl(192 80% 20%)',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: '14px',
-              transition: 'background 0.2s',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'hsl(192 80% 42%)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'hsl(192 80% 20%)'}
-          >
-            Save Changes
-          </button>
-          <button
-            onClick={onClose}
-            style={{
-              flex: 1,
-              padding: '12px',
-              background: 'hsl(210 22% 94%)',
-              color: 'hsl(220 25% 10%)',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: '14px',
-              transition: 'background 0.2s',
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.background = 'hsl(210 18% 86%)'}
-            onMouseLeave={(e) => e.currentTarget.style.background = 'hsl(210 22% 94%)'}
-          >
-            Cancel
-          </button>
-        </div>
-      </div>
-    </div>
+            <div className="space-y-4">
+              <h4 className="text-sm font-semibold text-foreground">Attributes</h4>
+              {classMetadata.attributes.length === 0 && (
+                <p className="text-sm italic text-muted-foreground">No attributes defined.</p>
+              )}
+              {classMetadata.attributes.map((attrMeta) => {
+                const inputType = inputTypeFor(attrMeta.type);
+                const fieldId = `edit-${attrMeta.name}`;
+                const currentValue = attributes[attrMeta.name] ?? '';
+                return (
+                  <div key={attrMeta.name} className="space-y-2">
+                    <Label htmlFor={fieldId}>
+                      {attrMeta.name}
+                      <span className="ml-2 text-xs font-normal text-muted-foreground">
+                        ({attrMeta.type})
+                      </span>
+                    </Label>
+                    {inputType === 'checkbox' ? (
+                      <input
+                        id={fieldId}
+                        type="checkbox"
+                        className="h-5 w-5 cursor-pointer accent-primary"
+                        checked={currentValue === true || currentValue === 'true'}
+                        onChange={(e) => handleAttributeChange(attrMeta.name, e.target.checked)}
+                      />
+                    ) : (
+                      <Input
+                        id={fieldId}
+                        type={inputType}
+                        value={String(currentValue)}
+                        onChange={(e) => {
+                          const value =
+                            inputType === 'number'
+                              ? e.target.value === ''
+                                ? ''
+                                : parseFloat(e.target.value)
+                              : e.target.value;
+                          handleAttributeChange(attrMeta.name, value);
+                        }}
+                        placeholder={`Enter ${attrMeta.name}`}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <DialogFooter className="border-t bg-accent/40 px-6 py-4">
+            <Button type="button" variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit">Save Changes</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 };
 {% endraw %}

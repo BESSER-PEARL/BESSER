@@ -1,27 +1,30 @@
 /**
  * InstanceCanvas Component
- * Main canvas for creating and managing instances using ReactFlow
+ * Main canvas for creating and managing instances using @xyflow/react
  */
 {% raw %}
 import React, { useCallback, useState } from 'react';
-import ReactFlow, {
+import {
+  ReactFlow,
   Node,
   Edge,
   Controls,
   Background,
+  BackgroundVariant,
   useNodesState,
   useEdgesState,
-  addEdge,
   Connection,
   ConnectionMode,
   Panel,
-} from 'reactflow';
-import 'reactflow/dist/style.css';
+  NodeChange,
+} from '@xyflow/react';
+import '@xyflow/react/dist/style.css';
 import { InstanceNode } from './InstanceNode';
 import { PropertyEditor } from './PropertyEditor';
 import { AssociationSelector } from './AssociationSelector';
 import { InstanceCreationModal } from './InstanceCreationModal';
 import type { BaseInstance, ClassMetadata } from '../types/models';
+import * as api from '../api/instances';
 
 const nodeTypes = {
   instance: InstanceNode,
@@ -44,8 +47,8 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
   onLinkCreate,
   onInstanceCreate,
 }) => {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedInstance, setSelectedInstance] = useState<BaseInstance | null>(null);
   const [pendingConnection, setPendingConnection] = useState<{
     sourceId: string;
@@ -53,30 +56,26 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
     sourceClass: string;
     targetClass: string;
   } | null>(null);
-  
-  // Store node positions to preserve them across updates
+
   const nodePositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map());
-  
-  // State for instance creation modal
+
   const [createInstanceModal, setCreateInstanceModal] = useState<{
     className: string;
     position: { x: number; y: number };
   } | null>(null);
 
-  // Handle drop event for creating instances
   const onDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
       event.preventDefault();
       const className = event.dataTransfer.getData('className');
       if (!className) return;
 
-      const reactFlowBounds = event.currentTarget.getBoundingClientRect();
+      const bounds = event.currentTarget.getBoundingClientRect();
       const position = {
-        x: event.clientX - reactFlowBounds.left - 100,
-        y: event.clientY - reactFlowBounds.top - 50,
+        x: event.clientX - bounds.left - 100,
+        y: event.clientY - bounds.top - 50,
       };
 
-      // Show elegant modal instead of prompt
       setCreateInstanceModal({ className, position });
     },
     []
@@ -87,20 +86,15 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
     event.dataTransfer.dropEffect = 'copy';
   }, []);
 
-  // Convert instances to ReactFlow nodes
   React.useEffect(() => {
     const flowNodes: Node[] = instances.map((instance, index) => {
-      const classMetadata = availableClasses.find(c => c.name === instance.class_name);
-      
-      // Use stored position or calculate new one
+      const classMetadata = availableClasses.find((c) => c.name === instance.class_name);
       const storedPosition = nodePositionsRef.current.get(instance.id);
-      const position = storedPosition || { x: 100 + (index % 5) * 250, y: 100 + Math.floor(index / 5) * 200 };
-      
-      // Store position for future updates
+      const position =
+        storedPosition || { x: 100 + (index % 5) * 250, y: 100 + Math.floor(index / 5) * 200 };
       if (!storedPosition) {
         nodePositionsRef.current.set(instance.id, position);
       }
-      
       return {
         id: instance.id,
         type: 'instance',
@@ -116,26 +110,37 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
 
     setNodes(flowNodes);
 
-    // Create edges from links
     const flowEdges: Edge[] = instances.flatMap((instance) =>
-      instance.links.map((link) => ({
-        id: `${instance.id}-${link.target_id}-${link.association_name}`,
-        source: instance.id,
-        target: link.target_id,
-        label: link.association_name,
-        type: 'default',
-        animated: false,
-      }))
+      instance.links.map((link) => {
+        const targetInstance = instances.find((i) => i.id === link.target_id);
+        return {
+          // '::' so the id survives UUIDs in source/target (which contain '-')
+          id: `${instance.id}::${link.target_id}::${link.association_name}`,
+          source: instance.id,
+          target: link.target_id,
+          label: link.association_name,
+          type: 'default',
+          animated: false,
+          labelStyle: { fontSize: 11, fontWeight: 600 },
+          labelBgStyle: { fill: 'hsl(var(--card))' },
+          labelBgPadding: [6, 3] as [number, number],
+          labelBgBorderRadius: 4,
+          data: {
+            sourceClass: instance.class_name,
+            targetClass: targetInstance?.class_name ?? '',
+            associationName: link.association_name,
+          },
+        } as Edge;
+      })
     );
 
     setEdges(flowEdges);
-  }, [instances, setNodes, setEdges]);
+  }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges]);
 
-  // Update stored positions when nodes move
-  const handleNodesChange = React.useCallback(
-    (changes: any[]) => {
+  const handleNodesChange = useCallback(
+    (changes: NodeChange[]) => {
       changes.forEach((change) => {
-        if (change.type === 'position' && change.position) {
+        if (change.type === 'position' && 'position' in change && change.position) {
           nodePositionsRef.current.set(change.id, change.position);
         }
       });
@@ -146,29 +151,26 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      if (connection.source && connection.target) {
-        const sourceInstance = instances.find((i) => i.id === connection.source);
-        const targetInstance = instances.find((i) => i.id === connection.target);
-        
-        if (sourceInstance && targetInstance) {
-          const sourceClass = availableClasses.find(c => c.name === sourceInstance.class_name);
-          const validAssociations = sourceClass?.associations.filter(
-            assoc => assoc.targetClass === targetInstance.class_name
-          ) || [];
-          
-          // If only one association, auto-select it
-          if (validAssociations.length === 1) {
-            onLinkCreate(connection.source, connection.target, validAssociations[0].name);
-          } else {
-            // Multiple associations, show selector
-            setPendingConnection({
-              sourceId: connection.source,
-              targetId: connection.target,
-              sourceClass: sourceInstance.class_name,
-              targetClass: targetInstance.class_name,
-            });
-          }
-        }
+      if (!connection.source || !connection.target) return;
+      const sourceInstance = instances.find((i) => i.id === connection.source);
+      const targetInstance = instances.find((i) => i.id === connection.target);
+      if (!sourceInstance || !targetInstance) return;
+
+      const sourceClass = availableClasses.find((c) => c.name === sourceInstance.class_name);
+      const validAssociations =
+        sourceClass?.associations.filter(
+          (assoc) => assoc.targetClass === targetInstance.class_name
+        ) || [];
+
+      if (validAssociations.length === 1) {
+        onLinkCreate(connection.source, connection.target, validAssociations[0].name);
+      } else if (validAssociations.length > 1) {
+        setPendingConnection({
+          sourceId: connection.source,
+          targetId: connection.target,
+          sourceClass: sourceInstance.class_name,
+          targetClass: targetInstance.class_name,
+        });
       }
     },
     [instances, availableClasses, onLinkCreate]
@@ -181,26 +183,40 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
     setPendingConnection(null);
   };
 
-  // Validate connections based on metamodel
+  const onEdgesDelete = useCallback(
+    async (deletedEdges: Edge[]) => {
+      for (const edge of deletedEdges) {
+        const data = edge.data as
+          | { sourceClass?: string; targetClass?: string; associationName?: string }
+          | undefined;
+        if (!data?.sourceClass || !data.targetClass || !data.associationName) continue;
+        try {
+          await api.deleteLink(
+            data.sourceClass,
+            edge.source,
+            data.targetClass,
+            edge.target,
+            data.associationName
+          );
+        } catch (error) {
+          console.error('Failed to delete link:', error);
+        }
+      }
+    },
+    []
+  );
+
   const isValidConnection = useCallback(
-    (connection: Connection) => {
+    (connection: Edge | Connection) => {
       if (!connection.source || !connection.target) return false;
-      
       const sourceInstance = instances.find((i) => i.id === connection.source);
       const targetInstance = instances.find((i) => i.id === connection.target);
-      
       if (!sourceInstance || !targetInstance) return false;
-      
-      // Get source class metadata
-      const sourceClass = availableClasses.find(c => c.name === sourceInstance.class_name);
+      const sourceClass = availableClasses.find((c) => c.name === sourceInstance.class_name);
       if (!sourceClass) return false;
-      
-      // Check if at least one association exists between these classes
-      const hasAssociation = sourceClass.associations.some(
-        a => a.targetClass === targetInstance.class_name
+      return sourceClass.associations.some(
+        (a) => a.targetClass === targetInstance.class_name
       );
-      
-      return hasAssociation;
     },
     [instances, availableClasses]
   );
@@ -210,22 +226,17 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
     setSelectedInstance(null);
   };
 
-  const handleCreateFromModal = async (instanceName: string, attributes: Record<string, any>) => {
+  const handleCreateFromModal = async (
+    instanceName: string,
+    attributes: Record<string, any>
+  ) => {
     if (!createInstanceModal) return;
-    
     try {
-      // Call the API to create instance
-      await fetch('http://localhost:8000/instances', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          class_name: createInstanceModal.className,
-          instance_name: instanceName,
-          attributes,
-        }),
+      await api.createInstance({
+        class_name: createInstanceModal.className,
+        instance_name: instanceName,
+        attributes,
       });
-      
-      // Reload instances
       onInstanceCreate(createInstanceModal.className, createInstanceModal.position);
     } catch (error) {
       console.error('Failed to create instance:', error);
@@ -234,58 +245,53 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
   };
 
   return (
-    <div style={{ width: '100%', height: '100vh', display: 'flex' }}>
-      <div style={{ flex: 1 }} onDrop={onDrop} onDragOver={onDragOver}>
+    <div className="relative flex h-full w-full flex-1">
+      <div className="flex-1" onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
           nodes={nodes}
           edges={edges}
           onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
+          onEdgesDelete={onEdgesDelete}
           onConnect={onConnect}
           isValidConnection={isValidConnection}
           nodeTypes={nodeTypes}
           connectionMode={ConnectionMode.Loose}
+          deleteKeyCode={['Delete', 'Backspace']}
+          edgesFocusable
+          edgesReconnectable={false}
           fitView
+          proOptions={{ hideAttribution: true }}
         >
-          <Controls />
-          <Background />
+          <Controls className="!bg-card !border-border !shadow-sm [&>button]:!bg-card [&>button]:!border-border [&>button:hover]:!bg-accent" />
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={24}
+            size={1.5}
+            color="hsl(var(--border))"
+          />
+
           <Panel position="top-left">
-            <div style={{ background: 'white', padding: '12px 16px', borderRadius: '8px', border: '1px solid hsl(210 18% 86%)', boxShadow: '0 2px 8px rgba(0,0,0,0.08)' }}>
+            <div className="rounded-lg border bg-card px-4 py-3 shadow-sm">
 {% endraw %}
-              <h3 style={{ '{{' }} margin: '0 0 4px 0', fontSize: '15px', fontWeight: 600, color: 'hsl(220 25% 10%)' {{ '}}' }}>{{ model.name }} Instances</h3>
+              <h3 className="mb-1 text-sm font-semibold text-foreground">{{ model.name }} Instances</h3>
 {% raw %}
-              <p style={{ margin: 0, fontSize: '13px', color: 'hsl(215 12% 44%)' }}>Total: {instances.length}</p>
+              <p className="text-xs text-muted-foreground">Total: {instances.length}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Click a link, press <kbd className="rounded border bg-muted px-1 text-[10px] font-semibold">Del</kbd> to remove it
+              </p>
             </div>
           </Panel>
-          
+
           <Panel position="bottom-right">
             <a
               href="https://editor.besser-pearl.org"
               target="_blank"
               rel="noopener noreferrer"
-              style={{
-                display: 'block',
-                background: 'white',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                border: '2px solid hsl(192 80% 30%)',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.08)',
-                textDecoration: 'none',
-                transition: 'all 0.2s',
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.transform = 'scale(1.05)';
-                e.currentTarget.style.boxShadow = '0 4px 12px rgba(0,0,0,0.15)';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.transform = 'scale(1)';
-                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)';
-              }}
+              className="block rounded-lg border-2 border-primary bg-card px-3 py-2 shadow-sm transition-all hover:scale-105 hover:shadow-md"
             >
-              <div style={{ fontSize: '18px', fontWeight: 700, color: 'hsl(192 80% 30%)', letterSpacing: '0.5px' }}>
-                BESSER
-              </div>
-              <div style={{ fontSize: '9px', color: 'hsl(215 12% 44%)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              <div className="text-lg font-bold tracking-wider text-primary">BESSER</div>
+              <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
                 Powered by
               </div>
             </a>
@@ -296,7 +302,9 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
       {selectedInstance && (
         <PropertyEditor
           instance={selectedInstance}
-          classMetadata={availableClasses.find(c => c.name === selectedInstance.class_name)!}
+          classMetadata={
+            availableClasses.find((c) => c.name === selectedInstance.class_name)!
+          }
           onSave={handleUpdateInstance}
           onClose={() => setSelectedInstance(null)}
         />
@@ -314,7 +322,9 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
 
       {createInstanceModal && (
         <InstanceCreationModal
-          classMetadata={availableClasses.find(c => c.name === createInstanceModal.className)!}
+          classMetadata={
+            availableClasses.find((c) => c.name === createInstanceModal.className)!
+          }
           onSubmit={handleCreateFromModal}
           onCancel={() => setCreateInstanceModal(null)}
         />

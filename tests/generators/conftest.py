@@ -8,12 +8,66 @@ Fixtures defined here are automatically available to all tests under
 the ``tests/generators/`` directory without explicit imports.
 """
 
+import importlib
+import sys
+import types
+
 import pytest
 from besser.BUML.metamodel.structural import (
     Class, DomainModel, Property, BinaryAssociation, Multiplicity,
     Generalization, Enumeration, EnumerationLiteral,
     StringType, IntegerType, DateType,
 )
+
+
+# ---------------------------------------------------------------------------
+# Break the BAFGenerator import cycle before any generator test module loads.
+#
+# Chain: baf_generator -> services.converters -> services.__init__
+#        -> deployment -> github_deploy_api -> config.generators
+#        -> baf_generator   (CYCLE)
+#
+# We stub the converters module, trigger the BAFGenerator import, then restore
+# the real services modules. Safe to run twice (agents/ has a sibling conftest
+# from an earlier era; both end up exercising the same idempotent path).
+# ---------------------------------------------------------------------------
+
+def _stub_converters():
+    _SERVICES = "besser.utilities.web_modeling_editor.backend.services"
+    _CONVERTERS = _SERVICES + ".converters"
+
+    saved = {}
+    for key in list(sys.modules.keys()):
+        if key.startswith(_SERVICES):
+            saved[key] = sys.modules.pop(key)
+
+    svc = types.ModuleType(_SERVICES)
+    svc.__package__ = _SERVICES
+    svc.__path__ = []
+    sys.modules[_SERVICES] = svc
+
+    conv = types.ModuleType(_CONVERTERS)
+    conv.__package__ = _CONVERTERS
+    conv.__path__ = []
+    conv.agent_buml_to_json = lambda code: {}
+    sys.modules[_CONVERTERS] = conv
+    svc.converters = conv
+
+    try:
+        importlib.import_module("besser.generators.agents.baf_generator")
+    except Exception:
+        pass
+
+    for key in list(sys.modules.keys()):
+        if key.startswith(_SERVICES) and key not in saved:
+            if "baf_generator" not in key:
+                del sys.modules[key]
+
+    for key, mod in saved.items():
+        sys.modules[key] = mod
+
+
+_stub_converters()
 
 
 # ---------------------------------------------------------------------------

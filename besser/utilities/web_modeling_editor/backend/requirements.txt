@@ -6,3 +6,4 @@ PyYAML
 deep_translator
 bocl == 1.0.0
 cryptography
+openpyxl >= 3.1.0

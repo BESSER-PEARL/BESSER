@@ -589,6 +589,90 @@ def test_element_uncertainty_type_validation():
     class1.uncertainty = 0.5
     assert class1.uncertainty == 0.5
     assert isinstance(class1.uncertainty, float)
+    
+
+def test_property_is_id_roundtrip():
+    """Test that is_id attribute survives a simulated JSON round-trip."""
+    json_data = {
+        "name": "id_attr",
+        "isId": True,
+        "isOptional": False 
+    }
+    
+    prop = Property(name=json_data["name"], type=StringType, is_id=json_data["isId"], is_optional=json_data["isOptional"])
+    
+    assert prop.is_id is True
+    
+    output_json = {
+        "name": prop.name,
+        "isId": prop.is_id
+    }
+    
+    assert output_json["isId"] is True
+
+
+def test_property_is_id_validation():
+    """Test all scenarios for Property identifiers."""
+    # Check default value (is_id should be False by default)
+    prop_default = Property(name="normal_attr", type=StringType)
+    assert prop_default.is_id is False
+    
+    # Check correct initialization as an identifier
+    prop = Property(name="id_attr", type=StringType, is_id=True)
+    assert prop.is_id is True
+    assert prop.is_optional is False
+    
+    # Check validation rule: conflict between is_id and is_optional during initialization
+    with pytest.raises(ValueError, match="cannot be both an identifier"):
+        Property(name="invalid_prop", type=StringType, is_id=True, is_optional=True)
+        
+    # Check validation rule: setting is_id=True on an already optional property
+    prop_opt = Property(name="opt_to_id", type=StringType, is_optional=True)
+    with pytest.raises(ValueError, match="cannot be both an identifier"):
+        prop_opt.is_id = True
+    
+    # Check validation rule: setting is_optional=True on an already identifier property
+    prop_id = Property(name="id_to_opt", type=StringType, is_id=True)
+    with pytest.raises(ValueError, match="cannot be both an identifier"):
+        prop_id.is_optional = True
+
+
+def test_property_is_external_id_validation():
+    """is_external_id defaults to False, round-trips, and conflicts with is_optional.
+
+    External identifiers (issue #230) are distinct from the internal PK
+    (``is_id``): a class may have several of them (composite key) and a
+    property may carry both flags at once when a natural key also serves as
+    the PK (e.g. ``isbn``). External ids must still be non-optional so the
+    object is always identifiable by users.
+    """
+    # Default is False
+    prop_default = Property(name="plain", type=StringType)
+    assert prop_default.is_external_id is False
+
+    # Correct initialization
+    prop = Property(name="email", type=StringType, is_external_id=True)
+    assert prop.is_external_id is True
+    assert prop.is_optional is False
+
+    # is_id and is_external_id may coexist (natural PK case)
+    prop_both = Property(name="isbn", type=StringType, is_id=True, is_external_id=True)
+    assert prop_both.is_id is True
+    assert prop_both.is_external_id is True
+
+    # is_external_id + is_optional rejected at construction
+    with pytest.raises(ValueError, match="external identifier and optional"):
+        Property(name="bad", type=StringType, is_external_id=True, is_optional=True)
+
+    # Setting is_external_id=True on an already-optional property is rejected
+    prop_opt = Property(name="opt", type=StringType, is_optional=True)
+    with pytest.raises(ValueError, match="external identifier and optional"):
+        prop_opt.is_external_id = True
+
+    # Setting is_optional=True on an external-id property is rejected
+    prop_ext = Property(name="ext", type=StringType, is_external_id=True)
+    with pytest.raises(ValueError, match="external identifier and optional"):
+        prop_ext.is_optional = True
 
 
 def test_attribute_shadowing_validation():

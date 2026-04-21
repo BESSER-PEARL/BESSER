@@ -1,0 +1,11 @@
+Version 7.1.5
+=============
+
+Patch release: **the DB Agent template now generates without an internal server error**. Backend-only fix — no metamodel, generator, or public API contract changes. The frontend submodule pointer is unchanged.
+
+Highlights
+----------
+
+- **DB Agent template generation no longer fails with ``NameError: name 'ReceiveTextEvent' is not defined``**: the shipped ``dbagent.json`` template has an event-only transition (``"event": "ReceiveTextEvent"`` with no conditions), which ``agent_model_builder.agent_model_to_code`` emits as ``initial.when_event(ReceiveTextEvent()).go_to(db_reply)``. The generated module's import block pulled in ``Agent, AgentReply, LLMReply, RAGReply, DBReply`` and the LLM classes, but none of the ``*Event`` classes. ``generate_agent_files`` in ``generation_router.py`` then ``exec_module``-ed the generated file and raised, which the frontend surfaced as a 500 on ``/besser_api/generate-output``. The other four shipped templates (``faqragagent``, ``greetingagent``, ``gymagent``, ``libraryagent``) hid the bug because they use intent-matcher transitions and the builder emits those as ``when_intent_matched(intent).go_to(...)`` without ever referencing the event class directly.
+- **Fix**: ``besser/utilities/buml_code_builder/agent_model_builder.py`` now adds ``ReceiveTextEvent``, ``ReceiveFileEvent``, ``ReceiveJSONEvent``, ``ReceiveMessageEvent``, ``WildcardEvent``, and ``DummyEvent`` to the ``from besser.BUML.metamodel.state_machine.agent import ...`` line it writes into the generated ``agent_model.py``. All six are already exported by ``besser.BUML.metamodel.state_machine.agent`` — this change only affects generated code, not runtime behavior of the builder itself.
+- **Regression coverage**: all five shipped agent templates (``dbagent``, ``faqragagent``, ``greetingagent``, ``gymagent``, ``libraryagent``) were round-tripped through ``process_agent_diagram`` → ``generate_agent_files`` and each produces a valid ``agent_output.zip`` containing a syntactically valid ``agent_model.py`` and the ``BAFGenerator`` output bundle.

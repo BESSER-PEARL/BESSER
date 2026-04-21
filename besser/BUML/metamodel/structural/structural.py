@@ -599,17 +599,25 @@ class Property(TypedElement):
     def __init__(self, name: str, type: Type, owner: Type = None, multiplicity: Multiplicity = Multiplicity(1, 1),
                  visibility: str = 'public', is_composite: bool = False, is_navigable: bool = True,
                  is_id: bool = False, is_read_only: bool = False, is_optional: bool = False,
+                 is_external_id: bool = False,
                  default_value: Any = None,
                  timestamp: datetime = None, metadata: Metadata = None, is_derived: bool = False,
                  uncertainty: float = 0.0):
+
         super().__init__(name, type, timestamp, metadata, visibility, is_derived, uncertainty)
         self.owner: Type = owner
         self.multiplicity: Multiplicity = multiplicity
         self.is_composite: bool = is_composite
         self.is_navigable: bool = is_navigable
+
+        self.__is_id = False
+        self.__is_optional = False
+        self.__is_external_id = False
+
         self.is_id: bool = is_id
         self.is_read_only: bool = is_read_only
         self.is_optional: bool = is_optional
+        self.is_external_id: bool = is_external_id
         self.default_value: Any = default_value
 
     @property
@@ -667,6 +675,8 @@ class Property(TypedElement):
     @is_id.setter
     def is_id(self, is_id: bool):
         """bool: Set whether the property is an id."""
+        if is_id is True and self.__is_optional is True:
+            raise ValueError("A property cannot be both an identifier and optional.")
         self.__is_id = is_id
 
     @property
@@ -687,7 +697,31 @@ class Property(TypedElement):
     @is_optional.setter
     def is_optional(self, is_optional: bool):
         """bool: Set whether the property is optional."""
+        if is_optional is True and self.__is_id is True:
+            raise ValueError("A property cannot be both an identifier and optional.")
+        if is_optional is True and self.__is_external_id is True:
+            raise ValueError("A property cannot be both an external identifier and optional.")
         self.__is_optional = is_optional
+
+    @property
+    def is_external_id(self) -> bool:
+        """bool: Get whether the property is an external identifier.
+
+        External identifiers are user-facing keys (e.g. ``name``, ``email``,
+        ``sku``) that people outside the system use to locate an object,
+        distinct from the internal/surrogate primary key (``is_id``). A class
+        may have multiple external-id properties forming a composite key, and a
+        property can be both ``is_id`` and ``is_external_id`` when a natural
+        key also serves as the PK.
+        """
+        return self.__is_external_id
+
+    @is_external_id.setter
+    def is_external_id(self, is_external_id: bool):
+        """bool: Set whether the property is an external identifier."""
+        if is_external_id is True and self.__is_optional is True:
+            raise ValueError("A property cannot be both an external identifier and optional.")
+        self.__is_external_id = is_external_id
 
     @property
     def default_value(self) -> Any:
@@ -714,6 +748,7 @@ class Property(TypedElement):
             f'Property({self.name}, {self.visibility}, {self.type}, {self.multiplicity}, '
             f'is_composite={self.is_composite}, is_id={self.is_id}, '
             f'is_read_only={self.is_read_only}, is_optional={self.is_optional}, '
+            f'is_external_id={self.is_external_id}, '
             f'default_value={self.default_value}, '
             f'{self.timestamp}, {self.metadata}, '
             f'is_derived={self.is_derived})'

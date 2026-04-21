@@ -97,7 +97,7 @@ MAX_BUML_SIZE = 2 * 1024 * 1024       # 2 MB
 # ---------------------------------------------------------------------------
 # Allowed MIME / extension sets per upload type
 # ---------------------------------------------------------------------------
-ALLOWED_CSV_EXTENSIONS = {".csv"}
+ALLOWED_SPREADSHEET_EXTENSIONS = {".csv", ".xlsx"}
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 ALLOWED_BUML_EXTENSIONS = {".py"}
 ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}
@@ -155,6 +155,14 @@ def _validate_file_content(content: bytes, filename: str) -> None:
                 detail="CSV file does not contain comma or semicolon separators.",
             )
 
+    elif ext == ".xlsx":
+        # XLSX files are ZIP archives — check the ZIP magic bytes.
+        if not content.startswith(b"PK\x03\x04"):
+            raise HTTPException(
+                status_code=400,
+                detail="XLSX file appears to be corrupted or is not a valid Excel workbook.",
+            )
+
     elif ext == ".py":
         # Must be valid Python syntax
         try:
@@ -199,6 +207,49 @@ async def _write_file(path: str, data: bytes | str, mode: str = "wb") -> None:
         with open(path, mode) as fh:
             fh.write(data)
     await asyncio.to_thread(_do_write)
+
+
+def _xlsx_bytes_to_csv_file(xlsx_bytes: bytes, csv_path: str) -> None:
+    """Convert the first worksheet of an XLSX workbook to a UTF-8 CSV file.
+
+    Lazy-imports openpyxl so the rest of the backend stays importable if the
+    optional dependency is missing.
+    """
+    import csv as _csv
+    import io
+
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="XLSX support requires the 'openpyxl' package. Install it with `pip install openpyxl`.",
+        ) from exc
+
+    try:
+        workbook = load_workbook(io.BytesIO(xlsx_bytes), read_only=True, data_only=True)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read XLSX file: {exc}",
+        ) from exc
+
+    try:
+        worksheet = workbook.active
+        if worksheet is None:
+            raise HTTPException(status_code=400, detail="XLSX file contains no worksheets.")
+
+        with open(csv_path, "w", encoding="utf-8", newline="") as fh:
+            writer = _csv.writer(fh)
+            rows_written = 0
+            for row in worksheet.iter_rows(values_only=True):
+                writer.writerow(["" if cell is None else cell for cell in row])
+                rows_written += 1
+    finally:
+        workbook.close()
+
+    if rows_written == 0:
+        raise HTTPException(status_code=400, detail="XLSX worksheet is empty.")
 
 
 async def _read_json_file(path: str) -> dict:
@@ -459,18 +510,32 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
 @handle_endpoint_errors("csv_to_domain_model_endpoint")
 async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
     """
-    Accepts one or more CSV files and returns a B-UML domain model as JSON.
+    Accepts one or more CSV or XLSX files and returns a B-UML domain model as JSON.
+    XLSX files are converted to CSV (first worksheet) before reverse engineering.
     """
     file_paths = []
     with tempfile.TemporaryDirectory(prefix=CSV_TEMP_DIR_PREFIX) as temp_dir:
         # Save uploaded files to temp dir
         for file in files:
             file_content = await file.read()
-            _validate_upload(file, max_size=MAX_CSV_SIZE, allowed_extensions=ALLOWED_CSV_EXTENSIONS, content=file_content)
+            _validate_upload(
+                file,
+                max_size=MAX_CSV_SIZE,
+                allowed_extensions=ALLOWED_SPREADSHEET_EXTENSIONS,
+                content=file_content,
+            )
             _validate_file_content(file_content, file.filename or "")
             safe_filename = os.path.basename(file.filename)
-            file_path = os.path.join(temp_dir, safe_filename)
-            await _write_file(file_path, file_content)
+            _, ext = os.path.splitext(safe_filename)
+            ext = ext.lower()
+
+            if ext == ".xlsx":
+                csv_name = os.path.splitext(safe_filename)[0] + ".csv"
+                file_path = os.path.join(temp_dir, csv_name)
+                _xlsx_bytes_to_csv_file(file_content, file_path)
+            else:
+                file_path = os.path.join(temp_dir, safe_filename)
+                await _write_file(file_path, file_content)
             file_paths.append(file_path)
 
         # Generate DomainModel from CSVs
@@ -511,15 +576,30 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
 @handle_endpoint_errors("get_json_model_from_image")
 async def get_json_model_from_image(
     image_file: UploadFile = File(...),
-    api_key: str = Form(...)
+    api_key: str = Form(...),
+    existing_model: str = Form(None),
 ):
     """
     Accepts a PNG or JPEG image and an OpenAI API key, uses BESSER's imagetouml feature to transform the image into a BUML class diagram, then converts the BUML to JSON and returns the JSON object.
+
+    When `existing_model` is provided (as a stringified diagram JSON of an existing
+    ClassDiagram), the image is merged into that model — same-name classes are
+    preserved, new ones are added — and the merged diagram is returned.
     """
     # Save uploaded image to a temp folder
     image_content = await image_file.read()
     _validate_upload(image_file, max_size=MAX_IMAGE_SIZE, allowed_extensions=ALLOWED_IMAGE_EXTENSIONS, content=image_content)
     _validate_file_content(image_content, image_file.filename or "")
+
+    existing_domain_model = None
+    if existing_model:
+        try:
+            existing_json = json.loads(existing_model)
+            if existing_json.get("model", {}).get("elements") or existing_json.get("elements"):
+                payload = existing_json if "model" in existing_json else {"title": "Existing", "model": existing_json}
+                existing_domain_model = process_class_diagram(payload)
+        except (json.JSONDecodeError, ValueError):
+            existing_domain_model = None
 
     with tempfile.TemporaryDirectory() as temp_dir:
         safe_filename = os.path.basename(image_file.filename)
@@ -538,7 +618,11 @@ async def get_json_model_from_image(
             raise HTTPException(status_code=400, detail="No valid image file found.")
         image_path = os.path.join(image_folder, image_files[0])
 
-        domain_model = image_to_buml(image_path=image_path, openai_token=api_key)
+        domain_model = image_to_buml(
+            image_path=image_path,
+            openai_token=api_key,
+            existing_model=existing_domain_model,
+        )
         diagram_json = class_buml_to_json(domain_model)
 
         diagram_title = diagram_json.get("title", "Imported Class Diagram")

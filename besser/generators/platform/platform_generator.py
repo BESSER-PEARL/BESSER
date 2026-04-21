@@ -101,7 +101,9 @@ class PlatformGenerator(GeneratorInterface):
             'frontend',
             'frontend/src',
             'frontend/src/components',
+            'frontend/src/components/ui',
             'frontend/src/api',
+            'frontend/src/lib',
             'frontend/src/types',
             'frontend/src/hooks',
             'frontend/src/utils',
@@ -328,19 +330,12 @@ class PlatformGenerator(GeneratorInterface):
         # Generate ClassPalette component (for dragging classes to create instances)
         template = self.env.get_template('frontend/src/components/ClassPalette.tsx.j2')
         output_path = os.path.join(components_dir, 'ClassPalette.tsx')
-        
+
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render(
                 classes=self.domain_model.get_classes()
             ))
-        
-        # Generate ClassPalette CSS
-        template = self.env.get_template('frontend/src/components/ClassPalette.css.j2')
-        output_path = os.path.join(components_dir, 'ClassPalette.css')
-        
-        with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(template.render())
-        
+
         # Generate AssociationSelector component
         template = self.env.get_template('frontend/src/components/AssociationSelector.tsx.j2')
         output_path = os.path.join(components_dir, 'AssociationSelector.tsx')
@@ -351,10 +346,24 @@ class PlatformGenerator(GeneratorInterface):
         # Generate InstanceCreationModal component
         template = self.env.get_template('frontend/src/components/InstanceCreationModal.tsx.j2')
         output_path = os.path.join(components_dir, 'InstanceCreationModal.tsx')
-        
+
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render())
-    
+
+        # Generate shared lib (cn helper)
+        lib_dir = os.path.join(frontend_dir, 'src', 'lib')
+        template = self.env.get_template('frontend/src/lib/utils.ts.j2')
+        with open(os.path.join(lib_dir, 'utils.ts'), 'w', encoding='utf-8') as f:
+            f.write(template.render())
+
+        # Generate shadcn/ui primitive components (static; wrapped in {% raw %})
+        ui_dir = os.path.join(components_dir, 'ui')
+        ui_components = ['button', 'input', 'label', 'card', 'dialog']
+        for comp in ui_components:
+            template = self.env.get_template(f'frontend/src/components/ui/{comp}.tsx.j2')
+            with open(os.path.join(ui_dir, f'{comp}.tsx'), 'w', encoding='utf-8') as f:
+                f.write(template.render())
+
     def _generate_frontend_app(self, frontend_dir):
         """Generates the main App component."""
         template = self.env.get_template('frontend/src/App.tsx.j2')
@@ -416,10 +425,24 @@ class PlatformGenerator(GeneratorInterface):
         # Generate vite.config.ts
         template = self.env.get_template('frontend/vite.config.ts.j2')
         output_path = os.path.join(frontend_dir, 'vite.config.ts')
-        
+
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render())
-    
+
+        # Generate tailwind.config.ts
+        template = self.env.get_template('frontend/tailwind.config.ts.j2')
+        output_path = os.path.join(frontend_dir, 'tailwind.config.ts')
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render())
+
+        # Generate postcss.config.js
+        template = self.env.get_template('frontend/postcss.config.js.j2')
+        output_path = os.path.join(frontend_dir, 'postcss.config.js')
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            f.write(template.render())
+
     def _generate_docker_files(self):
         """Generates Docker and docker-compose configuration."""
         # Generate docker-compose.yml

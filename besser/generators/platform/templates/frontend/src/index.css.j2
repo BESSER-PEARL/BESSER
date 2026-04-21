@@ -1,113 +1,77 @@
 @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&display=swap');
 
-:root {
-  --font-geist-sans: 'Sora', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-  --background: hsl(48 30% 97%);
-  --foreground: hsl(220 25% 10%);
-  --primary: hsl(192 80% 20%);
-  --primary-foreground: hsl(0 0% 100%);
-  --secondary: hsl(160 18% 92%);
-  --secondary-foreground: hsl(220 28% 14%);
-  --border: hsl(210 18% 86%);
-  --accent: hsl(196 42% 93%);
-  --muted: hsl(210 22% 94%);
-  --muted-foreground: hsl(215 12% 44%);
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 48 30% 97%;
+    --foreground: 220 25% 10%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 220 25% 10%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 25% 10%;
+
+    --primary: 192 80% 20%;
+    --primary-foreground: 0 0% 100%;
+
+    --secondary: 160 18% 92%;
+    --secondary-foreground: 220 28% 14%;
+
+    --muted: 210 22% 94%;
+    --muted-foreground: 215 12% 44%;
+
+    --accent: 196 42% 93%;
+    --accent-foreground: 192 80% 20%;
+
+    --destructive: 4 76% 50%;
+    --destructive-foreground: 0 0% 100%;
+
+    --success: 142 76% 35%;
+    --success-foreground: 0 0% 100%;
+
+    --warning: 25 95% 53%;
+    --warning-foreground: 0 0% 100%;
+
+    --border: 210 18% 86%;
+    --input: 210 18% 86%;
+    --ring: 192 80% 42%;
+
+    --radius: 0.5rem;
+  }
 }
 
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased font-sans;
+  }
 }
 
-body {
-  margin: 0;
-  font-family: var(--font-geist-sans);
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  background: var(--background);
-  color: var(--foreground);
-}
-
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
-}
-
-#root {
-  width: 100%;
-  height: 100vh;
-}
-
-button {
-  font-family: inherit;
-}
-
-input,
-textarea,
-select {
-  font-family: inherit;
-}
-
-/* Toolbar button styles */
-.toolbar-btn {
-  padding: 8px 16px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.2s;
-  background: white;
-  color: var(--foreground);
-}
-
-.toolbar-btn:hover:not(:disabled) {
-  background: var(--accent);
-  border-color: var(--primary);
-}
-
-.toolbar-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.toolbar-btn.primary {
-  background: var(--primary);
-  color: white;
-  border-color: var(--primary);
-}
-
-.toolbar-btn.primary:hover:not(:disabled) {
-  background: hsl(192 80% 42%);
-}
-
-.toolbar-btn.success {
-  background: hsl(142 76% 35%);
-  color: white;
-  border-color: hsl(142 76% 35%);
-}
-
-.toolbar-btn.success:hover:not(:disabled) {
-  background: hsl(142 76% 45%);
-}
-
-.toolbar-btn.danger {
-  background: hsl(4 76% 50%);
-  color: white;
-  border-color: hsl(4 76% 50%);
-}
-
-.toolbar-btn.danger:hover:not(:disabled) {
-  background: hsl(4 76% 60%);
-}
-
-.toolbar-btn.warning {
-  background: hsl(25 95% 53%);
-  color: white;
-  border-color: hsl(25 95% 53%);
-}
-
-.toolbar-btn.warning:hover:not(:disabled) {
-  background: hsl(25 95% 63%);
+/* Subtle scrollbars */
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: hsl(var(--border));
+    border-radius: 4px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--muted-foreground));
+  }
 }

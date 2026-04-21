@@ -576,15 +576,30 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
 @handle_endpoint_errors("get_json_model_from_image")
 async def get_json_model_from_image(
     image_file: UploadFile = File(...),
-    api_key: str = Form(...)
+    api_key: str = Form(...),
+    existing_model: str = Form(None),
 ):
     """
     Accepts a PNG or JPEG image and an OpenAI API key, uses BESSER's imagetouml feature to transform the image into a BUML class diagram, then converts the BUML to JSON and returns the JSON object.
+
+    When `existing_model` is provided (as a stringified diagram JSON of an existing
+    ClassDiagram), the image is merged into that model — same-name classes are
+    preserved, new ones are added — and the merged diagram is returned.
     """
     # Save uploaded image to a temp folder
     image_content = await image_file.read()
     _validate_upload(image_file, max_size=MAX_IMAGE_SIZE, allowed_extensions=ALLOWED_IMAGE_EXTENSIONS, content=image_content)
     _validate_file_content(image_content, image_file.filename or "")
+
+    existing_domain_model = None
+    if existing_model:
+        try:
+            existing_json = json.loads(existing_model)
+            if existing_json.get("model", {}).get("elements") or existing_json.get("elements"):
+                payload = existing_json if "model" in existing_json else {"title": "Existing", "model": existing_json}
+                existing_domain_model = process_class_diagram(payload)
+        except (json.JSONDecodeError, ValueError):
+            existing_domain_model = None
 
     with tempfile.TemporaryDirectory() as temp_dir:
         safe_filename = os.path.basename(image_file.filename)
@@ -603,7 +618,11 @@ async def get_json_model_from_image(
             raise HTTPException(status_code=400, detail="No valid image file found.")
         image_path = os.path.join(image_folder, image_files[0])
 
-        domain_model = image_to_buml(image_path=image_path, openai_token=api_key)
+        domain_model = image_to_buml(
+            image_path=image_path,
+            openai_token=api_key,
+            existing_model=existing_domain_model,
+        )
         diagram_json = class_buml_to_json(domain_model)
 
         diagram_title = diagram_json.get("title", "Imported Class Diagram")

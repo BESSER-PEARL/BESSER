@@ -233,6 +233,7 @@ def _process_classes(
                         attr_type = attr.get("attributeType", "str")
                         is_optional = attr.get("isOptional", False)
                         is_id = attr.get("isId", False)
+                        is_external_id = attr.get("isExternalId", False)
                         is_derived = attr.get("isDerived", False)
                         default_value = attr.get("defaultValue", None)
                     else:
@@ -240,6 +241,7 @@ def _process_classes(
                         visibility, name, attr_type = parse_attribute(attr.get("name", ""), domain_model, type_lookup=type_lookup)
                         is_optional = False
                         is_id = False
+                        is_external_id = False
                         is_derived = False
                         default_value = None
 
@@ -251,7 +253,7 @@ def _process_classes(
 
                     # Resolve the attribute type via O(1) lookup
                     type_obj = _resolve_type(attr_type, type_lookup)
-                    property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, is_id=is_id, is_derived=is_derived, default_value=default_value)
+                    property_ = Property(name=name, type=type_obj, visibility=visibility, is_optional=is_optional, is_id=is_id, is_external_id=is_external_id, is_derived=is_derived, default_value=default_value)
                     cls.add_attribute(property_)
 
             # Add methods

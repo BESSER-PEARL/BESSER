@@ -631,10 +631,48 @@ def test_property_is_id_validation():
     with pytest.raises(ValueError, match="cannot be both an identifier"):
         prop_opt.is_id = True
     
-    # Check validation rule: setting is_optional=True on an already identifier property    
+    # Check validation rule: setting is_optional=True on an already identifier property
     prop_id = Property(name="id_to_opt", type=StringType, is_id=True)
     with pytest.raises(ValueError, match="cannot be both an identifier"):
         prop_id.is_optional = True
+
+
+def test_property_is_external_id_validation():
+    """is_external_id defaults to False, round-trips, and conflicts with is_optional.
+
+    External identifiers (issue #230) are distinct from the internal PK
+    (``is_id``): a class may have several of them (composite key) and a
+    property may carry both flags at once when a natural key also serves as
+    the PK (e.g. ``isbn``). External ids must still be non-optional so the
+    object is always identifiable by users.
+    """
+    # Default is False
+    prop_default = Property(name="plain", type=StringType)
+    assert prop_default.is_external_id is False
+
+    # Correct initialization
+    prop = Property(name="email", type=StringType, is_external_id=True)
+    assert prop.is_external_id is True
+    assert prop.is_optional is False
+
+    # is_id and is_external_id may coexist (natural PK case)
+    prop_both = Property(name="isbn", type=StringType, is_id=True, is_external_id=True)
+    assert prop_both.is_id is True
+    assert prop_both.is_external_id is True
+
+    # is_external_id + is_optional rejected at construction
+    with pytest.raises(ValueError, match="external identifier and optional"):
+        Property(name="bad", type=StringType, is_external_id=True, is_optional=True)
+
+    # Setting is_external_id=True on an already-optional property is rejected
+    prop_opt = Property(name="opt", type=StringType, is_optional=True)
+    with pytest.raises(ValueError, match="external identifier and optional"):
+        prop_opt.is_external_id = True
+
+    # Setting is_optional=True on an external-id property is rejected
+    prop_ext = Property(name="ext", type=StringType, is_external_id=True)
+    with pytest.raises(ValueError, match="external identifier and optional"):
+        prop_ext.is_optional = True
 
 
 def test_attribute_shadowing_validation():

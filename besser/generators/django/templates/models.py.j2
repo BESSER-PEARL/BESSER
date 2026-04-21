@@ -21,9 +21,9 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     """
     Represents a {{ class_obj.name[0].lower() + class_obj.name[1:] }} in the system.
     """
-{%- for attr in sort_by_timestamp(class_obj.attributes) %}
-    {{ attr.name }} = {{ django_fields.get_field(attr.type, model.get_enumerations(), attr.is_id) }}{%- if not loop.last %}{% endif %}
-{%- endfor %}
+{% for attr in sort_by_timestamp(class_obj.attributes) %}
+    {{ attr.name }} = {{ django_fields.get_field(attr.type, model.get_enumerations(), attr.is_id, attr.is_external_id) }}
+{% endfor %}
     {%- for end in class_obj.association_ends() -%}
         {%- set ns = namespace(opposite_end=end) %}
         {%- for end_assoc in end.owner.ends %}
@@ -60,7 +60,31 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
               {%- set _ = attr_primitive_data_type.append(attr) %}
             {%- endif %}
         {%- endfor %}
-    {%- if attr_primitive_data_type %}
+    {# External-id attributes drive __str__ so ForeignKey dropdowns, admin list    #}
+    {# views, and {{ object }} template rendering show a human-meaningful label   #}
+    {# instead of the primary key (addresses BESSER#225 / #230).                   #}
+    {%- set external_id_attrs = [] %}
+        {%- for attr in sort_by_timestamp(class_obj.attributes) %}
+            {%- if attr.is_external_id and attr.type is is_primitive_data_type %}
+              {%- set _ = external_id_attrs.append(attr) %}
+            {%- endif %}
+        {%- endfor %}
+    {%- if external_id_attrs %}
+
+    def __str__(self):
+        """
+        Returns a string representation of the {{ class_obj.name[0].lower() + class_obj.name[1:] }}
+        using its external identifier{% if external_id_attrs | length > 1 %}s{% endif %}.
+        """
+        return {% if external_id_attrs | length == 1 -%}
+            str(self.{{ external_id_attrs[0].name }})
+        {%- else -%}
+            " - ".join(str(x) for x in (
+            {%- for a in external_id_attrs %}self.{{ a.name }}{% if not loop.last %}, {% endif %}{% endfor -%}
+            ))
+        {%- endif %}
+
+    {%- elif attr_primitive_data_type %}
     {%- set first_attr = attr_primitive_data_type[0] %}
 
     def __str__(self):

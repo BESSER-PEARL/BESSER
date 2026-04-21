@@ -200,6 +200,7 @@ def domain_model_to_code(
                 attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
                 visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
                 is_optional_str = ", is_optional=True" if attr.is_optional else ""
+                is_id_str = ", is_id=True" if attr.is_id else ""
                 is_derived_str = ", is_derived=True" if attr.is_derived else ""
                 if attr.default_value is not None:
                     if isinstance(attr.default_value, str):
@@ -209,7 +210,7 @@ def domain_model_to_code(
                 else:
                     default_value_str = ""
                 f.write(f"{cls_var_name}_{attr.name}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
-                       f"type={attr_type}{visibility_str}{is_optional_str}{is_derived_str}{default_value_str})\n")
+                       f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_derived_str}{default_value_str})\n")
 
             # Write methods
             for method in sort(cls.methods):
@@ -336,6 +337,7 @@ def domain_model_to_code(
                     attr_type = PRIMITIVE_TYPE_MAPPING.get(attr.type.name, safe_class_name(attr.type.name))
                     visibility_str = f', visibility="{attr.visibility}"' if attr.visibility != "public" else ""
                     is_optional_str = ", is_optional=True" if attr.is_optional else ""
+                    is_id_str = ", is_id=True" if attr.is_id else ""
                     is_derived_str = ", is_derived=True" if attr.is_derived else ""
                     if attr.default_value is not None:
                         if isinstance(attr.default_value, str):
@@ -345,7 +347,7 @@ def domain_model_to_code(
                     else:
                         default_value_str = ""
                     f.write(f"{ac_var_name}_{attr.name}: Property = Property(name=\"{_escape_python_string(attr.name)}\", "
-                           f"type={attr_type}{visibility_str}{is_optional_str}{is_derived_str}{default_value_str})\n")
+                           f"type={attr_type}{visibility_str}{is_optional_str}{is_id_str}{is_derived_str}{default_value_str})\n")
 
                 # Write methods for the association class
                 for method in sort(ac.methods):

@@ -22,7 +22,7 @@ class {{ class_obj.name }}({{ inheritance | default('models.Model', true) }}):
     Represents a {{ class_obj.name[0].lower() + class_obj.name[1:] }} in the system.
     """
 {%- for attr in sort_by_timestamp(class_obj.attributes) %}
-    {{ attr.name }} = {{ django_fields.get_field(attr.type, model.get_enumerations()) }}{%- if not loop.last %}{% endif %}
+    {{ attr.name }} = {{ django_fields.get_field(attr.type, model.get_enumerations(), attr.is_id) }}{%- if not loop.last %}{% endif %}
 {%- endfor %}
     {%- for end in class_obj.association_ends() -%}
         {%- set ns = namespace(opposite_end=end) %}

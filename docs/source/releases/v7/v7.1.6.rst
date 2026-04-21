@@ -1,0 +1,18 @@
+Version 7.1.6
+=============
+
+Minor release: **identifier story overhaul + more permissive PlantUML importer**. Closes #230, #225, #108, #236 and completes the ``is_id`` work from #478 / #486. Frontend submodule advances twice to expose the two new attribute checkboxes.
+
+Highlights
+----------
+
+- **New ``Property.is_external_id`` (closes #230, #225, #108)**: B-UML now distinguishes the internal surrogate PK (``is_id``) from user-facing identifiers (``is_external_id``). Composite keys supported. Flag round-trips through metamodel, JSON converters, and code builder. SQLAlchemy emits ``unique=True`` on non-PK external ids (subsumes #108's UNIQUE ask). Django emits ``unique=True`` and — crucially for #225 — uses external ids in ``__str__`` so ForeignKey dropdowns show ``isbn`` / ``first_name - last_name`` instead of the PK.
+- **``is_id`` propagation completed (#478)**: PR #486 landed the metamodel + converters but deferred the builder, generators, and editor. Finished here: ``domain_model_to_code`` emits ``is_id=True``, Django template emits ``primary_key=True``, editor gains an **ID** checkbox (SQLAlchemy already worked).
+- **PlantUML importer permissiveness (closes #236)**: grammar now accepts single-dash ``-`` associations, ``integer`` / ``boolean`` type aliases, and trailing ``<`` / ``>`` direction hints on labels. Lexer/parser regenerated with ANTLR 4.13.2.
+- **Django template whitespace fix**: pre-existing bug where the attribute for-loop stripped every newline — rendered ``models.py`` was invalid Python. Regression test compiles the output.
+- **Editor UI (submodule c4252a6 → b5102c0)**: two new attribute-popup checkboxes (ID, External ID), ``{id}`` / ``{external id}`` markers in the display name, plus ``c50f6dc`` (attribute/method reorder — piggybacked on ``develop``).
+
+Testing
+-------
+
+11 new tests: metamodel setter validation, JSON↔BUML round-trip, code-builder exec round-trip, SQLAlchemy schema introspection + real ``IntegrityError`` on duplicate external-id, Django field emission + ``__str__`` variants + ``compile()`` sanity, and 5 PlantUML grammar regressions. Full suite: **692 passed, 5 skipped, 3 xfailed**.

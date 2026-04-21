@@ -704,6 +704,46 @@ class TestClassDiagramRoundtrip:
         assert optionals.get("title") is False
         assert optionals.get("pages") is True
 
+    def test_attribute_is_id_and_external_id_preserved(self, minimal_class_diagram_json):
+        """`isId` and `isExternalId` flags survive the JSON -> BUML -> JSON roundtrip.
+
+        Regression guard for the is_id work (PR #486) and the is_external_id
+        work (issues #230 / #225). We mutate the fixture in place rather than
+        building a new one so any future change to the fixture shape doesn't
+        cause drift.
+        """
+        # Mutate the fixture: mark 'title' as id, 'pages' as external id.
+        # (isOptional must be False for both — metamodel enforces it.)
+        for element in minimal_class_diagram_json["model"]["elements"].values():
+            if element.get("type") != "ClassAttribute":
+                continue
+            if element["name"] == "title":
+                element["isId"] = True
+                element["isExternalId"] = False
+                element["isOptional"] = False
+            elif element["name"] == "pages":
+                element["isId"] = False
+                element["isExternalId"] = True
+                element["isOptional"] = False
+
+        domain_model = process_class_diagram(minimal_class_diagram_json)
+        result = class_buml_to_json(domain_model)
+
+        flags_by_name = {}
+        for element in result["elements"].values():
+            if element.get("type") != "ClassAttribute":
+                continue
+            owner = result["elements"].get(element.get("owner"), {})
+            if owner.get("name") != "Book":
+                continue
+            flags_by_name[element["name"]] = {
+                "isId": element.get("isId"),
+                "isExternalId": element.get("isExternalId"),
+            }
+
+        assert flags_by_name["title"] == {"isId": True, "isExternalId": False}
+        assert flags_by_name["pages"] == {"isId": False, "isExternalId": True}
+
     def test_methods_preserved(self, minimal_class_diagram_json):
         """Method names survive the roundtrip."""
         domain_model = process_class_diagram(minimal_class_diagram_json)

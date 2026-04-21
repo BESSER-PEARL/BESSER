@@ -1,0 +1,12 @@
+Version 7.1.4
+=============
+
+Patch release: **the "From Spreadsheet" project creation flow now accepts XLSX workbooks as advertised**. Backend-only fix — no metamodel, generator, or public API contract changes. The frontend submodule pointer is unchanged.
+
+Highlights
+----------
+
+- **XLSX uploads in ``/besser_api/csv-to-domain-model`` no longer fail with "Unsupported file type '.xlsx'"** (`#501 <https://github.com/BESSER-PEARL/BESSER/issues/501>`_): the Project Hub "From Spreadsheet" dialog already exposed ``accept=".csv,.xlsx,.xls,..."`` on its file input and the copy promised "Auto-generate a class diagram from CSV/XLSX files", but the backend's ``_validate_upload`` whitelisted only ``{".csv"}`` and rejected everything else with a 415. ``conversion_router.py`` now carries an ``ALLOWED_SPREADSHEET_EXTENSIONS = {".csv", ".xlsx"}`` set, validates ``.xlsx`` content by checking the ZIP magic bytes (``PK\x03\x04``), and converts each uploaded workbook's first worksheet to a UTF-8 CSV via ``openpyxl`` inside the request's temp directory before handing the resulting path list to the existing ``csv_to_domain_model`` reverse engineer. ``csv_reverse.py`` itself is unchanged — the xlsx-to-csv normalization happens entirely in the endpoint.
+- **New optional backend dependency: ``openpyxl >= 3.1.0``** added to ``besser/utilities/web_modeling_editor/backend/requirements.txt`` (not the top-level ``requirements.txt`` — this only matters for the editor backend). The import is lazy inside the helper, so the rest of the backend stays importable when the package is missing; if a user uploads XLSX without openpyxl installed they get a clear 500 with installation instructions instead of a traceback.
+- **Legacy ``.xls`` (BIFF) is deliberately not supported**: reading ``.xls`` would require the deprecated ``xlrd`` package (upstream dropped ``.xlsx`` support in 2.0 and warns against use for new work). Users who upload ``.xls`` get the same clear 415 as before, listing ``.csv, .xlsx`` as the allowed extensions.
+- **Regression coverage** in ``tests/utilities/web_modeling_editor/backend/test_spreadsheet_import.py``: CSV upload still succeeds, XLSX upload succeeds and produces a ``ClassDiagram``, unsupported extensions return 415 with both allowed extensions named in the error, and malformed XLSX (bad magic bytes) returns 400 before reaching openpyxl.

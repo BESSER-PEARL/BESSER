@@ -8,6 +8,7 @@ needed to generate correct code.
 A typical 10-class model serializes to ~2-3 KB of JSON.
 """
 
+import json
 from typing import Any
 
 from besser.BUML.metamodel.structural import (
@@ -33,6 +34,90 @@ def _type_name(t) -> str:
     return t.name
 
 
+def _attribute_entry(attr) -> dict[str, Any]:
+    """Produce the compact dict representation of a single ``Property``."""
+    entry: dict[str, Any] = {
+        "name": attr.name,
+        "type": _type_name(attr.type),
+    }
+    if getattr(attr, "is_id", False):
+        entry["is_id"] = True
+    if getattr(attr, "is_optional", False):
+        entry["is_optional"] = True
+    mult = getattr(attr, "multiplicity", None)
+    if mult and (mult.min != 1 or mult.max != 1):
+        entry["multiplicity"] = _multiplicity_str(mult)
+    if getattr(attr, "default_value", None) is not None:
+        entry["default"] = attr.default_value
+    visibility = getattr(attr, "visibility", None)
+    if visibility and visibility != "public":
+        entry["visibility"] = visibility
+    return entry
+
+
+def _method_entry(method) -> dict[str, Any]:
+    """Produce the compact dict representation of a single ``Method``."""
+    entry: dict[str, Any] = {"name": method.name}
+    if method.type:
+        entry["return_type"] = _type_name(method.type)
+    if method.parameters:
+        entry["parameters"] = [
+            {"name": p.name, "type": _type_name(p.type)}
+            for p in method.parameters
+        ]
+    visibility = getattr(method, "visibility", None)
+    if visibility and visibility != "public":
+        entry["visibility"] = visibility
+    impl_type = getattr(method, "implementation_type", None)
+    if impl_type:
+        entry["implementation"] = str(impl_type.name).lower()
+    # Where available, include the raw body — lets the LLM preserve or
+    # translate behaviour instead of re-inventing it.
+    code = getattr(method, "code", None) or getattr(method, "body", None)
+    if isinstance(code, str) and code.strip():
+        entry["body"] = code
+    return entry
+
+
+def _find_attribute_owner(attr, cls) -> str:
+    """Walk the class's ancestors to find which one declares ``attr``."""
+    try:
+        ancestors = cls.all_parents()
+    except Exception:
+        return ""
+    for parent in ancestors:
+        if attr in getattr(parent, "attributes", set()):
+            return parent.name
+    return ""
+
+
+def _collect_inherited_methods(cls) -> list:
+    """Return ``[(method, owner_name), …]`` for methods from ancestors.
+
+    A method is considered inherited if an ancestor declares it and the
+    class itself does not declare a same-named method (i.e. not
+    overridden). Overridden methods are still present in ``cls.methods``
+    and will appear under the class's own ``methods`` entry, so we skip
+    them here to avoid duplication.
+    """
+    try:
+        ancestors = cls.all_parents()
+    except Exception:
+        return []
+    own_names = {m.name for m in getattr(cls, "methods", [])}
+    # Sort ancestors so the output is deterministic.
+    sorted_ancestors = sorted(ancestors, key=lambda p: p.name)
+    seen: set[str] = set()
+    out = []
+    for parent in sorted_ancestors:
+        for m in sorted(getattr(parent, "methods", set()), key=lambda x: x.name):
+            if m.name in own_names or m.name in seen:
+                continue
+            seen.add(m.name)
+            out.append((m, parent.name))
+    return out
+
+
 def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
     """
     Convert a DomainModel into a structured dict for LLM context.
@@ -55,50 +140,40 @@ def serialize_domain_model(model: DomainModel) -> dict[str, Any]:
         if cls.is_abstract:
             cls_data["is_abstract"] = True
 
-        # Attributes
-        attrs = []
-        for attr in sorted(cls.attributes, key=lambda a: a.name):
-            attr_data: dict[str, Any] = {
-                "name": attr.name,
-                "type": _type_name(attr.type),
-            }
-            if attr.is_id:
-                attr_data["is_id"] = True
-            if attr.is_optional:
-                attr_data["is_optional"] = True
-            if attr.multiplicity and (attr.multiplicity.min != 1 or attr.multiplicity.max != 1):
-                attr_data["multiplicity"] = _multiplicity_str(attr.multiplicity)
-            if attr.default_value is not None:
-                attr_data["default"] = attr.default_value
-            if attr.visibility and attr.visibility != "public":
-                attr_data["visibility"] = attr.visibility
-            attrs.append(attr_data)
+        # Attributes (declared directly on the class)
+        attrs = [_attribute_entry(a) for a in sorted(cls.attributes, key=lambda a: a.name)]
         if attrs:
             cls_data["attributes"] = attrs
 
-        # Methods
-        methods = []
-        for m in sorted(cls.methods, key=lambda m: m.name):
-            m_data: dict[str, Any] = {"name": m.name}
-            if m.type:
-                m_data["return_type"] = _type_name(m.type)
-            if m.parameters:
-                m_data["parameters"] = [
-                    {"name": p.name, "type": _type_name(p.type)}
-                    for p in m.parameters
-                ]
-            if m.visibility and m.visibility != "public":
-                m_data["visibility"] = m.visibility
-            if hasattr(m, "implementation_type") and m.implementation_type:
-                m_data["implementation"] = str(m.implementation_type.name).lower()
-            methods.append(m_data)
+        # Methods (declared directly on the class)
+        methods = [_method_entry(m) for m in sorted(cls.methods, key=lambda m: m.name)]
         if methods:
             cls_data["methods"] = methods
 
-        # Parents (inheritance)
+        # Parents (inheritance) — direct parents only.
         parents = list(cls.parents())
         if parents:
-            cls_data["parents"] = [p.name for p in parents]
+            cls_data["parents"] = [p.name for p in sorted(parents, key=lambda p: p.name)]
+
+        # Flattened inherited members — saves the LLM from walking the MRO.
+        # Each entry records the name of the parent the member came from so
+        # the LLM can decide whether to override or call super().
+        try:
+            inherited_attrs = cls.inherited_attributes()
+        except Exception:
+            inherited_attrs = set()
+        if inherited_attrs:
+            cls_data["inherited_attributes"] = [
+                {**_attribute_entry(a), "from": _find_attribute_owner(a, cls)}
+                for a in sorted(inherited_attrs, key=lambda a: a.name)
+            ]
+
+        inherited_methods = _collect_inherited_methods(cls)
+        if inherited_methods:
+            cls_data["inherited_methods"] = [
+                {**_method_entry(m), "from": owner_name}
+                for m, owner_name in inherited_methods
+            ]
 
         # Metadata
         if hasattr(cls, "metadata") and cls.metadata:
@@ -264,4 +339,191 @@ def serialize_agent_model(agent_model) -> dict[str, Any] | None:
         result["states"] = states
     if intents:
         result["intents"] = intents
+    return result
+
+
+def serialize_object_model(object_model) -> dict[str, Any] | None:
+    """Convert an ObjectModel into a structured dict for LLM context.
+
+    Each object is dumped with its classifier name, attribute slots, and the
+    link ends that connect it to other objects. The LLM can use these as seed
+    data, database fixtures, or example request/response payloads.
+
+    Returns None if object_model is None or empty.
+    """
+    if object_model is None:
+        return None
+
+    objects_out: list[dict[str, Any]] = []
+    for obj in sorted(object_model.objects, key=lambda o: getattr(o, "name_", getattr(o, "name", ""))):
+        obj_name = getattr(obj, "name_", None) or getattr(obj, "name", "")
+        classifier = getattr(obj, "classifier", None)
+        entry: dict[str, Any] = {
+            "name": obj_name,
+            "class": _type_name(classifier) if classifier else "Unknown",
+        }
+        slots_data: list[dict[str, Any]] = []
+        for slot in getattr(obj, "slots", []) or []:
+            attr = getattr(slot, "attribute", None)
+            value = getattr(slot, "value", None)
+            raw_value = getattr(value, "value", value) if value is not None else None
+            # The downstream prompt builder calls plain ``json.dumps`` without
+            # a ``default=`` callback, so anything not natively JSON-serialisable
+            # must be stringified here.
+            try:
+                json.dumps(raw_value)
+                safe_value = raw_value
+            except TypeError:
+                safe_value = str(raw_value)
+            slots_data.append({
+                "attribute": attr.name if attr else "?",
+                "value": safe_value,
+            })
+        if slots_data:
+            entry["slots"] = slots_data
+        objects_out.append(entry)
+
+    links_out: list[dict[str, Any]] = []
+    seen_link_ids: set[int] = set()
+    for link in getattr(object_model, "links", None) or []:
+        if id(link) in seen_link_ids:
+            continue
+        seen_link_ids.add(id(link))
+        assoc = getattr(link, "association", None)
+        ends = []
+        for end in getattr(link, "connections", []) or []:
+            end_obj = getattr(end, "object", None)
+            end_obj_name = getattr(end_obj, "name_", None) or getattr(end_obj, "name", "") if end_obj else ""
+            assoc_end = getattr(end, "association_end", None)
+            ends.append({
+                "role": assoc_end.name if assoc_end else getattr(end, "name", ""),
+                "object": end_obj_name,
+            })
+        links_out.append({
+            "name": getattr(link, "name", ""),
+            "association": assoc.name if assoc else "",
+            "ends": ends,
+        })
+
+    result: dict[str, Any] = {"name": getattr(object_model, "name", "ObjectModel")}
+    if objects_out:
+        result["objects"] = objects_out
+    if links_out:
+        result["links"] = links_out
+
+    # Return None rather than an empty shell — the prompt builder uses
+    # truthiness to decide whether to include the section.
+    if not objects_out and not links_out:
+        return None
+    return result
+
+
+def serialize_state_machines(state_machines) -> list[dict[str, Any]] | None:
+    """Convert a list (or single instance) of StateMachine into structured dicts.
+
+    Each state machine is serialised with its states (name / initial / final)
+    and the outgoing transitions from each state (source → dest, event,
+    conditions). The LLM uses this to wire state fields + transition guards
+    in the generated code.
+
+    Returns None if the argument is None or empty.
+    """
+    if state_machines is None:
+        return None
+
+    if not isinstance(state_machines, (list, tuple, set)):
+        state_machines = [state_machines]
+
+    result: list[dict[str, Any]] = []
+    for sm in state_machines:
+        if sm is None:
+            continue
+        states_data: list[dict[str, Any]] = []
+        for state in getattr(sm, "states", []) or []:
+            state_entry: dict[str, Any] = {"name": state.name}
+            if getattr(state, "initial", False):
+                state_entry["initial"] = True
+            if getattr(state, "final", False):
+                state_entry["final"] = True
+            transitions_data: list[dict[str, Any]] = []
+            for transition in getattr(state, "transitions", []) or []:
+                event = getattr(transition, "event", None)
+                conditions = getattr(transition, "conditions", []) or []
+                transitions_data.append({
+                    "to": transition.dest.name if transition.dest else "",
+                    "event": event.name if event else None,
+                    "conditions": [c.name for c in conditions] if conditions else [],
+                })
+            if transitions_data:
+                state_entry["transitions"] = transitions_data
+            states_data.append(state_entry)
+
+        sm_entry: dict[str, Any] = {"name": getattr(sm, "name", "StateMachine")}
+        if states_data:
+            sm_entry["states"] = states_data
+        properties = getattr(sm, "properties", None)
+        if properties:
+            sm_entry["properties"] = [
+                {
+                    "section": getattr(p, "section", ""),
+                    "name": getattr(p, "name", ""),
+                    "value": getattr(p, "value", None),
+                }
+                for p in properties
+            ]
+        result.append(sm_entry)
+
+    return result or None
+
+
+def serialize_quantum_circuit(circuit) -> dict[str, Any] | None:
+    """Convert a QuantumCircuit into a structured dict for LLM context.
+
+    Captures register sizes and the ordered operation list. Gate parameters
+    are kept shallow — the LLM only needs enough to re-emit Qiskit / Cirq code.
+
+    Returns None if circuit is None.
+    """
+    if circuit is None:
+        return None
+
+    qregs = [
+        {"name": getattr(q, "name", ""), "size": getattr(q, "size", 0)}
+        for q in getattr(circuit, "qregs", []) or []
+    ]
+    cregs = [
+        {"name": getattr(c, "name", ""), "size": getattr(c, "size", 0)}
+        for c in getattr(circuit, "cregs", []) or []
+    ]
+
+    operations = []
+    for op in getattr(circuit, "operations", []) or []:
+        op_entry: dict[str, Any] = {
+            "type": type(op).__name__,
+            "name": getattr(op, "name", ""),
+        }
+        targets = getattr(op, "target_qubits", None)
+        if targets:
+            op_entry["targets"] = list(targets)
+        controls = getattr(op, "control_qubits", None)
+        if controls:
+            op_entry["controls"] = list(controls)
+        # Measurement-specific
+        if hasattr(op, "output_bit") and op.output_bit is not None:
+            op_entry["output_bit"] = op.output_bit
+        if hasattr(op, "basis") and op.basis:
+            op_entry["basis"] = op.basis
+        operations.append(op_entry)
+
+    result: dict[str, Any] = {
+        "name": getattr(circuit, "name", "QuantumCircuit"),
+        "num_qubits": getattr(circuit, "num_qubits", 0),
+        "num_clbits": getattr(circuit, "num_clbits", 0),
+    }
+    if qregs:
+        result["qregs"] = qregs
+    if cregs:
+        result["cregs"] = cregs
+    if operations:
+        result["operations"] = operations
     return result

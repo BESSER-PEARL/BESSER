@@ -54,6 +54,9 @@ from besser.BUML.metamodel.gui.events_actions import (
 )
 from besser.BUML.metamodel.gui.graphical_ui import InputFieldType
 from besser.BUML.metamodel.gui.style import Alignment, Color, Layout, LayoutType, Position, PositionType, Size, Styling, UnitSize
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+)
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -106,23 +109,7 @@ def parse_gui_buml_content(content: str) -> Optional[Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 def _parse_gui_model(content: str) -> Optional[GUIModel]:
     """Execute BUML GUI python content and return the first GUIModel found."""
-    safe_globals: Dict[str, Any] = {
-        "__builtins__": {
-            "set": set,
-            "list": list,
-            "dict": dict,
-            "tuple": tuple,
-            "str": str,
-            "int": int,
-            "float": float,
-            "bool": bool,
-            "len": len,
-            "range": range,
-            "True": True,
-            "False": False,
-            "None": None,
-            "print": lambda *a, **kw: None,  # no-op to prevent info leakage
-        },
+    allowed_names: Dict[str, Any] = {
         "GUIModel": GUIModel,
         "Module": Module,
         "Screen": Screen,
@@ -173,7 +160,7 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         "tuple": tuple,
         "dict": dict,
     }
-    # Strip import lines -- all required types are in safe_globals already.
+    # Strip import lines -- all required types are in allowed_names already.
     # Handle multi-line imports (e.g. from ... import (\n    ...\n))
     cleaned_lines = []
     in_import_block = False
@@ -190,9 +177,8 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
         cleaned_lines.append(line)
     cleaned_content = "\n".join(cleaned_lines)
 
-    local_vars: Dict[str, Any] = {}
     try:
-        exec(cleaned_content, safe_globals, local_vars)
+        local_vars = safe_load_buml(cleaned_content, allowed_names)
     except Exception as exc:
         raise ValueError(f"Failed to execute GUI BUML content: {exc}") from exc
     gui_candidates = [
@@ -200,7 +186,7 @@ def _parse_gui_model(content: str) -> Optional[GUIModel]:
     ]
     if not gui_candidates:
         gui_candidates = [
-            value for value in safe_globals.values() if isinstance(value, GUIModel)
+            value for value in allowed_names.values() if isinstance(value, GUIModel)
         ]
     return gui_candidates[0] if gui_candidates else None
 # ---------------------------------------------------------------------------

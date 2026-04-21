@@ -88,7 +88,21 @@ from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
 
 logger = logging.getLogger(__name__)
 
-SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'apikey', 'api-key'}
+# Key-name fragments that mark a value as sensitive. Substring match
+# (case-insensitive) so this catches camelCase, kebab-case, snake_case,
+# screaming-snake, and weird vendor names alike: ``openaiApiKey``,
+# ``OPENAI_API_KEY``, ``api-key``, ``X-Auth-Token`` all hit one of these.
+SENSITIVE_KEYS = frozenset({
+    "api_key", "apikey", "api-key",
+    "secret", "password", "passwd",
+    "token",                              # access_token, id_token, refresh_token
+    "credential",
+    "private",                            # private_key, private-key
+    "auth",                               # bearer_auth, basic_auth, x-auth-*
+    "cert",                               # cert, certificate
+    "session",                            # session_id, session_token
+    "key",                                # catch-all (last so longer matches dominate)
+})
 
 
 def _safe_path(base_dir: str, user_filename: str) -> str:
@@ -100,9 +114,33 @@ def _safe_path(base_dir: str, user_filename: str) -> str:
     return full_path
 
 
-def sanitize_config(config: dict) -> dict:
-    """Return a shallow copy of config with sensitive values masked."""
-    return {k: '***' if any(s in k.lower() for s in SENSITIVE_KEYS) else v for k, v in config.items()}
+def _key_is_sensitive(key: str) -> bool:
+    """True if a config key name looks like it holds a secret."""
+    if not isinstance(key, str):
+        return False
+    lowered = key.lower()
+    return any(token in lowered for token in SENSITIVE_KEYS)
+
+
+def sanitize_config(config):
+    """Return a deep-copied structure with sensitive values masked.
+
+    Walks nested dicts, lists, and tuples so a credential nested under
+    ``config["llm"]["openai"]["api_key"]`` is still masked. Non-dict
+    leaves are returned untouched (we only redact when the *key name*
+    looks sensitive — value-level heuristics are too prone to false
+    positives for now).
+    """
+    if isinstance(config, dict):
+        return {
+            k: ("***" if _key_is_sensitive(k) else sanitize_config(v))
+            for k, v in config.items()
+        }
+    if isinstance(config, list):
+        return [sanitize_config(item) for item in config]
+    if isinstance(config, tuple):
+        return tuple(sanitize_config(item) for item in config)
+    return config
 
 
 router = APIRouter(prefix="/besser_api", tags=["generation"])

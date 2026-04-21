@@ -22,12 +22,14 @@ import ast as _ast
 import json
 import logging
 import os
+import re as _re
 import shutil
 import sys
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Callable
+from dataclasses import dataclass
+from typing import Any, Callable, Literal
 
 from besser.generators.llm.compaction import (
     COMPACT_TOKEN_THRESHOLD,
@@ -36,19 +38,7 @@ from besser.generators.llm.compaction import (
     maybe_compact,
     _summarize_messages,
 )
-from besser.generators.llm.gap_analyzer import (
-    _AUTH_KEYWORDS,
-    _DB_KEYWORDS,
-    _DOCKER_KEYWORDS,
-    _TEST_KEYWORDS,
-    _SEARCH_KEYWORDS,
-    _PAGINATION_KEYWORDS,
-    _ROLE_KEYWORDS,
-    analyze_gaps,
-    _analyze_gaps_with_llm,
-    _analyze_gaps_keyword,
-    build_model_summary,
-)
+from besser.generators.llm.gap_analyzer import analyze_gaps_via_llm
 from besser.generators.llm.llm_client import ClaudeLLMClient
 from besser.generators.llm.prompt_builder import (
     build_system_prompt,
@@ -61,6 +51,78 @@ logger = logging.getLogger(__name__)
 
 # Snapshot directory name (inside output_dir)
 _SNAPSHOT_DIR = ".besser_snapshot"
+
+
+@dataclass(frozen=True)
+class ValidationIssue:
+    """A single Phase 3 validator finding, tagged by severity.
+
+    severity:
+      - ``blocker``: prevents the app from running (syntax errors,
+        missing required files, dependency conflicts).
+      - ``warning``: probably broken at runtime but not certain
+        (Dockerfile semantic issues, tsc type errors, missing imports).
+      - ``style``: cosmetic / preference (unused imports, line length,
+        formatting). Never blocks a release.
+
+    The auto-fix loop (when enabled) only consumes ``blocker`` issues.
+    Everything else is reported in the recipe and logs but left alone.
+    """
+
+    severity: Literal["blocker", "warning", "style"]
+    message: str
+
+    def __str__(self) -> str:  # for legacy log formatting
+        return self.message
+
+
+# ---- Phase 3 issue classification --------------------------------------
+
+# Ruff rule codes that are pure style: dead imports, unused vars, line length.
+# Anything else we treat as a warning (could be a real bug).
+_RUFF_STYLE_CODES = frozenset({
+    "F401", "F811", "F841",      # unused / redefinition
+    "E501",                       # line too long
+    "W291", "W292", "W293", "W391",  # whitespace
+    "E302", "E303", "E305", "E261", "E262", "E266",  # blank lines / comments
+    "I001",                       # import order
+})
+_RUFF_LINE_RE = _re.compile(r"\b([EWFCNI]\d{2,4})\b")
+
+
+def _classify_issue(message: str) -> ValidationIssue:
+    """Map a raw issue string to a ``ValidationIssue`` with severity.
+
+    Heuristics keyed on the prefix our validators produce so the
+    classification is stable as new validators are added.
+    """
+    text = message.strip()
+    lower = text.lower()
+
+    # Hard blockers — these prevent the generated app from running.
+    if lower.startswith("syntax error in"):
+        return ValidationIssue("blocker", text)
+    if lower.startswith("dependency conflict in"):
+        return ValidationIssue("blocker", text)
+    if "but it doesn't exist" in lower:
+        # e.g. "Dockerfile references requirements.txt but it doesn't exist"
+        return ValidationIssue("blocker", text)
+
+    # Ruff: classify by rule code.
+    if text.startswith("ruff:"):
+        match = _RUFF_LINE_RE.search(text)
+        if match and match.group(1) in _RUFF_STYLE_CODES:
+            return ValidationIssue("style", text)
+        return ValidationIssue("warning", text)
+
+    # tsc errors are usually warnings (often missing @types packages,
+    # not actual code bugs). Treat them as warnings unless they're
+    # clearly fatal — keeping it simple for v1.
+    if text.startswith("tsc "):
+        return ValidationIssue("warning", text)
+
+    # Unknown shape → conservative default: warning.
+    return ValidationIssue("warning", text)
 
 # Tools that are read-only and shouldn't count for loop detection
 _READONLY_TOOLS = frozenset({"read_file", "list_files", "search_in_files", "check_syntax"})
@@ -100,12 +162,26 @@ class LLMOrchestrator:
         on_progress: Callable[[int, str, str], None] | None = None,
         on_text: Callable[[str], None] | None = None,
         use_streaming: bool = True,
+        object_model=None,
+        state_machines=None,
+        quantum_circuit=None,
+        auto_fix_issues: bool = False,
+        should_continue: Callable[[], bool] | None = None,
     ):
         self.client = llm_client
         self.domain_model = domain_model
         self.gui_model = gui_model
         self.agent_model = agent_model
         self.agent_config = agent_config
+        self.object_model = object_model
+        # Normalise to a list so the prompt builder can iterate uniformly.
+        if state_machines is None:
+            self.state_machines: list = []
+        elif isinstance(state_machines, (list, tuple, set)):
+            self.state_machines = [sm for sm in state_machines if sm is not None]
+        else:
+            self.state_machines = [state_machines]
+        self.quantum_circuit = quantum_circuit
         self.output_dir = output_dir or tempfile.mkdtemp(prefix="besser_llm_")
         self.max_turns = max_turns or self.MAX_TURNS
         self.max_cost_usd = max_cost_usd
@@ -124,6 +200,14 @@ class LLMOrchestrator:
         # generate_pydantic during customization, or call a generator
         # the orchestrator didn't pick in Phase 1.
         self.tools = get_all_tools_including_generators()
+        # Phase 3 auto-fix policy. False = report-only (industry default
+        # for static analysers — fix on request, never blindly).
+        self.auto_fix_issues = auto_fix_issues
+        # Cooperative cancellation hook. The orchestrator polls this at
+        # the top of each Phase 2 turn. Returning False causes the loop
+        # to exit cleanly — used by the SSE runner to honour
+        # ``POST /cancel-smart-gen/{run_id}`` without killing the thread.
+        self._should_continue = should_continue
         self.tool_calls_log: list[dict] = []
         self.total_turns = 0
         self._recent_tool_calls: list[str] = []
@@ -131,7 +215,10 @@ class LLMOrchestrator:
         self._generator_used: str | None = None
         self._inventory: str = ""
         self._start_time: float | None = None
-        self._validation_issues: list[str] = []
+        # Stored as ValidationIssue objects so the recipe captures severity.
+        # Cast to strings via `[str(i) for i in self._validation_issues]`
+        # when emitting JSON.
+        self._validation_issues: list[ValidationIssue] = []
         self._previous_errors: list[str] = []  # track errors to avoid re-attempting
 
     _LOOP_THRESHOLD = 4
@@ -241,7 +328,11 @@ class LLMOrchestrator:
             # Both LLM and keywords agree: no generator
             return None
 
-        # Last resort: default based on available models
+        # Last resort: default based on available models. Quantum and GUI
+        # specialise first because they map cleanly to a single generator;
+        # bare class diagrams fall through to a backend.
+        if self.quantum_circuit is not None:
+            return "generate_qiskit"
         if self.gui_model:
             return "generate_web_app"
         if self.domain_model and self.domain_model.get_classes():
@@ -253,10 +344,36 @@ class LLMOrchestrator:
         try:
             from besser.generators.llm.tools import GENERATOR_TOOLS
 
-            has_gui = "YES" if self.gui_model else "NO"
             classes = [c.name for c in self.domain_model.get_classes()] if self.domain_model else []
 
-            # Build generator list dynamically from the tool registry
+            # Inventory of every available editor model so the selector LLM
+            # can prefer generators that match (e.g. quantum circuit → qiskit,
+            # state machines present → backend with state-pattern wiring).
+            available_models = [f"Domain model: {len(classes)} classes ({', '.join(classes[:10])})"]
+            available_models.append(f"GUI model: {'YES' if self.gui_model else 'NO'}")
+            available_models.append(f"Agent model: {'YES' if self.agent_model else 'NO'}")
+            if self.object_model is not None:
+                available_models.append(
+                    "Object model: YES (instance data — useful as seeders / fixtures)"
+                )
+            else:
+                available_models.append("Object model: NO")
+            if self.state_machines:
+                sm_names = ", ".join(getattr(sm, "name", "?") for sm in self.state_machines[:5])
+                available_models.append(
+                    f"State machines: YES ({len(self.state_machines)}: {sm_names}) — "
+                    "behavioural specs that should drive transition guards / event handlers"
+                )
+            else:
+                available_models.append("State machines: NO")
+            if self.quantum_circuit is not None:
+                available_models.append(
+                    "Quantum circuit: YES — prefer generate_qiskit for the circuit code"
+                )
+            else:
+                available_models.append("Quantum circuit: NO")
+
+            # Build generator list dynamically from the tool registry.
             gen_lines = []
             for tool in GENERATOR_TOOLS:
                 name = tool["name"]
@@ -267,8 +384,8 @@ class LLMOrchestrator:
 
             prompt = (
                 f"User request: {instructions[:500]}\n\n"
-                f"Domain model: {len(classes)} classes ({', '.join(classes[:10])})\n"
-                f"GUI model: {has_gui}\n\n"
+                "Available editor models:\n"
+                + "\n".join(f"  • {line}" for line in available_models) + "\n\n"
                 "Available BESSER generators:\n"
                 + "\n".join(gen_lines) + "\n"
                 "- NONE → write from scratch (for frameworks BESSER doesn't support: NestJS, Next.js, Express, Spring Boot, Go, etc.)\n\n"
@@ -277,6 +394,9 @@ class LLMOrchestrator:
                 "- Even if the user asks for more than one thing (backend + frontend), pick the generator for the biggest part\n"
                 "- generate_fastapi_backend includes SQLAlchemy + Pydantic — don't pick those separately\n"
                 "- generate_web_app includes React + FastAPI + Docker — most complete if GUI available\n"
+                "- If a Quantum circuit is present and the user asks for quantum/Qiskit code → generate_qiskit\n"
+                "- If state machines are present, pick the generator that fits the rest of the request — "
+                "the LLM in Phase 2 will wire state transitions on top of the generator output\n"
                 "- ONLY answer NONE if the user explicitly asks for a framework like NestJS, Next.js, Express, Spring Boot, Go, Rust\n"
                 "- If the user says 'backend', 'API', 'FastAPI', or 'REST' → answer generate_fastapi_backend\n"
                 "- If the user says 'Django' → answer generate_django\n"
@@ -306,11 +426,17 @@ class LLMOrchestrator:
             answer = answer.strip().lower().replace("`", "").replace("'", "").replace('"', '')
             logger.info("Phase 1 (LLM): Raw answer: '%s'", answer[:100])
 
-            # Check for a generator name FIRST (before checking for "none",
-            # because answer might contain both, e.g. "generate_fastapi_backend, none for frontend")
-            for gen in ("generate_web_app", "generate_fastapi_backend", "generate_django",
-                        "generate_pydantic", "generate_sqlalchemy", "generate_react",
-                        "generate_python_classes", "generate_sql"):
+            # Match against EVERY registered generator (was previously a hand-
+            # maintained subset that omitted qiskit, flutter, java, etc.).
+            # Sort by name length descending so longer prefixes win first
+            # (e.g. ``generate_python_classes`` is checked before
+            # ``generate_python``).
+            registered_names = sorted(
+                (tool["name"] for tool in GENERATOR_TOOLS),
+                key=len,
+                reverse=True,
+            )
+            for gen in registered_names:
                 if gen in answer:
                     logger.info("Phase 1 (LLM): Selected %s", gen)
                     return gen
@@ -432,20 +558,44 @@ class LLMOrchestrator:
     # ==================================================================
 
     def _run_phase2(self, instructions: str, extra_issues: list[str] | None = None) -> None:
-        """Give the LLM scoped tasks based on gap analysis."""
-        gap_tasks = self._analyze_gaps(instructions)
+        """Run the Phase 2 customisation loop.
 
-        # Append any Phase 1 validation issues as extra tasks
-        if extra_issues:
-            gap_tasks.extend(extra_issues)
+        Before starting, do ONE cheap LLM call (~$0.01) to scope the
+        work into a focused task list. If that call fails, fall back to
+        no checklist — the Phase 2 LLM is smart enough to plan from
+        instructions alone.
 
-        system = self._build_system_prompt(gap_tasks)
+        Phase 1 validator findings are passed as ``scoped_issues`` so
+        they're presented as bugs to fix (separate from the user's
+        feature request).
+        """
+        scoped_issues = list(extra_issues) if extra_issues else []
+        gap_tasks = analyze_gaps_via_llm(
+            instructions=instructions,
+            generator_used=self._generator_used,
+            domain_model=self.domain_model,
+            inventory=self._inventory,
+            llm_client=self.client,
+        )
+        system = self._build_system_prompt(
+            instructions=instructions,
+            scoped_issues=scoped_issues,
+            gap_tasks=gap_tasks,
+        )
         messages: list[dict] = [{"role": "user", "content": instructions}]
 
         _cost_warning_fired = False
 
         for turn in range(self.max_turns):
             self.total_turns = turn + 1
+
+            # -- Cooperative cancellation -------------------------------
+            # The runner sets the underlying flag when a user POSTs to
+            # /cancel-smart-gen/{run_id}. Bail out at the next turn
+            # boundary rather than killing the worker thread.
+            if self._should_continue is not None and not self._should_continue():
+                logger.warning("Cancellation requested — stopping Phase 2 loop")
+                break
 
             # -- Runtime timeout check ------------------------------------
             if self._start_time is not None:
@@ -623,21 +773,53 @@ class LLMOrchestrator:
             logger.info("Phase 3: Validation passed -- no issues found")
             return
 
-        error_count_before = len(issues)
-        # Log each issue clearly so user can see what's wrong
-        logger.warning("Phase 3: Found %d issues:", error_count_before)
-        for i, issue in enumerate(issues, 1):
-            logger.warning("  Issue %d: %s", i, issue)
-        self._validation_issues = list(issues)  # save for recipe
+        # Always record everything in the recipe — severity decides what
+        # gets fixed automatically.
+        blockers_before = [i for i in issues if i.severity == "blocker"]
+        warnings_before = [i for i in issues if i.severity == "warning"]
+        styles_before = [i for i in issues if i.severity == "style"]
+        logger.warning(
+            "Phase 3: Found %d issues (%d blocker / %d warning / %d style)",
+            len(issues), len(blockers_before), len(warnings_before), len(styles_before),
+        )
+        for issue in issues:
+            logger.warning("  [%s] %s", issue.severity, issue.message)
+        self._validation_issues = list(issues)
 
         if self.on_progress:
-            self.on_progress(self.total_turns, "validation", f"{error_count_before} issues")
+            self.on_progress(
+                self.total_turns,
+                "validation",
+                f"{len(blockers_before)} blockers / {len(issues)} total",
+            )
 
-        # Give the LLM a few turns to fix
+        # Auto-fix is opt-in (default off). Industry pattern: report by
+        # default, fix on request. Avoid the LLM running ``npm install`` —
+        # post-install hooks execute arbitrary code from chosen packages.
+        if not self.auto_fix_issues:
+            logger.info(
+                "Phase 3: auto_fix_issues=False — issues recorded, no LLM fix loop."
+            )
+            return
+
+        # Auto-fix only consumes BLOCKER issues. Style warnings (unused
+        # imports, line length) and soft warnings (tsc type hints) are
+        # left as-is; they don't justify burning LLM turns.
+        if not blockers_before:
+            logger.info(
+                "Phase 3: auto_fix_issues=True but no blocker-class issues — "
+                "skipping LLM fix loop. %d non-blocker issue(s) recorded.",
+                len(warnings_before) + len(styles_before),
+            )
+            return
+
         fix_prompt = (
-            "Post-generation validation found these issues:\n\n"
-            + "\n".join(f"- {i}" for i in issues)
-            + "\n\nFix each issue. Use modify_file or write_file as needed."
+            "Post-generation validation found these BLOCKER issues "
+            "(syntax / dependency / missing-file). Fix every one — they "
+            "prevent the app from running:\n\n"
+            + "\n".join(f"- {i.message}" for i in blockers_before)
+            + "\n\nUse modify_file or write_file as needed. Do NOT touch "
+            "anything unrelated."
         )
         system = "You are fixing validation errors in generated code. Fix each issue concisely."
         messages: list[dict] = [{"role": "user", "content": fix_prompt}]
@@ -659,34 +841,45 @@ class LLMOrchestrator:
                         tool_results.append({"type": "tool_result", "tool_use_id": block.id, "content": result})
                 messages.append({"role": "user", "content": tool_results})
 
-        # Check if fixes helped
+        # Re-evaluate against blocker count specifically. Style/warning
+        # changes don't justify a rollback — only a worse blocker count.
         issues_after = self._collect_validation_issues()
-        if not issues_after:
-            logger.info("Phase 3: All issues fixed!")
-            self._validation_issues = []
-        elif len(issues_after) > error_count_before:
-            # Fixes made things worse → rollback to pre-Phase-3 state
+        blockers_after = [i for i in issues_after if i.severity == "blocker"]
+        if not blockers_after:
+            logger.info(
+                "Phase 3: All blockers fixed (%d non-blocker remain).",
+                len(issues_after),
+            )
+            self._validation_issues = list(issues_after)
+        elif len(blockers_after) > len(blockers_before):
+            # Fixes made BLOCKERS worse → rollback to pre-Phase-3 state.
             logger.warning(
-                "Phase 3: Fixes made things worse (%d -> %d issues). "
-                "Rolling back to keep Phase 2 work. Remaining issues:",
-                error_count_before, len(issues_after),
+                "Phase 3: Fixes made blockers worse (%d -> %d). "
+                "Rolling back to keep Phase 2 work.",
+                len(blockers_before), len(blockers_after),
             )
             self._restore_snapshot()
-            # Re-collect issues from the restored state
             self._validation_issues = self._collect_validation_issues()
-            for i, issue in enumerate(self._validation_issues, 1):
-                logger.warning("  Unfixed issue %d: %s", i, issue)
+            for issue in self._validation_issues:
+                logger.warning("  Unfixed [%s]: %s", issue.severity, issue.message)
         else:
-            # Some issues remain but didn't get worse
             self._validation_issues = list(issues_after)
             if issues_after:
-                logger.warning("Phase 3: %d issues remain after fixes:", len(issues_after))
-                for i, issue in enumerate(issues_after, 1):
-                    logger.warning("  Remaining %d: %s", i, issue)
+                logger.warning(
+                    "Phase 3: %d issues remain after fixes (%d blocker)",
+                    len(issues_after), len(blockers_after),
+                )
+                for issue in issues_after:
+                    logger.warning("  [%s] %s", issue.severity, issue.message)
 
-    def _collect_validation_issues(self) -> list[str]:
-        """Collect all validation issues from the output directory."""
-        issues = []
+    def _collect_validation_issues(self) -> list[ValidationIssue]:
+        """Collect all validation issues from the output directory.
+
+        Returns ``ValidationIssue`` records with severity. The
+        Phase 3 fix loop only acts on ``blocker`` items when
+        ``auto_fix_issues`` is enabled.
+        """
+        raw_issues: list[str] = []
 
         for root, _, files in os.walk(self.output_dir):
             for fname in files:
@@ -703,7 +896,7 @@ class LLMOrchestrator:
                         with open(fpath, "r", encoding="utf-8") as f:
                             _ast.parse(f.read(), filename=rel)
                     except SyntaxError as e:
-                        issues.append(f"Syntax error in {rel} line {e.lineno}: {e.msg}")
+                        raw_issues.append(f"Syntax error in {rel} line {e.lineno}: {e.msg}")
 
                 # Check Dockerfiles
                 if fname == "Dockerfile":
@@ -724,11 +917,11 @@ class LLMOrchestrator:
                         if "package.json" in content or "package*.json" in content:
                             pkg = os.path.join(docker_dir, "package.json")
                             if not os.path.isfile(pkg):
-                                issues.append(f"{rel} references package.json but it doesn't exist")
+                                raw_issues.append(f"{rel} references package.json but it doesn't exist")
                         if "requirements.txt" in content:
                             req = os.path.join(docker_dir, "requirements.txt")
                             if not os.path.isfile(req):
-                                issues.append(f"{rel} references requirements.txt but it doesn't exist")
+                                raw_issues.append(f"{rel} references requirements.txt but it doesn't exist")
                     except Exception:
                         pass
 
@@ -783,10 +976,110 @@ class LLMOrchestrator:
                                          if l.strip() and "WARNING" not in l]
                             if err_lines:
                                 err = "\n".join(err_lines[-3:])
-                                issues.append(f"Dependency conflict in {rel}:\n{err}")
+                                raw_issues.append(f"Dependency conflict in {rel}:\n{err}")
                     except Exception:
                         pass  # pip not available or timeout — skip
 
+        # ``ruff`` and ``tsc`` are best-effort static checks — they skip
+        # silently if the binary isn't on PATH. Both catch classes of bug
+        # (dead imports, type errors) that would otherwise only surface
+        # at runtime, burning LLM turns.
+        raw_issues.extend(self._collect_ruff_issues())
+        raw_issues.extend(self._collect_tsc_issues())
+
+        return [_classify_issue(s) for s in raw_issues]
+
+    def _collect_ruff_issues(self) -> list[str]:
+        """Run ``ruff check`` across the workspace when available.
+
+        Returns a list of concise issue strings. Skips silently if ruff is
+        not installed, hits a timeout, or produces no parseable output —
+        these are "nice to have" checks, not run-blockers.
+        """
+        import shutil as _shutil
+        import subprocess
+
+        ruff_bin = _shutil.which("ruff")
+        if not ruff_bin:
+            return []
+
+        try:
+            result = subprocess.run(
+                [
+                    ruff_bin, "check",
+                    "--output-format=concise",
+                    "--no-cache",
+                    "--exit-zero",
+                    "--exclude", _SNAPSHOT_DIR,
+                    self.output_dir,
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            return []
+
+        lines = (result.stdout or "").strip().splitlines()
+        if not lines:
+            return []
+        # Cap to keep Phase 3 feedback scoped — the LLM doesn't need every
+        # unused-import warning, it needs the shape of the problem.
+        issues = [f"ruff: {line.strip()}" for line in lines[:20] if line.strip()]
+        if len(lines) > 20:
+            issues.append(f"ruff: (+{len(lines) - 20} more issues truncated)")
+        return issues
+
+    def _collect_tsc_issues(self) -> list[str]:
+        """Run ``tsc --noEmit`` for any TypeScript project in the workspace.
+
+        Looks for ``tsconfig.json`` files (skipping the snapshot dir) and
+        runs ``tsc --noEmit`` against each project root. Skips silently
+        if ``tsc`` is not available — tsc isn't installed by default and
+        we don't want to fail runs on user machines that don't have it.
+        """
+        import shutil as _shutil
+        import subprocess
+
+        tsc_bin = _shutil.which("tsc") or _shutil.which("tsc.cmd")
+        if not tsc_bin:
+            return []
+
+        tsconfigs: list[str] = []
+        for root, _, files in os.walk(self.output_dir):
+            rel_root = os.path.relpath(root, self.output_dir).replace("\\", "/")
+            if rel_root.startswith(_SNAPSHOT_DIR):
+                continue
+            # Skip node_modules — running tsc there is both meaningless
+            # and extremely slow.
+            if "node_modules" in rel_root.split("/"):
+                continue
+            if "tsconfig.json" in files:
+                tsconfigs.append(root)
+
+        if not tsconfigs:
+            return []
+
+        issues: list[str] = []
+        for project_dir in tsconfigs:
+            rel = os.path.relpath(project_dir, self.output_dir).replace("\\", "/") or "."
+            try:
+                result = subprocess.run(
+                    [tsc_bin, "--noEmit", "-p", "."],
+                    capture_output=True, text=True, timeout=60,
+                    cwd=project_dir,
+                )
+            except (subprocess.TimeoutExpired, OSError):
+                continue
+
+            # tsc emits errors on stdout (not stderr) in the classic
+            # ``file(line,col): error TSxxxx: message`` format.
+            output = (result.stdout or "").strip().splitlines()
+            err_lines = [ln.strip() for ln in output if ln.strip() and "error" in ln.lower()]
+            if not err_lines:
+                continue
+            for line in err_lines[:10]:
+                issues.append(f"tsc [{rel}]: {line}")
+            if len(err_lines) > 10:
+                issues.append(f"tsc [{rel}]: (+{len(err_lines) - 10} more errors truncated)")
         return issues
 
     # ==================================================================
@@ -980,47 +1273,35 @@ class LLMOrchestrator:
         return llm_explanation or "Fix cycle completed."
 
     # ==================================================================
-    # Delegating methods (backward compatibility)
+    # Delegating methods
     # ==================================================================
 
-    def _analyze_gaps(self, instructions: str) -> list[str]:
-        """Delegate to gap_analyzer module."""
-        return analyze_gaps(
-            instructions=instructions,
-            generator_used=self._generator_used,
-            domain_model=self.domain_model,
-            llm_client=self.client,
-        )
+    def _build_system_prompt(
+        self,
+        instructions: str,
+        scoped_issues: list[str] | None = None,
+        gap_tasks: list[str] | None = None,
+    ) -> str:
+        """Delegate to prompt_builder module.
 
-    def _analyze_gaps_with_llm(self, instructions: str) -> list[str] | None:
-        """Delegate to gap_analyzer module."""
-        return _analyze_gaps_with_llm(
-            instructions=instructions,
-            generator_used=self._generator_used or "",
-            domain_model=self.domain_model,
-            llm_client=self.client,
-        )
-
-    def _analyze_gaps_keyword(self, instructions: str) -> list[str]:
-        """Delegate to gap_analyzer module."""
-        return _analyze_gaps_keyword(
-            instructions=instructions,
-            generator_used=self._generator_used or "",
-        )
-
-    def _build_model_summary(self) -> str:
-        """Delegate to gap_analyzer module."""
-        return build_model_summary(self.domain_model)
-
-    def _build_system_prompt(self, gap_tasks: list[str]) -> str:
-        """Delegate to prompt_builder module."""
+        ``instructions`` is the user's verbatim request — embedded in the
+        prompt so the LLM plans its own work. ``scoped_issues`` are
+        validator findings from Phase 1 that the LLM must address as
+        concrete bugs (not user requests). ``gap_tasks`` is the optional
+        focused checklist produced by the cheap gap-analyzer LLM call.
+        """
         return build_system_prompt(
             domain_model=self.domain_model,
             gui_model=self.gui_model,
             agent_model=self.agent_model,
             inventory=self._inventory,
-            gap_tasks=gap_tasks,
+            instructions=instructions,
+            scoped_issues=scoped_issues or [],
+            gap_tasks=gap_tasks or [],
             max_turns=self.max_turns,
+            object_model=self.object_model,
+            state_machines=self.state_machines,
+            quantum_circuit=self.quantum_circuit,
         )
 
     def _build_inventory(self, generator_name: str) -> str:
@@ -1112,7 +1393,10 @@ class LLMOrchestrator:
             "max_cost_usd": self.max_cost_usd,
             "max_runtime_seconds": self.max_runtime_seconds,
             "usage": self.client.usage.summary(),
-            "validation_issues": self._validation_issues,
+            "validation_issues": [
+                {"severity": i.severity, "message": i.message}
+                for i in self._validation_issues
+            ],
             "output_files": sorted(output_files, key=lambda f: f["path"]),
             "output_summary": {
                 "total_files": len(output_files),

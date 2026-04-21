@@ -108,13 +108,15 @@ ErrorCode = Literal[
     "TIMEOUT",
     "INTERNAL",
     "BAD_REQUEST",
+    "CANCELLED",
 ]
 
 
 class ErrorEvent(BaseSseEvent):
     """Error signal. May or may not be terminal depending on ``code``.
 
-    * ``INVALID_KEY``, ``UPSTREAM_LLM``, ``INTERNAL``, ``BAD_REQUEST`` — terminal.
+    * ``INVALID_KEY``, ``UPSTREAM_LLM``, ``INTERNAL``, ``BAD_REQUEST``,
+      ``CANCELLED`` — terminal.
     * ``COST_CAP``, ``TIMEOUT`` — warnings emitted *before* the ``done`` event
       when the run exceeded its budget but still produced usable output.
       The client should treat them as non-terminal warnings and wait for

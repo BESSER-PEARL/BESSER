@@ -27,6 +27,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json._safe_buml_loader import (
+    safe_load_buml,
+)
 
 
 def parse_buml_content(content: str) -> DomainModel:
@@ -36,24 +39,9 @@ def parse_buml_content(content: str) -> DomainModel:
         if isinstance(content, DomainModel):
             return content
 
-        # Create a safe environment for eval without any generators
-        safe_globals = {
-            "__builtins__": {
-                "set": set,
-                "list": list,
-                "dict": dict,
-                "tuple": tuple,
-                "str": str,
-                "int": int,
-                "float": float,
-                "bool": bool,
-                "len": len,
-                "range": range,
-                "True": True,
-                "False": False,
-                "None": None,
-                "print": lambda *a, **kw: None,  # no-op to prevent info leakage
-            },
+        # Allowlist of names that may appear in the BUML source. Everything
+        # else is rejected by the safe loader.
+        allowed_names = {
             "Class": Class,
             "Property": Property,
             "Method": Method,
@@ -71,6 +59,9 @@ def parse_buml_content(content: str) -> DomainModel:
             "Metadata": Metadata,
             "MethodImplementationType": MethodImplementationType,
             "set": set,
+            "list": list,
+            "dict": dict,
+            "tuple": tuple,
             "StringType": PrimitiveDataType("str"),
             "IntegerType": PrimitiveDataType("int"),
             "FloatType": PrimitiveDataType("float"),
@@ -108,9 +99,8 @@ def parse_buml_content(content: str) -> DomainModel:
             cleaned_lines.append(line)
         cleaned_content = "\n".join(cleaned_lines)
 
-        # Execute the cleaned B-UML content
-        local_vars = {}
-        exec(cleaned_content, safe_globals, local_vars)
+        # Execute the cleaned B-UML content through the safe AST-based loader.
+        local_vars = safe_load_buml(cleaned_content, allowed_names)
 
         domain_name = "Imported_Domain_Model"
         for var_name, var_value in local_vars.items():

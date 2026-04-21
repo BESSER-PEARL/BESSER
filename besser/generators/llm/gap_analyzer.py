@@ -1,225 +1,141 @@
-"""
-Gap analysis for the LLM orchestrator.
+"""LLM-based gap analysis for the orchestrator.
 
-Compares user instructions against generator capabilities to determine
-what customizations the LLM needs to implement. Uses LLM-based analysis
-(cheap Haiku call) with keyword matching as a fallback.
+A single cheap LLM call ("Haiku-class") that compares the user's request
+against the generator output inventory and produces a focused task list
+for the Phase 2 LLM to execute.
+
+This is intentionally minimal — no keyword regex, no fallback rules.
+If the LLM call fails, the orchestrator skips the checklist and lets
+Phase 2 plan its own work from the user instructions alone.
+
+Why keep this when Phase 2 has a frontier model?
+  - It costs ~$0.01 per run; Phase 2 burning a turn or two to plan its
+    own to-do list is wasteful in comparison.
+  - An explicit checklist makes Phase 2 more likely to ship every
+    requested feature instead of stopping at "good enough".
+  - Failure mode is graceful: no list = the smart Phase 2 model still
+    plans, just without the upfront scaffold.
 """
 
 import json
 import logging
-import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Keywords used in gap analysis
-_AUTH_KEYWORDS = {"auth", "jwt", "login", "register", "password", "token", "oauth", "session"}
-_DB_KEYWORDS = {"postgres", "postgresql", "mysql", "mongo", "database", "db"}
-_DOCKER_KEYWORDS = {"docker", "container", "deploy", "dockerfile", "compose"}
-_TEST_KEYWORDS = {"test", "pytest", "unittest", "jest", "testing"}
-_SEARCH_KEYWORDS = {"search", "filter", "query", "find"}
-_PAGINATION_KEYWORDS = {"pagination", "paginate", "paging", "limit", "offset", "page"}
-_ROLE_KEYWORDS = {"role", "rbac", "permission", "admin", "authorization", "access control"}
 
-
-def analyze_gaps(
+def analyze_gaps_via_llm(
     instructions: str,
     generator_used: str | None,
     domain_model,
+    inventory: str,
     llm_client,
 ) -> list[str]:
-    """
-    Compare user instructions against generator capabilities.
-
-    Returns a list of specific tasks the LLM should do.
-
-    If a generator was used, attempts LLM-based gap analysis using a
-    cheap Haiku call. Falls back to keyword matching if the call fails.
-
-    Args:
-        instructions: User's natural language instructions.
-        generator_used: Name of the generator used in Phase 1, or None.
-        domain_model: The BUML domain model.
-        llm_client: The Claude LLM client (for Haiku gap analysis).
+    """Return a focused task list for Phase 2.
 
     Returns:
-        List of task strings.
+      - A list of task strings on success.
+      - An empty list if the LLM call fails or no work is needed
+        (caller should skip the checklist section in that case).
+      - A 1-element "build everything from scratch" list if no
+        generator was used in Phase 1.
     """
     if not generator_used:
-        # No generator -- LLM builds everything from scratch
         return [
-            "No BESSER generator was used. Write the entire application from scratch "
-            "using the domain model as your specification. Every entity, attribute, "
-            "type, and relationship in your code must match the model."
+            "No BESSER generator was used. Build the entire application "
+            "from scratch using the domain model as your specification. "
+            "Every entity, attribute, type, and relationship in your code "
+            "must match the model."
         ]
 
-    # Try LLM-based gap analysis first
-    llm_tasks = _analyze_gaps_with_llm(instructions, generator_used, domain_model, llm_client)
-    if llm_tasks is not None:
-        return llm_tasks
+    if not _is_real_provider(llm_client):
+        # Test client / mock — skip the LLM call.
+        return []
 
-    # Fall back to keyword matching
-    return _analyze_gaps_keyword(instructions, generator_used)
-
-
-def _analyze_gaps_with_llm(
-    instructions: str,
-    generator_used: str,
-    domain_model,
-    llm_client,
-) -> list[str] | None:
-    """
-    Use a cheap Haiku call to analyze what customizations are needed.
-
-    Returns a list of task strings, or None if the call fails
-    (in which case the caller falls back to keyword matching).
-    """
-    try:
-        model_summary = build_model_summary(domain_model)
-        prompt = (
-            f"Model: {model_summary}. "
-            f"Generator used: {generator_used}. "
-            f"User wants: {instructions}\n\n"
-            "The generator already provides: CRUD endpoints, ORM, schemas, basic pages.\n"
-            "List ONLY what's missing as a JSON array of task strings. "
-            "Each task should be a specific, actionable instruction for a developer. "
-            "Include a README task. Respond with ONLY the JSON array, no other text."
-        )
-
-        # Skip if client doesn't look like a real provider (mock in tests)
-        if not hasattr(llm_client, '_client'):
-            return None
-
-        # Use the main LLM client (whatever provider — Claude, OpenAI, etc.)
-        response = llm_client.chat(
-            system="You analyze what customizations are needed for a generated app. "
-                   "Respond with ONLY a JSON array of task strings.",
-            messages=[{"role": "user", "content": prompt}],
-            tools=[],
-        )
-
-        # Parse the response
-        text = ""
-        for block in response.get("content", []):
-            if hasattr(block, "text"):
-                text = block.text.strip()
-            elif isinstance(block, dict) and block.get("text"):
-                text = block["text"].strip()
-        # Handle markdown code blocks
-        if text.startswith("```"):
-            text = re.sub(r"^```(?:json)?\s*", "", text)
-            text = re.sub(r"\s*```$", "", text)
-
-        tasks = json.loads(text)
-        if isinstance(tasks, list) and all(isinstance(t, str) for t in tasks):
-            logger.info("LLM gap analysis returned %d tasks", len(tasks))
-            return tasks
-
-        logger.warning("LLM gap analysis returned unexpected format: %s", type(tasks))
-        return None
-
-    except Exception as e:
-        logger.warning("LLM gap analysis failed, falling back to keywords: %s", e)
-        return None
-
-
-def _analyze_gaps_keyword(instructions: str, generator_used: str) -> list[str]:
-    """
-    Keyword-based gap analysis fallback.
-
-    Compare user instructions against generator capabilities using
-    keyword matching. Returns a list of specific tasks.
-    """
-    tasks = []
-    lower = instructions.lower()
-
-    def _has_keyword(keywords: set[str]) -> bool:
-        """Check if any keyword appears as a word boundary in the text."""
-        pattern = r'\b(' + '|'.join(re.escape(k) for k in keywords) + r')\b'
-        return bool(re.search(pattern, lower))
-
-    # The generator handled: CRUD, ORM, schemas, basic pages
-    # Check what the user asked for that the generator doesn't provide:
-
-    if _has_keyword(_AUTH_KEYWORDS):
-        tasks.append(
-            "Add authentication: Write a NEW backend/auth.py (or web_app/backend/auth.py) "
-            "with JWT token creation, password hashing (bcrypt), and a get_current_user dependency. "
-            "Then use modify_file to add 'from auth import get_current_user' to main_api.py imports, "
-            "and add Depends(get_current_user) to protected endpoints. "
-            "Add python-jose and passlib to requirements.txt."
-        )
-
-    if _has_keyword(_DB_KEYWORDS):
-        db_type = "PostgreSQL" if "postgres" in lower else "the requested database"
-        tasks.append(
-            f"Switch to {db_type}: Use modify_file on sql_alchemy.py to change the "
-            f"create_engine() connection string. Add the appropriate driver to requirements.txt "
-            f"(e.g. psycopg2-binary for PostgreSQL)."
-        )
-
-    if _has_keyword(_PAGINATION_KEYWORDS):
-        tasks.append(
-            "Add pagination: Use modify_file on main_api.py to add skip/limit query parameters "
-            "to GET list endpoints."
-        )
-
-    if _has_keyword(_SEARCH_KEYWORDS):
-        tasks.append(
-            "Add search: Use modify_file on main_api.py to add search query parameters "
-            "to relevant GET endpoints (filter by name, email, etc.)."
-        )
-
-    if _has_keyword(_ROLE_KEYWORDS):
-        tasks.append(
-            "Add role-based access: Extend auth.py with role checking. "
-            "Use modify_file to add role-based guards to protected endpoints."
-        )
-
-    if _has_keyword(_DOCKER_KEYWORDS):
-        tasks.append(
-            "Update Docker config: modify docker-compose.yml for the requested services "
-            "(e.g., add PostgreSQL container). Update Dockerfiles if needed. "
-            "Write .env.example with all configuration variables."
-        )
-    elif not generator_used.endswith("web_app"):
-        # web_app generator already produces Docker; others don't
-        tasks.append(
-            "Write Docker deployment: docker-compose.yml, backend Dockerfile, "
-            "frontend Dockerfile (if frontend exists), .env.example."
-        )
-
-    if _has_keyword(_TEST_KEYWORDS):
-        tasks.append("Write tests for the key endpoints and business logic.")
-
-    # Always add README
-    tasks.append(
-        "Write README.md with setup instructions: how to install deps, "
-        "configure env vars, run the app (with and without Docker)."
+    classes = [c.name for c in domain_model.get_classes()] if domain_model else []
+    summary = (
+        f"Generator: {generator_used}. "
+        f"Classes: {', '.join(classes[:20])}. "
+        f"Output inventory: {inventory[:1500]}"
     )
 
-    # If user mentions custom pages/features not in the generator
-    custom_features = []
-    for keyword in ["dashboard", "kanban", "pipeline", "analytics", "chart"]:
-        if keyword in lower:
-            custom_features.append(keyword)
-    if custom_features:
-        tasks.append(
-            f"Write custom frontend pages for: {', '.join(custom_features)}. "
-            "Create new .tsx files in the pages directory. "
-            "The generated pages handle basic CRUD -- write NEW pages for these custom views."
+    user_prompt = (
+        f"USER REQUEST:\n{instructions[:1500]}\n\n"
+        f"GENERATOR CONTEXT:\n{summary}\n\n"
+        "The generator produced the inventory above (CRUD endpoints, ORM, "
+        "schemas, basic pages). List ONLY what's still missing as a JSON "
+        "array of short task strings (1 line each, max 12 tasks). Skip "
+        "anything the generator already provided. Return ONLY the JSON "
+        "array — no prose, no markdown fences."
+    )
+    system_prompt = (
+        "You are a senior engineer scoping a refactor. Return ONLY a JSON "
+        "array of task strings. No explanation, no markdown."
+    )
+
+    try:
+        response = llm_client.chat(
+            system=system_prompt,
+            messages=[{"role": "user", "content": user_prompt}],
+            tools=[],
         )
+    except Exception:
+        logger.warning("Gap analyzer LLM call failed; falling back to no checklist")
+        return []
 
-    return tasks
+    text = _extract_text(response)
+    tasks = _parse_task_array(text)
+    if tasks is None:
+        logger.warning("Gap analyzer returned non-JSON response: %r", text[:200])
+        return []
+    # Sanity bounds — if the model returns 50 tasks, something is off.
+    return [t.strip() for t in tasks[:12] if isinstance(t, str) and t.strip()]
 
 
-def build_model_summary(domain_model) -> str:
-    """Build a concise model summary for the gap analysis prompt."""
-    classes = [c.name for c in domain_model.get_classes()]
-    enums = [e.name for e in domain_model.get_enumerations()]
-    parts = [f"Classes: {', '.join(classes)}"]
-    if enums:
-        parts.append(f"Enums: {', '.join(enums)}")
-    parts.append(f"Associations: {len(domain_model.associations)}")
-    return "; ".join(parts)
+# ----------------------------------------------------------------------
+# Helpers
+# ----------------------------------------------------------------------
+
+
+def _is_real_provider(llm_client) -> bool:
+    """Mock clients in tests don't have ``_client``. Skip the LLM call
+    in that case so unit tests don't try to hit the network."""
+    return hasattr(llm_client, "_client")
+
+
+def _extract_text(response: dict[str, Any]) -> str:
+    parts: list[str] = []
+    for block in response.get("content", []):
+        if hasattr(block, "text"):
+            parts.append(block.text)
+        elif isinstance(block, dict) and block.get("type") == "text":
+            parts.append(block.get("text", ""))
+    return "".join(parts).strip()
+
+
+def _parse_task_array(text: str) -> list | None:
+    """Best-effort parse of a JSON array from a model response.
+
+    Handles raw arrays, arrays wrapped in ```json fences, and trailing
+    prose by extracting the first ``[...]`` block.
+    """
+    if not text:
+        return None
+    # Strip common markdown fences.
+    cleaned = text
+    if cleaned.startswith("```"):
+        # Drop opening fence (with or without ``json``).
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+    # Slice to the first balanced bracket pair if there's surrounding prose.
+    start = cleaned.find("[")
+    end = cleaned.rfind("]")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    candidate = cleaned[start : end + 1]
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, list) else None

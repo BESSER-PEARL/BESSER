@@ -343,16 +343,92 @@ VALIDATION_TOOLS: list[dict[str, Any]] = [
 ]
 
 
+# ======================================================================
+# Model query tools — lightweight random-access into the domain model
+# so the LLM doesn't have to keep the full JSON in context.
+# ======================================================================
+
+MODEL_QUERY_TOOLS: list[dict[str, Any]] = [
+    {
+        "name": "query_class",
+        "description": (
+            "Return the full definition of a single class from the domain "
+            "model: attributes, methods (with inheritance flattened), "
+            "parents, and association ends. Use this when you need deeper "
+            "detail on one class than the system-prompt summary provides."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Class name (case-sensitive).",
+                },
+            },
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "list_classes_with",
+        "description": (
+            "List every class in the domain model matching a simple "
+            "predicate. Keeps context small when the model has dozens of "
+            "classes. Supported predicates: 'is_abstract', 'is_root' "
+            "(no parents), 'has_constraint', 'has_attribute:<name>', "
+            "'has_method:<name>', 'extends:<parent_name>'."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "predicate": {
+                    "type": "string",
+                    "description": (
+                        "One of: is_abstract | is_root | has_constraint | "
+                        "has_attribute:<name> | has_method:<name> | "
+                        "extends:<parent_name>"
+                    ),
+                },
+            },
+            "required": ["predicate"],
+        },
+    },
+    {
+        "name": "get_constraints_for",
+        "description": (
+            "Return all constraints (OCL expressions) whose context is the "
+            "given class. Use this to translate OCL constraints into "
+            "runtime validators (Pydantic / Zod / serializers)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "class_name": {
+                    "type": "string",
+                    "description": "Class name to look up constraints for.",
+                },
+            },
+            "required": ["class_name"],
+        },
+    },
+]
+
+
 def get_all_tools() -> list[dict[str, Any]]:
     """Return tools available to the LLM in Phase 2.
 
     Generator tools are NOT included — the orchestrator calls them
-    directly in Phase 1.  The LLM only gets file, execution, and
-    validation tools for customizing the generated output.
+    directly in Phase 1.  The LLM only gets file, execution, model-query,
+    and validation tools for customizing the generated output.
     """
-    return FILE_TOOLS + EXECUTION_TOOLS + VALIDATION_TOOLS
+    return FILE_TOOLS + EXECUTION_TOOLS + MODEL_QUERY_TOOLS + VALIDATION_TOOLS
 
 
 def get_all_tools_including_generators() -> list[dict[str, Any]]:
     """Return ALL tools (including generators) — for no-generator mode."""
-    return GENERATOR_TOOLS + FILE_TOOLS + EXECUTION_TOOLS + VALIDATION_TOOLS
+    return (
+        GENERATOR_TOOLS
+        + FILE_TOOLS
+        + EXECUTION_TOOLS
+        + MODEL_QUERY_TOOLS
+        + VALIDATION_TOOLS
+    )

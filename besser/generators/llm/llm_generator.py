@@ -92,6 +92,9 @@ class LLMGenerator(GeneratorInterface):
         gui_model=None,
         agent_model=None,
         agent_config: dict | None = None,
+        object_model=None,
+        state_machines=None,
+        quantum_circuit=None,
         output_dir: str | None = None,
         max_turns: int | None = None,
         max_cost_usd: float = 5.0,
@@ -103,6 +106,9 @@ class LLMGenerator(GeneratorInterface):
         self.gui_model = gui_model
         self.agent_model = agent_model
         self.agent_config = agent_config
+        self.object_model = object_model
+        self.state_machines = state_machines
+        self.quantum_circuit = quantum_circuit
         self.max_turns = max_turns
         self.max_cost_usd = max_cost_usd
         self.max_runtime_seconds = max_runtime_seconds
@@ -138,6 +144,9 @@ class LLMGenerator(GeneratorInterface):
             gui_model=self.gui_model,
             agent_model=self.agent_model,
             agent_config=self.agent_config,
+            object_model=self.object_model,
+            state_machines=self.state_machines,
+            quantum_circuit=self.quantum_circuit,
             output_dir=output,
             max_turns=self.max_turns,
             max_cost_usd=self.max_cost_usd,

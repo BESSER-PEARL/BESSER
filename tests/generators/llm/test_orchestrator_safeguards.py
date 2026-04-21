@@ -359,96 +359,247 @@ class TestPhase1Validation:
 
 
 # ======================================================================
-# LLM-based gap analysis tests
+# Ruff / tsc validation tests
 # ======================================================================
 
-class TestLLMGapAnalysis:
 
-    def test_keyword_fallback_when_generator_used(self, simple_model, tmp_path):
-        """Keyword fallback works when LLM gap analysis fails."""
+class TestRuffAndTscValidation:
+    """Phase 3 static-analysis hooks. Both shell out; both must skip
+    silently when the binary isn't installed, and cap output so the
+    LLM feedback stays scoped."""
+
+    def test_ruff_returns_empty_when_binary_missing(
+        self, simple_model, tmp_path, monkeypatch
+    ):
+        """If ``ruff`` is not on PATH, the validator returns an empty list
+        rather than raising or polluting issues."""
+        import shutil as _shutil
+
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
             domain_model=simple_model,
             output_dir=str(tmp_path),
         )
-        orchestrator._generator_used = "generate_fastapi_backend"
 
-        # _analyze_gaps_with_llm will fail (no real API key) and fall back to keywords
-        tasks = orchestrator._analyze_gaps("Build a FastAPI backend with JWT auth and PostgreSQL")
+        # Force ``shutil.which`` to act as if ruff is unavailable.
+        monkeypatch.setattr(_shutil, "which", lambda name: None)
+        assert orchestrator._collect_ruff_issues() == []
 
-        # Should get keyword-based tasks (auth + db + docker + readme)
-        task_text = " ".join(tasks).lower()
-        assert "auth" in task_text
-        assert "readme" in task_text
+    def test_ruff_captures_output_when_binary_present(
+        self, simple_model, tmp_path, monkeypatch
+    ):
+        """When ``ruff`` is available and produces output, the validator
+        prefixes each line with ``ruff:`` and caps at 20 entries."""
+        import shutil as _shutil
+        import subprocess
 
-    def test_keyword_fallback_no_generator(self, simple_model, tmp_path):
-        """When no generator is used, returns scratch-build task."""
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
             domain_model=simple_model,
             output_dir=str(tmp_path),
         )
-        orchestrator._generator_used = None
 
-        tasks = orchestrator._analyze_gaps("Build a NestJS backend")
-        assert len(tasks) == 1
-        assert "from scratch" in tasks[0].lower()
+        monkeypatch.setattr(_shutil, "which", lambda name: "/fake/ruff")
 
-    def test_analyze_gaps_keyword_auth(self, simple_model, tmp_path):
-        """Keyword analysis detects auth requirements."""
+        class FakeCompleted:
+            stdout = (
+                "app.py:1:1: F401 'os' imported but unused\n"
+                "app.py:2:1: F841 Local variable 'x' is assigned to but never used\n"
+            )
+            stderr = ""
+            returncode = 0
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeCompleted())
+        issues = orchestrator._collect_ruff_issues()
+        assert len(issues) == 2
+        assert all(i.startswith("ruff:") for i in issues)
+        assert any("F401" in i for i in issues)
+
+    def test_ruff_truncates_long_output(
+        self, simple_model, tmp_path, monkeypatch
+    ):
+        import shutil as _shutil
+        import subprocess
+
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
             domain_model=simple_model,
             output_dir=str(tmp_path),
         )
-        orchestrator._generator_used = "generate_fastapi_backend"
+        monkeypatch.setattr(_shutil, "which", lambda name: "/fake/ruff")
 
-        tasks = orchestrator._analyze_gaps_keyword("Add JWT authentication")
-        assert any("auth" in t.lower() for t in tasks)
+        huge_stdout = "\n".join(
+            f"f.py:{i}:1: F401 dummy" for i in range(1, 26)
+        )
 
-    def test_analyze_gaps_keyword_docker(self, simple_model, tmp_path):
-        """Keyword analysis detects Docker requirements."""
+        class FakeCompleted:
+            stdout = huge_stdout
+            stderr = ""
+            returncode = 0
+
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeCompleted())
+        issues = orchestrator._collect_ruff_issues()
+        assert len(issues) == 21  # 20 lines + 1 truncation notice
+        assert "truncated" in issues[-1]
+
+    def test_ruff_handles_timeout(
+        self, simple_model, tmp_path, monkeypatch
+    ):
+        import shutil as _shutil
+        import subprocess
+
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
             domain_model=simple_model,
             output_dir=str(tmp_path),
         )
-        orchestrator._generator_used = "generate_fastapi_backend"
+        monkeypatch.setattr(_shutil, "which", lambda name: "/fake/ruff")
 
-        tasks = orchestrator._analyze_gaps_keyword("Deploy with Docker")
-        assert any("docker" in t.lower() for t in tasks)
+        def _raise_timeout(*a, **kw):
+            raise subprocess.TimeoutExpired(cmd="ruff", timeout=30)
 
-    def test_analyze_gaps_keyword_always_readme(self, simple_model, tmp_path):
-        """Keyword analysis always includes README task."""
+        monkeypatch.setattr(subprocess, "run", _raise_timeout)
+        # Timeout must not propagate — Phase 3 validation is advisory,
+        # not a blocker.
+        assert orchestrator._collect_ruff_issues() == []
+
+    def test_tsc_returns_empty_when_binary_missing(
+        self, simple_model, tmp_path, monkeypatch
+    ):
+        import shutil as _shutil
+
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
             domain_model=simple_model,
             output_dir=str(tmp_path),
         )
-        orchestrator._generator_used = "generate_fastapi_backend"
+        monkeypatch.setattr(_shutil, "which", lambda name: None)
+        assert orchestrator._collect_tsc_issues() == []
 
-        tasks = orchestrator._analyze_gaps_keyword("Build a simple backend")
-        assert any("readme" in t.lower() for t in tasks)
+    def test_tsc_returns_empty_without_tsconfig(
+        self, simple_model, tmp_path, monkeypatch
+    ):
+        """Even when ``tsc`` is available, no tsconfig.json means no
+        work to do — must not run tsc on an empty workspace."""
+        import shutil as _shutil
 
-    def test_build_model_summary(self, simple_model, tmp_path):
-        """Model summary contains class names."""
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
             domain_model=simple_model,
             output_dir=str(tmp_path),
         )
-        summary = orchestrator._build_model_summary()
-        assert "User" in summary
+        monkeypatch.setattr(_shutil, "which", lambda name: "/fake/tsc")
+        assert orchestrator._collect_tsc_issues() == []
 
-    def test_analyze_gaps_with_llm_returns_none_on_failure(self, simple_model, tmp_path):
-        """LLM gap analysis returns None when API call fails."""
+    def test_tsc_skips_node_modules(
+        self, simple_model, tmp_path, monkeypatch
+    ):
+        """A tsconfig.json under node_modules must be ignored — tsc
+        would otherwise take minutes and report third-party issues."""
+        import shutil as _shutil
+        import subprocess
+
+        # Create a node_modules tsconfig — should be skipped.
+        nm_dir = tmp_path / "node_modules" / "some-pkg"
+        nm_dir.mkdir(parents=True, exist_ok=True)
+        (nm_dir / "tsconfig.json").write_text("{}")
+
+        calls: list[tuple] = []
+
+        class FakeCompleted:
+            stdout = ""
+            stderr = ""
+            returncode = 0
+
+        def _record(*args, **kwargs):
+            calls.append((args, kwargs))
+            return FakeCompleted()
+
+        monkeypatch.setattr(_shutil, "which", lambda name: "/fake/tsc")
+        monkeypatch.setattr(subprocess, "run", _record)
+
         orchestrator = LLMOrchestrator(
             llm_client=_make_end_turn_client(),
             domain_model=simple_model,
             output_dir=str(tmp_path),
         )
-        orchestrator._generator_used = "generate_fastapi_backend"
+        orchestrator._collect_tsc_issues()
+        # Invariant: tsc was never invoked because the only tsconfig is
+        # under node_modules.
+        assert calls == []
 
-        # This will fail because there's no real API key
-        result = orchestrator._analyze_gaps_with_llm("Build an app")
-        assert result is None
+    def test_tsc_captures_errors(self, simple_model, tmp_path, monkeypatch):
+        import shutil as _shutil
+        import subprocess
+
+        # Valid tsconfig at the workspace root.
+        (tmp_path / "tsconfig.json").write_text("{}")
+
+        class FakeCompleted:
+            stdout = (
+                "src/app.tsx(12,5): error TS2322: Type 'string' is not "
+                "assignable to type 'number'.\n"
+                "src/other.ts(3,1): error TS2304: Cannot find name 'x'.\n"
+            )
+            stderr = ""
+            returncode = 1
+
+        monkeypatch.setattr(_shutil, "which", lambda name: "/fake/tsc")
+        monkeypatch.setattr(subprocess, "run", lambda *a, **kw: FakeCompleted())
+
+        orchestrator = LLMOrchestrator(
+            llm_client=_make_end_turn_client(),
+            domain_model=simple_model,
+            output_dir=str(tmp_path),
+        )
+        issues = orchestrator._collect_tsc_issues()
+        assert len(issues) == 2
+        assert all(i.startswith("tsc ") for i in issues)
+        assert any("TS2322" in i for i in issues)
+
+
+# ======================================================================
+# Phase 2 system prompt construction
+# (gap_analyzer was removed — the LLM plans tasks itself from the user
+# request + inventory + model. These tests pin the new contract.)
+# ======================================================================
+
+
+class TestPhase2SystemPrompt:
+
+    def test_user_request_appears_verbatim(self, simple_model, tmp_path):
+        orchestrator = LLMOrchestrator(
+            llm_client=_make_end_turn_client(),
+            domain_model=simple_model,
+            output_dir=str(tmp_path),
+        )
+        prompt = orchestrator._build_system_prompt(
+            instructions="Build a FastAPI backend with JWT auth"
+        )
+        assert "Build a FastAPI backend with JWT auth" in prompt
+        assert "User request" in prompt
+
+    def test_scoped_issues_kept_separate_from_request(self, simple_model, tmp_path):
+        """Phase 1 validator findings appear in their own section, not
+        glued to the user's feature request."""
+        orchestrator = LLMOrchestrator(
+            llm_client=_make_end_turn_client(),
+            domain_model=simple_model,
+            output_dir=str(tmp_path),
+        )
+        prompt = orchestrator._build_system_prompt(
+            instructions="Add Stripe checkout",
+            scoped_issues=["Dockerfile references missing requirements.txt"],
+        )
+        assert "Add Stripe checkout" in prompt
+        assert "Dockerfile references missing requirements.txt" in prompt
+        assert "Phase 1 validation" in prompt
+
+    def test_no_scoped_issues_section_when_none(self, simple_model, tmp_path):
+        orchestrator = LLMOrchestrator(
+            llm_client=_make_end_turn_client(),
+            domain_model=simple_model,
+            output_dir=str(tmp_path),
+        )
+        prompt = orchestrator._build_system_prompt(instructions="Build a backend")
+        assert "Phase 1 validation" not in prompt

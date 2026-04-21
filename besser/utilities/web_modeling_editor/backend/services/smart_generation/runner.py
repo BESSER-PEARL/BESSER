@@ -179,6 +179,47 @@ SMART_RUN_REGISTRY = SmartRunRegistry()
 
 
 # ---------------------------------------------------------------------
+# Live-run cancellation registry
+# ---------------------------------------------------------------------
+
+# Maps ``run_id`` of an in-flight smart-gen run to an asyncio.Event that
+# the cancel endpoint can set. The runner registers itself here on start
+# and removes itself in its ``finally`` block. The orchestrator polls
+# the event between turns to stop cleanly. Closing the SSE stream alone
+# is not enough — the orchestrator runs in a worker thread and would
+# keep burning the user's BYOK budget until natural completion.
+_ACTIVE_RUNS: dict[str, asyncio.Event] = {}
+_ACTIVE_RUNS_LOCK = asyncio.Lock()
+
+
+async def request_cancellation(run_id: str) -> bool:
+    """Signal a live run to stop at its next turn boundary.
+
+    Returns True if the run was found and signalled, False if no such
+    run is currently active (already completed, never existed, or the
+    download already happened).
+    """
+    async with _ACTIVE_RUNS_LOCK:
+        event = _ACTIVE_RUNS.get(run_id)
+    if event is None:
+        return False
+    event.set()
+    return True
+
+
+async def _register_active_run(run_id: str) -> asyncio.Event:
+    event = asyncio.Event()
+    async with _ACTIVE_RUNS_LOCK:
+        _ACTIVE_RUNS[run_id] = event
+    return event
+
+
+async def _deregister_active_run(run_id: str) -> None:
+    async with _ACTIVE_RUNS_LOCK:
+        _ACTIVE_RUNS.pop(run_id, None)
+
+
+# ---------------------------------------------------------------------
 # Runner
 # ---------------------------------------------------------------------
 
@@ -346,18 +387,33 @@ class SmartGenerationRunner:
                 )
             _put(ToolCallEvent(turn=turn, tool=tool, status="executing"))
 
+        # Register this run for cancellation NOW that we've cleared all
+        # the early-return paths (mkdtemp / model assembly / LLM client
+        # build). ``POST /cancel-smart-gen/{run_id}`` will set this
+        # event and the orchestrator will stop at the next turn boundary.
+        cancel_event = await _register_active_run(self.run_id)
+
+        # Bridge the asyncio.Event into a thread-safe boolean check the
+        # synchronous orchestrator can poll between turns.
+        def should_continue() -> bool:
+            return not cancel_event.is_set()
+
         orchestrator = LLMOrchestrator(
             llm_client=client,
             domain_model=assembled.domain_model,
             gui_model=assembled.gui_model,
             agent_model=assembled.agent_model,
             agent_config=assembled.agent_config,
+            object_model=assembled.object_model,
+            state_machines=assembled.state_machines,
+            quantum_circuit=assembled.quantum_circuit,
             output_dir=self.temp_dir,
             max_cost_usd=self.request.max_cost_usd,
             max_runtime_seconds=self.request.max_runtime_seconds,
             on_progress=on_progress,
             on_text=on_text,
             use_streaming=True,
+            should_continue=should_continue,
         )
 
         # ---- 6. Spawn the worker + the cost emitter --------------------
@@ -485,6 +541,18 @@ class SmartGenerationRunner:
                 if leftover is None:
                     continue
                 yield format_sse(leftover)
+
+            # Always deregister so a future cancel call returns False
+            # cleanly and the dict doesn't leak entries.
+            await _deregister_active_run(self.run_id)
+
+            # If the user cancelled, surface that explicitly so the
+            # frontend stops waiting for `done` and shows a clear status.
+            if cancel_event.is_set():
+                yield format_sse(ErrorEvent(
+                    code="CANCELLED",
+                    message="Smart generation cancelled by user request",
+                ))
 
         # ---- 9. Surface cost / runtime cap warnings -------------------
         if worker_exception is None and result_path:

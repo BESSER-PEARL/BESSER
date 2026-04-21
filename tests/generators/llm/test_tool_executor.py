@@ -397,3 +397,136 @@ class TestOrchestratorIntegration:
         # Phase 1 adds generate_fastapi_backend (turn 0) + mock LLM adds 4 tool calls
         assert recipe["turns"] >= 4
         assert len(recipe["tool_calls"]) >= 4
+
+
+# ======================================================================
+# Model query tools
+# ======================================================================
+
+
+@pytest.fixture
+def library_executor(tmp_path):
+    """Executor with a richer model for query tests.
+
+    Two classes (Book extends Item, abstract Item), one constraint, one
+    method, a couple of attributes — enough to exercise every predicate
+    branch in ``list_classes_with``.
+    """
+    from besser.BUML.metamodel.structural import (
+        Constraint,
+        Generalization,
+        Method,
+    )
+
+    String = PrimitiveDataType("str")
+    Int = PrimitiveDataType("int")
+
+    item = Class(name="Item", is_abstract=True)
+    item.attributes = {
+        Property(name="id", type=Int, is_id=True),
+        Property(name="title", type=String),
+    }
+    item.methods = {Method(name="describe", type=String)}
+
+    book = Class(name="Book")
+    book.attributes = {Property(name="isbn", type=String)}
+
+    Generalization(general=item, specific=book)
+
+    constraint = Constraint(
+        name="non_empty_title",
+        context=item,
+        expression="self.title.size() > 0",
+        language="OCL",
+    )
+
+    model = DomainModel(
+        name="Library",
+        types={item, book},
+        constraints={constraint},
+    )
+    return ToolExecutor(workspace=str(tmp_path), domain_model=model)
+
+
+class TestModelQueryTools:
+
+    def test_query_class_returns_full_definition(self, library_executor):
+        result = _call(library_executor, "query_class", {"name": "Item"})
+        assert result["name"] == "Item"
+        assert result["is_abstract"] is True
+        attr_names = {a["name"] for a in result["attributes"]}
+        assert {"id", "title"} <= attr_names
+        method_names = {m["name"] for m in result["methods"]}
+        assert "describe" in method_names
+
+    def test_query_class_unknown_returns_error(self, library_executor):
+        result = _call(library_executor, "query_class", {"name": "DoesNotExist"})
+        assert "error" in result
+        assert "DoesNotExist" in result["error"]
+
+    def test_list_classes_is_abstract(self, library_executor):
+        result = _call(library_executor, "list_classes_with", {"predicate": "is_abstract"})
+        assert result["matches"] == ["Item"]
+        assert result["count"] == 1
+
+    def test_list_classes_is_root(self, library_executor):
+        """``is_root`` = classes with no parents."""
+        result = _call(library_executor, "list_classes_with", {"predicate": "is_root"})
+        # Item is abstract root. Book extends Item, so it is not root.
+        assert "Item" in result["matches"]
+        assert "Book" not in result["matches"]
+
+    def test_list_classes_has_constraint(self, library_executor):
+        result = _call(
+            library_executor, "list_classes_with", {"predicate": "has_constraint"}
+        )
+        assert result["matches"] == ["Item"]
+
+    def test_list_classes_has_attribute(self, library_executor):
+        result = _call(
+            library_executor, "list_classes_with", {"predicate": "has_attribute:isbn"}
+        )
+        assert result["matches"] == ["Book"]
+
+    def test_list_classes_extends(self, library_executor):
+        result = _call(
+            library_executor, "list_classes_with", {"predicate": "extends:Item"}
+        )
+        assert result["matches"] == ["Book"]
+
+    def test_list_classes_unknown_predicate(self, library_executor):
+        result = _call(
+            library_executor, "list_classes_with", {"predicate": "quantum_entangled"}
+        )
+        assert "error" in result
+        assert "Unknown predicate" in result["error"]
+
+    def test_list_classes_predicate_requires_value(self, library_executor):
+        result = _call(
+            library_executor, "list_classes_with", {"predicate": "has_attribute"}
+        )
+        assert "error" in result
+        assert "requires a value" in result["error"]
+
+    def test_get_constraints_for_class(self, library_executor):
+        result = _call(
+            library_executor, "get_constraints_for", {"class_name": "Item"}
+        )
+        assert result["class"] == "Item"
+        assert result["count"] == 1
+        assert result["constraints"][0]["name"] == "non_empty_title"
+        assert "title.size" in result["constraints"][0]["expression"]
+
+    def test_get_constraints_for_class_without_any(self, library_executor):
+        result = _call(
+            library_executor, "get_constraints_for", {"class_name": "Book"}
+        )
+        assert result["class"] == "Book"
+        assert result["count"] == 0
+        assert result["constraints"] == []
+
+    def test_get_constraints_for_unknown_class(self, library_executor):
+        result = _call(
+            library_executor, "get_constraints_for", {"class_name": "Nope"}
+        )
+        assert "error" in result

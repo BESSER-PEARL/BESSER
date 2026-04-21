@@ -42,6 +42,9 @@ from besser.utilities.web_modeling_editor.backend.services.smart_generation impo
     SMART_RUN_REGISTRY,
     SmartGenerationRunner,
 )
+from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
+    request_cancellation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +123,37 @@ async def smart_generate(request: SmartGenerateRequest):
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ---------------------------------------------------------------------
+# POST /besser_api/cancel-smart-gen/{run_id}
+# ---------------------------------------------------------------------
+
+
+@router.post("/cancel-smart-gen/{run_id}")
+@handle_endpoint_errors("cancel_smart_gen")
+async def cancel_smart_gen(
+    run_id: str = Path(
+        ...,
+        pattern=r"^[a-f0-9]{32}$",
+        description="Hex run ID returned in the `start` SSE event",
+    ),
+):
+    """Signal a live smart-generation run to stop at its next turn.
+
+    Returns ``{"status": "cancelled"}`` if the run was found and
+    signalled, ``{"status": "not_found"}`` if no live run exists for
+    that ID (already finished, never existed, or download already
+    happened).
+
+    The user's BYOK budget stops accruing once the orchestrator hits
+    the next turn boundary (typically within a few seconds). The SSE
+    stream emits a final ``error(code="CANCELLED")`` event before
+    closing so the frontend can show a definite "stopped by user"
+    state instead of waiting for ``done``.
+    """
+    cancelled = await request_cancellation(run_id)
+    return {"status": "cancelled" if cancelled else "not_found", "runId": run_id}
 
 
 # ---------------------------------------------------------------------

@@ -117,3 +117,99 @@ class TestAssembleModels:
         class_names = {t.name for t in result.domain_model.types if hasattr(t, "name")}
         assert "Author" in class_names
         assert "Book" in class_names
+
+    def test_new_optional_models_default_to_empty(self):
+        """The newly added optional diagram slots (object / state machines /
+        quantum) must default to ``None`` / empty list when the project
+        doesn't include those diagram types. No crash, no implicit values."""
+        project = _project_with({
+            "ClassDiagram": [
+                {
+                    "id": "cd1",
+                    "title": "Library",
+                    "model": CLASS_DIAGRAM_MODEL,
+                }
+            ]
+        })
+
+        result = assemble_models_from_project(project)
+        assert result.object_model is None
+        assert result.state_machines == []
+        assert result.quantum_circuit is None
+
+    def test_malformed_state_machine_diagram_does_not_abort(self):
+        """A broken StateMachineDiagram must never block a run whose
+        ClassDiagram is valid. Whether the processor returns ``None`` or
+        an empty shell is an implementation detail of the upstream
+        processor — all we care about is that assembly finishes with the
+        domain model intact."""
+        project = _project_with({
+            "ClassDiagram": [
+                {
+                    "id": "cd1",
+                    "title": "Library",
+                    "model": CLASS_DIAGRAM_MODEL,
+                }
+            ],
+            "StateMachineDiagram": [
+                {
+                    "id": "sm1",
+                    "title": "Broken",
+                    "model": {"type": "StateMachineDiagram", "garbage": True},
+                }
+            ],
+        })
+
+        result = assemble_models_from_project(project)
+        assert result.domain_model is not None
+        # The list is either empty (processor raised) or contains
+        # a degenerate entry (processor returned an empty shell).
+        assert isinstance(result.state_machines, list)
+
+    def test_malformed_object_diagram_does_not_abort(self):
+        project = _project_with({
+            "ClassDiagram": [
+                {
+                    "id": "cd1",
+                    "title": "Library",
+                    "model": CLASS_DIAGRAM_MODEL,
+                }
+            ],
+            "ObjectDiagram": [
+                {
+                    "id": "od1",
+                    "title": "Broken",
+                    "model": {"type": "ObjectDiagram", "garbage": True},
+                }
+            ],
+        })
+
+        result = assemble_models_from_project(project)
+        # object_model is either None (processor raised) or an empty
+        # ObjectModel (processor returned a shell). Either is acceptable.
+        assert result.domain_model is not None
+
+    def test_malformed_quantum_diagram_does_not_abort(self):
+        project = _project_with({
+            "ClassDiagram": [
+                {
+                    "id": "cd1",
+                    "title": "Library",
+                    "model": CLASS_DIAGRAM_MODEL,
+                }
+            ],
+            "QuantumCircuitDiagram": [
+                {
+                    "id": "qd1",
+                    "title": "Broken",
+                    "model": {"type": "QuantumCircuitDiagram", "garbage": True},
+                }
+            ],
+        })
+
+        result = assemble_models_from_project(project)
+        assert result.domain_model is not None
+        # A malformed quantum diagram yields either None or an empty
+        # QuantumCircuit. Both are safe for the downstream serializer.
+        if result.quantum_circuit is not None:
+            assert getattr(result.quantum_circuit, "num_qubits", 0) == 0

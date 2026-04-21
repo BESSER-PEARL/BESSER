@@ -407,87 +407,72 @@ class TestFixError:
 
 
 # ======================================================================
-# Standalone module tests (gap_analyzer, prompt_builder)
+# Standalone module tests (prompt_builder)
+# (gap_analyzer was deleted — the LLM plans its own tasks from the
+# user request + inventory + model JSON; no keyword regex needed.)
 # ======================================================================
-
-class TestGapAnalyzerModule:
-
-    def test_analyze_gaps_no_generator(self, simple_model, tmp_path):
-        """analyze_gaps returns scratch-build task when no generator used."""
-        from besser.generators.llm.gap_analyzer import analyze_gaps
-        tasks = analyze_gaps(
-            instructions="Build a NestJS backend",
-            generator_used=None,
-            domain_model=simple_model,
-            llm_client=_make_end_turn_client(),
-        )
-        assert len(tasks) == 1
-        assert "from scratch" in tasks[0].lower()
-
-    def test_analyze_gaps_keyword_auth(self, simple_model, tmp_path):
-        """Keyword analysis detects auth requirements."""
-        from besser.generators.llm.gap_analyzer import _analyze_gaps_keyword
-        tasks = _analyze_gaps_keyword("Add JWT authentication", "generate_fastapi_backend")
-        assert any("auth" in t.lower() for t in tasks)
-
-    def test_analyze_gaps_keyword_pagination(self, simple_model, tmp_path):
-        """Keyword analysis detects pagination requirements."""
-        from besser.generators.llm.gap_analyzer import _analyze_gaps_keyword
-        tasks = _analyze_gaps_keyword("Add pagination to list endpoints", "generate_fastapi_backend")
-        assert any("pagination" in t.lower() for t in tasks)
-
-    def test_build_model_summary(self, simple_model):
-        """Model summary contains class names."""
-        from besser.generators.llm.gap_analyzer import build_model_summary
-        summary = build_model_summary(simple_model)
-        assert "User" in summary
-        assert "Associations" in summary
 
 
 class TestPromptBuilderModule:
 
     def test_build_system_prompt(self, simple_model):
-        """build_system_prompt includes model and tasks."""
+        """build_system_prompt embeds the model and the user request."""
         from besser.generators.llm.prompt_builder import build_system_prompt
         prompt = build_system_prompt(
             domain_model=simple_model,
             gui_model=None,
             agent_model=None,
             inventory="",
-            gap_tasks=["Add auth", "Write README"],
+            instructions="Add auth and write a README",
             max_turns=50,
         )
         assert "User" in prompt
-        assert "Add auth" in prompt
-        assert "Write README" in prompt
+        assert "Add auth and write a README" in prompt
         assert "Domain Model" in prompt
+        assert "User request" in prompt
 
     def test_build_system_prompt_with_inventory(self, simple_model):
-        """build_system_prompt includes inventory when provided."""
         from besser.generators.llm.prompt_builder import build_system_prompt
         prompt = build_system_prompt(
             domain_model=simple_model,
             gui_model=None,
             agent_model=None,
             inventory="Generator produced 5 files",
-            gap_tasks=[],
+            instructions="Build a backend",
             max_turns=50,
         )
         assert "Generator produced 5 files" in prompt
         assert "What was already generated" in prompt
 
     def test_build_system_prompt_no_inventory(self, simple_model):
-        """build_system_prompt omits inventory section when empty."""
         from besser.generators.llm.prompt_builder import build_system_prompt
         prompt = build_system_prompt(
             domain_model=simple_model,
             gui_model=None,
             agent_model=None,
             inventory="",
-            gap_tasks=["Task 1"],
+            instructions="Build a backend",
             max_turns=50,
         )
         assert "What was already generated" not in prompt
+
+    def test_scoped_issues_appear_separately_from_user_request(self, simple_model):
+        """Validator-detected issues must be presented as bugs to fix, not
+        merged into the user's feature request."""
+        from besser.generators.llm.prompt_builder import build_system_prompt
+        prompt = build_system_prompt(
+            domain_model=simple_model,
+            gui_model=None,
+            agent_model=None,
+            inventory="",
+            instructions="Add Stripe checkout",
+            scoped_issues=["Syntax error in main.py line 12"],
+            max_turns=50,
+        )
+        # Both surfaces are present in their dedicated sections.
+        assert "Add Stripe checkout" in prompt
+        assert "Syntax error in main.py line 12" in prompt
+        assert "Phase 1 validation" in prompt
 
     def test_build_inventory(self, simple_model, tmp_path):
         """build_inventory lists files and model info."""

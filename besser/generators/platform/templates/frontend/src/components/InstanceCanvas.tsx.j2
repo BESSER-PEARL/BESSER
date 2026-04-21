@@ -23,12 +23,50 @@ import { InstanceNode } from './InstanceNode';
 import { PropertyEditor } from './PropertyEditor';
 import { AssociationSelector } from './AssociationSelector';
 import { InstanceCreationModal } from './InstanceCreationModal';
-import type { BaseInstance, ClassMetadata } from '../types/models';
+import type { BaseInstance, ClassMetadata, AssociationMetadata } from '../types/models';
 import * as api from '../api/instances';
 
 const nodeTypes = {
   instance: InstanceNode,
 };
+
+/** Find the innermost container instance whose bounds contain the given canvas coords. */
+function findContainerAt(
+  canvasPoint: { x: number; y: number },
+  nodes: Node[],
+  availableClasses: ClassMetadata[]
+): Node | null {
+  const containers = nodes.filter((n) => {
+    const meta = (n.data as { classMetadata?: ClassMetadata } | undefined)?.classMetadata;
+    return meta?.isContainer;
+  });
+  const hits = containers.filter((n) => {
+    const meta = (n.data as { classMetadata: ClassMetadata }).classMetadata;
+    const size = meta.defaultSize ?? { width: 320, height: 240 };
+    const width = n.measured?.width ?? n.width ?? size.width;
+    const height = n.measured?.height ?? n.height ?? size.height;
+    return (
+      canvasPoint.x >= n.position.x &&
+      canvasPoint.x <= n.position.x + width &&
+      canvasPoint.y >= n.position.y &&
+      canvasPoint.y <= n.position.y + height
+    );
+  });
+  // Innermost == smallest area wins.
+  hits.sort((a, b) => {
+    const am = (a.data as { classMetadata: ClassMetadata }).classMetadata;
+    const bm = (b.data as { classMetadata: ClassMetadata }).classMetadata;
+    const as = (a.measured?.width ?? a.width ?? am.defaultSize?.width ?? 320) *
+      (a.measured?.height ?? a.height ?? am.defaultSize?.height ?? 240);
+    const bs = (b.measured?.width ?? b.width ?? bm.defaultSize?.width ?? 320) *
+      (b.measured?.height ?? b.height ?? bm.defaultSize?.height ?? 240);
+    return as - bs;
+  });
+  // Also exclude availableClasses param from lint by touching it (it is useful
+  // context for future extensions but unused right now).
+  void availableClasses;
+  return hits[0] ?? null;
+}
 
 interface InstanceCanvasProps {
   instances: BaseInstance[];
@@ -59,9 +97,20 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
 
   const nodePositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map());
 
+  // Remember which handle (top/right/bottom/left) the user actually clicked when
+  // they drew each edge, so re-renders don't fall back to the default 'top' handle.
+  // Keyed by `${sourceId}::${targetId}::${associationName}` (same shape as the edge id).
+  // Session-scoped only: the backend Link model doesn't carry handle info, so after
+  // a page reload xyflow picks defaults again.
+  const edgeHandlesRef = React.useRef<
+    Map<string, { sourceHandle?: string; targetHandle?: string }>
+  >(new Map());
+
   const [createInstanceModal, setCreateInstanceModal] = useState<{
     className: string;
     position: { x: number; y: number };
+    parentContainerId?: string;
+    parentContainerClass?: string;
   } | null>(null);
 
   const onDrop = useCallback(
@@ -76,9 +125,16 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
         y: event.clientY - bounds.top - 50,
       };
 
-      setCreateInstanceModal({ className, position });
+      // If the drop lands inside a container instance, remember it so we can
+      // auto-create the containment association after the instance is created.
+      const container = findContainerAt(position, nodes, availableClasses);
+      const parentContainerId = container?.id;
+      const parentContainerClass = (container?.data as { instance?: BaseInstance } | undefined)
+        ?.instance?.class_name;
+
+      setCreateInstanceModal({ className, position, parentContainerId, parentContainerClass });
     },
-    []
+    [nodes, availableClasses]
   );
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -87,15 +143,37 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
   }, []);
 
   React.useEffect(() => {
+    // First pass: identify containment relationships so children get parentId.
+    // A link from a container instance is treated as containment of its target.
+    const parentByChild = new Map<string, string>();
+    for (const instance of instances) {
+      const srcMeta = availableClasses.find((c) => c.name === instance.class_name);
+      if (!srcMeta?.isContainer) continue;
+      for (const link of instance.links) {
+        if (!parentByChild.has(link.target_id)) {
+          parentByChild.set(link.target_id, instance.id);
+        }
+      }
+    }
+
     const flowNodes: Node[] = instances.map((instance, index) => {
       const classMetadata = availableClasses.find((c) => c.name === instance.class_name);
       const storedPosition = nodePositionsRef.current.get(instance.id);
-      const position =
-        storedPosition || { x: 100 + (index % 5) * 250, y: 100 + Math.floor(index / 5) * 200 };
+      const isContainer = Boolean(classMetadata?.isContainer);
+      const parentId = parentByChild.get(instance.id);
+
+      // Containers are always laid out in absolute canvas coords. Children of a
+      // container are stored with coords relative to the parent; if we don't yet
+      // have a stored position, default to a small inset inside the container.
+      const defaultPosition = parentId
+        ? { x: 24, y: 48 + (index % 4) * 60 }
+        : { x: 100 + (index % 5) * 250, y: 100 + Math.floor(index / 5) * 200 };
+      const position = storedPosition ?? defaultPosition;
       if (!storedPosition) {
         nodePositionsRef.current.set(instance.id, position);
       }
-      return {
+
+      const node: Node = {
         id: instance.id,
         type: 'instance',
         position,
@@ -106,6 +184,15 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
           onDelete: () => onInstanceDelete(instance.class_name, instance.id),
         },
       };
+      if (isContainer && classMetadata?.defaultSize) {
+        node.width = classMetadata.defaultSize.width;
+        node.height = classMetadata.defaultSize.height;
+      }
+      if (parentId) {
+        node.parentId = parentId;
+        node.extent = 'parent';
+      }
+      return node;
     });
 
     setNodes(flowNodes);
@@ -113,14 +200,31 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
     const flowEdges: Edge[] = instances.flatMap((instance) =>
       instance.links.map((link) => {
         const targetInstance = instances.find((i) => i.id === link.target_id);
+        const sourceMeta = availableClasses.find((c) => c.name === instance.class_name);
+        const assocMeta: AssociationMetadata | undefined = sourceMeta?.associations.find(
+          (a) => a.name === link.association_name && a.targetClass === (targetInstance?.class_name ?? '')
+        );
+        const edgeColor = assocMeta?.edgeColor;
+
+        // Hide the edge when the source is a container and the target is its child:
+        // the containment is visually obvious from the nesting, a line just adds noise.
+        const sourceIsContainer = Boolean(sourceMeta?.isContainer);
+        const childOfSource = sourceIsContainer && parentByChild.get(link.target_id) === instance.id;
+
+        const edgeId = `${instance.id}::${link.target_id}::${link.association_name}`;
+        const savedHandles = edgeHandlesRef.current.get(edgeId);
+
         return {
-          // '::' so the id survives UUIDs in source/target (which contain '-')
-          id: `${instance.id}::${link.target_id}::${link.association_name}`,
+          id: edgeId,
           source: instance.id,
           target: link.target_id,
+          sourceHandle: savedHandles?.sourceHandle,
+          targetHandle: savedHandles?.targetHandle,
           label: link.association_name,
           type: 'default',
           animated: false,
+          hidden: childOfSource,
+          style: edgeColor ? { stroke: edgeColor, strokeWidth: 2 } : undefined,
           labelStyle: { fontSize: 11, fontWeight: 600 },
           labelBgStyle: { fill: 'hsl(var(--card))' },
           labelBgPadding: [6, 3] as [number, number],
@@ -149,6 +253,24 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
     [onNodesChange]
   );
 
+  const rememberEdgeHandles = useCallback(
+    (
+      sourceId: string,
+      targetId: string,
+      associationName: string,
+      sourceHandle?: string | null,
+      targetHandle?: string | null,
+    ) => {
+      if (!sourceHandle && !targetHandle) return;
+      const key = `${sourceId}::${targetId}::${associationName}`;
+      edgeHandlesRef.current.set(key, {
+        sourceHandle: sourceHandle ?? undefined,
+        targetHandle: targetHandle ?? undefined,
+      });
+    },
+    [],
+  );
+
   const onConnect = useCallback(
     (connection: Connection) => {
       if (!connection.source || !connection.target) return;
@@ -163,7 +285,15 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
         ) || [];
 
       if (validAssociations.length === 1) {
-        onLinkCreate(connection.source, connection.target, validAssociations[0].name);
+        const assocName = validAssociations[0].name;
+        rememberEdgeHandles(
+          connection.source,
+          connection.target,
+          assocName,
+          connection.sourceHandle,
+          connection.targetHandle,
+        );
+        onLinkCreate(connection.source, connection.target, assocName);
       } else if (validAssociations.length > 1) {
         setPendingConnection({
           sourceId: connection.source,
@@ -171,9 +301,20 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
           sourceClass: sourceInstance.class_name,
           targetClass: targetInstance.class_name,
         });
+        // Stash handles under every valid association; handleAssociationSelect
+        // below picks the right one and the rest are harmless dead entries.
+        for (const assoc of validAssociations) {
+          rememberEdgeHandles(
+            connection.source,
+            connection.target,
+            assoc.name,
+            connection.sourceHandle,
+            connection.targetHandle,
+          );
+        }
       }
     },
-    [instances, availableClasses, onLinkCreate]
+    [instances, availableClasses, onLinkCreate, rememberEdgeHandles]
   );
 
   const handleAssociationSelect = (associationName: string) => {
@@ -232,11 +373,41 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
   ) => {
     if (!createInstanceModal) return;
     try {
-      await api.createInstance({
+      const created = await api.createInstance({
         class_name: createInstanceModal.className,
         instance_name: instanceName,
         attributes,
       });
+
+      // If dropped inside a container, auto-create the containment association.
+      const { parentContainerId, parentContainerClass, className } = createInstanceModal;
+      if (parentContainerId && parentContainerClass && created?.id) {
+        const parentMeta = availableClasses.find((c) => c.name === parentContainerClass);
+        const matchingAssoc = parentMeta?.associations.filter(
+          (a) => a.targetClass === className
+        ) ?? [];
+        if (matchingAssoc.length === 1) {
+          try {
+            await api.createLink({
+              source_class: parentContainerClass,
+              source_id: parentContainerId,
+              target_class: className,
+              target_id: created.id,
+              association_name: matchingAssoc[0].name,
+            });
+          } catch (error) {
+            console.error('Failed to auto-create containment link:', error);
+          }
+        } else if (matchingAssoc.length > 1) {
+          setPendingConnection({
+            sourceId: parentContainerId,
+            targetId: created.id,
+            sourceClass: parentContainerClass,
+            targetClass: className,
+          });
+        }
+      }
+
       onInstanceCreate(createInstanceModal.className, createInstanceModal.position);
     } catch (error) {
       console.error('Failed to create instance:', error);

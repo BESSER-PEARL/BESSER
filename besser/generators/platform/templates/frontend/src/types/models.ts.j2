@@ -65,6 +65,8 @@ export type DomainInstance = {% for cls in classes %}{{ cls.name }}Instance{% if
 export interface ClassMetadata {
   name: string;
   icon?: string; // SVG icon as plain text
+  isContainer?: boolean; // container classes render as drop-zone rectangles
+  defaultSize?: { width: number; height: number };
   attributes: AttributeMetadata[];
   associations: AssociationMetadata[];
 }
@@ -84,15 +86,23 @@ export interface AssociationMetadata {
     min: number;
     max: number;
   };
+  edgeColor?: string; // CSS color (hex, hsl, etc.); omitted uses the theme default
 }
 
 // Available classes in the domain model
 export const DOMAIN_CLASSES: ClassMetadata[] = [
   {%- for cls in classes %}
+  {%- set cls_cust = customization.get_class_customization(cls.name) if customization else None %}
   {
     name: '{{ cls.name }}',
     {%- if cls.metadata and cls.metadata.icon %}
     icon: `{{ cls.metadata.icon | safe }}`,
+    {%- endif %}
+    {%- if cls_cust and cls_cust.is_container %}
+    isContainer: true,
+    {%- endif %}
+    {%- if cls_cust and cls_cust.default_width and cls_cust.default_height %}
+    defaultSize: { width: {{ cls_cust.default_width }}, height: {{ cls_cust.default_height }} },
     {%- endif %}
     attributes: [
       {%- for attr in cls.attributes | union(cls.inherited_attributes()) %}
@@ -107,6 +117,7 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
       {%- for end in cls.all_association_ends() %}
       {%- set assoc = end.owner %}
       {%- set other_ends = assoc.ends | reject('eq', end) | list %}{%- set other_end = other_ends[0] if other_ends else none %}
+      {%- set assoc_cust = customization.get_association_customization(assoc.name) if customization else None %}
       {
         name: '{{ assoc.name }}',
         targetClass: '{{ end.type.name }}',
@@ -115,7 +126,8 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
         multiplicity: {
           min: {{ end.multiplicity.min }},
           max: {{ end.multiplicity.max }}
-        }
+        }{% if assoc_cust and assoc_cust.edge_color %},
+        edgeColor: '{{ assoc_cust.edge_color }}'{% endif %}
       }{% if not loop.last %},{% endif %}
       {%- endfor %}
     ]

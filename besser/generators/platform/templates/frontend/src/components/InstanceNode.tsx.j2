@@ -34,6 +34,69 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
   const { instance, classMetadata, onEdit, onDelete } = data;
   const [isHovered, setIsHovered] = React.useState(false);
   const hasIcon = Boolean(classMetadata.icon);
+  const isContainer = Boolean(classMetadata.isContainer);
+
+  // Container variant: a big rounded drop-zone with a header bar. Children land
+  // inside via xyflow's parentId subflow mechanism.
+  if (isContainer) {
+    const size = classMetadata.defaultSize ?? { width: 320, height: 240 };
+    return (
+      <div
+        className={cn(
+          'relative rounded-xl border-2 border-dashed border-primary/60 bg-primary/5 shadow-sm transition-colors',
+          selected && 'border-primary ring-2 ring-ring ring-offset-2 ring-offset-background'
+        )}
+        style={{ width: size.width, height: size.height }}
+      >
+        {HANDLE_POSITIONS.map(({ id, position, offset }) => (
+          <Handle
+            key={id}
+            type="source"
+            position={position}
+            id={id}
+            style={offset}
+            className="!h-4 !w-4 !border-2 !border-background !bg-primary transition-all hover:!h-5 hover:!w-5 hover:!bg-primary/90"
+          />
+        ))}
+        <div className="flex items-center justify-between gap-2 rounded-t-[10px] border-b border-primary/30 bg-primary/10 px-3 py-2">
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-xs font-semibold uppercase tracking-wider text-primary/80">
+              {instance.class_name}
+            </div>
+            <div className="truncate text-sm font-bold text-foreground">
+              {instance.instance_name}
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-1">
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7"
+              onClick={(e) => {
+                e.stopPropagation();
+                onEdit();
+              }}
+              title="Edit"
+            >
+              <Pencil />
+            </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              className="h-7 w-7 text-destructive hover:text-destructive"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              title="Delete"
+            >
+              <Trash2 />
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div

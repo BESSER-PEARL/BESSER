@@ -1,6 +1,6 @@
 # Generated from PlantUML.g4 by ANTLR 4.13.2
 from antlr4 import *
-from io import StringIO
+from io import StringIO  # noqa: F401
 import sys
 if sys.version_info[1] > 5:
     from typing import TextIO

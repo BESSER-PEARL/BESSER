@@ -41,6 +41,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_gui_diagram,
     process_quantum_diagram,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.platform_customization_processor import (
+    process_platform_customization_diagram,
+)
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
@@ -251,6 +254,10 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     # Handle Web App generator (requires both ClassDiagram and GUINoCodeDiagram)
     if generator_type == "web_app":
         return await _handle_web_app_project_generation(input_data, generator_info, config)
+
+    # Handle Platform generator (ClassDiagram + optional PlatformCustomizationDiagram)
+    if generator_type == "platform":
+        return await _handle_platform_project_generation(input_data, generator_info, config)
 
     # Handle Qiskit generator (requires QuantumCircuitDiagram)
     if generator_type == "qiskit":
@@ -931,6 +938,58 @@ async def _generate_web_app(buml_model, gui_model, generator_class, config: dict
     generator_instance = generator_class(buml_model, gui_model, output_dir=temp_dir, agent_model=agent_model, agent_config=agent_config)
     await asyncio.to_thread(generator_instance.generate)
     return _create_zip_response(temp_dir, "web_app")
+
+
+@handle_endpoint_errors("_handle_platform_project_generation")
+async def _handle_platform_project_generation(input_data: ProjectInput, generator_info, config: dict):
+    """Handle Platform generation: ClassDiagram (required) + PlatformCustomizationDiagram (optional).
+
+    Mirrors the WebApp dispatch pattern but the customization diagram is optional — when
+    absent, the generator is invoked exactly like today's single-diagram path (customization=None).
+    """
+    # ClassDiagram is required; resolve it as the active one.
+    class_diagram = input_data.get_active_diagram("ClassDiagram")
+    if not class_diagram:
+        raise HTTPException(
+            status_code=400,
+            detail="ClassDiagram is required for Platform generator",
+        )
+
+    # PlatformCustomizationDiagram is optional. Prefer the class diagram's references if present,
+    # otherwise fall back to the active customization (or None when the tab was never used).
+    customization_diagram = input_data.get_referenced_diagram(
+        class_diagram, "PlatformCustomizationDiagram"
+    ) or input_data.get_active_diagram("PlatformCustomizationDiagram")
+
+    with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
+        buml_model = process_class_diagram(class_diagram.model_dump())
+
+        customization_model = None
+        if customization_diagram and customization_diagram.model:
+            customization_model = process_platform_customization_diagram(
+                customization_diagram.model,
+                name=(customization_diagram.title or "PlatformCustomization").replace(" ", "_"),
+            )
+
+        return await _generate_platform(
+            buml_model,
+            customization_model,
+            generator_info.generator_class,
+            config,
+            temp_dir,
+        )
+
+
+@handle_endpoint_errors("_generate_platform")
+async def _generate_platform(buml_model, customization_model, generator_class, config: dict, temp_dir: str):
+    """Instantiate PlatformGenerator and return the generated ZIP."""
+    generator_instance = generator_class(
+        buml_model,
+        customization=customization_model,
+        output_dir=temp_dir,
+    )
+    await asyncio.to_thread(generator_instance.generate)
+    return _create_zip_response(temp_dir, "platform")
 
 @handle_endpoint_errors("_generate_standard")
 async def _generate_standard(buml_model, generator_class, generator_type: str, generator_info, temp_dir: str):

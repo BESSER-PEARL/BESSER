@@ -8,8 +8,11 @@ BESSER web modeling editor.
 """
 
 import os
+from typing import Optional
+
 from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
+from besser.BUML.metamodel.platform_customization import PlatformCustomizationModel
 from besser.generators import GeneratorInterface
 
 
@@ -27,26 +30,45 @@ class PlatformGenerator(GeneratorInterface):
     Args:
         model (DomainModel): The B-UML domain model (class diagram) that defines
                             the metamodel for which instances will be created.
+        customization (PlatformCustomizationModel, optional): Per-class and
+                            per-association overrides (container flag, default
+                            node size, edge color). None preserves the default
+                            look for every class/association.
         output_dir (str, optional): Directory where generated code will be saved.
                                    Defaults to None (uses 'output' folder).
-    
+
     Example:
         >>> from besser.BUML import DomainModel, Class, Property, StringType
-        >>> 
+        >>> from besser.BUML.metamodel.platform_customization import (
+        ...     PlatformCustomizationModel, ClassCustomization, AssociationCustomization
+        ... )
+        >>>
         >>> # Define a simple class diagram
         >>> library_model = DomainModel(name="LibraryDomain")
         >>> Book = Class(name="Book")
         >>> Book.attributes = {Property(name="title", type=StringType)}
         >>> library_model.types = {Book}
-        >>> 
+        >>>
+        >>> # Optional: customize how the generated editor renders Book instances
+        >>> cust = PlatformCustomizationModel(
+        ...     name="LibraryCustomization",
+        ...     class_overrides={"Book": ClassCustomization(default_width=100, default_height=100)},
+        ... )
+        >>>
         >>> # Generate instance editor platform
-        >>> generator = PlatformGenerator(library_model, output_dir="library_platform")
+        >>> generator = PlatformGenerator(library_model, customization=cust, output_dir="library_platform")
         >>> generator.generate()
     """
-    
-    def __init__(self, model: DomainModel, output_dir: str = None):
+
+    def __init__(
+        self,
+        model: DomainModel,
+        customization: Optional[PlatformCustomizationModel] = None,
+        output_dir: str = None,
+    ):
         super().__init__(model, output_dir)
         self.domain_model = model
+        self.customization = customization
         
         # Setup Jinja2 environment
         templates_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
@@ -268,14 +290,15 @@ class PlatformGenerator(GeneratorInterface):
     def _generate_frontend_types(self, frontend_dir):
         """Generates TypeScript type definitions."""
         types_dir = os.path.join(frontend_dir, 'src', 'types')
-        
+
         template = self.env.get_template('frontend/src/types/models.ts.j2')
         output_path = os.path.join(types_dir, 'models.ts')
-        
+
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render(
                 model=self.domain_model,
-                classes=self.domain_model.classes_sorted_by_inheritance()
+                classes=self.domain_model.classes_sorted_by_inheritance(),
+                customization=self.customization,
             ))
     
     def _generate_frontend_api(self, frontend_dir):

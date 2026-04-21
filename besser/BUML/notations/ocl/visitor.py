@@ -106,6 +106,27 @@ class BOCLVisitorImpl(BOCLVisitor):
         oce.source = source
         return oce
 
+    def visitDotSizeNavigation(self, ctx: BOCLParser.DotSizeNavigationContext):
+        """Resolve ``self.size`` as a property when no parens follow.
+
+        ``size`` is a reserved OCL keyword for the ``->size()`` / ``.size()``
+        collection op, so the lexer always tokenizes it as ``SIZE`` and the
+        plain ``dotNavigation`` rule (which expects ``ID``) never matches.
+        Without this fallback, any domain model with an attribute literally
+        named ``size`` fails to parse even though the metamodel allows it
+        (see BESSER-PEARL/BESSER#198).
+        """
+        self.visit(ctx.expression())
+        prop = self._resolve_property("size")
+        if prop is None:
+            prop = self._resolve_property_in_iterators("size")
+        if prop is not None:
+            return prop
+        raise Exception(
+            f"Property 'size' not found in context "
+            f"'{self.context_class.name if self.context_class else '?'}'"
+        )
+
     def visitDotMethodCall(self, ctx: BOCLParser.DotMethodCallContext):
         source = self.visit(ctx.expression())
         method_name = ctx.ID().getText()

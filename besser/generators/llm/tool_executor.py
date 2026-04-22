@@ -612,6 +612,31 @@ class ToolExecutor:
             f.write(new_content)
         return {"status": "modified", "path": args["path"]}
 
+    def _delete_file(self, args: dict) -> dict:
+        """Delete a regular file from the workspace.
+
+        Refuses to delete directories — the LLM should never need to
+        recursively wipe a tree, and an accidental glob expansion at the
+        prompt level would be catastrophic. Path traversal is blocked by
+        ``_safe_path`` (same containment check used by every other file
+        tool).
+        """
+        path = self._safe_path(args["path"])
+        if not os.path.exists(path):
+            return {"error": f"File not found: {args['path']}"}
+        if os.path.isdir(path):
+            return {
+                "error": (
+                    f"Refused to delete: {args['path']} is a directory. "
+                    "delete_file only removes regular files."
+                ),
+            }
+        try:
+            os.remove(path)
+        except OSError as exc:
+            return {"error": f"Failed to delete {args['path']}: {exc}"}
+        return {"status": "deleted", "path": args["path"]}
+
     def _search_in_files(self, args: dict) -> dict:
         """Search for a pattern across workspace files."""
         pattern = args["pattern"]
@@ -920,6 +945,7 @@ class ToolExecutor:
         "write_file": _write_file,
         "modify_file": _modify_file,
         "search_in_files": _search_in_files,
+        "delete_file": _delete_file,
         # Execution
         "run_command": _run_command,
         "install_dependencies": _install_dependencies,

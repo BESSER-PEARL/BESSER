@@ -843,6 +843,7 @@ class LLMOrchestrator:
                 domain_model=self.domain_model,
                 inventory=self._inventory,
                 llm_client=self.client,
+                on_progress=self.on_progress,
             )
             messages = [{"role": "user", "content": instructions}]
 

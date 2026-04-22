@@ -259,6 +259,28 @@ FILE_TOOLS: list[dict[str, Any]] = [
             "required": ["pattern"],
         },
     },
+    {
+        "name": "delete_file",
+        "description": (
+            "Delete a file from the workspace. Use this to remove dead files "
+            "the deterministic generator left behind that no longer fit the "
+            "customised stack — e.g. a leftover FastAPI `main_api.py` after "
+            "you switched the project to Flask, or unused Pydantic schemas "
+            "after you replaced them with Marshmallow. "
+            "Only deletes regular files (not directories). Path must be "
+            "relative to the workspace root."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Relative path to the file to delete",
+                },
+            },
+            "required": ["path"],
+        },
+    },
 ]
 
 # ======================================================================

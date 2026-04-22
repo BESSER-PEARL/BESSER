@@ -522,6 +522,13 @@ class SmartGenerationRunner:
             if tool == "validation":
                 _put(PhaseEvent(phase="validate", message=status))
                 return
+            if tool == "gap_analysis":
+                # Sentinel emitted by gap_analyzer.analyze_gaps_via_llm
+                # right before the planning LLM call. Surfaces the gap
+                # phase in the smart-gen card; without this the user
+                # sees a silent jump from `generate` to `customize`.
+                _put(PhaseEvent(phase="gap", message="Analysing gaps"))
+                return
             if turn == 0:
                 _put(PhaseEvent(phase="generate", message=f"running {tool}"))
                 return

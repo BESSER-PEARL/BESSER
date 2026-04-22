@@ -9,6 +9,7 @@ from .object_diagram_converter import object_buml_to_json
 from .gui_diagram_converter import gui_buml_to_json, parse_gui_buml_content
 from .project_converter import project_to_json, empty_model
 from .quantum_diagram_converter import quantum_circuit_to_json, quantum_circuit_to_editor_json, quantum_buml_to_json
+from .kg_diagram_converter import kg_to_json, kg_buml_to_json
 
 __all__ = [
     'class_buml_to_json',
@@ -24,5 +25,7 @@ __all__ = [
     'empty_model',
     'quantum_circuit_to_json',
     'quantum_circuit_to_editor_json',
-    'quantum_buml_to_json'
+    'quantum_buml_to_json',
+    'kg_to_json',
+    'kg_buml_to_json',
 ]

@@ -146,6 +146,13 @@ async def validate_diagram(input_data: DiagramInput):
             except ValueError as e:
                 validation_errors.extend(str(e).splitlines())
 
+        elif diagram_type == "KnowledgeGraphDiagram":
+            return {
+                "isValid": True,
+                "message": "✅ Knowledge graph is valid",
+                "errors": [],
+                "warnings": []
+            }
         elif diagram_type == "GUINoCodeDiagram":
             return {
                 "isValid": True,

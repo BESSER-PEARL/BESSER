@@ -16,6 +16,7 @@ from .agent_diagram_converter import agent_buml_to_json
 from .object_diagram_converter import object_buml_to_json
 from .gui_diagram_converter import gui_buml_to_json
 from .quantum_diagram_converter import quantum_buml_to_json
+from .kg_diagram_converter import kg_buml_to_json
 
 logger = logging.getLogger(__name__)
 
@@ -26,11 +27,12 @@ SECTION_CONFIG = {
     'agent': ('AGENT', 'AgentDiagram', 'Agent Diagram'),
     'gui_model': ('GUI', 'GUINoCodeDiagram', 'GUI Diagram'),
     'quantum_model': ('QUANTUM', 'QuantumCircuitDiagram', 'Quantum Circuit Diagram'),
+    'kg_model': ('KNOWLEDGE_GRAPH', 'KnowledgeGraphDiagram', 'Knowledge Graph Diagram'),
     'sm': ('STATE MACHINE', 'StateMachineDiagram', 'State Machine Diagram'),
 }
 
 # All known section header keywords used as boundary markers
-ALL_SECTION_KEYWORDS = ['STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE']
+ALL_SECTION_KEYWORDS = ['STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'KNOWLEDGE_GRAPH', 'STATE MACHINE']
 
 
 def empty_model(diagram_type: str) -> Dict[str, Any]:
@@ -53,6 +55,15 @@ def empty_model(diagram_type: str) -> Dict[str, Any]:
             "styles": [],
             "assets": [],
             "symbols": []
+        }
+
+    # KnowledgeGraphDiagram stores nodes/edges rather than elements/relationships.
+    if diagram_type == "KnowledgeGraphDiagram":
+        return {
+            "version": "1.0.0",
+            "type": diagram_type,
+            "nodes": [],
+            "edges": [],
         }
 
     return {
@@ -186,6 +197,9 @@ def _convert_section(
         elif model_name == "quantum_model":
             model = quantum_buml_to_json(section_code)
 
+        elif model_name == "kg_model":
+            model = kg_buml_to_json(section_code)
+
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
 
@@ -313,6 +327,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
         "StateMachineDiagram": "StateMachineDiagram",
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
+        "KnowledgeGraphDiagram": "KnowledgeGraphDiagram",
     }
 
     for diagram_type, model_type in diagram_defaults.items():

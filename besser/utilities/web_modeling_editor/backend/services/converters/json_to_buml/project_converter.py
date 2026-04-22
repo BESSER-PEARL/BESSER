@@ -41,6 +41,10 @@ def _is_valid_diagram(diag, diagram_type):
         cols = data.get("cols") if isinstance(data, dict) else getattr(model, "cols", None)
         return cols is not None  # Empty list is valid
 
+    if diagram_type == "KnowledgeGraphDiagram":
+        nodes = data.get("nodes") if isinstance(data, dict) else getattr(model, "nodes", None)
+        return nodes is not None  # Empty list is valid
+
     # Standard element-based diagrams
     elements = data.get("elements") if isinstance(data, dict) else getattr(model, "elements", None)
     return bool(elements)
@@ -58,6 +62,7 @@ def _collect_valid_diagrams(project):
         "AgentDiagram",
         "GUINoCodeDiagram",
         "QuantumCircuitDiagram",
+        "KnowledgeGraphDiagram",
         "UserDiagram",
     ]
 
@@ -181,6 +186,19 @@ def json_to_buml_project(project):
     for quantum_diag in diagrams.get("QuantumCircuitDiagram", []):
         quantum_model = process_quantum_diagram(quantum_diag.model_dump())
         model_list.append(quantum_model)
+
+    # ── Process ALL KnowledgeGraphDiagrams ────────────────────────────
+    from .kg_diagram_processor import process_kg_diagram
+
+    for kg_diag in diagrams.get("KnowledgeGraphDiagram", []):
+        try:
+            kg_model = process_kg_diagram(kg_diag.model_dump())
+            model_list.append(kg_model)
+        except Exception as e:
+            logger.warning(
+                "KnowledgeGraphDiagram '%s' could not be processed: %s",
+                getattr(kg_diag, "title", "unknown"), e,
+            )
 
     # ── Process ALL StateMachineDiagrams ────────────────────────────────
     for sm_diag in diagrams.get("StateMachineDiagram", []):

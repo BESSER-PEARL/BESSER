@@ -27,6 +27,7 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
 # BESSER image-to-UML and BUML utilities
 from besser.utilities.image_to_buml import image_to_buml
 from besser.utilities.kg_to_buml import kg_to_buml
+from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
@@ -55,6 +56,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     agent_buml_to_json,
     gui_buml_to_json,
     project_to_json,
+    kg_to_json,
 )
 
 # Backend services - Other services
@@ -93,6 +95,7 @@ logger = logging.getLogger(__name__)
 MAX_CSV_SIZE = 5 * 1024 * 1024       # 5 MB
 MAX_IMAGE_SIZE = 10 * 1024 * 1024     # 10 MB
 MAX_BUML_SIZE = 2 * 1024 * 1024       # 2 MB
+MAX_OWL_SIZE = 5 * 1024 * 1024        # 5 MB
 
 # ---------------------------------------------------------------------------
 # Allowed MIME / extension sets per upload type
@@ -101,6 +104,7 @@ ALLOWED_SPREADSHEET_EXTENSIONS = {".csv", ".xlsx"}
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 ALLOWED_BUML_EXTENSIONS = {".py"}
 ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}
+ALLOWED_OWL_EXTENSIONS = {".owl", ".ttl", ".rdf", ".xml", ".nt", ".n3"}
 
 
 def _validate_upload(file: UploadFile, *, max_size: int, allowed_extensions: set[str], content: bytes) -> None:
@@ -191,6 +195,16 @@ def _validate_file_content(content: bytes, filename: str) -> None:
                     status_code=400,
                     detail="File content does not match JPEG format (invalid magic bytes).",
                 )
+
+    elif ext in (".owl", ".ttl", ".rdf", ".xml", ".nt", ".n3"):
+        # RDF / OWL: must be non-empty and decodable as UTF-8. The real parser
+        # (rdflib) performs the structural validation.
+        if not content.strip():
+            raise HTTPException(status_code=400, detail="OWL/RDF file is empty.")
+        try:
+            content.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="OWL/RDF file is not valid UTF-8 text.")
 
 
 async def _read_file(path: str, mode: str = "r", **kwargs) -> str | bytes:
@@ -670,6 +684,42 @@ async def get_json_model_from_kg(
         return {
             "title": diagram_title,
             "model": {**diagram_json, "type": diagram_type},
+            "diagramType": diagram_type,
+            "exportedAt": datetime.now(timezone.utc).isoformat(),
+            "version": API_VERSION,
+        }
+
+
+@router.post("/import-owl", response_model=DiagramExportResponse)
+@handle_endpoint_errors("import_owl")
+async def import_owl(owl_file: UploadFile = File(...)):
+    """Parse an uploaded OWL/RDF ontology into a KnowledgeGraph diagram JSON.
+
+    Accepts ``.owl``, ``.ttl``, ``.rdf``, ``.xml``, ``.nt``, ``.n3``. Returns
+    the JSON shape rendered by the KG editor's Cytoscape canvas (``nodes`` +
+    ``edges``) wrapped in the standard diagram-export envelope.
+    """
+    owl_content = await owl_file.read()
+    _validate_upload(
+        owl_file,
+        max_size=MAX_OWL_SIZE,
+        allowed_extensions=ALLOWED_OWL_EXTENSIONS,
+        content=owl_content,
+    )
+    _validate_file_content(owl_content, owl_file.filename or "")
+
+    with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
+        safe_filename = os.path.basename(owl_file.filename or "ontology.owl")
+        owl_path = os.path.join(temp_dir, safe_filename)
+        await _write_file(owl_path, owl_content)
+        kg = owl_file_to_knowledge_graph(owl_path)
+        diagram_json = kg_to_json(kg)
+
+        diagram_title = diagram_json.get("title", "Imported Knowledge Graph")
+        diagram_type = "KnowledgeGraphDiagram"
+        return {
+            "title": diagram_title,
+            "model": {**diagram_json["model"], "type": diagram_type},
             "diagramType": diagram_type,
             "exportedAt": datetime.now(timezone.utc).isoformat(),
             "version": API_VERSION,

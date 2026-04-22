@@ -7,13 +7,79 @@ AGENT_TEMP_DIR_PREFIX = "besser_agent_"
 CSV_TEMP_DIR_PREFIX = "besser_csv_"
 LLM_TEMP_DIR_PREFIX = "besser_llm_"
 
-# LLM smart-generation safety caps (server-enforced upper bounds for BYOK runs)
-LLM_MAX_COST_USD_HARD_CAP = 2.0          # max USD spend per run
-LLM_MAX_RUNTIME_SECONDS_HARD_CAP = 900   # max wall-clock per run (15 min)
-LLM_DEFAULT_MAX_COST_USD = 1.0
-LLM_DEFAULT_MAX_RUNTIME_SECONDS = 600
-LLM_DOWNLOAD_TTL_SECONDS = 1800          # how long generated output stays downloadable (30 min)
-LLM_COST_EMITTER_INTERVAL_SECONDS = 2.0  # cadence of the SSE cost ticker
+# ---------------------------------------------------------------------
+# LLM smart-generation caps & feature flags
+# ---------------------------------------------------------------------
+# All of these can be overridden at deploy time via environment
+# variables. Reading env once at import keeps the hot path free of
+# ``os.environ`` lookups and lets tests monkeypatch the module-level
+# constants if they need to. Sensible server-side hard defaults remain
+# here so a forgotten env var never exposes unbounded cost / runtime.
+
+
+def _env_float(name: str, default: float) -> float:
+    import os as _os
+    value = _os.environ.get(name)
+    if not value:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _env_int(name: str, default: int) -> int:
+    import os as _os
+    value = _os.environ.get(name)
+    if not value:
+        return default
+    try:
+        parsed = int(value)
+    except ValueError:
+        return default
+    return parsed if parsed > 0 else default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    import os as _os
+    value = _os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# Per-run spend / runtime caps. The HARD_CAP values are the absolute
+# ceiling a request's fields are clamped to; DEFAULT values are what
+# clients get when they don't send an explicit number.
+LLM_MAX_COST_USD_HARD_CAP = _env_float("BESSER_LLM_MAX_COST_USD_HARD_CAP", 2.0)
+LLM_MAX_RUNTIME_SECONDS_HARD_CAP = _env_int("BESSER_LLM_MAX_RUNTIME_SECONDS_HARD_CAP", 900)
+LLM_DEFAULT_MAX_COST_USD = min(
+    _env_float("BESSER_LLM_DEFAULT_MAX_COST_USD", 1.0),
+    LLM_MAX_COST_USD_HARD_CAP,
+)
+LLM_DEFAULT_MAX_RUNTIME_SECONDS = min(
+    _env_int("BESSER_LLM_DEFAULT_MAX_RUNTIME_SECONDS", 600),
+    LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
+)
+
+# Generated-output TTL + SSE cadence.
+LLM_DOWNLOAD_TTL_SECONDS = _env_int("BESSER_LLM_DOWNLOAD_TTL_SECONDS", 1800)
+LLM_COST_EMITTER_INTERVAL_SECONDS = _env_float(
+    "BESSER_LLM_COST_EMITTER_INTERVAL_SECONDS", 2.0,
+)
+
+# Concurrency cap. Each in-flight smart-generation run holds a worker
+# thread, a temp dir, and an SSE connection. 10 is a sensible default
+# for a modest VM; bump for beefier hosts, lower for shared infra.
+LLM_MAX_CONCURRENT_RUNS = _env_int("BESSER_LLM_MAX_CONCURRENT_RUNS", 10)
+
+# Observability + crash-recovery toggles. Tracing is cheap; disabling
+# it is mostly useful for deployments with strict log-footprint caps.
+# Checkpointing adds a per-turn file write — also cheap, but the
+# toggle lets deployments opt out if disk volume is tight.
+LLM_ENABLE_TRACING = _env_bool("BESSER_LLM_ENABLE_TRACING", True)
+LLM_ENABLE_CHECKPOINTING = _env_bool("BESSER_LLM_ENABLE_CHECKPOINTING", True)
 
 # Output defaults
 OUTPUT_DIR_NAME = "output"

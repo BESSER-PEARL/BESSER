@@ -29,6 +29,39 @@ logger = logging.getLogger(__name__)
 # Maximum time a shell command can run (seconds)
 COMMAND_TIMEOUT = 120
 
+# Obvious destructive / exfiltration patterns we refuse to run. This is
+# NOT a full sandbox — a committed attacker with prompt injection on the
+# instructions can still cause damage within the workspace. It's a cheap
+# filter that stops the easy mistakes: fork bombs, root-fs rm, curl-pipe-
+# sh one-liners, writes to system paths, and credential theft from the
+# user's home dir. Strong isolation requires a container/VM (see roadmap).
+_COMMAND_DENY_PATTERNS: tuple[re.Pattern, ...] = (
+    re.compile(r"(?:^|[\s;&|])sudo(?:\s|$)"),
+    re.compile(r"(?:^|[\s;&|])su\s+-"),
+    re.compile(r"rm\s+-[a-zA-Z]*[rf][a-zA-Z]*\s+(?:/|~|\$HOME|%USERPROFILE%)(?:\s|$)"),
+    re.compile(r"\|\s*(?:sh|bash|zsh|ksh|fish|cmd|powershell|pwsh)\b"),
+    re.compile(r"(?:curl|wget|iwr|Invoke-WebRequest)\b[^\n|]*\|\s*(?:sh|bash|zsh)\b"),
+    re.compile(r":\(\)\s*\{.*:\|:&.*\};\s*:"),  # classic fork bomb
+    re.compile(r"(?:^|\s)chmod\s+-R\s+[0-7]*777\s+/"),
+    re.compile(r">\s*/etc/"),
+    re.compile(r">\s*/dev/(?:sd|nvme|disk)"),
+    re.compile(r"(?:~/|\$HOME/|%USERPROFILE%\\)\.ssh", re.IGNORECASE),
+    re.compile(r"(?:~/|\$HOME/|%USERPROFILE%\\)\.aws", re.IGNORECASE),
+)
+
+
+def _check_command_safety(command: str) -> str | None:
+    """Return a human-readable reason if ``command`` matches a deny pattern."""
+    for pattern in _COMMAND_DENY_PATTERNS:
+        match = pattern.search(command)
+        if match:
+            return (
+                "Refused: command matches a security denylist "
+                f"({match.group(0)!r}). Break the task into smaller, "
+                "explicit commands."
+            )
+    return None
+
 # Maximum output size returned to the LLM (chars).
 # Lower = less context bloat = more turns before compaction needed.
 MAX_OUTPUT_SIZE = 15_000
@@ -136,7 +169,7 @@ class ToolExecutor:
     def __init__(
         self,
         workspace: str,
-        domain_model: DomainModel,
+        domain_model: DomainModel | None = None,
         gui_model: Any = None,
         agent_model: Any = None,
         agent_config: dict | None = None,
@@ -148,6 +181,23 @@ class ToolExecutor:
         self.agent_config = agent_config
         # Track files created by generators — used to warn if LLM overwrites them
         self._generator_files: set[str] = set()
+
+    def _require_domain_model(self, tool_name: str) -> dict | None:
+        """Return an error dict if no domain model is loaded, else None.
+
+        Called at the top of every handler that needs ``self.domain_model``.
+        Surfaces a clear "you can't do this without a ClassDiagram" error
+        to the LLM instead of raising an AttributeError mid-handler.
+        """
+        if self.domain_model is None:
+            return {
+                "error": (
+                    f"{tool_name} requires a domain model (ClassDiagram) "
+                    "but this project does not include one. Skip this tool "
+                    "and use write_file / run_command instead."
+                ),
+            }
+        return None
 
     def execute(self, tool_name: str, arguments: dict) -> str:
         """
@@ -298,6 +348,9 @@ class ToolExecutor:
     }
 
     def _gen_pydantic(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_pydantic")
+        if err:
+            return err
         from besser.generators.pydantic_classes import PydanticGenerator
         out = self._gen_dir("pydantic")
         PydanticGenerator(
@@ -312,6 +365,9 @@ class ToolExecutor:
         }
 
     def _gen_sqlalchemy(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_sqlalchemy")
+        if err:
+            return err
         from besser.generators.sql_alchemy import SQLAlchemyGenerator
         out = self._gen_dir("sqlalchemy")
         SQLAlchemyGenerator(model=self.domain_model, output_dir=out).generate(
@@ -324,6 +380,9 @@ class ToolExecutor:
         }
 
     def _gen_fastapi_backend(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_fastapi_backend")
+        if err:
+            return err
         from besser.generators.backend import BackendGenerator
         out = self._gen_dir("backend")
         BackendGenerator(
@@ -337,6 +396,9 @@ class ToolExecutor:
         }
 
     def _gen_django(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_django")
+        if err:
+            return err
         from besser.generators.django import DjangoGenerator
         out = self._gen_dir("django")
         DjangoGenerator(
@@ -352,24 +414,36 @@ class ToolExecutor:
         }
 
     def _gen_python_classes(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_python_classes")
+        if err:
+            return err
         from besser.generators.python_classes import PythonGenerator
         out = self._gen_dir("python")
         PythonGenerator(model=self.domain_model, output_dir=out).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_java_classes(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_java_classes")
+        if err:
+            return err
         from besser.generators.java_classes import JavaGenerator
         out = self._gen_dir("java")
         JavaGenerator(model=self.domain_model, output_dir=out).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_sql(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_sql")
+        if err:
+            return err
         from besser.generators.sql import SQLGenerator
         out = self._gen_dir("sql")
         SQLGenerator(model=self.domain_model, output_dir=out).generate()
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_json_schema(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_json_schema")
+        if err:
+            return err
         from besser.generators.json import JSONSchemaGenerator
         out = self._gen_dir("jsonschema")
         JSONSchemaGenerator(
@@ -379,6 +453,9 @@ class ToolExecutor:
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_rest_api(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_rest_api")
+        if err:
+            return err
         from besser.generators.rest_api import RESTAPIGenerator
         out = self._gen_dir("rest_api")
         RESTAPIGenerator(
@@ -388,6 +465,9 @@ class ToolExecutor:
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_react(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_react")
+        if err:
+            return err
         if not self.gui_model:
             return {"error": "No GUI model available. The React generator requires a GUI model."}
         from besser.generators.react import ReactGenerator
@@ -396,6 +476,9 @@ class ToolExecutor:
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_flutter(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_flutter")
+        if err:
+            return err
         if not self.gui_model:
             return {"error": "No GUI model available. The Flutter generator requires a GUI model."}
         from besser.generators.flutter import FlutterGenerator
@@ -404,6 +487,9 @@ class ToolExecutor:
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_web_app(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_web_app")
+        if err:
+            return err
         if not self.gui_model:
             return {"error": "No GUI model available. The WebApp generator requires a GUI model."}
         from besser.generators.web_app import WebAppGenerator
@@ -415,6 +501,9 @@ class ToolExecutor:
         return {"status": "ok", "files": self._track_generated_files(out)}
 
     def _gen_rdf(self, args: dict) -> dict:
+        err = self._require_domain_model("generate_rdf")
+        if err:
+            return err
         from besser.generators.rdf import RDFGenerator
         out = self._gen_dir("rdf")
         RDFGenerator(model=self.domain_model, output_dir=out).generate()
@@ -575,6 +664,19 @@ class ToolExecutor:
         command = args["command"]
         working_dir = self._safe_cwd(args.get("working_dir", "."))
 
+        # Refuse obviously-destructive or exfil commands before we hand
+        # them to the shell. Returned as a normal tool error so the LLM
+        # can re-plan.
+        deny_reason = _check_command_safety(command)
+        if deny_reason:
+            logger.warning("run_command denied: %s", deny_reason)
+            return {
+                "error": deny_reason,
+                "command": command,
+                "exit_code": None,
+                "success": False,
+            }
+
         logger.info("Running command: %s (in %s)", command, working_dir)
 
         try:
@@ -645,6 +747,9 @@ class ToolExecutor:
     # ------------------------------------------------------------------
 
     def _validate_model(self, args: dict) -> dict:
+        err = self._require_domain_model("validate_model")
+        if err:
+            return err
         try:
             result = self.domain_model.validate()
             return {"validation": result}

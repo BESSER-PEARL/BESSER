@@ -38,6 +38,14 @@ from besser.generators.llm.compaction import (
     maybe_compact,
     _summarize_messages,
 )
+from besser.generators.llm.checkpoint import (
+    CHECKPOINT_SCHEMA_VERSION,
+    Checkpoint,
+    compute_fingerprint,
+    delete_checkpoint,
+    load_checkpoint,
+    save_checkpoint,
+)
 from besser.generators.llm.gap_analyzer import analyze_gaps_via_llm
 from besser.generators.llm.llm_client import ClaudeLLMClient
 from besser.generators.llm.prompt_builder import (
@@ -46,6 +54,24 @@ from besser.generators.llm.prompt_builder import (
 )
 from besser.generators.llm.tool_executor import ToolExecutor
 from besser.generators.llm.tools import get_all_tools, get_all_tools_including_generators
+from besser.generators.llm.tracing import (
+    EVENT_CHECKPOINT,
+    EVENT_COMPACTION,
+    EVENT_COST_UPDATE,
+    EVENT_ERROR,
+    EVENT_PHASE_ENTER,
+    EVENT_PHASE_EXIT,
+    EVENT_ROLLBACK,
+    EVENT_RUN_END,
+    EVENT_RUN_START,
+    EVENT_SNAPSHOT,
+    EVENT_TOOL_CALL,
+    EVENT_TURN_START,
+    EVENT_VALIDATION_ISSUE,
+    TRACE_FILENAME,
+    NullTraceWriter,
+    TraceWriter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +177,7 @@ class LLMOrchestrator:
     def __init__(
         self,
         llm_client: ClaudeLLMClient,
-        domain_model,
+        domain_model=None,
         gui_model=None,
         agent_model=None,
         agent_config: dict | None = None,
@@ -167,6 +193,10 @@ class LLMOrchestrator:
         quantum_circuit=None,
         auto_fix_issues: bool = False,
         should_continue: Callable[[], bool] | None = None,
+        primary_kind: str | None = None,
+        run_id: str = "",
+        enable_tracing: bool = True,
+        enable_checkpointing: bool = True,
     ):
         self.client = llm_client
         self.domain_model = domain_model
@@ -182,6 +212,16 @@ class LLMOrchestrator:
         else:
             self.state_machines = [state_machines]
         self.quantum_circuit = quantum_circuit
+        # Classify the primary driver. Explicit override wins; otherwise we
+        # pick the first populated model in the standard preference order.
+        # This is the anchor for generator selection, prompt framing, and
+        # the plan preview endpoint.
+        self.primary_kind = primary_kind or self._auto_detect_primary_kind()
+        if self.primary_kind is None:
+            raise ValueError(
+                "LLMOrchestrator requires at least one model (domain, gui, "
+                "agent, state_machine, object, or quantum)"
+            )
         self.output_dir = output_dir or tempfile.mkdtemp(prefix="besser_llm_")
         self.max_turns = max_turns or self.MAX_TURNS
         self.max_cost_usd = max_cost_usd
@@ -196,10 +236,18 @@ class LLMOrchestrator:
             agent_model=agent_model,
             agent_config=agent_config,
         )
-        # Give the LLM ALL tools including generators — it might need
-        # generate_pydantic during customization, or call a generator
-        # the orchestrator didn't pick in Phase 1.
-        self.tools = get_all_tools_including_generators()
+        # Give the LLM tools scoped to the models it actually has. Tools
+        # that need a domain model (pydantic/sqlalchemy/django/react/…)
+        # are hidden when there isn't one so the LLM doesn't waste turns
+        # calling generators that will just error. See tools.get_tools_for.
+        from besser.generators.llm.tools import get_tools_for
+        self.tools = get_tools_for(
+            has_domain_model=self.domain_model is not None,
+            has_gui_model=self.gui_model is not None,
+            has_agent_model=self.agent_model is not None,
+            has_state_machines=bool(self.state_machines),
+            has_quantum_circuit=self.quantum_circuit is not None,
+        )
         # Phase 3 auto-fix policy. False = report-only (industry default
         # for static analysers — fix on request, never blindly).
         self.auto_fix_issues = auto_fix_issues
@@ -221,7 +269,62 @@ class LLMOrchestrator:
         self._validation_issues: list[ValidationIssue] = []
         self._previous_errors: list[str] = []  # track errors to avoid re-attempting
 
+        # Observability + crash recovery. Both are output-dir-local and
+        # opt-out via the constructor flags so unit tests that don't
+        # care (or that use in-memory ``tempfile.mkdtemp`` workspaces)
+        # can disable them without polluting the working tree.
+        self.run_id = run_id
+        self._trace: TraceWriter | NullTraceWriter = (
+            TraceWriter(self.output_dir, run_id=run_id, primary_kind=self.primary_kind)
+            if enable_tracing
+            else NullTraceWriter()
+        )
+        self._checkpointing_enabled = enable_checkpointing
+        # Fingerprint is stable over the run; compute once so resume
+        # validation doesn't re-hash on every turn.
+        self._project_fingerprint = compute_fingerprint(
+            instructions="",  # filled in once run() knows the instructions
+            primary_kind=self.primary_kind,
+            domain_model=domain_model,
+            state_machines=self.state_machines,
+            gui_model=gui_model,
+            agent_model=agent_model,
+            object_model=object_model,
+            quantum_circuit=quantum_circuit,
+        )
+        self._resume_from_turn: int = 0
+        self._resume_messages: list[dict] | None = None
+        # ``True`` once Phase 2 exits via end_turn (LLM said it's done).
+        # Anything else — API error, cost cap, timeout, cancellation —
+        # leaves this ``False`` so the checkpoint is preserved for a
+        # possible resume. Kept separate from ``self._validation_issues``
+        # because those are about Phase 3 quality, not run completion.
+        self._phase2_exited_cleanly: bool = False
+
     _LOOP_THRESHOLD = 4
+
+    def _auto_detect_primary_kind(self) -> str | None:
+        """Pick the primary model kind from whatever is present.
+
+        Same order as the service-layer assembler: class diagrams are
+        preferred when present because they drive the most mature
+        deterministic generators. We duplicate the ordering here rather
+        than importing from the web-layer assembler so the orchestrator
+        stays independent of the HTTP surface.
+        """
+        if self.domain_model is not None:
+            return "class"
+        if self.gui_model is not None:
+            return "gui"
+        if self.agent_model is not None:
+            return "agent"
+        if self.state_machines:
+            return "state_machine"
+        if self.object_model is not None:
+            return "object"
+        if self.quantum_circuit is not None:
+            return "quantum"
+        return None
 
     # ==================================================================
     # Main entry point
@@ -233,23 +336,61 @@ class LLMOrchestrator:
             raise ValueError("Instructions cannot be empty")
 
         self._start_time = time.monotonic()
+        # Re-compute fingerprint now that we know the instructions — the
+        # constructor-time value was hashed with an empty string.
+        self._project_fingerprint = compute_fingerprint(
+            instructions=instructions,
+            primary_kind=self.primary_kind,
+            domain_model=self.domain_model,
+            state_machines=self.state_machines,
+            gui_model=self.gui_model,
+            agent_model=self.agent_model,
+            object_model=self.object_model,
+            quantum_circuit=self.quantum_circuit,
+        )
+        self._trace.write(
+            EVENT_RUN_START,
+            instructions=instructions[:500],
+            max_cost_usd=self.max_cost_usd,
+            max_runtime_seconds=self.max_runtime_seconds,
+            max_turns=self.max_turns,
+        )
 
         # -- Phase 1: Deterministic generation ----------------------------
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase1")
         self._run_phase1(instructions)
+        self._trace.write(
+            EVENT_PHASE_EXIT,
+            phase="phase1",
+            generator_used=self._generator_used,
+        )
 
         # -- Phase 1.5: Validate Phase 1 output ---------------------------
         phase1_issues = self._validate_phase1_output()
+        for issue in phase1_issues:
+            self._trace.write(EVENT_VALIDATION_ISSUE, phase="phase1_5", message=issue)
 
         # -- Phase 2: LLM customization -----------------------------------
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase2")
         self._run_phase2(instructions, extra_issues=phase1_issues)
+        self._trace.write(EVENT_PHASE_EXIT, phase="phase2", turns=self.total_turns)
 
         # -- Snapshot BEFORE Phase 3 (preserves all Phase 2 work) ---------
         # If Phase 3 fixes make things worse, we roll back here
         # (keeping Phase 2 work intact), not back to Phase 1.
         self._create_snapshot()
+        self._trace.write(EVENT_SNAPSHOT, before_phase="phase3")
 
         # -- Phase 3: Validate & fix --------------------------------------
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
         self._run_phase3_validation()
+        self._trace.write(
+            EVENT_PHASE_EXIT,
+            phase="phase3",
+            unresolved_blockers=sum(
+                1 for i in self._validation_issues if i.severity == "blocker"
+            ),
+        )
 
         elapsed = time.monotonic() - self._start_time
         logger.info(
@@ -267,6 +408,105 @@ class LLMOrchestrator:
         # Clean up snapshot
         self._remove_snapshot()
 
+        # Only drop the checkpoint when Phase 2 ended cleanly (LLM said
+        # "done"). If Phase 2 broke out due to an API error, cost cap,
+        # timeout, or cancellation, the checkpoint stays on disk so the
+        # user can resume via POST /besser_api/resume-smart-gen/{run_id}.
+        if self._phase2_exited_cleanly:
+            delete_checkpoint(self.output_dir)
+
+        self._trace.write(
+            EVENT_RUN_END,
+            elapsed_seconds=round(elapsed, 2),
+            total_turns=self.total_turns,
+            estimated_cost_usd=float(self.client.usage.estimated_cost),
+            validation_issues=len(self._validation_issues),
+        )
+
+        return self.output_dir
+
+    # ==================================================================
+    # Resume entry point
+    # ==================================================================
+
+    def resume(self, instructions: str) -> str:
+        """Resume a previously-crashed run from its checkpoint.
+
+        Loads ``.besser_checkpoint.json`` from ``self.output_dir`` and
+        continues Phase 2 from the saved turn. Phase 1 is skipped
+        entirely — its outputs are already on disk. Phase 3 still runs
+        after Phase 2 completes so validation/fix logic gets a chance
+        to clean up anything left half-done at the crash point.
+
+        Raises
+        ------
+        FileNotFoundError
+            No checkpoint in the output dir — nothing to resume.
+        ValueError
+            The checkpoint's project fingerprint disagrees with the
+            current project/instructions. We refuse rather than silently
+            resuming against a different spec.
+        """
+        checkpoint = load_checkpoint(self.output_dir)
+        if checkpoint is None:
+            raise FileNotFoundError(
+                f"No checkpoint at {self.output_dir}; nothing to resume"
+            )
+
+        expected = compute_fingerprint(
+            instructions=instructions,
+            primary_kind=self.primary_kind,
+            domain_model=self.domain_model,
+            state_machines=self.state_machines,
+            gui_model=self.gui_model,
+            agent_model=self.agent_model,
+            object_model=self.object_model,
+            quantum_circuit=self.quantum_circuit,
+        )
+        if expected != checkpoint.project_fingerprint:
+            raise ValueError(
+                "Checkpoint fingerprint does not match the supplied "
+                "project/instructions — refusing to resume. Start a "
+                "fresh run if you changed the model or the request."
+            )
+
+        # Re-hydrate the counters that drive Phase 2 semantics.
+        self._start_time = time.monotonic()
+        self.total_turns = checkpoint.total_turns
+        self._resume_from_turn = checkpoint.turn
+        self._resume_messages = checkpoint.messages
+        self._inventory = checkpoint.inventory
+        self._generator_used = checkpoint.generator_used
+        self._compaction_count = checkpoint.compaction_count
+        self.tool_calls_log = list(checkpoint.tool_calls_log)
+        self._validation_issues = [
+            ValidationIssue(i.get("severity", "warning"), i.get("message", ""))
+            for i in checkpoint.validation_issues
+        ]
+        self._project_fingerprint = checkpoint.project_fingerprint
+        self._trace.write(
+            EVENT_RUN_START,
+            resumed=True,
+            resume_from_turn=checkpoint.turn,
+            saved_at=checkpoint.saved_at,
+        )
+
+        # -- Phase 2 (continued) ------------------------------------------
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase2_resume")
+        self._run_phase2(instructions, extra_issues=[])
+        self._trace.write(EVENT_PHASE_EXIT, phase="phase2_resume", turns=self.total_turns)
+
+        self._create_snapshot()
+        self._trace.write(EVENT_SNAPSHOT, before_phase="phase3_resume")
+        self._trace.write(EVENT_PHASE_ENTER, phase="phase3")
+        self._run_phase3_validation()
+        self._trace.write(EVENT_PHASE_EXIT, phase="phase3")
+
+        elapsed = time.monotonic() - self._start_time
+        self._save_recipe(instructions, elapsed)
+        self._remove_snapshot()
+        delete_checkpoint(self.output_dir)
+        self._trace.write(EVENT_RUN_END, resumed=True, elapsed_seconds=round(elapsed, 2))
         return self.output_dir
 
     # ==================================================================
@@ -275,6 +515,19 @@ class LLMOrchestrator:
 
     def _run_phase1(self, instructions: str) -> None:
         """Select and run the best generator, then inventory the output."""
+        # Almost every BESSER generator needs a domain model. When the
+        # user drove smart-generation from a state-machine / agent /
+        # quantum-only project, there is nothing for Phase 1 to do —
+        # skip straight to Phase 2, where the LLM writes from the
+        # primary model using write_file / run_command.
+        if self.domain_model is None and self.quantum_circuit is None:
+            logger.info(
+                "Phase 1: skipped (no domain_model or quantum_circuit — "
+                "primary_kind=%s). LLM writes from scratch in Phase 2.",
+                self.primary_kind,
+            )
+            return
+
         generator_name = self._select_generator(instructions)
 
         if generator_name:  # non-empty string = use this generator
@@ -333,10 +586,14 @@ class LLMOrchestrator:
         # bare class diagrams fall through to a backend.
         if self.quantum_circuit is not None:
             return "generate_qiskit"
-        if self.gui_model:
+        if self.gui_model and self.domain_model is not None:
             return "generate_web_app"
-        if self.domain_model and self.domain_model.get_classes():
-            return "generate_fastapi_backend"
+        if self.domain_model is not None:
+            try:
+                if self.domain_model.get_classes():
+                    return "generate_fastapi_backend"
+            except Exception:
+                pass
         return None
 
     def _select_generator_with_llm(self, instructions: str) -> str | None:
@@ -570,24 +827,41 @@ class LLMOrchestrator:
         feature request).
         """
         scoped_issues = list(extra_issues) if extra_issues else []
-        gap_tasks = analyze_gaps_via_llm(
-            instructions=instructions,
-            generator_used=self._generator_used,
-            domain_model=self.domain_model,
-            inventory=self._inventory,
-            llm_client=self.client,
-        )
+
+        # On resume we skip gap analysis entirely — the checkpoint's
+        # message history already contains whatever task-list the
+        # original run established. Running a new gap-analyzer call
+        # now would contradict the mid-run reasoning.
+        resumed = self._resume_messages is not None
+        if resumed:
+            gap_tasks: list[str] = []
+            messages = list(self._resume_messages or [])
+        else:
+            gap_tasks = analyze_gaps_via_llm(
+                instructions=instructions,
+                generator_used=self._generator_used,
+                domain_model=self.domain_model,
+                inventory=self._inventory,
+                llm_client=self.client,
+            )
+            messages = [{"role": "user", "content": instructions}]
+
         system = self._build_system_prompt(
             instructions=instructions,
             scoped_issues=scoped_issues,
             gap_tasks=gap_tasks,
         )
-        messages: list[dict] = [{"role": "user", "content": instructions}]
 
         _cost_warning_fired = False
+        start_turn = self._resume_from_turn if resumed else 0
+        # Clear resume state so a subsequent run() on the same instance
+        # starts fresh.
+        self._resume_from_turn = 0
+        self._resume_messages = None
 
-        for turn in range(self.max_turns):
+        for turn in range(start_turn, self.max_turns):
             self.total_turns = turn + 1
+            self._trace.write(EVENT_TURN_START, turn=turn + 1)
 
             # -- Cooperative cancellation -------------------------------
             # The runner sets the underlying flag when a user POSTs to
@@ -638,6 +912,7 @@ class LLMOrchestrator:
 
             if response["stop_reason"] == "end_turn":
                 logger.info("LLM completed after %d turns", turn + 1)
+                self._phase2_exited_cleanly = True
                 break
 
             if response["stop_reason"] == "tool_use":
@@ -651,6 +926,22 @@ class LLMOrchestrator:
 
                 tool_results = self._execute_tool_blocks(tool_blocks, turn)
                 messages.append({"role": "user", "content": tool_results})
+
+                # Save a checkpoint at the end of every full turn so a
+                # crash AFTER tool execution doesn't make the LLM
+                # re-execute the same tool calls on resume. We save
+                # after appending results so the rehydrated message
+                # list starts cleanly with the next assistant turn.
+                self._trace.write(
+                    EVENT_COST_UPDATE,
+                    turn=turn + 1,
+                    estimated_cost_usd=float(current_cost),
+                )
+                self._save_checkpoint_for_turn(
+                    turn=turn + 1,
+                    messages=messages,
+                    instructions=instructions,
+                )
             else:
                 logger.warning("Unexpected stop_reason: %s", response["stop_reason"])
                 break
@@ -713,6 +1004,11 @@ class LLMOrchestrator:
 
         if tool_name not in _READONLY_TOOLS:
             self._recent_tool_calls.append(tool_name)
+            # Cap the ring buffer so long runs don't leak memory. Keeping
+            # 2x the loop threshold is plenty — _is_stuck() only checks
+            # the tail.
+            if len(self._recent_tool_calls) > self._LOOP_THRESHOLD * 2:
+                self._recent_tool_calls = self._recent_tool_calls[-self._LOOP_THRESHOLD * 2 :]
 
         if self.on_progress:
             self.on_progress(turn + 1, tool_name, "executing")
@@ -730,17 +1026,70 @@ class LLMOrchestrator:
                 "result": result_obj,
             })
 
+        success = '"error"' not in result[:100]
         self.tool_calls_log.append({
             "turn": turn + 1, "tool": tool_name,
             "input": _sanitize_for_log(block.input),
-            "success": '"error"' not in result[:100],
+            "success": success,
         })
+        self._trace.write(
+            EVENT_TOOL_CALL,
+            turn=turn + 1,
+            tool=tool_name,
+            success=success,
+            input=_sanitize_for_log(block.input),
+        )
 
         return {
             "type": "tool_result",
             "tool_use_id": block.id,
             "content": result,
         }
+
+    # ==================================================================
+    # Checkpointing
+    # ==================================================================
+
+    def _save_checkpoint_for_turn(
+        self,
+        turn: int,
+        messages: list[dict],
+        instructions: str,
+    ) -> None:
+        """Persist mid-run state so a crash after ``turn`` can recover.
+
+        No-op when checkpointing was disabled in the constructor (tests).
+        Failures are logged at debug level — instrumentation must not
+        break the run.
+        """
+        if not self._checkpointing_enabled:
+            return
+        try:
+            ckpt = Checkpoint(
+                schema_version=CHECKPOINT_SCHEMA_VERSION,
+                run_id=self.run_id,
+                instructions=instructions,
+                primary_kind=self.primary_kind,
+                turn=turn,
+                total_turns=self.total_turns,
+                messages=messages,
+                tool_calls_log=self.tool_calls_log,
+                validation_issues=[
+                    {"severity": i.severity, "message": i.message}
+                    for i in self._validation_issues
+                ],
+                inventory=self._inventory,
+                generator_used=self._generator_used,
+                estimated_cost_usd=float(self.client.usage.estimated_cost),
+                compaction_count=self._compaction_count,
+                project_fingerprint=self._project_fingerprint,
+                saved_at=time.time(),
+            )
+            path = save_checkpoint(self.output_dir, ckpt)
+            if path:
+                self._trace.write(EVENT_CHECKPOINT, turn=turn, path=path)
+        except Exception as exc:
+            logger.debug("Checkpoint write failed on turn %d: %s", turn, exc)
 
     # ==================================================================
     # Phase 3: Post-generation validation & fix
@@ -828,7 +1177,13 @@ class LLMOrchestrator:
             self.total_turns += 1
             try:
                 response = self.client.chat(system=system, messages=messages, tools=self.tools)
-            except Exception:
+            except Exception as exc:
+                # Surface the failure instead of silently exiting the fix
+                # loop — callers and logs need to see why validation bailed.
+                logger.warning(
+                    "Phase 3: LLM call failed on fix turn %d, aborting fix loop: %s",
+                    turn + 1, exc,
+                )
                 break
             if response["stop_reason"] == "end_turn":
                 break
@@ -1302,6 +1657,7 @@ class LLMOrchestrator:
             object_model=self.object_model,
             state_machines=self.state_machines,
             quantum_circuit=self.quantum_circuit,
+            primary_kind=self.primary_kind,
         )
 
     def _build_inventory(self, generator_name: str) -> str:
@@ -1314,6 +1670,13 @@ class LLMOrchestrator:
             messages=messages,
             tool_calls_log=self.tool_calls_log,
             output_dir=self.output_dir,
+            domain_model=self.domain_model,
+            gui_model=self.gui_model,
+            agent_model=self.agent_model,
+            state_machines=self.state_machines,
+            object_model=self.object_model,
+            quantum_circuit=self.quantum_circuit,
+            primary_kind=self.primary_kind,
         )
         if did_compact:
             self._compaction_count += 1
@@ -1372,18 +1735,37 @@ class LLMOrchestrator:
         except Exception:
             pass
 
-        # Build model summary
-        classes = [c.name for c in self.domain_model.get_classes()]
-        enums = [e.name for e in self.domain_model.get_enumerations()]
+        # Build model summary. Every field is populated best-effort —
+        # a state-machine-only or agent-only run still gets a recipe,
+        # it just doesn't claim there were classes/enums/associations
+        # that weren't actually part of the project.
+        recipe_model: dict[str, Any] = {"primary_kind": self.primary_kind}
+        if self.domain_model is not None:
+            try:
+                recipe_model.update({
+                    "name": getattr(self.domain_model, "name", None),
+                    "classes": [c.name for c in self.domain_model.get_classes()],
+                    "enumerations": [e.name for e in self.domain_model.get_enumerations()],
+                    "associations": len(self.domain_model.associations),
+                })
+            except Exception:
+                # Domain model is present but malformed — don't fail
+                # the whole recipe write over it.
+                logger.debug("Skipping domain model summary in recipe (malformed)")
+        if self.state_machines:
+            recipe_model["state_machines"] = [
+                getattr(sm, "name", "unnamed") for sm in self.state_machines
+            ]
+        if self.agent_model is not None:
+            recipe_model["agent_present"] = True
+        if self.gui_model is not None:
+            recipe_model["gui_present"] = True
+        if self.quantum_circuit is not None:
+            recipe_model["quantum_present"] = True
 
         recipe = {
             "instructions": instructions,
-            "model": {
-                "name": self.domain_model.name,
-                "classes": classes,
-                "enumerations": enums,
-                "associations": len(self.domain_model.associations),
-            },
+            "model": recipe_model,
             "llm_model": self.client.model,
             "generator_used": self._generator_used,
             "turns": self.total_turns,
@@ -1405,6 +1787,11 @@ class LLMOrchestrator:
                 "total_bytes": sum(f["size"] for f in output_files),
             },
             "tool_calls": self.tool_calls_log,
+            # Pointer to the structured trace file alongside this recipe.
+            # Clients that want per-turn detail (tool calls, cost ticks,
+            # phase transitions) can read it instead of re-parsing the
+            # recipe's flattened summaries.
+            "trace_file": TRACE_FILENAME if self._trace.path else None,
         }
         recipe_path = os.path.join(self.output_dir, ".besser_recipe.json")
         try:

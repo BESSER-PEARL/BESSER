@@ -84,8 +84,8 @@ class LLMGenerator(GeneratorInterface):
 
     def __init__(
         self,
-        model,
-        instructions: str,
+        model=None,
+        instructions: str = "",
         api_key: str | None = None,
         llm_model: str | None = None,
         provider: str = "anthropic",
@@ -100,8 +100,27 @@ class LLMGenerator(GeneratorInterface):
         max_cost_usd: float = 5.0,
         max_runtime_seconds: int = 1200,
         base_url: str | None = None,
+        primary_kind: str | None = None,
     ):
-        super().__init__(model, output_dir)
+        # ``model`` (DomainModel) is optional now — smart generation
+        # can also be driven from a state machine, agent, GUI, object,
+        # or quantum circuit alone. ``GeneratorInterface`` expects
+        # SOMETHING in model slot, so when there is no domain model we
+        # pass the first available alternative instead (primarily for
+        # output_dir bookkeeping — the orchestrator never reads it).
+        anchor_model = model or gui_model or agent_model or object_model or quantum_circuit
+        if anchor_model is None and not state_machines:
+            raise ValueError(
+                "LLMGenerator requires at least one model — domain, gui, "
+                "agent, object, quantum, or a non-empty state_machines list"
+            )
+        if anchor_model is None:
+            anchor_model = state_machines[0] if isinstance(state_machines, (list, tuple)) else state_machines
+        super().__init__(anchor_model, output_dir)
+        # Preserve the "is there actually a DomainModel?" signal separately —
+        # ``self.model`` may now be pointing at any BUML artifact, so we
+        # can't use it as the domain-model truth source downstream.
+        self.domain_model = model
         self.instructions = instructions
         self.gui_model = gui_model
         self.agent_model = agent_model
@@ -109,6 +128,7 @@ class LLMGenerator(GeneratorInterface):
         self.object_model = object_model
         self.state_machines = state_machines
         self.quantum_circuit = quantum_circuit
+        self.primary_kind = primary_kind
         self.max_turns = max_turns
         self.max_cost_usd = max_cost_usd
         self.max_runtime_seconds = max_runtime_seconds
@@ -140,7 +160,7 @@ class LLMGenerator(GeneratorInterface):
         output = self.build_generation_dir()
         self._orchestrator = LLMOrchestrator(
             llm_client=self.llm_client,
-            domain_model=self.model,
+            domain_model=self.domain_model,
             gui_model=self.gui_model,
             agent_model=self.agent_model,
             agent_config=self.agent_config,
@@ -151,6 +171,7 @@ class LLMGenerator(GeneratorInterface):
             max_turns=self.max_turns,
             max_cost_usd=self.max_cost_usd,
             max_runtime_seconds=self.max_runtime_seconds,
+            primary_kind=self.primary_kind,
         )
         result = self._orchestrator.run(self.instructions)
 

@@ -37,6 +37,8 @@ from besser.generators.llm.orchestrator import LLMOrchestrator
 from besser.utilities.web_modeling_editor.backend.constants.constants import (
     LLM_COST_EMITTER_INTERVAL_SECONDS,
     LLM_DOWNLOAD_TTL_SECONDS,
+    LLM_ENABLE_CHECKPOINTING,
+    LLM_ENABLE_TRACING,
     LLM_TEMP_DIR_PREFIX,
 )
 from besser.utilities.web_modeling_editor.backend.models.smart_generation import (
@@ -179,6 +181,114 @@ SMART_RUN_REGISTRY = SmartRunRegistry()
 
 
 # ---------------------------------------------------------------------
+# Global concurrency cap
+# ---------------------------------------------------------------------
+# Each in-flight smart-generation run holds a worker thread, a temp
+# dir, and a long-lived SSE connection. The semaphore protects against
+# a malicious or buggy client spawning runs faster than they finish,
+# which would otherwise exhaust threads / disk. The router tries a
+# non-blocking acquire first and returns HTTP 429 if the cap is
+# exhausted — we deliberately do NOT queue because queued SSE
+# connections just look hung from the browser's perspective.
+
+_CONCURRENCY_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def _get_concurrency_semaphore() -> asyncio.Semaphore:
+    """Lazy-construct the semaphore on first use.
+
+    We can't build it at import time because the constant might be
+    monkeypatched by tests and because asyncio.Semaphore attaches
+    itself to the current running loop on creation.
+    """
+    global _CONCURRENCY_SEMAPHORE
+    if _CONCURRENCY_SEMAPHORE is None:
+        from besser.utilities.web_modeling_editor.backend.constants.constants import (
+            LLM_MAX_CONCURRENT_RUNS,
+        )
+        _CONCURRENCY_SEMAPHORE = asyncio.Semaphore(LLM_MAX_CONCURRENT_RUNS)
+    return _CONCURRENCY_SEMAPHORE
+
+
+def _reset_concurrency_semaphore_for_tests() -> None:
+    """Allow tests to rebuild the semaphore after patching the cap.
+
+    Not part of the public API — prefix is underscore. Exported so the
+    test module can call it without hacking private globals.
+    """
+    global _CONCURRENCY_SEMAPHORE
+    _CONCURRENCY_SEMAPHORE = None
+
+
+def try_acquire_run_slot() -> bool:
+    """Non-blocking attempt to reserve a concurrency slot.
+
+    Returns True on success (caller must eventually call
+    ``release_run_slot``), False when the cap is reached.
+    """
+    sem = _get_concurrency_semaphore()
+    return sem.locked() is False and _try_acquire_nowait(sem)
+
+
+def _try_acquire_nowait(sem: asyncio.Semaphore) -> bool:
+    # asyncio.Semaphore lacks a non-blocking acquire, so inspect the
+    # private counter. Safe because we never await between the check
+    # and the decrement — both happen on the event loop thread.
+    if sem._value <= 0:
+        return False
+    sem._value -= 1
+    return True
+
+
+def release_run_slot() -> None:
+    """Return a concurrency slot. Idempotent: if the counter is already
+    at its max, this is a no-op rather than a crash.
+    """
+    sem = _get_concurrency_semaphore()
+    sem.release()
+
+
+# ---------------------------------------------------------------------
+# Crash-recovery helpers
+# ---------------------------------------------------------------------
+
+
+def _locate_run_temp_dir(run_id: str) -> str | None:
+    """Locate a smart-gen temp directory by ``run_id``.
+
+    ``mkdtemp`` names temp dirs as ``{prefix}{run_id}_{suffix}`` so we
+    can recover them after a process restart by scanning the system
+    temp dir. Returns ``None`` when no matching directory exists — the
+    caller surfaces that as "no run to resume".
+
+    Only directories carrying a ``.besser_checkpoint.json`` are
+    considered valid resume candidates; a lingering temp dir from a
+    crashed mkdtemp-but-never-checkpointed run is ignored.
+    """
+    if not run_id:
+        return None
+    from besser.generators.llm.checkpoint import CHECKPOINT_FILENAME
+
+    tempdir = tempfile.gettempdir()
+    prefix = f"{LLM_TEMP_DIR_PREFIX}{run_id}_"
+    try:
+        candidates = [
+            entry for entry in os.listdir(tempdir)
+            if entry.startswith(prefix)
+        ]
+    except OSError:
+        return None
+
+    for name in candidates:
+        full = os.path.join(tempdir, name)
+        if os.path.isdir(full) and os.path.isfile(
+            os.path.join(full, CHECKPOINT_FILENAME),
+        ):
+            return full
+    return None
+
+
+# ---------------------------------------------------------------------
 # Live-run cancellation registry
 # ---------------------------------------------------------------------
 
@@ -227,18 +337,38 @@ async def _deregister_active_run(run_id: str) -> None:
 class SmartGenerationRunner:
     """Drive one smart-generation run and yield SSE events."""
 
-    def __init__(self, request: SmartGenerateRequest) -> None:
+    def __init__(
+        self,
+        request: SmartGenerateRequest,
+        *,
+        resume_run_id: Optional[str] = None,
+    ) -> None:
         self.request = request
-        self.run_id = uuid.uuid4().hex
+        # Resuming a prior run reuses its run_id so the client can keep
+        # the same identifier across the crash. Fresh runs get a new
+        # UUID. Either way the id is hex[32] so the path regex in the
+        # cancel / download / resume routes accepts it.
+        self.run_id = resume_run_id or uuid.uuid4().hex
+        self._resume_run_id = resume_run_id
         self.temp_dir: Optional[str] = None
         self._started_at: Optional[float] = None
 
-    async def generate_and_stream(self) -> AsyncGenerator[bytes, None]:
+    async def generate_and_stream(
+        self,
+        http_request: Any | None = None,
+    ) -> AsyncGenerator[bytes, None]:
         """Run the pipeline and yield SSE frames.
 
         The generator always emits at least a ``start`` event first so
         the client can confirm the connection is live even if the run
         fails immediately afterwards.
+
+        If ``http_request`` (a Starlette/FastAPI ``Request``) is provided
+        a watcher task polls ``is_disconnected()`` every second and
+        triggers cancellation when the client drops the connection —
+        otherwise the worker thread would keep calling the user's
+        provider until natural completion, burning their BYOK budget
+        after the browser tab is already closed.
         """
         loop = asyncio.get_running_loop()
         self._started_at = time.monotonic()
@@ -255,23 +385,44 @@ class SmartGenerationRunner:
             maxRuntime=self.request.max_runtime_seconds,
         ))
 
-        # ---- 2. Create the temp dir ------------------------------------
-        try:
-            self.temp_dir = tempfile.mkdtemp(
-                prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_"
-            )
-        except OSError as exc:
-            yield format_sse(ErrorEvent(
-                code="INTERNAL",
-                message="Failed to allocate a workspace for this run",
-            ))
-            logger.exception("mkdtemp failed for smart-generate run %s: %s", self.run_id, exc)
-            return
+        # ---- 2. Create (or recover) the temp dir -----------------------
+        # When resuming, we reattach to the temp dir from the crashed run
+        # so the orchestrator sees its existing output + checkpoint. The
+        # caller is expected to have verified (via the resume endpoint)
+        # that the dir is still there; we double-check and surface a
+        # clear BAD_REQUEST if it isn't — the user should start fresh.
+        if self._resume_run_id:
+            existing = _locate_run_temp_dir(self._resume_run_id)
+            if existing is None:
+                yield format_sse(ErrorEvent(
+                    code="BAD_REQUEST",
+                    message=(
+                        "No recoverable workspace for this run_id — the "
+                        "crashed run's temp directory has been swept. "
+                        "Start a fresh run."
+                    ),
+                ))
+                return
+            self.temp_dir = existing
+        else:
+            try:
+                self.temp_dir = tempfile.mkdtemp(
+                    prefix=f"{LLM_TEMP_DIR_PREFIX}{self.run_id}_"
+                )
+            except OSError as exc:
+                yield format_sse(ErrorEvent(
+                    code="INTERNAL",
+                    message="Failed to allocate a workspace for this run",
+                ))
+                logger.exception("mkdtemp failed for smart-generate run %s: %s", self.run_id, exc)
+                return
 
         # ---- 3. Assemble BUML models from the project ------------------
         try:
             assembled = await asyncio.to_thread(
-                assemble_models_from_project, self.request.project
+                assemble_models_from_project,
+                self.request.project,
+                getattr(self.request, "primary_kind_override", None),
             )
         except (
             ConversionError,
@@ -414,6 +565,17 @@ class SmartGenerationRunner:
             on_text=on_text,
             use_streaming=True,
             should_continue=should_continue,
+            # Carry through the assembled primary so the orchestrator
+            # doesn't re-detect it. ``assembled.primary_kind`` already
+            # honours the user's override (if any) courtesy of
+            # assemble_models_from_project.
+            primary_kind=assembled.primary_kind,
+            run_id=self.run_id,
+            # Honour the deploy-wide feature flags. The orchestrator
+            # defaults to both on; ops can disable per deploy via the
+            # BESSER_LLM_ENABLE_* env vars without a code change.
+            enable_tracing=LLM_ENABLE_TRACING,
+            enable_checkpointing=LLM_ENABLE_CHECKPOINTING,
         )
 
         # ---- 6. Spawn the worker + the cost emitter --------------------
@@ -439,6 +601,10 @@ class SmartGenerationRunner:
 
         async def run_orchestrator() -> str:
             try:
+                if self._resume_run_id:
+                    return await asyncio.to_thread(
+                        orchestrator.resume, self.request.instructions
+                    )
                 return await asyncio.to_thread(
                     orchestrator.run, self.request.instructions
                 )
@@ -468,6 +634,37 @@ class SmartGenerationRunner:
 
         emitter_task = asyncio.create_task(cost_emitter(), name="smart-gen-cost-emitter")
         worker_task = asyncio.create_task(run_orchestrator(), name="smart-gen-worker")
+
+        # Watch for client disconnect. When the browser closes the SSE
+        # stream we flip the cancel_event so the orchestrator stops at
+        # its next turn boundary instead of silently burning the user's
+        # LLM budget. Polling at 1Hz is well under the cost of a single
+        # LLM turn so we don't waste visible wallclock time.
+        async def disconnect_watcher() -> None:
+            if http_request is None:
+                return
+            try:
+                while not cancel_event.is_set():
+                    try:
+                        disconnected = await http_request.is_disconnected()
+                    except Exception:
+                        # If the transport is in a weird state, stop
+                        # watching rather than spamming exceptions.
+                        return
+                    if disconnected:
+                        logger.info(
+                            "smart-gen client disconnected, cancelling run %s",
+                            self.run_id,
+                        )
+                        cancel_event.set()
+                        return
+                    await asyncio.sleep(1.0)
+            except asyncio.CancelledError:
+                raise
+
+        disconnect_task = asyncio.create_task(
+            disconnect_watcher(), name="smart-gen-disconnect-watcher",
+        )
 
         # ---- 7. Drain the queue, yielding events ----------------------
         worker_exception: Optional[BaseException] = None
@@ -528,6 +725,9 @@ class SmartGenerationRunner:
             emitter_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await emitter_task
+            disconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await disconnect_task
 
             # Drain any events the emitter enqueued between the sentinel
             # being put and the task being cancelled. These are cost

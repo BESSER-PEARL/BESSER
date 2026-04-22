@@ -432,3 +432,78 @@ def get_all_tools_including_generators() -> list[dict[str, Any]]:
         + MODEL_QUERY_TOOLS
         + VALIDATION_TOOLS
     )
+
+
+# Which tool names require which model. Kept here so ``get_tools_for``
+# below can filter without re-parsing descriptions at runtime. Every
+# entry in GENERATOR_TOOLS should appear here; failure modes are loud
+# (``assert`` below catches drift in tests).
+_TOOL_MODEL_REQUIREMENTS: dict[str, frozenset[str]] = {
+    # Generators that need only the domain model
+    "generate_pydantic":        frozenset({"domain"}),
+    "generate_sqlalchemy":      frozenset({"domain"}),
+    "generate_fastapi_backend": frozenset({"domain"}),
+    "generate_django":          frozenset({"domain"}),
+    "generate_python_classes":  frozenset({"domain"}),
+    "generate_java_classes":    frozenset({"domain"}),
+    "generate_sql":             frozenset({"domain"}),
+    "generate_json_schema":     frozenset({"domain"}),
+    "generate_rest_api":        frozenset({"domain"}),
+    "generate_rdf":             frozenset({"domain"}),
+    # Generators that need domain + GUI
+    "generate_react":           frozenset({"domain", "gui"}),
+    "generate_flutter":         frozenset({"domain", "gui"}),
+    "generate_web_app":         frozenset({"domain", "gui"}),
+    # Model-query tools need the domain model
+    "query_class":              frozenset({"domain"}),
+    "list_classes_with":        frozenset({"domain"}),
+    "get_constraints_for":      frozenset({"domain"}),
+    "validate_model":           frozenset({"domain"}),
+}
+
+
+def get_tools_for(
+    has_domain_model: bool = True,
+    has_gui_model: bool = False,
+    has_agent_model: bool = False,
+    has_state_machines: bool = False,
+    has_quantum_circuit: bool = False,
+) -> list[dict[str, Any]]:
+    """Return the tool list scoped to which models are actually loaded.
+
+    When a project has no domain model, every generator that takes one
+    is dropped from the tool list — the LLM then defaults to
+    ``write_file`` / ``run_command`` and builds from the primary model
+    (state machine, agent, GUI-only, etc.) in natural code. This
+    matches the ``_require_domain_model`` guards in ``ToolExecutor`` so
+    the LLM never sees a tool it would immediately get an error from.
+
+    Parameters
+    ----------
+    has_domain_model
+        Whether a ``DomainModel`` is available.
+    has_gui_model, has_agent_model, has_state_machines, has_quantum_circuit
+        Whether the corresponding BUML model is populated. Currently only
+        GUI affects filtering (for React/Flutter/WebApp); agent / SM /
+        quantum flags are accepted for forward compatibility as future
+        tools key on them.
+    """
+    available: set[str] = set()
+    if has_domain_model:
+        available.add("domain")
+    if has_gui_model:
+        available.add("gui")
+    if has_agent_model:
+        available.add("agent")
+    if has_state_machines:
+        available.add("state_machine")
+    if has_quantum_circuit:
+        available.add("quantum")
+
+    def _keep(tool: dict[str, Any]) -> bool:
+        requirements = _TOOL_MODEL_REQUIREMENTS.get(tool["name"], frozenset())
+        return requirements.issubset(available)
+
+    return [
+        tool for tool in get_all_tools_including_generators() if _keep(tool)
+    ]

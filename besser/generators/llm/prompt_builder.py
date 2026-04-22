@@ -34,6 +34,7 @@ def build_system_prompt(
     object_model=None,
     state_machines=None,
     quantum_circuit=None,
+    primary_kind: str | None = None,
 ) -> str:
     """
     Build the system prompt with all available models, inventory, the user's
@@ -45,7 +46,10 @@ def build_system_prompt(
     a checklist (the keyword-based gap analyzer was deleted).
 
     Args:
-        domain_model: The BUML domain model (required).
+        domain_model: Optional BUML domain model. When None, the LLM is
+            told explicitly that no ClassDiagram was provided and must
+            drive the run from whichever ``primary_kind`` model IS
+            present — see Rule 3 in the system prompt below.
         gui_model: Optional GUIModel.
         agent_model: Optional AgentModel.
         inventory: Description of what the generator already produced.
@@ -56,17 +60,23 @@ def build_system_prompt(
         object_model: Optional ObjectModel (instance data — useful as fixtures/seeders).
         state_machines: Optional list of StateMachine objects.
         quantum_circuit: Optional QuantumCircuit.
+        primary_kind: Which model is driving the generation: "class",
+            "gui", "agent", "state_machine", "object", "quantum". Used to
+            frame the LLM's task (e.g. "this is a state-machine-driven
+            run — emit the transition code").
 
     Returns:
         The full system prompt string.
     """
-    model_sections: list[str] = [
-        "## Domain Model",
-        "",
-        "```json",
-        json.dumps(serialize_domain_model(domain_model), indent=2),
-        "```",
-    ]
+    model_sections: list[str] = []
+    if domain_model is not None:
+        model_sections.extend([
+            "## Domain Model",
+            "",
+            "```json",
+            json.dumps(serialize_domain_model(domain_model), indent=2),
+            "```",
+        ])
 
     gui_json = serialize_gui_model(gui_model)
     if gui_json:
@@ -179,43 +189,38 @@ def build_system_prompt(
             f"{formatted}\n"
         )
 
-    return f"""\
+    # ------------------------------------------------------------------
+    # Cache strategy
+    # ------------------------------------------------------------------
+    # Anthropic prompt caching keys on byte-identical prefixes. Everything
+    # BEFORE the ``## Variable context`` marker is stable across turns and
+    # across runs for the same diagram — so we keep role, rules, tool
+    # guidance, and the serialized models up top where they benefit from
+    # ephemeral caching. The variable tail (inventory, user request, gap
+    # tasks, Phase 1 issues) changes per run and never gets cached. This
+    # rewrite was driven by a prompt-caching audit that found the
+    # previous order mixed variable content into the middle of the
+    # prompt, invalidating the cache on every new request.
+    # Primary-kind banner. When the user drove the run from anything
+    # other than a ClassDiagram, we tell the LLM up front so it doesn't
+    # default to "build a CRUD app". Omitted for class-diagram-driven
+    # runs because that IS the default.
+    primary_banner = ""
+    if primary_kind and primary_kind != "class":
+        friendly = {
+            "gui": "GUI-driven run — screens and components are the spec; there is no domain/class model.",
+            "agent": "Agent-driven run — the chatbot / intent flow is the spec; there is no domain/class model.",
+            "state_machine": "State-machine-driven run — transition tables are the spec. Generate transition code / guards.",
+            "object": "Object-diagram-driven run — instance data is the spec. Emit seed data / fixtures.",
+            "quantum": "Quantum-circuit-driven run — circuit gates are the spec. Emit Qiskit code.",
+        }.get(primary_kind, f"Primary model kind: {primary_kind}")
+        primary_banner = f"\n> Primary input: {friendly}\n"
+
+    stable_header = f"""\
 You are an expert full-stack developer. You make targeted, scoped changes to code.
 
 Read the generated code before changing it and keep changes tightly scoped to the user's request.
-Do not rewrite generated files from scratch — make surgical modifications.
-
-{models_block}
-{inventory_section}
-## User request
-
-The generator handled the base app (CRUD, ORM, schemas, pages). Your job is to
-implement what the user asked for, on top of the generator output:
-
-> {instructions.strip()}
-{_render_gap_section(gap_tasks)}
-Plan your own work from the request — pick the right files to edit, the
-right packages to add, the right order. Do NOT exceed the request scope.
-{issues_section}
-
-## Tools for deeper model inspection
-
-When the JSON above is not enough — large model, need a single class in
-detail, or want to filter classes by a predicate — use these tools rather
-than re-reading or guessing:
-
-- **`query_class(name)`** — full definition of one class: attributes,
-  methods, parents, association ends, abstract flag. Use this when you
-  need details that don't fit in the summary above.
-- **`list_classes_with(predicate)`** — find classes matching a simple
-  rule. Predicates: `is_abstract`, `is_root`, `has_constraint`,
-  `has_attribute:<name>`, `has_method:<name>`, `extends:<parent_name>`.
-  Use this for "every class with an OCL constraint" or "every leaf in
-  the hierarchy" queries.
-- **`get_constraints_for(class_name)`** — OCL constraint expressions
-  scoped to a class. **Translate these into runtime validators** in the
-  target language (Pydantic field validators, Zod schemas, SQL CHECK
-  constraints, etc.) — the generator does not enforce them for you.
+Do not rewrite generated files from scratch — make surgical modifications.{primary_banner}
 
 ## Rules
 
@@ -243,8 +248,44 @@ than re-reading or guessing:
 9. **Be efficient.** One read per file. Write complete files in one call.
 10. **Don't re-read files** you already read. Remember what's in them.
 
+## Tools for deeper model inspection
+
+When the JSON below is not enough — large model, need a single class in
+detail, or want to filter classes by a predicate — use these tools rather
+than re-reading or guessing:
+
+- **`query_class(name)`** — full definition of one class: attributes,
+  methods, parents, association ends, abstract flag. Use this when you
+  need details that don't fit in the summary.
+- **`list_classes_with(predicate)`** — find classes matching a simple
+  rule. Predicates: `is_abstract`, `is_root`, `has_constraint`,
+  `has_attribute:<name>`, `has_method:<name>`, `extends:<parent_name>`.
+  Use this for "every class with an OCL constraint" or "every leaf in
+  the hierarchy" queries.
+- **`get_constraints_for(class_name)`** — OCL constraint expressions
+  scoped to a class. **Translate these into runtime validators** in the
+  target language (Pydantic field validators, Zod schemas, SQL CHECK
+  constraints, etc.) — the generator does not enforce them for you.
+"""
+
+    variable_tail = f"""\
+
+## Variable context (per-run — not cached below this line)
+{inventory_section}
+## User request
+
+The generator handled the base app (CRUD, ORM, schemas, pages). Your job is to
+implement what the user asked for, on top of the generator output:
+
+> {instructions.strip()}
+{_render_gap_section(gap_tasks)}
+Plan your own work from the request — pick the right files to edit, the
+right packages to add, the right order. Do NOT exceed the request scope.
+{issues_section}
 When done, briefly summarize what you changed.
 """
+
+    return f"{stable_header}\n{models_block}\n{variable_tail}"
 
 
 def _render_gap_section(gap_tasks: list[str] | None) -> str:
@@ -328,7 +369,10 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
 
     Args:
         output_dir: Path to the output directory.
-        domain_model: The BUML domain model.
+        domain_model: The BUML domain model, or None when the run is
+            driven by a non-class primary (state machine, agent, etc.).
+            When None, the domain-specific lines (entities, enums,
+            associations) are omitted rather than showing empty values.
         generator_name: Name of the generator that was used.
 
     Returns:
@@ -342,19 +386,25 @@ def build_inventory(output_dir: str, domain_model, generator_name: str) -> str:
             size = os.path.getsize(os.path.join(root, f))
             files.append(f"{rel.replace(chr(92), '/')} ({size:,} bytes)")
 
-    class_names = [c.name for c in domain_model.get_classes()]
-    enum_names = [e.name for e in domain_model.get_enumerations()]
-
     lines = [f"Generator `{generator_name}` produced {len(files)} files:"]
     for f in sorted(files)[:30]:
         lines.append(f"  - {f}")
     if len(files) > 30:
         lines.append(f"  ... and {len(files) - 30} more files")
 
-    lines.append(f"\nEntities with full CRUD: {', '.join(class_names)}")
-    if enum_names:
-        lines.append(f"Enumerations: {', '.join(enum_names)}")
-    lines.append(f"Associations: {len(domain_model.associations)} relationships")
+    if domain_model is not None:
+        try:
+            class_names = [c.name for c in domain_model.get_classes()]
+            enum_names = [e.name for e in domain_model.get_enumerations()]
+            lines.append(f"\nEntities with full CRUD: {', '.join(class_names)}")
+            if enum_names:
+                lines.append(f"Enumerations: {', '.join(enum_names)}")
+            lines.append(f"Associations: {len(domain_model.associations)} relationships")
+        except Exception:
+            # Malformed / partially-constructed domain model — skip the
+            # domain-specific lines rather than spraying tracebacks into
+            # the LLM prompt.
+            pass
 
     if generator_name == "generate_web_app":
         lines.append("\nBackend: FastAPI with SQLAlchemy ORM + Pydantic schemas")

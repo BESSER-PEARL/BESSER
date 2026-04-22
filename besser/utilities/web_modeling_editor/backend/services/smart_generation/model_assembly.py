@@ -44,16 +44,37 @@ from besser.utilities.web_modeling_editor.backend.services.converters.json_to_bu
 logger = logging.getLogger(__name__)
 
 
+# Mapping from BESSER diagram type names to the short ``primary_kind``
+# identifiers the orchestrator uses internally. Ordered — earlier entries
+# win ties during auto-detection, reflecting "how complete is a
+# generation driven by just this diagram?" Class diagrams drive the most
+# mature deterministic generators so they rank first; quantum circuits
+# are standalone specs with a single valid target generator, so they
+# rank last despite being fully sufficient.
+_PRIMARY_KIND_PREFERENCE: tuple[tuple[str, str], ...] = (
+    ("ClassDiagram", "class"),
+    ("GUINoCodeDiagram", "gui"),
+    ("AgentDiagram", "agent"),
+    ("StateMachineDiagram", "state_machine"),
+    ("ObjectDiagram", "object"),
+    ("QuantumCircuitDiagram", "quantum"),
+)
+
+
 @dataclass(frozen=True)
 class AssembledModels:
     """BUML models ready to be passed to ``LLMOrchestrator``.
 
-    ``domain_model`` is required. Everything else is optional and degrades
-    to ``None`` / empty when the matching editor diagram is absent or fails
-    to process.
+    Every field is optional. The constraint — enforced by the assembler
+    below — is that *at least one* of the model fields must be populated,
+    because there is nothing to generate from an empty project. Which
+    model the orchestrator treats as the primary anchor is carried in
+    ``primary_kind``; auto-detection prefers class → gui → agent →
+    state_machine → object → quantum.
     """
 
-    domain_model: Any                                   # DomainModel — always present
+    primary_kind: str                                   # one of: class|gui|agent|state_machine|object|quantum
+    domain_model: Optional[Any] = None                  # DomainModel or None
     gui_model: Optional[Any] = None                     # GUIModel or None
     agent_model: Optional[Any] = None                   # AgentModel or None
     agent_config: Optional[dict] = None                 # per-diagram or project-level agent config
@@ -61,47 +82,136 @@ class AssembledModels:
     state_machines: List[Any] = field(default_factory=list)  # list of StateMachine
     quantum_circuit: Optional[Any] = None               # QuantumCircuit or None
 
+    def summary(self) -> dict[str, Any]:
+        """Shape suitable for the preview endpoint response.
 
-def assemble_models_from_project(project: ProjectInput) -> AssembledModels:
+        Lists which diagram types are present and lightweight shape data
+        (counts only — never full content) so the UI can render
+        confirmation without leaking prompt-sized context.
+        """
+        present: list[dict[str, Any]] = []
+        if self.domain_model is not None:
+            present.append({
+                "kind": "class",
+                "classes": _safe_count(lambda: len(list(self.domain_model.get_classes()))),
+                "enumerations": _safe_count(lambda: len(list(self.domain_model.get_enumerations()))),
+                "associations": _safe_count(lambda: len(list(getattr(self.domain_model, "associations", []) or []))),
+            })
+        if self.gui_model is not None:
+            present.append({
+                "kind": "gui",
+                "modules": _safe_count(lambda: len(self.gui_model.modules or [])),
+                "screens": _safe_count(lambda: sum(
+                    len(m.screens or []) for m in (self.gui_model.modules or [])
+                )),
+            })
+        if self.agent_model is not None:
+            present.append({"kind": "agent"})
+        if self.state_machines:
+            present.append({
+                "kind": "state_machine",
+                "count": len(self.state_machines),
+            })
+        if self.object_model is not None:
+            present.append({"kind": "object"})
+        if self.quantum_circuit is not None:
+            present.append({"kind": "quantum"})
+        return {"primary": self.primary_kind, "present": present}
+
+
+def _safe_count(fn) -> int:
+    """Best-effort integer count; returns 0 if the model shape is unexpected."""
+    try:
+        return int(fn())
+    except Exception:
+        return 0
+
+
+def assemble_models_from_project(
+    project: ProjectInput,
+    primary_kind_override: Optional[str] = None,
+) -> AssembledModels:
     """Build BUML models from a ``ProjectInput``.
 
-    The class diagram is required — it is the anchor for every other model.
-    Every additional diagram type is processed best-effort: a processor
-    failure logs and continues rather than blocking the whole run.
+    Every diagram type is processed best-effort: a processor failure
+    logs and continues rather than blocking the whole run. The assembler
+    does NOT require any particular diagram — it accepts any combination
+    so users can drive smart generation from a state machine alone, a
+    GUI alone, an agent alone, etc. It raises only when no usable model
+    was found at all.
 
     Supported diagram types:
-      * ``ClassDiagram``            — required, produces ``DomainModel``.
-      * ``GUINoCodeDiagram``        — optional, produces ``GUIModel``.
-      * ``AgentDiagram``            — optional, produces ``AgentModel``
-        (only wired when the GUI contains agent components).
-      * ``ObjectDiagram``           — optional, produces ``ObjectModel``
+      * ``ClassDiagram``            — produces ``DomainModel``.
+      * ``GUINoCodeDiagram``        — produces ``GUIModel``.
+      * ``AgentDiagram``            — produces ``AgentModel``
+        (wired when the GUI contains agent components, or stand-alone
+        when no GUI is present).
+      * ``ObjectDiagram``           — produces ``ObjectModel``
         (instance data — great for seeders / test fixtures).
-      * ``StateMachineDiagram``     — optional, produces a list of
-        ``StateMachine`` objects (all state-machine diagrams in the
-        project are collected, not just the active one).
-      * ``QuantumCircuitDiagram``   — optional, produces ``QuantumCircuit``.
+      * ``StateMachineDiagram``     — collected into a list of
+        ``StateMachine`` objects (all SM diagrams, not just the active).
+      * ``QuantumCircuitDiagram``   — produces ``QuantumCircuit``.
+
+    Parameters
+    ----------
+    project
+        The user's project payload.
+    primary_kind_override
+        If provided, forces the returned ``primary_kind`` instead of
+        auto-detection. Must be the short identifier form ("class",
+        "gui", "agent", "state_machine", "object", "quantum"). A value
+        that points at a missing model silently falls back to
+        auto-detection rather than failing the run.
 
     Raises
     ------
     ValueError
-        If the project does not contain a ClassDiagram.
+        If the project contains no usable modeling artifacts at all.
     """
     class_diagram = _pick_class_diagram(project)
-    if class_diagram is None:
-        raise ValueError(
-            "Smart generation requires a ClassDiagram in the project"
-        )
-
-    domain_model = process_class_diagram(class_diagram.model_dump())
+    domain_model = None
+    if class_diagram is not None:
+        try:
+            domain_model = process_class_diagram(class_diagram.model_dump())
+        except Exception:
+            # Class diagram exists but won't parse. Log and continue —
+            # we may still have other models to work with.
+            logger.exception(
+                "Failed to process ClassDiagram for smart generation; "
+                "continuing without domain model"
+            )
+            domain_model = None
 
     gui_model, agent_model, agent_config = _assemble_gui_and_agent(
         project, class_diagram, domain_model
     )
+    if agent_model is None:
+        agent_model, agent_config = _assemble_standalone_agent(
+            project, agent_config
+        )
+
     object_model = _assemble_object_model(project, domain_model)
     state_machines = _assemble_state_machines(project)
     quantum_circuit = _assemble_quantum_circuit(project)
 
+    primary_kind = _resolve_primary_kind(
+        override=primary_kind_override,
+        domain_model=domain_model,
+        gui_model=gui_model,
+        agent_model=agent_model,
+        state_machines=state_machines,
+        object_model=object_model,
+        quantum_circuit=quantum_circuit,
+    )
+    if primary_kind is None:
+        raise ValueError(
+            "Smart generation requires at least one modeling artifact "
+            "(ClassDiagram, GUINoCodeDiagram, AgentDiagram, "
+            "StateMachineDiagram, ObjectDiagram, or QuantumCircuitDiagram)"
+        )
+
     return AssembledModels(
+        primary_kind=primary_kind,
         domain_model=domain_model,
         gui_model=gui_model,
         agent_model=agent_model,
@@ -110,6 +220,84 @@ def assemble_models_from_project(project: ProjectInput) -> AssembledModels:
         state_machines=state_machines,
         quantum_circuit=quantum_circuit,
     )
+
+
+def _resolve_primary_kind(
+    override: Optional[str],
+    domain_model: Any,
+    gui_model: Any,
+    agent_model: Any,
+    state_machines: list[Any],
+    object_model: Any,
+    quantum_circuit: Any,
+) -> Optional[str]:
+    """Pick the primary model kind based on what was assembled.
+
+    Honours ``override`` when the requested model is actually present;
+    otherwise walks ``_PRIMARY_KIND_PREFERENCE`` in order and returns
+    the first kind whose model exists. Returns ``None`` iff nothing
+    is present at all.
+    """
+    presence = {
+        "class": domain_model is not None,
+        "gui": gui_model is not None,
+        "agent": agent_model is not None,
+        "state_machine": bool(state_machines),
+        "object": object_model is not None,
+        "quantum": quantum_circuit is not None,
+    }
+    if override:
+        kind = override.strip().lower()
+        if presence.get(kind, False):
+            return kind
+        logger.warning(
+            "primary_kind_override=%r ignored: no matching model in project",
+            override,
+        )
+    for _, kind in _PRIMARY_KIND_PREFERENCE:
+        if presence[kind]:
+            return kind
+    return None
+
+
+def _assemble_standalone_agent(
+    project: ProjectInput,
+    agent_config: Optional[dict],
+) -> tuple[Optional[Any], Optional[dict]]:
+    """Process an AgentDiagram even when no GUI is present.
+
+    The GUI-and-agent path above only wires agents when the GUI
+    contains AgentComponents. For projects that are agent-only (no
+    ClassDiagram, no GUI), we still want the agent model available.
+    """
+    agent_diagram = project.get_active_diagram("AgentDiagram")
+    if agent_diagram is None or not getattr(agent_diagram, "model", None):
+        return None, agent_config
+    try:
+        agent_diagram_dict = agent_diagram.model_dump()
+        agent_model = process_agent_diagram(agent_diagram_dict)
+    except Exception:
+        logger.exception(
+            "Failed to process standalone AgentDiagram for smart "
+            "generation; continuing without agent model"
+        )
+        return None, agent_config
+
+    # Reuse the same config-resolution logic as the GUI-paired path so
+    # downstream code doesn't care which way we got here.
+    project_settings = project.settings if isinstance(project.settings, dict) else {}
+    project_config = project_settings.get("config") if isinstance(project_settings, dict) else None
+    project_agent_config = (
+        project_config.get("agentConfig") if isinstance(project_config, dict) else None
+    )
+    resolved_config = (
+        agent_diagram_dict.get("config")
+        or agent_diagram.config
+        or project_agent_config
+        or project_config
+        or agent_config
+    )
+    return agent_model, resolved_config
 
 
 def _assemble_gui_and_agent(

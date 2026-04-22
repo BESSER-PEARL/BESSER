@@ -26,6 +26,15 @@ class SafeBumlLoaderError(ValueError):
     """Raised when the BUML content contains disallowed constructs."""
 
 
+# Resource limits. Real BUML files from our code builder are ~a few KB with
+# a few hundred AST nodes at most. These caps are defence-in-depth against
+# accidentally-huge or maliciously-crafted uploads (e.g. a 50 MB file of
+# nested list literals that would blow up the recursive validator).
+_MAX_CONTENT_BYTES = 1_000_000         # 1 MB source limit
+_MAX_AST_NODES = 20_000                # total nodes after ``ast.parse``
+_MAX_AST_DEPTH = 80                    # recursion depth for validator walk
+
+
 # AST node types we accept. Anything not in this set is rejected.
 #
 # Rationale: these are the minimum nodes required to represent BUML files
@@ -102,6 +111,7 @@ def _validate_node(
     node: ast.AST,
     allowed_names: Mapping[str, Any],
     declared_vars: Set[str],
+    depth: int = 0,
 ) -> None:
     """
     Recursively validate ``node``. Raises ``SafeBumlLoaderError`` on anything
@@ -113,6 +123,10 @@ def _validate_node(
     same file; a reference to ``x.foo()`` is only allowed if ``x`` is in
     ``allowed_names`` or ``declared_vars``.
     """
+    if depth > _MAX_AST_DEPTH:
+        raise SafeBumlLoaderError(
+            f"BUML AST too deep (> {_MAX_AST_DEPTH} levels)"
+        )
     node_type = type(node)
     if node_type not in _ALLOWED_NODE_TYPES:
         raise SafeBumlLoaderError(
@@ -179,7 +193,7 @@ def _validate_node(
     # Recurse into children. Use ``iter_child_nodes`` so we cover all
     # AST-significant children without hitting string fields.
     for child in ast.iter_child_nodes(node):
-        _validate_node(child, allowed_names, declared_vars)
+        _validate_node(child, allowed_names, declared_vars, depth + 1)
 
 
 def _collect_assigned_names(module: ast.Module) -> Set[str]:
@@ -236,7 +250,24 @@ def safe_load_buml(
     SyntaxError
         If the content is not parseable Python.
     """
+    # Fail fast on oversized uploads before we spend memory on parsing.
+    # ``len(content)`` is char count; bytes would be >= char count for
+    # UTF-8 so this is a conservative cap.
+    if len(content) > _MAX_CONTENT_BYTES:
+        raise SafeBumlLoaderError(
+            f"BUML content too large ({len(content)} chars > {_MAX_CONTENT_BYTES})"
+        )
+
     tree = ast.parse(content, mode="exec")
+
+    # Defence-in-depth: cap the total node count even if everything is
+    # on the allowlist. A file full of legitimately-allowed ``Call``
+    # nodes could still exhaust memory during traversal otherwise.
+    node_count = sum(1 for _ in ast.walk(tree))
+    if node_count > _MAX_AST_NODES:
+        raise SafeBumlLoaderError(
+            f"BUML AST too complex ({node_count} nodes > {_MAX_AST_NODES})"
+        )
 
     # Only module-level statements are allowed to be Assign or Expr. Things
     # like ``FunctionDef``, ``ClassDef``, ``Import``, ``If``, ``For`` never

@@ -28,12 +28,13 @@ import re
 import shutil
 from typing import AsyncIterator
 
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Request
 from fastapi.responses import StreamingResponse
 from starlette.background import BackgroundTask
 
 from besser.utilities.web_modeling_editor.backend.models.smart_generation import (
     SmartGenerateRequest,
+    SmartPreviewRequest,
 )
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
@@ -42,8 +43,17 @@ from besser.utilities.web_modeling_editor.backend.services.smart_generation impo
     SMART_RUN_REGISTRY,
     SmartGenerationRunner,
 )
+from besser.utilities.web_modeling_editor.backend.services.smart_generation.model_assembly import (
+    assemble_models_from_project,
+)
+from besser.utilities.web_modeling_editor.backend.services.smart_generation.preview import (
+    build_preview,
+)
 from besser.utilities.web_modeling_editor.backend.services.smart_generation.runner import (
+    _locate_run_temp_dir,
+    release_run_slot,
     request_cancellation,
+    try_acquire_run_slot,
 )
 
 logger = logging.getLogger(__name__)
@@ -91,13 +101,31 @@ def _background_rmtree(temp_dir: str) -> None:
         )
 
 
+async def _stream_with_slot_release(
+    inner: AsyncIterator[bytes],
+) -> AsyncIterator[bytes]:
+    """Yield from an SSE generator and return its concurrency slot
+    when the stream ends, regardless of outcome.
+
+    Used for both /smart-generate and /resume-smart-gen. The slot is
+    always acquired by the caller before entering this wrapper; we
+    only care about release semantics (happy path, error, or client
+    disconnect — ``finally`` covers all three).
+    """
+    try:
+        async for frame in inner:
+            yield frame
+    finally:
+        release_run_slot()
+
+
 # ---------------------------------------------------------------------
 # POST /besser_api/smart-generate  (SSE stream)
 # ---------------------------------------------------------------------
 
 
 @router.post("/smart-generate", response_class=StreamingResponse)
-async def smart_generate(request: SmartGenerateRequest):
+async def smart_generate(request: SmartGenerateRequest, http_request: Request):
     """Stream an LLM-orchestrated code generation run as SSE events.
 
     Emits events in order: ``start`` → zero or more of
@@ -111,15 +139,195 @@ async def smart_generate(request: SmartGenerateRequest):
     against ``/download-smart/{runId}`` serves the file; subsequent GETs
     return 404.
     """
+    # Reserve a concurrency slot BEFORE allocating any resources.
+    # ``try_acquire_run_slot`` is non-blocking: the client sees an
+    # immediate 429 when the server is saturated, never a hung SSE
+    # stream. The wrapper around the stream returns the slot on exit.
+    if not try_acquire_run_slot():
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Too many smart-generation runs are in flight right now. "
+                "Retry in a moment."
+            ),
+        )
+
     runner = SmartGenerationRunner(request)
     return StreamingResponse(
-        runner.generate_and_stream(),
+        _stream_with_slot_release(
+            runner.generate_and_stream(http_request=http_request),
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
             "Connection": "keep-alive",
             # Disable response buffering in proxies (nginx, Render, etc.)
             # so events reach the browser in near-real-time.
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------
+# GET /besser_api/smart-gen/config
+# ---------------------------------------------------------------------
+
+
+@router.get("/smart-gen/config")
+async def smart_gen_config():
+    """Expose the server's current smart-generation configuration.
+
+    The frontend reads this once at app startup (or before rendering
+    the preview screen) so it can show the real hard caps in tooltips,
+    clamp its own input fields to the server's limits, and surface
+    whether tracing/checkpointing are on at this deploy.
+
+    Nothing here is a secret — everything exposed is either a public
+    cap or a feature flag. API keys and run IDs are never returned.
+    """
+    # Re-import the constants each call so tests that monkeypatch the
+    # module see fresh values. The indirection has zero measurable
+    # overhead vs. the LLM work these caps gate.
+    from besser.utilities.web_modeling_editor.backend.constants import constants as C
+
+    return {
+        "caps": {
+            "max_cost_usd_hard_cap": C.LLM_MAX_COST_USD_HARD_CAP,
+            "max_runtime_seconds_hard_cap": C.LLM_MAX_RUNTIME_SECONDS_HARD_CAP,
+            "default_max_cost_usd": C.LLM_DEFAULT_MAX_COST_USD,
+            "default_max_runtime_seconds": C.LLM_DEFAULT_MAX_RUNTIME_SECONDS,
+        },
+        "download_ttl_seconds": C.LLM_DOWNLOAD_TTL_SECONDS,
+        "cost_emitter_interval_seconds": C.LLM_COST_EMITTER_INTERVAL_SECONDS,
+        "concurrency": {
+            "max_concurrent_runs": C.LLM_MAX_CONCURRENT_RUNS,
+        },
+        "features": {
+            "tracing_enabled": C.LLM_ENABLE_TRACING,
+            "checkpointing_enabled": C.LLM_ENABLE_CHECKPOINTING,
+            "resume_enabled": C.LLM_ENABLE_CHECKPOINTING,
+        },
+        "supported_providers": ["anthropic", "openai"],
+    }
+
+
+# ---------------------------------------------------------------------
+# POST /besser_api/smart-preview
+# ---------------------------------------------------------------------
+
+
+@router.post("/smart-preview")
+async def smart_preview(request: SmartPreviewRequest):
+    """Return the plan smart-generate would run, without executing it.
+
+    The response lets the UI show a confirmation screen before the user
+    commits their API key and budget. Preview never calls an LLM — the
+    classifier is pure heuristics plus the project's model presence —
+    so no api_key is required and the response is instant.
+
+    Returns (simplified)::
+
+        {
+          "primary_kind": "class",
+          "auxiliary_kinds": ["gui", "agent"],
+          "target_generator": "generate_web_app",
+          "target_generator_confidence": 0.8,
+          "summary": "Generate full-stack web app from Class Diagram; "
+                     "also using GUI Model, Agent Model",
+          "estimated_turns": 18,
+          "estimated_cost_usd": 0.59,
+          "estimated_duration_seconds": 195,
+          "notes": [...],
+          "model_summary": {"primary": "class", "present": [...]}
+        }
+
+    Errors are handled inline (not via the ``handle_endpoint_errors``
+    decorator) because its ``functools.wraps`` wrapper confuses Pydantic
+    forward-ref resolution: the wrapped function's ``__globals__`` point
+    at the decorator module, so ``SmartPreviewRequest`` isn't visible
+    when the schema is built.
+    """
+    try:
+        assembled = assemble_models_from_project(
+            request.project, primary_kind_override=request.primary_kind_override,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Unexpected error building smart-preview")
+        raise HTTPException(status_code=500, detail="Internal server error") from exc
+
+    plan = build_preview(
+        assembled,
+        instructions=request.instructions,
+        max_cost_usd=request.max_cost_usd,
+        max_runtime_seconds=request.max_runtime_seconds,
+    )
+    payload = plan.to_dict()
+    payload["model_summary"] = assembled.summary()
+    return payload
+
+
+# ---------------------------------------------------------------------
+# POST /besser_api/resume-smart-gen/{run_id}
+# ---------------------------------------------------------------------
+
+
+@router.post("/resume-smart-gen/{run_id}", response_class=StreamingResponse)
+async def resume_smart_gen(
+    run_id: str,
+    request: SmartGenerateRequest,
+    http_request: Request,
+):
+    """Resume a smart-generate run that crashed before completion.
+
+    Takes the same ``SmartGenerateRequest`` shape as ``/smart-generate``
+    — the user re-supplies their API key and the current project, which
+    we hash and compare against the checkpoint's fingerprint before
+    accepting the resume. The orchestrator picks up from the last saved
+    turn; earlier tool calls are not re-executed.
+
+    Returns 404 when the run_id has no recoverable workspace (either
+    never existed, was swept, or completed cleanly — in which case its
+    checkpoint was intentionally deleted on success).
+
+    The run_id path pattern matches hex[32] to keep malformed IDs out
+    of the filesystem scan performed by ``_locate_run_temp_dir``.
+    """
+    if not re.fullmatch(r"[a-f0-9]{32}", run_id):
+        raise HTTPException(status_code=422, detail="Invalid run_id format")
+
+    temp_dir = _locate_run_temp_dir(run_id)
+    if temp_dir is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "No recoverable workspace for this run_id. The crashed "
+                "run's temp directory has either been swept or the run "
+                "completed cleanly. Start a fresh run via /smart-generate."
+            ),
+        )
+
+    # Same concurrency gate as /smart-generate — a resumed run consumes
+    # the same resources as a fresh one.
+    if not try_acquire_run_slot():
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "Too many smart-generation runs are in flight right now. "
+                "Retry in a moment."
+            ),
+        )
+
+    runner = SmartGenerationRunner(request, resume_run_id=run_id)
+    return StreamingResponse(
+        _stream_with_slot_release(
+            runner.generate_and_stream(http_request=http_request),
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
     )

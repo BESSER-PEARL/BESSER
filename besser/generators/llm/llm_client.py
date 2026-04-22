@@ -81,7 +81,6 @@ class UsageTracker:
         self.cache_read_tokens += cr
         logger.debug("API call #%d: in=%d out=%d cache_w=%d cache_r=%d",
                      self.api_calls, inp, out, cw, cr)
-        self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
 
     @property
     def total_tokens(self) -> int:
@@ -712,41 +711,52 @@ class OpenAIProvider(LLMProvider):
                 finish_reason = None
 
                 stream = self._client.chat.completions.create(**kwargs)
-                for chunk in stream:
-                    if not chunk.choices:
-                        # Usage-only chunk at end of stream
-                        if chunk.usage:
-                            self._usage.record(_OpenAIUsageAdapter(chunk.usage))
-                        continue
+                try:
+                    for chunk in stream:
+                        if not chunk.choices:
+                            # Usage-only chunk at end of stream
+                            if chunk.usage:
+                                self._usage.record(_OpenAIUsageAdapter(chunk.usage))
+                            continue
 
-                    delta = chunk.choices[0].delta
-                    fr = chunk.choices[0].finish_reason
+                        delta = chunk.choices[0].delta
+                        fr = chunk.choices[0].finish_reason
 
-                    if fr:
-                        finish_reason = fr
+                        if fr:
+                            finish_reason = fr
 
-                    # Text content
-                    if delta and delta.content:
-                        collected_text += delta.content
-                        yield {"type": "text_delta", "text": delta.content}
+                        # Text content
+                        if delta and delta.content:
+                            collected_text += delta.content
+                            yield {"type": "text_delta", "text": delta.content}
 
-                    # Accumulate tool calls across chunks
-                    if delta and delta.tool_calls:
-                        for tc_delta in delta.tool_calls:
-                            idx = tc_delta.index
-                            if idx not in tool_calls_accum:
-                                tool_calls_accum[idx] = {
-                                    "id": tc_delta.id or "",
-                                    "name": "",
-                                    "arguments": "",
-                                }
-                            if tc_delta.id:
-                                tool_calls_accum[idx]["id"] = tc_delta.id
-                            if tc_delta.function:
-                                if tc_delta.function.name:
-                                    tool_calls_accum[idx]["name"] = tc_delta.function.name
-                                if tc_delta.function.arguments:
-                                    tool_calls_accum[idx]["arguments"] += tc_delta.function.arguments
+                        # Accumulate tool calls across chunks
+                        if delta and delta.tool_calls:
+                            for tc_delta in delta.tool_calls:
+                                idx = tc_delta.index
+                                if idx not in tool_calls_accum:
+                                    tool_calls_accum[idx] = {
+                                        "id": tc_delta.id or "",
+                                        "name": "",
+                                        "arguments": "",
+                                    }
+                                if tc_delta.id:
+                                    tool_calls_accum[idx]["id"] = tc_delta.id
+                                if tc_delta.function:
+                                    if tc_delta.function.name:
+                                        tool_calls_accum[idx]["name"] = tc_delta.function.name
+                                    if tc_delta.function.arguments:
+                                        tool_calls_accum[idx]["arguments"] += tc_delta.function.arguments
+                finally:
+                    # Ensure the underlying HTTP connection is released even
+                    # if iteration raises. The OpenAI SDK stream object
+                    # exposes ``close()``; fall back silently if missing.
+                    close_fn = getattr(stream, "close", None)
+                    if callable(close_fn):
+                        try:
+                            close_fn()
+                        except Exception:
+                            pass
 
                 # Build final content blocks
                 content: list[Any] = []

@@ -67,6 +67,13 @@ class SmartGenerateRequest(BaseModel):
     llm_model: Optional[str] = Field(default=None, max_length=120)
     max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
     max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)
+    # Optional plan override from the preview screen. When the user
+    # clicks "Adjust" and picks a different primary model or target
+    # generator, those overrides travel here. Unset values fall back to
+    # auto-detection — the backend never forces a primary.
+    primary_kind_override: Optional[
+        Literal["class", "gui", "agent", "state_machine", "object", "quantum"]
+    ] = None
 
     @field_validator("instructions")
     @classmethod
@@ -120,3 +127,39 @@ class SmartGenerateRequest(BaseModel):
         and never log, store, or echo it elsewhere.
         """
         return self.api_key.get_secret_value()
+
+
+class SmartPreviewRequest(BaseModel):
+    """Body of ``POST /besser_api/smart-preview``.
+
+    Same shape as ``SmartGenerateRequest`` minus the ``api_key`` —
+    preview is a pure-local computation (no LLM call) so we don't want
+    users leaking their API key just to see the pre-flight plan.
+    """
+
+    project: ProjectInput
+    instructions: str = Field(..., min_length=1, max_length=8000)
+    max_cost_usd: float = Field(default=LLM_DEFAULT_MAX_COST_USD, gt=0.0)
+    max_runtime_seconds: int = Field(default=LLM_DEFAULT_MAX_RUNTIME_SECONDS, gt=0)
+    primary_kind_override: Optional[
+        Literal["class", "gui", "agent", "state_machine", "object", "quantum"]
+    ] = None
+
+    @field_validator("instructions")
+    @classmethod
+    def _validate_instructions_not_whitespace(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("instructions cannot be empty or whitespace-only")
+        return value
+
+    @field_validator("max_cost_usd")
+    @classmethod
+    def _validate_and_clamp_cost(cls, value: float) -> float:
+        if math.isnan(value) or math.isinf(value):
+            raise ValueError("max_cost_usd must be a finite positive number")
+        return min(value, LLM_MAX_COST_USD_HARD_CAP)
+
+    @field_validator("max_runtime_seconds")
+    @classmethod
+    def _validate_and_clamp_runtime(cls, value: int) -> int:
+        return min(value, LLM_MAX_RUNTIME_SECONDS_HARD_CAP)

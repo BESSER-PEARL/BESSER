@@ -22,6 +22,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_state_machine,
     process_agent_diagram,
     process_object_diagram,
+    process_nn_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -155,12 +156,13 @@ async def validate_diagram(input_data: DiagramInput):
             }
 
         elif diagram_type == "NNDiagram":
-            return {
-                "isValid": True,
-                "message": "\u2705 NN diagram is valid",
-                "errors": [],
-                "warnings": []
-            }
+            # Build the NN model; process_nn_diagram raises ValueError on
+            # missing mandatory attributes, cycles, unresolved NNReferences,
+            # duplicate datasets, and multiple top-level containers.
+            try:
+                process_nn_diagram(input_data.model_dump())
+            except ValueError as e:
+                validation_errors.extend(str(e).splitlines())
 
         elif diagram_type == "QuantumCircuitDiagram":
             return {

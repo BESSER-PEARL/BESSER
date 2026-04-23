@@ -9,6 +9,7 @@ import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from besser.BUML.metamodel.nn import NN, Configuration, Dataset
+from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
 
 
 # Metamodel class → (frontend parent type, attribute type suffix)
@@ -35,8 +36,12 @@ def _new_id() -> str:
 
 
 def _is_attr_set(obj, attr_name: str) -> bool:
-    """True when a boolean attribute was explicitly toggled in the editor."""
-    return attr_name in getattr(obj, '_set_attrs', set())
+    """True when an attribute was explicitly toggled in the editor.
+
+    Delegates to the sidecar bookkeeping so the metamodel objects don't carry
+    editor-specific state.
+    """
+    return is_explicit(obj, attr_name)
 
 
 def _attr_type_for(field: str, suffix: str) -> str:
@@ -46,13 +51,29 @@ def _attr_type_for(field: str, suffix: str) -> str:
 
 
 def _fmt_value(value: Any) -> str:
-    """Convert a Python value to the string representation used in the JSON 'value' field."""
+    """Convert a Python value to the string representation used in the JSON 'value' field.
+
+    Lists are formatted as ``[a, b, c]``; string items are kept bare (no quotes)
+    because the processor's parsers tolerate both ``[a, b]`` and ``['a', 'b']``
+    and downstream consumers expect the bare form. The one exception is items
+    containing ``,`` or ``]``, which would round-trip incorrectly — those are
+    rejected so we fail fast instead of silently truncating.
+    """
     if value is None:
         return ''
     if isinstance(value, bool):
         return 'true' if value else 'false'
     if isinstance(value, list):
-        return '[' + ', '.join(_fmt_value(v).strip("'") for v in value) + ']'
+        parts = []
+        for v in value:
+            formatted = _fmt_value(v)
+            if isinstance(v, str) and (',' in v or ']' in v or '[' in v):
+                raise ValueError(
+                    f"List item {v!r} contains unsupported characters (,[]) "
+                    f"that would break round-trip through the editor format"
+                )
+            parts.append(formatted)
+        return '[' + ', '.join(parts) + ']'
     return str(value)
 
 
@@ -144,7 +165,7 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('return_type', module.return_type, 'str', False))
         if _is_attr_set(module, 'bidirectional'):
             fields.append(('bidirectional', module.bidirectional, 'bool', False))
-        if module.dropout:
+        if _is_attr_set(module, 'dropout'):
             fields.append(('dropout', module.dropout, 'float', False))
         if _is_attr_set(module, 'batch_first'):
             fields.append(('batch_first', module.batch_first, 'bool', False))
@@ -237,7 +258,7 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('transpose_dim', module.transpose_dim, 'List', False))
         elif tns_type == 'permute' and module.permute_dim:
             fields.append(('permute_dim', module.permute_dim, 'List', False))
-        if module.input_reused:
+        if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
 
     return fields
@@ -252,9 +273,13 @@ def _configuration_fields(config: Configuration) -> List[Tuple[str, Any, str, bo
         ('loss_function',  config.loss_function,  'str',  True),
         ('metrics',        config.metrics,        'List', True),
     ]
-    if config.weight_decay:
+    if _is_attr_set(config, 'weight_decay') or (
+        config.weight_decay is not None and config.weight_decay != 0
+    ):
         fields.append(('weight_decay', config.weight_decay, 'float', False))
-    if config.momentum:
+    if _is_attr_set(config, 'momentum') or (
+        config.momentum is not None and config.momentum != 0
+    ):
         fields.append(('momentum', config.momentum, 'float', False))
     return fields
 
@@ -280,7 +305,13 @@ def _emit_module(module, owner_id: str, x: int, y: int,
                  elements: Dict[str, Dict[str, Any]]) -> str:
     """Create a layer/tensor_op element (with its attribute children) inside a container."""
     cls = type(module).__name__
-    parent_type, suffix = _MODULE_TYPE_MAP[cls]
+    try:
+        parent_type, suffix = _MODULE_TYPE_MAP[cls]
+    except KeyError as exc:
+        raise ValueError(
+            f"Cannot emit module of type {cls!r}: no mapping to frontend "
+            f"element type. Add {cls!r} to _MODULE_TYPE_MAP."
+        ) from exc
     element_id = _new_id()
     attr_ids: List[str] = []
 

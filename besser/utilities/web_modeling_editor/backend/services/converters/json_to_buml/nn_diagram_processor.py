@@ -28,6 +28,7 @@ from besser.BUML.metamodel.nn import (
 import bisect
 import ast
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
+from besser.utilities.buml_code_builder.nn_explicit_attrs import mark_explicit
 
 
 def _get_attr_by_name(element: dict, attr_name: str, elements: dict, default=None):
@@ -54,10 +55,24 @@ def create_dataset(element: dict, elements: dict) -> Dataset:
     image = None
     if input_format == 'images':
         shape_raw = _get_attr_by_name(element, 'shape', elements)
-        try:
-            shape = ast.literal_eval(shape_raw) if shape_raw else [256, 256]
-        except (ValueError, SyntaxError):
+        if shape_raw is None or shape_raw == '':
             shape = [256, 256]
+        elif isinstance(shape_raw, (list, tuple)):
+            shape = list(shape_raw)
+        else:
+            try:
+                shape = ast.literal_eval(str(shape_raw))
+            except (ValueError, SyntaxError) as exc:
+                raise ValueError(
+                    f"Dataset '{name}' has malformed 'shape' attribute "
+                    f"{shape_raw!r}: expected a list like [32, 32, 3]"
+                ) from exc
+            if not isinstance(shape, (list, tuple)):
+                raise ValueError(
+                    f"Dataset '{name}' 'shape' attribute must be a list "
+                    f"(got {type(shape).__name__})"
+                )
+            shape = list(shape)
         normalize_raw = _get_attr_by_name(element, 'normalize', elements)
         normalize = str(normalize_raw).lower() == 'true' if normalize_raw is not None else False
         image = Image(shape=shape, normalize=normalize)
@@ -66,9 +81,69 @@ def create_dataset(element: dict, elements: dict) -> Dataset:
                    input_format=input_format, image=image)
 
 
+# Map the `attr_key` prefix used at call sites (e.g. 'NameAttribute',
+# 'KernelDimAttribute') to the `attributeName` field emitted by the
+# frontend/converter (e.g. 'name', 'kernel_dim'). Using the `attributeName`
+# field rather than a substring match on `type` avoids collisions between
+# attributes whose type names share a prefix/suffix.
+_ATTR_KEY_TO_NAME = {
+    'NameAttribute': 'name',
+    'KernelDimAttribute': 'kernel_dim',
+    'StrideDimAttribute': 'stride_dim',
+    'OutChannelsAttribute': 'out_channels',
+    'InChannelsAttribute': 'in_channels',
+    'PaddingAmountAttribute': 'padding_amount',
+    'PaddingTypeAttribute': 'padding_type',
+    'ActvFuncAttribute': 'actv_func',
+    'NameModuleInputAttribute': 'name_module_input',
+    'InputReusedAttribute': 'input_reused',
+    'PermuteInAttribute': 'permute_in',
+    'PermuteOutAttribute': 'permute_out',
+    'PoolingTypeAttribute': 'pooling_type',
+    'DimensionAttribute': 'dimension',
+    'OutputDimAttribute': 'output_dim',
+    'HiddenSizeAttribute': 'hidden_size',
+    'InputSizeAttribute': 'input_size',
+    'ReturnTypeAttribute': 'return_type',
+    'BidirectionalAttribute': 'bidirectional',
+    'DropoutAttribute': 'dropout',
+    'BatchFirstAttribute': 'batch_first',
+    'OutFeaturesAttribute': 'out_features',
+    'InFeaturesAttribute': 'in_features',
+    'StartDimAttribute': 'start_dim',
+    'EndDimAttribute': 'end_dim',
+    'NumEmbeddingsAttribute': 'num_embeddings',
+    'EmbeddingDimAttribute': 'embedding_dim',
+    'RateAttribute': 'rate',
+    'NormalizedShapeAttribute': 'normalized_shape',
+    'NumFeaturesAttribute': 'num_features',
+    'TnsTypeAttribute': 'tns_type',
+    'ConcatenateDimAttribute': 'concatenate_dim',
+    'LayersOfTensorsAttribute': 'layers_of_tensors',
+    'ReshapeDimAttribute': 'reshape_dim',
+    'TransposeDimAttribute': 'transpose_dim',
+    'PermuteDimAttribute': 'permute_dim',
+    'BatchSizeAttribute': 'batch_size',
+    'EpochsAttribute': 'epochs',
+    'LearningRateAttribute': 'learning_rate',
+    'OptimizerAttribute': 'optimizer',
+    'LossFunctionAttribute': 'loss_function',
+    'MetricsAttribute': 'metrics',
+    'WeightDecayAttribute': 'weight_decay',
+    'MomentumAttribute': 'momentum',
+}
+
+
 def get_element_attribute(element: dict, attr_key: str, elements: dict, default=None):
     """
     Get an attribute value from an element's attribute children.
+
+    Lookup is done via the `attributeName` field emitted by the frontend (which
+    is stable across layer types), with an exact-prefix fallback on `type`
+    (e.g. 'NameAttributeConv2D' starts with 'NameAttribute'). Substring
+    matching is deliberately avoided to prevent collisions between attributes
+    whose type names share segments (e.g. 'NameAttribute' vs
+    'NameModuleInputAttribute').
 
     Args:
         element: The parent element
@@ -79,19 +154,26 @@ def get_element_attribute(element: dict, attr_key: str, elements: dict, default=
     Returns:
         The attribute value or default
     """
-    # Get all attribute IDs from the element
-    # The frontend serializes UMLClassifier children in 'attributes' property
+    attribute_name = _ATTR_KEY_TO_NAME.get(attr_key)
     attribute_ids = element.get('attributes', [])
 
-    # Find the matching attribute
     for attr_id in attribute_ids:
         attr_element = elements.get(attr_id, {})
-        attr_type = attr_element.get('type', '')
 
-        # Check if this attribute matches the requested key
-        if attr_key in attr_type:
-            # Frontend stores the value in 'value' field
+        # Preferred: match by `attributeName` (set consistently by the converter).
+        if attribute_name is not None and attr_element.get('attributeName') == attribute_name:
             return attr_element.get('value', default)
+
+        # Fallback for legacy payloads that only carry `type`: require an
+        # exact prefix match so 'NameAttribute' doesn't pick up
+        # 'NameModuleInputAttributeConv2D'.
+        attr_type = attr_element.get('type', '')
+        if attr_type.startswith(attr_key):
+            # Reject partial matches where the next char isn't the layer-suffix
+            # boundary (e.g. 'NameAttributeExtra' should not match 'NameAttribute').
+            rest = attr_type[len(attr_key):]
+            if rest == '' or rest[0].isupper():
+                return attr_element.get('value', default)
 
     return default
 
@@ -325,11 +407,18 @@ def process_nn_diagram(json_data):
     if 'project' in json_data:
         project_data = json_data.get('project', {})
         diagrams = project_data.get('diagrams', {})
-        nn_diagram_data = diagrams.get('NNDiagram', {})
+        nn_diagram_data = diagrams.get('NNDiagram')
         if isinstance(nn_diagram_data, list):
+            if not nn_diagram_data:
+                raise ValueError("Project contains no NNDiagram entries")
             nn_diagram_data = nn_diagram_data[0]
+        elif isinstance(nn_diagram_data, dict):
+            # Legacy single-diagram shape: use as-is.
+            pass
         else:
-            raise ValueError("nn_diagram_data must be a list")
+            raise ValueError(
+                f"Unexpected NNDiagram payload type: {type(nn_diagram_data).__name__}"
+            )
 
         title = nn_diagram_data.get('title', 'Neural_Network')
         model_data = nn_diagram_data.get('model', {})
@@ -339,8 +428,7 @@ def process_nn_diagram(json_data):
         if not model_data:
             model_data = json_data
 
-    if ' ' in title:
-        title = title.replace(' ', '_')
+    title = sanitize_name(title)
 
     elements = model_data.get('elements', {})
     relationships = model_data.get('relationships', {})
@@ -493,36 +581,70 @@ def process_nn_diagram(json_data):
             elif module_id in container_refs_dict:
                 # This is an NNReference - add the referenced NN as sub_nn
                 ref_name = container_refs_dict.get(module_id)
-                if ref_name and ref_name in nn_by_name:
-                    nn.add_sub_nn(nn_by_name[ref_name])
+                if not ref_name:
+                    raise ValueError(
+                        f"NNReference in container '{container_name}' has no "
+                        f"'referencedNN' field"
+                    )
+                if ref_name not in nn_by_name:
+                    raise ValueError(
+                        f"NNReference '{ref_name}' in container "
+                        f"'{container_name}' does not match any NNContainer"
+                    )
+                nn.add_sub_nn(nn_by_name[ref_name])
 
-    # Step 6: Determine the main NN to return
-    # The main NN is the one that is NOT referenced by others (or the last processed)
-    main_nn = None
-    for cid, cname in containers.items():
-        if cname not in referenced_names:
-            main_nn = nn_by_name.get(cname)
-            break
-
-    # If all containers are referenced somehow, just use the first non-empty one
-    if main_nn is None and nn_by_name:
-        main_nn = list(nn_by_name.values())[-1]
-
-    # If no containers exist, create a simple NN with the diagram title
-    if main_nn is None:
+    # Step 6: Determine the main NN to return.
+    # The main NN is the one that is NOT referenced by any NNReference.
+    top_level = [cname for _, cname in containers.items() if cname not in referenced_names]
+    if len(top_level) > 1:
+        raise ValueError(
+            f"NN diagram contains {len(top_level)} top-level NNContainers "
+            f"({', '.join(top_level)}); exactly one is required. Connect the "
+            f"others via NNReference elements to mark them as sub-networks."
+        )
+    if top_level:
+        main_nn = nn_by_name.get(top_level[0])
+    elif nn_by_name:
+        # Every container is referenced (mutual reference) — still broken, but
+        # surface the issue clearly instead of silently picking one.
+        raise ValueError(
+            "NN diagram has no top-level NNContainer: every container is "
+            "referenced by an NNReference. Remove one of the references."
+        )
+    else:
+        # No containers at all — produce an empty NN so empty diagrams still export.
         main_nn = NN(name=title)
 
     # Add configuration to the main NN
     if configuration:
         main_nn.add_configuration(configuration)
 
-    # Step 7: Parse datasets (TrainingDataset / TestDataset) and attach to main NN
+    # Step 7: Parse datasets (TrainingDataset / TestDataset) and attach to main NN.
+    # The metamodel only holds one of each, so collect first and raise on duplicates
+    # rather than letting the last one silently overwrite the previous.
+    train_datasets = []
+    test_datasets = []
     for element_id, element in elements.items():
         element_type = element.get('type', '')
         if element_type == 'TrainingDataset':
-            main_nn.add_train_data(create_dataset(element, elements))
+            train_datasets.append(element)
         elif element_type == 'TestDataset':
-            main_nn.add_test_data(create_dataset(element, elements))
+            test_datasets.append(element)
+
+    if len(train_datasets) > 1:
+        raise ValueError(
+            f"NN diagram contains {len(train_datasets)} TrainingDataset elements; "
+            f"only one is supported per NN model"
+        )
+    if len(test_datasets) > 1:
+        raise ValueError(
+            f"NN diagram contains {len(test_datasets)} TestDataset elements; "
+            f"only one is supported per NN model"
+        )
+    if train_datasets:
+        main_nn.add_train_data(create_dataset(train_datasets[0], elements))
+    if test_datasets:
+        main_nn.add_test_data(create_dataset(test_datasets[0], elements))
 
     return main_nn
 
@@ -565,10 +687,16 @@ def topological_sort(module_ids, outgoing_connections):
                 if in_degree[target_id] == 0:
                     bisect.insort(queue, target_id)
 
-    # Add any remaining nodes (handles disconnected components or cycles)
-    for mid in module_ids:
-        if mid not in result:
-            result.append(mid)
+    # Any nodes still missing from the result have a non-zero in-degree,
+    # which means they participate in a cycle (disconnected components
+    # always have at least one zero-in-degree node). That is a malformed
+    # network, so surface it instead of silently accepting it.
+    remaining = [mid for mid in module_ids if mid not in result]
+    if remaining:
+        raise ValueError(
+            "NNNext relationships form a cycle involving "
+            f"{len(remaining)} module(s); cannot determine layer order"
+        )
 
     return result
 
@@ -597,7 +725,6 @@ def _create_conv_layer(element, elements, conv_class, default_stride):
         kernel_dim=kernel_dim,
         out_channels=out_channels,
     )
-    layer._set_attrs = set()
 
     # Optional attributes
     stride = get_element_attribute(element, 'StrideDimAttribute', elements)
@@ -627,7 +754,7 @@ def _create_conv_layer(element, elements, conv_class, default_stride):
     input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
+        mark_explicit(layer, 'input_reused')
 
     permute_in = get_element_attribute(element, 'PermuteInAttribute', elements)
     if permute_in:
@@ -693,7 +820,6 @@ def create_pooling_layer(element, elements):
         kernel_dim=kernel_dim,
         stride_dim=stride_dim,
     )
-    layer._set_attrs = set()
 
     padding = get_element_attribute(element, 'PaddingAmountAttribute', elements)
     if padding is not None:
@@ -718,7 +844,7 @@ def create_pooling_layer(element, elements):
     input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
+        mark_explicit(layer, 'input_reused')
 
     permute_in = get_element_attribute(element, 'PermuteInAttribute', elements)
     if permute_in:
@@ -747,7 +873,6 @@ def _create_rnn_like_layer(element, elements, rnn_class):
         name=sanitize_name(name),
         hidden_size=hidden_size,
     )
-    layer._set_attrs = set()
 
     # Optional attributes
     return_type = get_element_attribute(element, 'ReturnTypeAttribute', elements)
@@ -761,16 +886,17 @@ def _create_rnn_like_layer(element, elements, rnn_class):
     bidirectional = get_element_attribute(element, 'BidirectionalAttribute', elements)
     if bidirectional is not None:
         layer.bidirectional = parse_bool(bidirectional)
-        layer._set_attrs.add('bidirectional')
+        mark_explicit(layer, 'bidirectional')
 
     dropout = get_element_attribute(element, 'DropoutAttribute', elements)
     if dropout is not None:
         layer.dropout = parse_float(dropout, 0.0)
+        mark_explicit(layer, 'dropout')
 
     batch_first = get_element_attribute(element, 'BatchFirstAttribute', elements)
     if batch_first is not None:
         layer.batch_first = parse_bool(batch_first)
-        layer._set_attrs.add('batch_first')
+        mark_explicit(layer, 'batch_first')
 
     actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
     if actv_func:
@@ -783,7 +909,7 @@ def _create_rnn_like_layer(element, elements, rnn_class):
     input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
+        mark_explicit(layer, 'input_reused')
 
     return layer
 
@@ -818,7 +944,6 @@ def create_linear_layer(element, elements):
         name=sanitize_name(name),
         out_features=out_features,
     )
-    layer._set_attrs = set()
 
     # Optional attributes
     in_features = get_element_attribute(element, 'InFeaturesAttribute', elements)
@@ -836,7 +961,7 @@ def create_linear_layer(element, elements):
     input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
+        mark_explicit(layer, 'input_reused')
 
     return layer
 
@@ -848,7 +973,6 @@ def create_flatten_layer(element, elements):
         raise ValueError("FlattenLayer missing mandatory 'name' attribute")
 
     layer = FlattenLayer(name=sanitize_name(name))
-    layer._set_attrs = set()
 
     # Optional attributes
     start_dim = get_element_attribute(element, 'StartDimAttribute', elements)
@@ -870,7 +994,7 @@ def create_flatten_layer(element, elements):
     input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
+        mark_explicit(layer, 'input_reused')
 
     return layer
 
@@ -896,7 +1020,6 @@ def create_embedding_layer(element, elements):
         num_embeddings=num_embeddings,
         embedding_dim=embedding_dim,
     )
-    layer._set_attrs = set()
 
     # Optional attributes
     actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
@@ -910,7 +1033,7 @@ def create_embedding_layer(element, elements):
     input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
+        mark_explicit(layer, 'input_reused')
 
     return layer
 
@@ -930,7 +1053,6 @@ def create_dropout_layer(element, elements):
         name=sanitize_name(name),
         rate=rate,
     )
-    layer._set_attrs = set()
 
     # Optional attributes
     name_module_input = get_element_attribute(element, 'NameModuleInputAttribute', elements)
@@ -940,7 +1062,7 @@ def create_dropout_layer(element, elements):
     input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
+        mark_explicit(layer, 'input_reused')
 
     return layer
 
@@ -960,7 +1082,6 @@ def create_layer_norm_layer(element, elements):
         name=sanitize_name(name),
         normalized_shape=normalized_shape,
     )
-    layer._set_attrs = set()
 
     # Optional attributes
     actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
@@ -974,7 +1095,7 @@ def create_layer_norm_layer(element, elements):
     input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
+        mark_explicit(layer, 'input_reused')
 
     return layer
 
@@ -1000,7 +1121,6 @@ def create_batch_norm_layer(element, elements):
         num_features=num_features,
         dimension=dimension,
     )
-    layer._set_attrs = set()
 
     # Optional attributes
     actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
@@ -1014,7 +1134,7 @@ def create_batch_norm_layer(element, elements):
     input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
     if input_reused is not None:
         layer.input_reused = parse_bool(input_reused)
-        layer._set_attrs.add('input_reused')
+        mark_explicit(layer, 'input_reused')
 
     return layer
 
@@ -1118,6 +1238,7 @@ def create_tensor_op(element, elements):
     input_reused = get_element_attribute(element, 'InputReusedAttribute', elements)
     if input_reused is not None:
         tensor_op.input_reused = parse_bool(input_reused)
+        mark_explicit(tensor_op, 'input_reused')
 
     return tensor_op
 
@@ -1177,9 +1298,11 @@ def create_configuration(element, elements):
     weight_decay = get_element_attribute(element, 'WeightDecayAttribute', elements)
     if weight_decay is not None:
         config.weight_decay = parse_float(weight_decay, 0.0)
+        mark_explicit(config, 'weight_decay')
 
     momentum = get_element_attribute(element, 'MomentumAttribute', elements)
     if momentum is not None:
         config.momentum = parse_float(momentum, 0.0)
+        mark_explicit(config, 'momentum')
 
     return config

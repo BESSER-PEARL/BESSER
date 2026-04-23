@@ -349,11 +349,25 @@ def test_dataset_empty_path_data_raises():
         create_dataset(element, elements)
 
 
-def test_dataset_invalid_shape_falls_back_to_default():
-    """Image shape parsing falls back to [256, 256] when the literal is malformed."""
+def test_dataset_invalid_shape_raises():
+    """Image shape parsing raises ValueError when the literal is malformed.
+
+    Silently falling back to a default hid user-entry mistakes; the
+    processor now surfaces them so the editor can show a validation error.
+    """
     element, elements = _dataset_element({
         "name": "train", "path_data": "/d",
         "input_format": "images", "shape": "not-a-list",
+    })
+    with pytest.raises(ValueError, match="malformed 'shape'"):
+        create_dataset(element, elements)
+
+
+def test_dataset_default_shape_when_empty():
+    """Empty/missing shape still falls back to [256, 256] (unchanged)."""
+    element, elements = _dataset_element({
+        "name": "train", "path_data": "/d",
+        "input_format": "images", "shape": "",
     })
     ds = create_dataset(element, elements)
     assert ds.image.shape == [256, 256]
@@ -366,3 +380,152 @@ def test_dataset_without_input_format_has_no_image():
     })
     ds = create_dataset(element, elements)
     assert ds.image is None
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for PR review fixes
+# ---------------------------------------------------------------------------
+
+def _minimal_container_json(extra_elements=None, extra_relationships=None):
+    """Build a minimal NNDiagram JSON with one container + one Linear layer."""
+    elements = {
+        "c1": {
+            "id": "c1", "type": "NNContainer", "name": "Net", "owner": None,
+            "bounds": {"x": 0, "y": 0, "width": 200, "height": 100},
+        },
+        "l1": {
+            "id": "l1", "type": "LinearLayer", "name": "LinearLayer", "owner": "c1",
+            "bounds": {"x": 0, "y": 0, "width": 100, "height": 100},
+            "attributes": ["l1a1", "l1a2"], "methods": [],
+        },
+        "l1a1": {
+            "id": "l1a1", "type": "NameAttributeLinear",
+            "attributeName": "name", "value": "lin", "owner": "l1",
+        },
+        "l1a2": {
+            "id": "l1a2", "type": "OutFeaturesAttributeLinear",
+            "attributeName": "out_features", "value": "10", "owner": "l1",
+        },
+    }
+    if extra_elements:
+        elements.update(extra_elements)
+    return {
+        "title": "Net",
+        "model": {
+            "type": "NNDiagram",
+            "elements": elements,
+            "relationships": extra_relationships or {},
+        },
+    }
+
+
+def test_project_format_dict_payload_accepted():
+    """Legacy single-diagram dict under 'NNDiagram' must be accepted (regression for review #1)."""
+    diagram = _minimal_container_json()
+    project_payload = {"project": {"diagrams": {"NNDiagram": diagram}}}
+    nn = process_nn_diagram(project_payload)
+    assert nn.name == "Net"
+
+
+def test_project_format_list_payload_accepted():
+    """List shape under 'NNDiagram' (new format) must be accepted."""
+    diagram = _minimal_container_json()
+    project_payload = {"project": {"diagrams": {"NNDiagram": [diagram]}}}
+    nn = process_nn_diagram(project_payload)
+    assert nn.name == "Net"
+
+
+def test_project_format_empty_list_raises():
+    """Empty list surfaces a clear error instead of IndexError."""
+    project_payload = {"project": {"diagrams": {"NNDiagram": []}}}
+    with pytest.raises(ValueError, match="no NNDiagram entries"):
+        process_nn_diagram(project_payload)
+
+
+def test_unresolved_nnreference_raises():
+    """An NNReference pointing to a missing container must raise (regression for review #3)."""
+    extra = {
+        "ref1": {
+            "id": "ref1", "type": "NNReference", "name": "ghost",
+            "referencedNN": "ghost", "owner": "c1",
+            "bounds": {"x": 0, "y": 0, "width": 100, "height": 100},
+        },
+    }
+    diagram = _minimal_container_json(extra_elements=extra)
+    with pytest.raises(ValueError, match="NNReference 'ghost'"):
+        process_nn_diagram(diagram)
+
+
+def test_nnnext_cycle_raises():
+    """A cycle in NNNext relationships must raise (regression for review #6)."""
+    extra = {
+        "l2": {
+            "id": "l2", "type": "LinearLayer", "name": "LinearLayer", "owner": "c1",
+            "bounds": {"x": 0, "y": 0, "width": 100, "height": 100},
+            "attributes": ["l2a1", "l2a2"], "methods": [],
+        },
+        "l2a1": {
+            "id": "l2a1", "type": "NameAttributeLinear",
+            "attributeName": "name", "value": "lin2", "owner": "l2",
+        },
+        "l2a2": {
+            "id": "l2a2", "type": "OutFeaturesAttributeLinear",
+            "attributeName": "out_features", "value": "5", "owner": "l2",
+        },
+    }
+    rels = {
+        "r1": {"id": "r1", "type": "NNNext", "source": {"element": "l1"}, "target": {"element": "l2"}, "name": "next"},
+        "r2": {"id": "r2", "type": "NNNext", "source": {"element": "l2"}, "target": {"element": "l1"}, "name": "next"},
+    }
+    diagram = _minimal_container_json(extra_elements=extra, extra_relationships=rels)
+    with pytest.raises(ValueError, match="cycle"):
+        process_nn_diagram(diagram)
+
+
+def test_multiple_training_datasets_raises():
+    """Two TrainingDataset elements must raise rather than silently overwrite (review #8)."""
+    extra = {
+        "ds1": {"id": "ds1", "type": "TrainingDataset", "owner": None, "attributes": ["ds1a1", "ds1a2"]},
+        "ds1a1": {"id": "ds1a1", "attributeName": "name", "value": "t1", "owner": "ds1"},
+        "ds1a2": {"id": "ds1a2", "attributeName": "path_data", "value": "/a", "owner": "ds1"},
+        "ds2": {"id": "ds2", "type": "TrainingDataset", "owner": None, "attributes": ["ds2a1", "ds2a2"]},
+        "ds2a1": {"id": "ds2a1", "attributeName": "name", "value": "t2", "owner": "ds2"},
+        "ds2a2": {"id": "ds2a2", "attributeName": "path_data", "value": "/b", "owner": "ds2"},
+    }
+    diagram = _minimal_container_json(extra_elements=extra)
+    with pytest.raises(ValueError, match="TrainingDataset"):
+        process_nn_diagram(diagram)
+
+
+def test_multiple_top_level_containers_raises():
+    """Two NNContainers that aren't referenced by each other must raise (review #19)."""
+    extra = {
+        "c2": {
+            "id": "c2", "type": "NNContainer", "name": "Other", "owner": None,
+            "bounds": {"x": 400, "y": 0, "width": 200, "height": 100},
+        },
+    }
+    diagram = _minimal_container_json(extra_elements=extra)
+    with pytest.raises(ValueError, match="top-level NNContainers"):
+        process_nn_diagram(diagram)
+
+
+def test_attribute_prefix_match_no_collision():
+    """'NameAttribute' must not match 'NameModuleInputAttributeX' (review #5)."""
+    from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+        get_element_attribute,
+    )
+    # Intentionally only provide NameModuleInput (a longer-prefix attribute);
+    # the shorter 'NameAttribute' key must NOT mistake it for a match.
+    element = {"attributes": ["a1"]}
+    elements = {
+        "a1": {
+            "id": "a1", "type": "NameModuleInputAttributeConv2D",
+            "attributeName": "name_module_input", "value": "prev_layer",
+        },
+    }
+    assert get_element_attribute(element, 'NameAttribute', elements) is None
+    assert (
+        get_element_attribute(element, 'NameModuleInputAttribute', elements)
+        == 'prev_layer'
+    )

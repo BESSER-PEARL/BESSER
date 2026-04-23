@@ -28,6 +28,12 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.object_diagram_processor import (
     process_object_diagram,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+    process_nn_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.nn_diagram_converter import (
+    nn_model_to_json,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1275,3 +1281,120 @@ class TestObjectDiagramRoundtrip:
                     for slot in obj.slots
                 }
                 assert slot_values.get("name") == "Fitzgerald"
+
+
+# ===========================================================================
+# NN Diagram Roundtrip: JSON -> NN -> JSON
+# ===========================================================================
+
+class TestNNDiagramRoundtrip:
+    """Roundtrip tests for NNDiagram: JSON -> NN -> JSON preserves essential data."""
+
+    @staticmethod
+    def _minimal_nn_json():
+        """A minimal NN diagram: container + Conv2D + Linear + configuration + datasets."""
+        return {
+            "title": "TestNet",
+            "model": {
+                "type": "NNDiagram",
+                "version": "3.0.0",
+                "size": {"width": 1400, "height": 740},
+                "elements": {
+                    "c1": {"id": "c1", "type": "NNContainer", "name": "TestNet", "owner": None, "bounds": {"x": 0, "y": 0, "width": 600, "height": 200}},
+                    "l1": {"id": "l1", "type": "Conv2DLayer", "name": "Conv2DLayer", "owner": "c1", "bounds": {"x": 20, "y": 60, "width": 110, "height": 110}, "attributes": ["l1a1", "l1a2", "l1a3"], "methods": []},
+                    "l1a1": {"id": "l1a1", "type": "NameAttributeConv2D", "attributeName": "name", "value": "c1", "owner": "l1"},
+                    "l1a2": {"id": "l1a2", "type": "KernelDimAttributeConv2D", "attributeName": "kernel_dim", "value": "[3, 3]", "owner": "l1"},
+                    "l1a3": {"id": "l1a3", "type": "OutChannelsAttributeConv2D", "attributeName": "out_channels", "value": "16", "owner": "l1"},
+                    "l2": {"id": "l2", "type": "LinearLayer", "name": "LinearLayer", "owner": "c1", "bounds": {"x": 150, "y": 60, "width": 110, "height": 110}, "attributes": ["l2a1", "l2a2"], "methods": []},
+                    "l2a1": {"id": "l2a1", "type": "NameAttributeLinear", "attributeName": "name", "value": "lin", "owner": "l2"},
+                    "l2a2": {"id": "l2a2", "type": "OutFeaturesAttributeLinear", "attributeName": "out_features", "value": "10", "owner": "l2"},
+                    "cfg": {"id": "cfg", "type": "Configuration", "name": "Configuration", "owner": None, "bounds": {"x": 700, "y": 0, "width": 160, "height": 200}, "attributes": ["cfg1", "cfg2", "cfg3", "cfg4", "cfg5", "cfg6"], "methods": []},
+                    "cfg1": {"id": "cfg1", "type": "BatchSizeAttributeConfiguration", "attributeName": "batch_size", "value": "32", "owner": "cfg"},
+                    "cfg2": {"id": "cfg2", "type": "EpochsAttributeConfiguration", "attributeName": "epochs", "value": "10", "owner": "cfg"},
+                    "cfg3": {"id": "cfg3", "type": "LearningRateAttributeConfiguration", "attributeName": "learning_rate", "value": "0.001", "owner": "cfg"},
+                    "cfg4": {"id": "cfg4", "type": "OptimizerAttributeConfiguration", "attributeName": "optimizer", "value": "adam", "owner": "cfg"},
+                    "cfg5": {"id": "cfg5", "type": "LossFunctionAttributeConfiguration", "attributeName": "loss_function", "value": "crossentropy", "owner": "cfg"},
+                    "cfg6": {"id": "cfg6", "type": "MetricsAttributeConfiguration", "attributeName": "metrics", "value": "[accuracy]", "owner": "cfg"},
+                    "ds1": {"id": "ds1", "type": "TrainingDataset", "name": "TrainingDataset", "owner": None, "bounds": {"x": 0, "y": 400, "width": 110, "height": 110}, "attributes": ["ds1a1", "ds1a2", "ds1a3", "ds1a4", "ds1a5", "ds1a6"], "methods": []},
+                    "ds1a1": {"id": "ds1a1", "attributeName": "name", "value": "train", "owner": "ds1"},
+                    "ds1a2": {"id": "ds1a2", "attributeName": "path_data", "value": "/data/train", "owner": "ds1"},
+                    "ds1a3": {"id": "ds1a3", "attributeName": "task_type", "value": "multi_class", "owner": "ds1"},
+                    "ds1a4": {"id": "ds1a4", "attributeName": "input_format", "value": "images", "owner": "ds1"},
+                    "ds1a5": {"id": "ds1a5", "attributeName": "shape", "value": "[32, 32, 3]", "owner": "ds1"},
+                    "ds1a6": {"id": "ds1a6", "attributeName": "normalize", "value": "false", "owner": "ds1"},
+                    "ds2": {"id": "ds2", "type": "TestDataset", "name": "TestDataset", "owner": None, "bounds": {"x": 300, "y": 400, "width": 110, "height": 110}, "attributes": ["ds2a1", "ds2a2"], "methods": []},
+                    "ds2a1": {"id": "ds2a1", "attributeName": "name", "value": "test", "owner": "ds2"},
+                    "ds2a2": {"id": "ds2a2", "attributeName": "path_data", "value": "/data/test", "owner": "ds2"},
+                },
+                "relationships": {
+                    "r1": {"id": "r1", "type": "NNNext", "source": {"element": "l1"}, "target": {"element": "l2"}, "name": "next"},
+                },
+                "interactive": {"elements": {}, "relationships": {}},
+                "assessments": {},
+            },
+        }
+
+    def _roundtrip(self, json_in):
+        nn = process_nn_diagram(json_in)
+        return nn_model_to_json(nn)
+
+    def test_diagram_type_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        assert out["type"] == "NNDiagram"
+
+    def test_container_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        containers = _extract_elements_by_type(out, "NNContainer")
+        assert len(containers) == 1
+        assert containers[0]["name"] == "TestNet"
+
+    def test_layers_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        assert len(_extract_elements_by_type(out, "Conv2DLayer")) == 1
+        assert len(_extract_elements_by_type(out, "LinearLayer")) == 1
+
+    def test_nnnext_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        nexts = _extract_relationships_by_type(out, "NNNext")
+        assert len(nexts) == 1
+
+    def test_configuration_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        configs = _extract_elements_by_type(out, "Configuration")
+        assert len(configs) == 1
+        elements = _resolve_elements(out)
+        attr_values = {elements[aid]["attributeName"]: elements[aid]["value"] for aid in configs[0]["attributes"]}
+        assert attr_values["batch_size"] == "32"
+        assert attr_values["optimizer"] == "adam"
+
+    def test_training_dataset_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        training = _extract_elements_by_type(out, "TrainingDataset")
+        assert len(training) == 1
+        elements = _resolve_elements(out)
+        attrs = {elements[aid]["attributeName"]: elements[aid]["value"] for aid in training[0]["attributes"]}
+        assert attrs["name"] == "train"
+        assert attrs["path_data"] == "/data/train"
+        assert attrs["task_type"] == "multi_class"
+        assert attrs["input_format"] == "images"
+        assert attrs["shape"] == "[32, 32, 3]"
+        assert attrs["normalize"] == "false"
+
+    def test_test_dataset_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        testing = _extract_elements_by_type(out, "TestDataset")
+        assert len(testing) == 1
+        elements = _resolve_elements(out)
+        attrs = {elements[aid]["attributeName"]: elements[aid]["value"] for aid in testing[0]["attributes"]}
+        assert attrs["name"] == "test"
+        assert attrs["path_data"] == "/data/test"
+        assert "input_format" not in attrs
+
+    def test_double_roundtrip_stable(self):
+        """Second roundtrip yields the same structural shape."""
+        from collections import Counter
+        first = self._roundtrip(self._minimal_nn_json())
+        second = self._roundtrip(first)
+        def counts(j):
+            return Counter(e.get("type") for e in _resolve_elements(j).values() if "Attribute" not in (e.get("type") or ""))
+        assert counts(first) == counts(second)

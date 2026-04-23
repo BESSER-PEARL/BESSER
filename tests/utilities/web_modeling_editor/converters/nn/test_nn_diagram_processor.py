@@ -6,10 +6,11 @@ import json
 import pathlib
 import pytest
 
-from besser.BUML.metamodel.nn import NN, Conv1D, Conv2D, PoolingLayer, FlattenLayer, LinearLayer, DropoutLayer, EmbeddingLayer, GRULayer, LSTMLayer
+from besser.BUML.metamodel.nn import NN, Conv1D, Conv2D, PoolingLayer, FlattenLayer, LinearLayer, DropoutLayer, EmbeddingLayer, GRULayer, LSTMLayer, Dataset, Image
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
     process_nn_diagram,
     topological_sort,
+    create_dataset,
 )
 
 
@@ -227,3 +228,141 @@ def test_lstm_configuration():
     assert model.configuration.epochs == 10
     assert model.configuration.learning_rate == 0.001
     assert model.configuration.optimizer == "adam"
+
+
+# ---------------------------------------------------------------------------
+# Tutorial example fixture-based tests (with TrainingDataset / TestDataset)
+# ---------------------------------------------------------------------------
+
+def _tutorial():
+    """Helper: load and process the tutorial_example fixture."""
+    return process_nn_diagram(load_fixture("tutorial_example.json"))
+
+
+def test_tutorial_returns_nn():
+    """process_nn_diagram returns an NN instance for the tutorial export."""
+    assert isinstance(_tutorial(), NN)
+
+
+def test_tutorial_name():
+    """Main NN is named NeuralNetwork."""
+    assert _tutorial().name == "NeuralNetwork"
+
+
+def test_tutorial_no_sub_nns():
+    """Tutorial example has no sub_nns (flat architecture)."""
+    assert len(_tutorial().sub_nns) == 0
+
+
+def test_tutorial_module_count():
+    """Tutorial example has 8 modules."""
+    assert len(_tutorial().modules) == 8
+
+
+def test_tutorial_layer_types():
+    """Tutorial example contains the expected layer types and counts."""
+    types = [type(m).__name__ for m in _tutorial().modules]
+    assert types.count("Conv2D") == 3
+    assert types.count("PoolingLayer") == 2
+    assert types.count("FlattenLayer") == 1
+    assert types.count("LinearLayer") == 2
+
+
+def test_tutorial_configuration():
+    """Configuration is parsed and attached to the tutorial model."""
+    model = _tutorial()
+    assert model.configuration is not None
+    assert model.configuration.batch_size == 32
+    assert model.configuration.epochs == 10
+    assert model.configuration.learning_rate == 0.001
+    assert model.configuration.optimizer == "adam"
+
+
+def test_tutorial_train_dataset():
+    """TrainingDataset is parsed with all attributes and attached via add_train_data."""
+    train = _tutorial().train_data
+    assert isinstance(train, Dataset)
+    assert train.name == "train_data"
+    assert train.path_data == "dataset/cifar10/train"
+    assert train.task_type == "multi_class"
+    assert train.input_format == "images"
+
+
+def test_tutorial_train_dataset_image():
+    """Training dataset with input_format=images has an Image with shape and normalize."""
+    image = _tutorial().train_data.image
+    assert isinstance(image, Image)
+    assert image.shape == [32, 32, 3]
+    assert image.normalize is False
+
+
+def test_tutorial_test_dataset():
+    """TestDataset with only mandatory attributes is parsed and attached via add_test_data."""
+    test = _tutorial().test_data
+    assert isinstance(test, Dataset)
+    assert test.name == "test_data"
+    assert test.path_data == "dataset/cifar10/test"
+    assert test.image is None
+
+
+# ---------------------------------------------------------------------------
+# Error-case tests for dataset parsing
+# ---------------------------------------------------------------------------
+
+def _dataset_element(attrs):
+    """Build a minimal TrainingDataset element + attribute children dict."""
+    elements = {}
+    attr_ids = []
+    for field, value in attrs.items():
+        aid = f"attr_{field}"
+        elements[aid] = {"attributeName": field, "value": value}
+        attr_ids.append(aid)
+    elements["ds1"] = {"type": "TrainingDataset", "attributes": attr_ids}
+    return elements["ds1"], elements
+
+
+def test_dataset_missing_name_raises():
+    """create_dataset raises ValueError when name attribute is missing."""
+    element, elements = _dataset_element({"path_data": "/data"})
+    with pytest.raises(ValueError, match="name"):
+        create_dataset(element, elements)
+
+
+def test_dataset_empty_name_raises():
+    """create_dataset raises ValueError when name is empty string."""
+    element, elements = _dataset_element({"name": "", "path_data": "/data"})
+    with pytest.raises(ValueError, match="name"):
+        create_dataset(element, elements)
+
+
+def test_dataset_missing_path_data_raises():
+    """create_dataset raises ValueError when path_data is missing."""
+    element, elements = _dataset_element({"name": "train"})
+    with pytest.raises(ValueError, match="path_data"):
+        create_dataset(element, elements)
+
+
+def test_dataset_empty_path_data_raises():
+    """create_dataset raises ValueError when path_data is empty string."""
+    element, elements = _dataset_element({"name": "train", "path_data": ""})
+    with pytest.raises(ValueError, match="path_data"):
+        create_dataset(element, elements)
+
+
+def test_dataset_invalid_shape_falls_back_to_default():
+    """Image shape parsing falls back to [256, 256] when the literal is malformed."""
+    element, elements = _dataset_element({
+        "name": "train", "path_data": "/d",
+        "input_format": "images", "shape": "not-a-list",
+    })
+    ds = create_dataset(element, elements)
+    assert ds.image.shape == [256, 256]
+
+
+def test_dataset_without_input_format_has_no_image():
+    """Dataset with no input_format (or non-images) has no image attached."""
+    element, elements = _dataset_element({
+        "name": "train", "path_data": "/d", "input_format": "csv",
+    })
+    ds = create_dataset(element, elements)
+    assert ds.image is None

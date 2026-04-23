@@ -22,9 +22,48 @@ from besser.BUML.metamodel.nn import (
     DropoutLayer,
     LayerNormLayer,
     BatchNormLayer,
+    Dataset,
+    Image,
 )
 import bisect
+import ast
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
+
+
+def _get_attr_by_name(element: dict, attr_name: str, elements: dict, default=None):
+    """Get an attribute value by its attributeName field (used for dataset elements)."""
+    for attr_id in element.get('attributes', []):
+        attr_el = elements.get(attr_id, {})
+        if attr_el.get('attributeName') == attr_name:
+            return attr_el.get('value', default)
+    return default
+
+
+def create_dataset(element: dict, elements: dict) -> Dataset:
+    """Create a Dataset (and optional Image) from a TrainingDataset/TestDataset element."""
+    name = _get_attr_by_name(element, 'name', elements)
+    if not name:
+        raise ValueError("Dataset missing mandatory 'name' attribute")
+    path_data = _get_attr_by_name(element, 'path_data', elements)
+    if not path_data:
+        raise ValueError("Dataset missing mandatory 'path_data' attribute")
+
+    task_type = _get_attr_by_name(element, 'task_type', elements) or None
+    input_format = _get_attr_by_name(element, 'input_format', elements) or None
+
+    image = None
+    if input_format == 'images':
+        shape_raw = _get_attr_by_name(element, 'shape', elements)
+        try:
+            shape = ast.literal_eval(shape_raw) if shape_raw else [256, 256]
+        except (ValueError, SyntaxError):
+            shape = [256, 256]
+        normalize_raw = _get_attr_by_name(element, 'normalize', elements)
+        normalize = str(normalize_raw).lower() == 'true' if normalize_raw is not None else False
+        image = Image(shape=shape, normalize=normalize)
+
+    return Dataset(name=name, path_data=path_data, task_type=task_type,
+                   input_format=input_format, image=image)
 
 
 def get_element_attribute(element: dict, attr_key: str, elements: dict, default=None):
@@ -476,6 +515,14 @@ def process_nn_diagram(json_data):
     # Add configuration to the main NN
     if configuration:
         main_nn.add_configuration(configuration)
+
+    # Step 7: Parse datasets (TrainingDataset / TestDataset) and attach to main NN
+    for element_id, element in elements.items():
+        element_type = element.get('type', '')
+        if element_type == 'TrainingDataset':
+            main_nn.add_train_data(create_dataset(element, elements))
+        elif element_type == 'TestDataset':
+            main_nn.add_test_data(create_dataset(element, elements))
 
     return main_nn
 

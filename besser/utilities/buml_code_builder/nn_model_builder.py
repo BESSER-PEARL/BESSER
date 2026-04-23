@@ -8,6 +8,7 @@ from besser.BUML.metamodel.nn import (
     SimpleRNNLayer, LSTMLayer, GRULayer,
     LinearLayer, FlattenLayer, EmbeddingLayer,
     DropoutLayer, LayerNormLayer, BatchNormLayer,
+    Dataset,
 )
 
 
@@ -36,6 +37,13 @@ def _collect_used_types(model: NN, used_types: set = None) -> set:
     # Check for Configuration
     if model.configuration:
         used_types.add('Configuration')
+
+    # Check for datasets
+    for ds in (getattr(model, 'train_data', None), getattr(model, 'test_data', None)):
+        if ds is not None:
+            used_types.add('Dataset')
+            if getattr(ds, 'image', None) is not None:
+                used_types.add('Image')
 
     # Check modules (layers and tensor_ops)
     for module in model.modules:
@@ -116,6 +124,16 @@ def nn_model_to_code(model: NN, file_path: str):
             f.write("# Configuration\n")
             _write_configuration(f, model.configuration, "config")
             f.write(f"{main_var}.add_configuration(config)\n\n")
+
+        # Datasets
+        if getattr(model, 'train_data', None) is not None:
+            f.write("# Training dataset\n")
+            _write_dataset(f, model.train_data, "train_data")
+            f.write(f"{main_var}.add_train_data(train_data)\n\n")
+        if getattr(model, 'test_data', None) is not None:
+            f.write("# Test dataset\n")
+            _write_dataset(f, model.test_data, "test_data")
+            f.write(f"{main_var}.add_test_data(test_data)\n\n")
 
 
 def _name_to_var(name: str) -> str:
@@ -437,6 +455,26 @@ def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
         params.append(f"input_reused={tensor_op.input_reused}")
 
     f.write(f"{var_name} = TensorOp({', '.join(params)})\n")
+
+
+def _write_dataset(f, dataset: Dataset, var_name: str):
+    """Write a Dataset (and optional Image) definition."""
+    if dataset.image is not None:
+        image = dataset.image
+        f.write(f"image = Image(shape={image.shape}, normalize={image.normalize})\n")
+    params = [
+        f"name='{dataset.name}'",
+        f"path_data='{dataset.path_data}'",
+    ]
+    task_type = getattr(dataset, 'task_type', None)
+    if task_type:
+        params.append(f"task_type='{task_type}'")
+    input_format = getattr(dataset, 'input_format', None)
+    if input_format:
+        params.append(f"input_format='{input_format}'")
+    if dataset.image is not None:
+        params.append("image=image")
+    f.write(f"{var_name} = Dataset({', '.join(params)})\n")
 
 
 def _write_configuration(f, config: Configuration, var_name: str):

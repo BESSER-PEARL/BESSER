@@ -1315,3 +1315,115 @@ class TestDomainModelBuilderAdvanced:
 
         assert "MethodImplementationType.CODE" in code
         assert "return 42" in code
+
+
+# ---------------------------------------------------------------------------
+# nn_model_builder.py
+# ---------------------------------------------------------------------------
+from besser.BUML.metamodel.nn import (
+    NN, Conv2D, LinearLayer, FlattenLayer, Configuration, Dataset, Image,
+)
+from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
+
+
+class TestNNModelBuilder:
+    """Tests for nn_model_to_code."""
+
+    @staticmethod
+    def _build_simple_nn():
+        nn = NN(name="SimpleNet")
+        nn.add_layer(Conv2D(name="c1", kernel_dim=[3, 3], out_channels=16, actv_func="relu"))
+        nn.add_layer(FlattenLayer(name="f1"))
+        nn.add_layer(LinearLayer(name="l1", out_features=10))
+        return nn
+
+    def test_generates_valid_python(self, tmp_path):
+        """Generated NN code compiles."""
+        nn = self._build_simple_nn()
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        compile(code, file_path, "exec")
+
+    def test_roundtrip_exec(self, tmp_path):
+        """Generated code produces an NN when executed."""
+        nn = self._build_simple_nn()
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        namespace = {}
+        exec(code, namespace)
+        recreated = namespace["simplenet"]
+        assert isinstance(recreated, NN)
+        assert recreated.name == "SimpleNet"
+        assert len(recreated.modules) == 3
+
+    def test_configuration_emitted(self, tmp_path):
+        """Configuration is written and attached via add_configuration."""
+        nn = self._build_simple_nn()
+        nn.add_configuration(Configuration(
+            batch_size=32, epochs=10, learning_rate=0.001,
+            optimizer="adam", loss_function="crossentropy", metrics=["accuracy"],
+        ))
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        assert "Configuration(" in code
+        assert "add_configuration(config)" in code
+
+    def test_train_dataset_emitted(self, tmp_path):
+        """Training dataset with an Image is written and attached via add_train_data."""
+        nn = self._build_simple_nn()
+        image = Image(shape=[32, 32, 3], normalize=False)
+        nn.add_train_data(Dataset(
+            name="train", path_data="/data/train",
+            task_type="multi_class", input_format="images", image=image,
+        ))
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        assert "Image(shape=[32, 32, 3]" in code
+        assert "Dataset(" in code
+        assert "add_train_data(train_data)" in code
+
+    def test_test_dataset_emitted(self, tmp_path):
+        """Minimal test dataset (no image) is written and attached via add_test_data."""
+        nn = self._build_simple_nn()
+        nn.add_test_data(Dataset(name="test", path_data="/data/test"))
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        assert "Dataset(name='test'" in code
+        assert "add_test_data(test_data)" in code
+        assert "image=image" not in code
+
+    def test_dataset_imports_emitted(self, tmp_path):
+        """Dataset and Image are present in the generated imports when needed."""
+        nn = self._build_simple_nn()
+        nn.add_train_data(Dataset(
+            name="t", path_data="/d", input_format="images",
+            image=Image(shape=[8, 8, 3], normalize=True),
+        ))
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        # First non-empty line should be the import block; Dataset + Image must appear in it
+        assert "Dataset" in code.split("\n")[1]
+        assert "Image" in code
+
+    def test_no_dataset_no_dataset_import(self, tmp_path):
+        """When NN has no datasets, Dataset/Image are not imported."""
+        nn = self._build_simple_nn()
+        file_path = str(tmp_path / "nn.py")
+        nn_model_to_code(nn, file_path)
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+        header = code.split(")")[0]  # first import block ends at ")"
+        assert "Dataset" not in header
+        assert "Image" not in header

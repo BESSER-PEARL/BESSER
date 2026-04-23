@@ -17,6 +17,42 @@ from besser.utilities.buml_code_builder.agent_model_builder import agent_model_t
 from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
 
 
+# Keys that represent system-level runtime settings (platform, LLM, intent
+# recognition, languages, API key). They do NOT in themselves warrant running
+# the personalization pipeline or emitting ``personalized_agent_model.py`` —
+# they are applied via normal template rendering. Personalization content
+# lives under ``personalizationMapping`` (new flow, per-user variants selected
+# at runtime), ``personalizationrules`` (legacy rules), or legacy top-level
+# fields like ``agentLanguage``/``agentStyle``/etc.
+_SYSTEM_ONLY_CONFIG_KEYS = frozenset({
+    "agentPlatform",
+    "intentRecognitionTechnology",
+    "llm",
+    "languages",
+    "openaiApiKey",
+    "openai_api_key",
+})
+
+
+def _config_has_personalization_content(config) -> bool:
+    """Return True when ``config`` contains fields that warrant running the
+    personalization pass (``configure_agent`` + ``personalized_agent_model.py``
+    emission). A config with only system-level runtime settings does not.
+    """
+    if not config or not isinstance(config, dict):
+        return False
+    if config.get("personalizationMapping"):
+        return True
+    if config.get("personalizationrules"):
+        return True
+    for key in config:
+        if key in _SYSTEM_ONLY_CONFIG_KEYS:
+            continue
+        if key in ("personalizationMapping", "personalizationrules"):
+            continue
+        return True
+    return False
+
 
 class GenerationMode(Enum):
     FULL = "full"
@@ -125,7 +161,11 @@ class BAFGenerator(GeneratorInterface):
         personalized_json_path = self.build_generation_path(file_name="personalized_agent_model.json")
         personalized_messages = {}
         config_for_personalization = dict(self.config) if self.config else None
-        if generate_personalized_assets and config_for_personalization and self.generation_mode != GenerationMode.CODE_ONLY:
+        if (
+            generate_personalized_assets
+            and _config_has_personalization_content(config_for_personalization)
+            and self.generation_mode != GenerationMode.CODE_ONLY
+        ):
             if 'personalizationrules' in config_for_personalization:
                 # Aaron: i don't this is used anymore, but leaving it here for now to check later when integrating the personalization
                 # personalize_agent(self.model, config_for_personalization['personalizationrules'], personalized_messages)

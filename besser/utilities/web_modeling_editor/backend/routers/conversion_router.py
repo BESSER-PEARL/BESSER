@@ -61,6 +61,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     extract_openai_api_key,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
+    generate_user_profile_document,
+)
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
 )
@@ -692,7 +695,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         config = deepcopy(base_config)
         user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
         if isinstance(user_profile_payload, dict):
-            config["userProfileModel"] = _generate_user_profile_document(user_profile_payload)
+            config["userProfileModel"] = generate_user_profile_document(user_profile_payload)
         elif isinstance(config, dict) and "userProfileModel" in config:
             config.pop("userProfileModel", None)
 
@@ -755,14 +758,3 @@ async def transform_agent_model_json(input_data: DiagramInput):
         }
 
 
-def _generate_user_profile_document(user_profile_model: dict) -> dict:
-    """Generate the normalized JSON document for a stored user profile diagram.
-
-    This is a local helper used by transform_agent_model_json. It delegates to
-    the generation router's implementation for the actual user profile generation.
-    """
-    # Import here to avoid circular imports at module level
-    from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
-        _generate_user_profile_document as _gen_user_profile_doc,
-    )
-    return _gen_user_profile_doc(user_profile_model)

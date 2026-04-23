@@ -43,6 +43,9 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_generatio
     extract_openai_api_key,
     normalize_personalization_mapping,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
+    generate_user_profile_document,
+)
 
 
 # Create router
@@ -194,13 +197,9 @@ async def deploy_webapp_to_github(
             # the same way the generation router does. Without this step the
             # BAF generator receives raw UML JSON for ``user_profile`` /
             # ``agent_model`` entries and falls back to the default chatbot.
-            # Local import to avoid a circular dependency with the router.
             if isinstance(agent_config, dict) and isinstance(agent_config.get("personalizationMapping"), list):
-                from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
-                    _generate_user_profile_document,
-                )
                 normalize_personalization_mapping(
-                    agent_config, agent_diagram_data, _generate_user_profile_document,
+                    agent_config, agent_diagram_data, generate_user_profile_document,
                 )
                 logger.info(
                     "[chatbot deploy] normalized %d personalization mapping entries",

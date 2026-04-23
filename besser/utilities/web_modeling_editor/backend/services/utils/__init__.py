@@ -24,6 +24,12 @@ from .agent_config_manual_mapping_utils import (
     get_manual_agent_config_mapping,
     build_manual_mapping_recommendation,
 )
+from .user_profile_utils import (
+    generate_user_profile_document,
+    normalize_user_model_output,
+    sanitize_object_model_filename,
+    safe_path,
+)
 
 __all__ = [
     "calculate_center_point",
@@ -40,4 +46,8 @@ __all__ = [
     "MANUAL_AGENT_CONFIG_MAPPING",
     "get_manual_agent_config_mapping",
     "build_manual_mapping_recommendation",
+    "generate_user_profile_document",
+    "normalize_user_model_output",
+    "sanitize_object_model_filename",
+    "safe_path",
 ]

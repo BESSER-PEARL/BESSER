@@ -1092,6 +1092,156 @@ class TestProjectGeneration:
 
 
 # ---------------------------------------------------------------------------
+# Recommendation Endpoints
+# ---------------------------------------------------------------------------
+
+class TestRecommendationEndpoints:
+    """Tests for recommendation-related endpoints."""
+
+    def test_recommend_agent_config_llm_success_normalizes_output(self, monkeypatch):
+        """LLM recommendation endpoint returns normalized config payload."""
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
+
+        def _fake_profile_document(_model):
+            return {"profile": {"age": 34, "notes": "test"}}
+
+        def _fake_call_openai_chat(*_args, **_kwargs):
+            return json.dumps(
+                {
+                    "presentation": {
+                        "agentLanguage": "klingon",
+                        "interfaceStyle": {
+                            "size": 200,
+                            "lineSpacing": 0,
+                            "alignment": "diagonal",
+                        },
+                    },
+                    "modality": {"inputModalities": ["speech"]},
+                    "content": {"adaptContentToUserProfile": True},
+                    "system": {
+                        "agentPlatform": "desktop_app",
+                        "llm": {"provider": "openai", "model": "gpt-5-mini"},
+                    },
+                }
+            )
+
+        monkeypatch.setattr(gr, "_generate_user_profile_document", _fake_profile_document)
+        monkeypatch.setattr(gr, "call_openai_chat", _fake_call_openai_chat)
+
+        payload = {
+            "userProfileModel": {"type": "UserDiagram", "elements": {}, "relationships": {}},
+            "userProfileName": "Alice",
+            "model": "gpt-5-mini",
+            "currentConfig": {},
+        }
+
+        response = client.post("/besser_api/recommend-agent-config-llm", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["source"] == "openai"
+        assert data["model"] == "gpt-5-mini"
+        assert "generatedAt" in data
+        assert data["config"]["content"]["userProfileName"] == "Alice"
+        # Clamped and sanitized by normalize_recommended_agent_config
+        assert data["config"]["presentation"]["interfaceStyle"]["size"] == 32
+        assert data["config"]["presentation"]["interfaceStyle"]["lineSpacing"] == 1
+        assert data["config"]["presentation"]["agentLanguage"] == "original"
+        assert data["config"]["system"]["agentPlatform"] == "streamlit"
+        assert data["config"]["modality"]["inputModalities"] == ["text", "speech"]
+
+    def test_recommend_agent_config_llm_invalid_payload_returns_400(self):
+        """LLM recommendation requires a userProfileModel object."""
+        response = client.post(
+            "/besser_api/recommend-agent-config-llm",
+            json={"userProfileName": "Alice"},
+        )
+        assert response.status_code == 400
+        assert "userProfileModel" in response.json().get("detail", "")
+
+    def test_recommend_agent_config_llm_parse_error_returns_502(self, monkeypatch):
+        """Invalid LLM text should surface as parse failure with 502."""
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
+
+        monkeypatch.setattr(gr, "_generate_user_profile_document", lambda _m: {"profile": {}})
+        monkeypatch.setattr(gr, "call_openai_chat", lambda *_args, **_kwargs: "not-json")
+
+        payload = {
+            "userProfileModel": {"type": "UserDiagram", "elements": {}, "relationships": {}},
+            "userProfileName": "Alice",
+        }
+        response = client.post("/besser_api/recommend-agent-config-llm", json=payload)
+        assert response.status_code == 502
+        assert "Failed to parse LLM recommendation response" in response.json().get("detail", "")
+
+    def test_recommend_agent_config_llm_runtime_error_returns_400(self, monkeypatch):
+        """Runtime errors from the LLM client should map to HTTP 400."""
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
+
+        def _raise_runtime_error(*_args, **_kwargs):
+            raise RuntimeError("Missing OpenAI API key")
+
+        monkeypatch.setattr(gr, "_generate_user_profile_document", lambda _m: {"profile": {}})
+        monkeypatch.setattr(gr, "call_openai_chat", _raise_runtime_error)
+
+        payload = {
+            "userProfileModel": {"type": "UserDiagram", "elements": {}, "relationships": {}},
+        }
+        response = client.post("/besser_api/recommend-agent-config-llm", json=payload)
+        assert response.status_code == 400
+        assert "Missing OpenAI API key" in response.json().get("detail", "")
+
+    def test_agent_config_manual_mapping_success(self):
+        """Manual mapping endpoint returns mapping metadata."""
+        response = client.get("/besser_api/agent-config-manual-mapping")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["source"] == "manual_mapping"
+        assert "generatedAt" in data
+        assert "mapping" in data
+        assert "rules" in data["mapping"]
+        assert isinstance(data["mapping"]["rules"], list)
+
+    def test_recommend_agent_config_mapping_success(self, monkeypatch):
+        """Manual recommendation endpoint returns config and matching metadata."""
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
+
+        monkeypatch.setattr(gr, "_generate_user_profile_document", lambda _m: {"profile": {"age": 70}})
+
+        def _fake_manual_mapping(*_args, **_kwargs):
+            return {
+                "config": {"behavior": {"responseTiming": "instant"}},
+                "matchedRules": [{"id": "older_adults_readability"}],
+                "signals": {"age": 70},
+            }
+
+        monkeypatch.setattr(gr, "build_manual_mapping_recommendation", _fake_manual_mapping)
+
+        payload = {
+            "userProfileModel": {"type": "UserDiagram", "elements": {}, "relationships": {}},
+            "userProfileName": "Bob",
+            "currentConfig": {},
+        }
+
+        response = client.post("/besser_api/recommend-agent-config-mapping", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["source"] == "manual_mapping"
+        assert data["config"]["behavior"]["responseTiming"] == "instant"
+        assert data["matchedRules"][0]["id"] == "older_adults_readability"
+        assert data["signals"]["age"] == 70
+
+    def test_recommend_agent_config_mapping_invalid_payload_returns_400(self):
+        """Manual recommendation endpoint validates userProfileModel presence/type."""
+        response = client.post(
+            "/besser_api/recommend-agent-config-mapping",
+            json={"userProfileName": "Bob"},
+        )
+        assert response.status_code == 400
+        assert "userProfileModel" in response.json().get("detail", "")
+
+
+# ---------------------------------------------------------------------------
 # Feedback Endpoint -- POST /besser_api/feedback
 # ---------------------------------------------------------------------------
 

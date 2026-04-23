@@ -24,12 +24,21 @@ from .agent_config_manual_mapping_utils import (
     get_manual_agent_config_mapping,
     build_manual_mapping_recommendation,
 )
-from .user_profile_utils import (
-    generate_user_profile_document,
-    normalize_user_model_output,
-    sanitize_object_model_filename,
-    safe_path,
-)
+
+# NOTE: ``user_profile_utils`` is intentionally NOT re-exported here.
+# It imports ``backend.config`` (for ``get_generator_info``), which in turn
+# imports ``BAFGenerator`` — and BAFGenerator imports ``services.converters``.
+# Because ``services/converters/__init__.py`` itself imports from
+# ``services.utils`` (for the layout helpers), eagerly loading
+# ``user_profile_utils`` at package import time closes that loop and raises
+# ``ImportError: cannot import name 'agent_buml_to_json' from partially
+# initialized module 'services.converters'``.
+#
+# Consumers that need the user-profile helpers import them directly from the
+# submodule:
+#
+#     from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils \
+#         import generate_user_profile_document
 
 __all__ = [
     "calculate_center_point",
@@ -46,8 +55,4 @@ __all__ = [
     "MANUAL_AGENT_CONFIG_MAPPING",
     "get_manual_agent_config_mapping",
     "build_manual_mapping_recommendation",
-    "generate_user_profile_document",
-    "normalize_user_model_output",
-    "sanitize_object_model_filename",
-    "safe_path",
 ]

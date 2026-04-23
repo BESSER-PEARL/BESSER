@@ -311,6 +311,72 @@ class TestDomainModelBuilder:
         enum_names = {t.name for t in recreated.types if isinstance(t, Enumeration)}
         assert "Color" in enum_names
 
+    def test_is_id_roundtrip(self, tmp_path):
+        """is_id flag must survive domain_model_to_code -> exec round-trip.
+
+        Regression guard for the is_id propagation work (issue #468 / PR #486):
+        the builder previously emitted Property(...) without is_id, so a model
+        exported to code and re-executed would silently lose the flag.
+        """
+        isbn = Property(name="isbn", type=StringType, is_id=True)
+        title = Property(name="title", type=StringType)
+        book = Class(name="Book", attributes={isbn, title})
+        model = DomainModel(name="Shop", types={book}, associations=set())
+
+        file_path = str(tmp_path / "is_id_model.py")
+        domain_model_to_code(model, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # The generated code must contain is_id=True on the PK attribute
+        # and must NOT attach it to the non-PK attribute.
+        assert 'name="isbn"' in code and "is_id=True" in code
+        isbn_line = next(line for line in code.splitlines() if 'name="isbn"' in line)
+        title_line = next(line for line in code.splitlines() if 'name="title"' in line)
+        assert "is_id=True" in isbn_line
+        assert "is_id=True" not in title_line
+
+        namespace: dict = {}
+        exec(code, namespace)
+        recreated = namespace["domain_model"]
+        recreated_book = recreated.get_class_by_name("Book")
+        attrs = {a.name: a for a in recreated_book.attributes}
+        assert attrs["isbn"].is_id is True
+        assert attrs["title"].is_id is False
+
+    def test_is_external_id_roundtrip(self, tmp_path):
+        """is_external_id flag must survive domain_model_to_code round-trip.
+
+        Supports user-facing identifiers distinct from the surrogate PK
+        (issue #230 / #225). A class may carry both an internal ``is_id``
+        and one or more ``is_external_id`` attributes.
+        """
+        pk = Property(name="id", type=IntegerType, is_id=True)
+        isbn = Property(name="isbn", type=StringType, is_external_id=True)
+        title = Property(name="title", type=StringType)
+        book = Class(name="Book", attributes={pk, isbn, title})
+        model = DomainModel(name="Shop", types={book}, associations=set())
+
+        file_path = str(tmp_path / "ext_id_model.py")
+        domain_model_to_code(model, file_path)
+
+        with open(file_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        isbn_line = next(line for line in code.splitlines() if 'name="isbn"' in line)
+        title_line = next(line for line in code.splitlines() if 'name="title"' in line)
+        assert "is_external_id=True" in isbn_line
+        assert "is_external_id=True" not in title_line
+
+        namespace: dict = {}
+        exec(code, namespace)
+        recreated = namespace["domain_model"]
+        attrs = {a.name: a for a in recreated.get_class_by_name("Book").attributes}
+        assert attrs["isbn"].is_external_id is True
+        assert attrs["id"].is_id is True and attrs["id"].is_external_id is False
+        assert attrs["title"].is_external_id is False
+
     def test_generalization(self, tmp_path):
         """Generalization relationships are generated."""
         animal = Class(name="Animal")

@@ -48,7 +48,9 @@ def agent_model_to_code(model: Agent, file_path: str, model_var_name: str = "age
             "from besser.BUML.metamodel.state_machine.agent import "
             "Agent, AgentReply, LLMReply, RAGReply, DBReply, "
             "LLMOpenAI, LLMHuggingFace, LLMHuggingFaceAPI, LLMReplicate, "
-            "RAGVectorStore, RAGTextSplitter\n"
+            "RAGVectorStore, RAGTextSplitter, "
+            "ReceiveTextEvent, ReceiveFileEvent, ReceiveJSONEvent, "
+            "ReceiveMessageEvent, WildcardEvent, DummyEvent\n"
         )
         f.write("from besser.BUML.metamodel.structural import Metadata\n")
         f.write("import operator\n\n")

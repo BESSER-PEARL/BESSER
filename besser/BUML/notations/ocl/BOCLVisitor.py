@@ -1,4 +1,4 @@
-# Generated from BOCL.g4 by ANTLR 4.13.1
+# Generated from BOCL.g4 by ANTLR 4.13.2
 from antlr4 import *
 if "." in __name__:
     from .BOCLParser import BOCLParser
@@ -226,6 +226,11 @@ class BOCLVisitor(ParseTreeVisitor):
 
     # Visit a parse tree produced by BOCLParser#arrowPrepend.
     def visitArrowPrepend(self, ctx:BOCLParser.ArrowPrependContext):
+        return self.visitChildren(ctx)
+
+
+    # Visit a parse tree produced by BOCLParser#dotSizeNavigation.
+    def visitDotSizeNavigation(self, ctx:BOCLParser.DotSizeNavigationContext):
         return self.visitChildren(ctx)
 
 

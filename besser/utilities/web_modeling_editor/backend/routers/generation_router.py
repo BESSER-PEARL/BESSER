@@ -157,10 +157,18 @@ def generate_agent_files(
             generator_class = generator_info.generator_class
             openai_api_key = extract_openai_api_key(config)
 
+            # Pin the generator to this request's temp dir. Without this, the
+            # base GeneratorInterface falls back to "<CWD>/output", which (a)
+            # leaks artifacts across concurrent requests and (b) means the
+            # harvester below walks an empty temp_dir/output and ships a zip
+            # containing only the raw agent_model.py.
+            generator_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
+
             # Use the BAFGenerator with the agent model from the module
             if hasattr(agent_module, 'agent'):
                 generator = generator_class(
                     agent_module.agent,
+                    output_dir=generator_output_dir,
                     config=config,
                     openai_api_key=openai_api_key,
                     generation_mode=generation_mode,
@@ -169,6 +177,7 @@ def generate_agent_files(
                 # Fall back to the original agent model
                 generator = generator_class(
                     agent_model,
+                    output_dir=generator_output_dir,
                     config=config,
                     openai_api_key=openai_api_key,
                     generation_mode=generation_mode,

@@ -86,6 +86,11 @@ expression
     | expression DOT OCLISKINDOF LPAREN typeRef RPAREN                              #dotOclIsKindOf
     | expression DOT ID LPAREN argList? RPAREN                                      #dotMethodCall
     | expression DOT ID                                                             #dotNavigation
+    // Fallback: `size` is also a valid attribute name when no parens follow.
+    // ANTLR's longest-match keeps `dotSize` (`.size()`) winning when parens are
+    // present, so `collection->size()` and `string.size()` still parse.
+    // See BESSER-PEARL/BESSER#198.
+    | expression DOT SIZE                                                           #dotSizeNavigation
 
     // --- Postfix: arrow operations ---
     | expression ARROW iteratorOp LPAREN iteratorVarDecl PIPE expression RPAREN     #arrowIterator

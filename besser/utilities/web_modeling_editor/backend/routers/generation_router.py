@@ -160,7 +160,8 @@ async def recommend_agent_config_llm(payload: Dict[str, Any] = Body(...)):
     )
 
     try:
-        recommendation_text = call_openai_chat(
+        recommendation_text = await asyncio.to_thread(
+            call_openai_chat,
             system_prompt,
             user_prompt,
             model=llm_model,

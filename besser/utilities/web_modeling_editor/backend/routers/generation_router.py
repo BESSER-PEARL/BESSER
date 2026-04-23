@@ -262,6 +262,9 @@ async def generate_code_output_from_project(input_data: ProjectInput):
     if generator_type == "web_app":
         return await _handle_web_app_project_generation(input_data, generator_info, config)
 
+    # Handle MATLAB GUI generator (requires both ClassDiagram and GUINoCodeDiagram)
+    if generator_type == "matlab_gui":
+        return await _handle_matlab_gui_project_generation(input_data, config)
     # Handle Qiskit generator (requires QuantumCircuitDiagram)
     if generator_type == "qiskit":
         quantum_diagram = input_data.get_active_diagram("QuantumCircuitDiagram")
@@ -363,7 +366,48 @@ async def generate_code_output(input_data: DiagramInput):
         return await _handle_class_diagram_generation(
             json_data, generator_type, generator_info, input_data.config, temp_dir
         )
+@handle_endpoint_errors("_handle_matlab_gui_project_generation")
+async def _handle_matlab_gui_project_generation(input_data: ProjectInput, config: dict):
+    """
+    Handle MATLAB GUI generation from a complete project.
+    Requires both a GUINoCodeDiagram and the ClassDiagram it references.
+    """
+    # Get the active GUI diagram — same pattern as web_app
+    gui_diagram = input_data.get_active_diagram("GUINoCodeDiagram")
+    if not gui_diagram:
+        raise HTTPException(
+            status_code=400,
+            detail="GUINoCodeDiagram is required for MATLAB GUI generator"
+        )
 
+    # Get the ClassDiagram referenced by the GUI diagram — same pattern as web_app
+    class_diagram = input_data.get_referenced_diagram(gui_diagram, "ClassDiagram")
+    if not class_diagram:
+        raise HTTPException(
+            status_code=400,
+            detail="ClassDiagram is required for MATLAB GUI generator"
+        )
+
+    with tempfile.TemporaryDirectory(prefix=TEMP_DIR_PREFIX) as temp_dir:
+        # Convert JSON → B-UML models using the existing converters
+        domain_model = process_class_diagram(class_diagram.model_dump())
+        gui_model    = process_gui_diagram(
+            gui_diagram.model,
+            class_diagram.model,
+            domain_model,
+        )
+
+        # Run the MATLAB GUI generator
+        from besser.generators.matlab_gui import MatlabGuiGenerator
+        generator = MatlabGuiGenerator(
+            model=domain_model,
+            gui_model=gui_model,
+            output_dir=temp_dir,
+        )
+        await asyncio.to_thread(generator.generate)
+
+        # Return as ZIP — same pattern as _generate_web_app
+        return _create_zip_response(temp_dir, "matlab_gui")
 
 @handle_endpoint_errors("_handle_web_app_project_generation")
 async def _handle_web_app_project_generation(input_data: ProjectInput, generator_info, config: dict):

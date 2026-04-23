@@ -19,6 +19,7 @@ from besser.generators.rest_api import RESTAPIGenerator
 from besser.generators.react import ReactGenerator
 from besser.generators.flutter import FlutterGenerator
 from besser.generators.terraform import TerraformGenerator
+from besser.generators.matlab_gui import MatlabGuiGenerator
 try:
     from besser.generators.nn.pytorch.pytorch_code_generator import PytorchGenerator
 except ImportError:
@@ -86,6 +87,13 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="web_framework",
         requires_class_diagram=True
     ),
+    "matlab_gui": GeneratorInfo(
+            generator_class=MatlabGuiGenerator,
+            output_type="zip",
+            file_extension=".zip",
+            category="web_framework",       # same category as web_app
+            requires_class_diagram=True
+        ),
 
     # Database generators (class diagram based)
     "sqlalchemy": GeneratorInfo(

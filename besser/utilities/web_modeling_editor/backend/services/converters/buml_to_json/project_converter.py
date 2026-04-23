@@ -318,6 +318,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
         "StateMachineDiagram": "StateMachineDiagram",
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
+        "NNDiagram": "NNDiagram",
     }
 
     for diagram_type, model_type in diagram_defaults.items():

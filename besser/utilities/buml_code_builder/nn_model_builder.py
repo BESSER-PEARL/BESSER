@@ -10,11 +10,12 @@ from besser.BUML.metamodel.nn import (
     DropoutLayer, LayerNormLayer, BatchNormLayer,
     Dataset,
 )
+from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
 
 
 def _is_attr_set(layer, attr_name: str) -> bool:
-    """Check if a boolean attribute was explicitly set (ticked) in the editor."""
-    return attr_name in getattr(layer, '_set_attrs', set())
+    """Check if an attribute was explicitly set (ticked/entered) in the editor."""
+    return is_explicit(layer, attr_name)
 
 
 def _collect_used_types(model: NN, used_types: set = None) -> set:
@@ -299,7 +300,7 @@ def _write_rnn_like(f, layer, var_name: str):
         params.append(f"return_type='{layer.return_type}'")
     if _is_attr_set(layer, 'bidirectional'):
         params.append(f"bidirectional={layer.bidirectional}")
-    if layer.dropout:
+    if _is_attr_set(layer, 'dropout'):
         params.append(f"dropout={layer.dropout}")
     if _is_attr_set(layer, 'batch_first'):
         params.append(f"batch_first={layer.batch_first}")
@@ -450,8 +451,8 @@ def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
         if tensor_op.permute_dim:
             params.append(f"permute_dim={tensor_op.permute_dim}")
 
-    # input_reused is optional for all types - only output if explicitly set to True
-    if tensor_op.input_reused:
+    # input_reused is optional for all types - only output when explicitly set
+    if _is_attr_set(tensor_op, 'input_reused'):
         params.append(f"input_reused={tensor_op.input_reused}")
 
     f.write(f"{var_name} = TensorOp({', '.join(params)})\n")
@@ -487,9 +488,13 @@ def _write_configuration(f, config: Configuration, var_name: str):
         f"loss_function='{config.loss_function}'",
         f"metrics={config.metrics}",
     ]
-    if config.weight_decay:
+    if _is_attr_set(config, 'weight_decay') or (
+        config.weight_decay is not None and config.weight_decay != 0
+    ):
         params.append(f"weight_decay={config.weight_decay}")
-    if config.momentum:
+    if _is_attr_set(config, 'momentum') or (
+        config.momentum is not None and config.momentum != 0
+    ):
         params.append(f"momentum={config.momentum}")
 
     f.write(f"{var_name} = Configuration({', '.join(params)})\n")

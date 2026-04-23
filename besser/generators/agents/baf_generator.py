@@ -13,6 +13,7 @@ from besser.generators import GeneratorInterface
 from besser.generators.agents.agent_personalization import configure_agent, flatten_agent_config_structure
 
 # BESSER utilities
+from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.web_modeling_editor.backend.services.converters import agent_buml_to_json
 
 
@@ -138,7 +139,7 @@ class BAFGenerator(GeneratorInterface):
 
             # Persist personalized agent python for downstream conversion
             # removed for current release
-            # agent_model_to_code(self.model, personalized_agent_path)
+            agent_model_to_code(self.model, personalized_agent_path)
 
             # Also emit JSON representation of personalized agent
             # removed for current release, but leaving code here for now to check later when integrating the personalization

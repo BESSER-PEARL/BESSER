@@ -90,7 +90,7 @@ def check_ocl_constraint(domain_model, object_model = None):
                         valid_constraints.append(f"✅ '{constraint.expression}'")
                     except BOCLSyntaxError as syntax_err:
                         invalid_constraints.append(
-                            f"❌ '{constraint.expression}' - Error: Invalid OCL syntax: {syntax_err}"
+                            f"❌ '{constraint.expression}' - {syntax_err}"
                         )
                 else:
                     # Check if there are instances of the context class in the object model

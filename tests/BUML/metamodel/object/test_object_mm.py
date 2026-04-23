@@ -113,3 +113,18 @@ def test_object_model_validation_detects_multiplicity_violation():
     message = str(excinfo.value)
     assert "multiplicity" in message
     assert "owns" in message or "owner" in message
+
+
+def test_object_completeness_warning_only_for_classes_with_attributes():
+    class_with_attrs = Class(name="ClassWithAttrs", attributes={Property(name="name", type=StringType)})
+    class_without_attrs = Class(name="ClassWithoutAttrs", attributes=set())
+
+    obj_with_attrs = Object(name="obj_with_attrs", classifier=class_with_attrs, slots=[])
+    obj_without_attrs = Object(name="obj_without_attrs", classifier=class_without_attrs, slots=[])
+
+    model = ObjectModel(name="CompletenessModel", objects={obj_with_attrs, obj_without_attrs})
+    result = model.validate(raise_exception=False)
+
+    assert len(result["warnings"]) == 1
+    assert "obj_with_attrs" in result["warnings"][0]
+    assert "obj_without_attrs" not in result["warnings"][0]

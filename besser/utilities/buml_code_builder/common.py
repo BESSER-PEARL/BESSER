@@ -58,7 +58,7 @@ def safe_var_name(name: str) -> str:
     # Remove consecutive underscores
     while '__' in safe_name:
         safe_name = safe_name.replace('__', '_')
-    safe_name = safe_name.strip('_').lower() or "unnamed"
+    safe_name = safe_name.strip('_') or "unnamed"
     if keyword.iskeyword(safe_name):
         safe_name = f"{safe_name}_"
     return safe_name

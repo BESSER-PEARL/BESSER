@@ -589,7 +589,16 @@ class ObjectModel(NamedElement):
     def _validate_object_completeness(self, warnings: list[str]):
         """Warn about objects with no attribute values defined."""
         for obj in self.__objects:
-            if not obj.slots:
+            classifier = obj.classifier
+            class_attributes = set(getattr(classifier, "attributes", set()))
+            inherited_attributes = (
+                classifier.inherited_attributes()
+                if hasattr(classifier, "inherited_attributes")
+                else set()
+            )
+            all_attributes = class_attributes | set(inherited_attributes)
+
+            if all_attributes and not obj.slots:
                 warnings.append(
                     f"Object '{obj.name_}' of class '{obj.classifier.name}' has no attribute values defined."
                 )

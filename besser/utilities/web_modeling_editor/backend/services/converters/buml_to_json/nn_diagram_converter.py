@@ -627,11 +627,30 @@ def _parse_nn_buml_ast(content: str, nn_module):
                 return allowed_classes[node.id]
             raise ValueError(f"Unknown name in NN BUML: {node.id!r}")
         if isinstance(node, (ast.List, ast.Tuple)):
+            for e in node.elts:
+                if isinstance(e, ast.Starred):
+                    raise ValueError(
+                        "Iterable unpacking (*expr) is not supported "
+                        "in NN BUML literals."
+                    )
             return [_eval(e, env) for e in node.elts]
         if isinstance(node, ast.Dict):
+            # ``{**other}`` encodes as a Dict whose key is ``None``.
+            for k in node.keys:
+                if k is None:
+                    raise ValueError(
+                        "Dict unpacking (**expr) is not supported "
+                        "in NN BUML literals."
+                    )
             return {_eval(k, env): _eval(v, env)
                     for k, v in zip(node.keys, node.values)}
         if isinstance(node, ast.Set):
+            for e in node.elts:
+                if isinstance(e, ast.Starred):
+                    raise ValueError(
+                        "Iterable unpacking (*expr) is not supported "
+                        "in NN BUML literals."
+                    )
             return {_eval(e, env) for e in node.elts}
         if isinstance(node, ast.Call):
             # Only allow calls whose callable is a whitelisted metamodel
@@ -756,7 +775,20 @@ def nn_buml_to_json(content: str) -> Dict[str, Any]:
     if not all_nns:
         raise ValueError("No NN instance found in the NN BUML content")
 
-    referenced = {id(s) for nn in all_nns for s in nn.sub_nns}
+    # Build the `referenced` set transitively — every NN that appears anywhere
+    # in any NN's sub_nns tree, not just direct children. Without this, a
+    # grandchild sub-NN bound to a local variable (``c = NN(...)`` inside a
+    # BUML file where only ``a.add_sub_nn(b); b.add_sub_nn(c)`` appears)
+    # would be counted as top-level and trigger the multi-top-level error.
+    referenced: set = set()
+    _walk_stack = list(all_nns)
+    while _walk_stack:
+        nn = _walk_stack.pop()
+        for sub in getattr(nn, 'sub_nns', ()) or ():
+            if id(sub) in referenced:
+                continue
+            referenced.add(id(sub))
+            _walk_stack.append(sub)
     main_nns = [nn for nn in all_nns if id(nn) not in referenced]
     if len(main_nns) > 1:
         # Symmetric with the processor (which already rejects this case);

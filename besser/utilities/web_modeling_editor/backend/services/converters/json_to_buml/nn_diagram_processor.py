@@ -89,7 +89,12 @@ def create_dataset(element: dict, elements: dict) -> Dataset:
     image = None
     shape_raw = _get_attr_by_name(element, 'shape', elements)
     normalize_raw = _get_attr_by_name(element, 'normalize', elements)
-    if shape_raw is not None or normalize_raw is not None or input_format == 'images':
+    # Treat empty strings as absent (user cleared the field). Otherwise the
+    # fall-through path below would attach a default Image(shape=[256,256])
+    # to a Dataset the user didn't intend to have one.
+    shape_present = shape_raw is not None and shape_raw != ''
+    normalize_present = normalize_raw is not None and str(normalize_raw) != ''
+    if shape_present or normalize_present or input_format == 'images':
         if shape_raw is None or shape_raw == '':
             # Documented default; downstream generators treat it as "user
             # didn't specify". Keep as-is to avoid breaking existing models
@@ -317,7 +322,16 @@ def parse_float(value, default=None):
             ) from exc
     try:
         return float(value)
-    except (ValueError, TypeError):
+    except TypeError as exc:
+        # Non-string, non-numeric payload (list/dict/etc. from a broken
+        # frontend). Surface a clear error rather than silently returning
+        # the default — the mandatory-attribute check would otherwise
+        # fire with a misleading "missing" message.
+        raise ValueError(
+            f"{type(value).__name__} value is not a valid number "
+            f"— expected a float"
+        ) from exc
+    except ValueError:
         return default
 
 

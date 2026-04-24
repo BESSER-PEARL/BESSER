@@ -1935,6 +1935,42 @@ class TestNNDiagramRoundtrip:
         with pytest.raises(ValueError, match=r"invalid tns_type.*Allowed values"):
             process_nn_diagram(payload)
 
+    def test_conv_permute_in_false_explicitly_marked(self):
+        """permute_in=False must round-trip via the sidecar too — an
+        explicit False is semantically different from "unset" and must
+        reach the generator."""
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
+        payload = self._single_layer_json('Conv2DLayer', [
+            ('Conv2D', 'name', 'c1'),
+            ('Conv2D', 'kernel_dim', '[3, 3]'),
+            ('Conv2D', 'out_channels', '16'),
+            ('Conv2D', 'permute_in', 'false'),
+        ])
+        nn = process_nn_diagram(payload)
+        convs = [m for m in nn.modules if type(m).__name__ == 'Conv2D']
+        assert convs and convs[0].permute_in is False
+        assert is_explicit(convs[0], 'permute_in'), \
+            "explicit False must be tracked via mark_explicit too"
+
+    def test_sibling_sub_nn_same_name_emits_distinct_containers(self):
+        """Two sibling sub-NNs with identical display names must emit
+        distinct containers — pins the iter-17 id-keyed sub_nn_ids fix."""
+        from besser.BUML.metamodel.nn import NN, LinearLayer
+        # Build the NN directly (testing the converter side)
+        nn = NN(name='Parent')
+        block_a = NN(name='Block')
+        block_a.add_layer(LinearLayer(name='a_lin', out_features=4))
+        block_b = NN(name='Block')
+        block_b.add_layer(LinearLayer(name='b_lin', out_features=8))
+        nn.add_sub_nn(block_a)
+        nn.add_sub_nn(block_b)
+        out = nn_model_to_json(nn)
+        containers = _extract_elements_by_type(out, 'NNContainer')
+        # Parent + 2 sibling sub-NN containers = 3
+        assert len(containers) == 3, (
+            f'expected 3 containers (parent + 2 same-named sub-NNs), got {len(containers)}'
+        )
+
     def test_parse_float_rejects_european_decimal(self):
         """parse_float with '0,5' (European comma) raises rather than
         silently returning the default."""

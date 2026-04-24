@@ -1644,3 +1644,124 @@ class TestNNDiagramRoundtrip:
         }
         with pytest.raises(ValueError, match=r"Conv3D.*volume.*kernel_dim.*expected 3"):
             process_nn_diagram(payload)
+
+    @staticmethod
+    def _single_layer_json(layer_type: str, attrs: list, rels: dict = None):
+        """Build a minimal NN diagram with a single layer of the given type.
+
+        ``attrs`` is a list of (suffix, attributeName, value) tuples. Each
+        becomes an attribute element owned by the layer.
+        """
+        layer_id = 'L'
+        attr_elements = {}
+        attr_ids = []
+        for idx, (suffix, aname, avalue) in enumerate(attrs):
+            aid = f'a{idx}'
+            attr_ids.append(aid)
+            attr_elements[aid] = {
+                'id': aid,
+                'type': f'{aname.title().replace("_", "")}Attribute{suffix}'.replace(' ', ''),
+                'attributeName': aname,
+                'value': avalue,
+                'owner': layer_id,
+            }
+        return {
+            'title': 'single',
+            'model': {
+                'type': 'NNDiagram', 'version': '3.0.0',
+                'size': {'width': 800, 'height': 400},
+                'elements': {
+                    'c': {'id': 'c', 'type': 'NNContainer', 'name': 'net', 'owner': None,
+                          'bounds': {'x': 0, 'y': 0, 'width': 400, 'height': 200}},
+                    layer_id: {'id': layer_id, 'type': layer_type, 'name': layer_type, 'owner': 'c',
+                               'bounds': {'x': 20, 'y': 60, 'width': 110, 'height': 110},
+                               'attributes': attr_ids, 'methods': []},
+                    **attr_elements,
+                },
+                'relationships': rels or {},
+                'interactive': {'elements': {}, 'relationships': {}},
+                'assessments': {},
+            },
+        }
+
+    def test_lstm_roundtrip(self):
+        payload = self._single_layer_json('LSTMLayer', [
+            ('LSTM', 'name', 'lstm1'),
+            ('LSTM', 'hidden_size', '128'),
+            ('LSTM', 'input_size', '64'),
+            ('LSTM', 'return_type', 'last'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        lstm = _extract_elements_by_type(out, 'LSTMLayer')
+        assert lstm, 'LSTMLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in lstm[0]['attributes']}
+        assert attrs.get('name') == 'lstm1'
+        assert attrs.get('hidden_size') == '128'
+        assert attrs.get('input_size') == '64'
+        assert attrs.get('return_type') == 'last'
+
+    def test_gru_roundtrip(self):
+        payload = self._single_layer_json('GRULayer', [
+            ('GRU', 'name', 'gru1'),
+            ('GRU', 'hidden_size', '32'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        gru = _extract_elements_by_type(out, 'GRULayer')
+        assert gru, 'GRULayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in gru[0]['attributes']}
+        assert attrs.get('name') == 'gru1'
+        assert attrs.get('hidden_size') == '32'
+
+    def test_embedding_roundtrip(self):
+        payload = self._single_layer_json('EmbeddingLayer', [
+            ('Embedding', 'name', 'emb'),
+            ('Embedding', 'num_embeddings', '1000'),
+            ('Embedding', 'embedding_dim', '64'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        emb = _extract_elements_by_type(out, 'EmbeddingLayer')
+        assert emb, 'EmbeddingLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in emb[0]['attributes']}
+        assert attrs.get('num_embeddings') == '1000'
+        assert attrs.get('embedding_dim') == '64'
+
+    def test_batchnorm_roundtrip(self):
+        payload = self._single_layer_json('BatchNormalizationLayer', [
+            ('BatchNormalization', 'name', 'bn'),
+            ('BatchNormalization', 'num_features', '64'),
+            ('BatchNormalization', 'dimension', '2D'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        bn = _extract_elements_by_type(out, 'BatchNormalizationLayer')
+        assert bn, 'BatchNormalizationLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in bn[0]['attributes']}
+        assert attrs.get('num_features') == '64'
+        assert attrs.get('dimension') == '2D'
+
+    def test_layernorm_roundtrip(self):
+        payload = self._single_layer_json('LayerNormalizationLayer', [
+            ('LayerNormalization', 'name', 'ln'),
+            ('LayerNormalization', 'normalized_shape', '[32, 32]'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        ln = _extract_elements_by_type(out, 'LayerNormalizationLayer')
+        assert ln, 'LayerNormalizationLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ln[0]['attributes']}
+        assert attrs.get('normalized_shape') == '[32, 32]'
+
+    def test_dropout_roundtrip(self):
+        payload = self._single_layer_json('DropoutLayer', [
+            ('Dropout', 'name', 'drop'),
+            ('Dropout', 'rate', '0.5'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        drop = _extract_elements_by_type(out, 'DropoutLayer')
+        assert drop, 'DropoutLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in drop[0]['attributes']}
+        assert attrs.get('rate') == '0.5'

@@ -94,10 +94,23 @@ SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'a
 
 
 def _safe_path(base_dir: str, user_filename: str) -> str:
-    """Resolve a user-provided filename safely within base_dir."""
+    """Resolve a user-provided filename safely within ``base_dir``.
+
+    Uses ``os.path.commonpath`` rather than ``startswith``: a simple prefix
+    check returns a false positive when two directories share a prefix
+    (e.g. ``/tmp/besser_abc`` vs ``/tmp/besser_abcd``). ``commonpath``
+    respects actual path boundaries. The caller-side ``os.path.basename``
+    already strips directory separators; this is defense in depth.
+    """
     safe_name = os.path.basename(user_filename)
-    full_path = os.path.realpath(os.path.join(base_dir, safe_name))
-    if not full_path.startswith(os.path.realpath(base_dir)):
+    real_base = os.path.realpath(base_dir)
+    full_path = os.path.realpath(os.path.join(real_base, safe_name))
+    try:
+        common = os.path.commonpath([full_path, real_base])
+    except ValueError:
+        # Paths on different drives (Windows) — not inside base_dir.
+        raise ValueError("Invalid path")
+    if common != real_base:
         raise ValueError("Invalid path")
     return full_path
 

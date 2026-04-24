@@ -47,6 +47,7 @@ _ALLOWED_METRICS = ('accuracy', 'precision', 'recall', 'f1-score', 'mae')
 _ALLOWED_TNS_TYPES = (
     'concatenate', 'multiply', 'matmultiply', 'reshape', 'transpose', 'permute',
 )
+_ALLOWED_PADDING_TYPES = ('same', 'valid')
 _CONV_EXPECTED_DIMS = {'Conv1D': 1, 'Conv2D': 2, 'Conv3D': 3}
 
 
@@ -901,6 +902,12 @@ def _create_conv_layer(element, elements, conv_class, default_stride):
 
     padding_type = get_element_attribute(element, 'PaddingTypeAttribute', elements)
     if padding_type:
+        if padding_type not in _ALLOWED_PADDING_TYPES:
+            raise ValueError(
+                f"{class_name} layer '{name}' has invalid padding_type "
+                f"'{padding_type}'. Allowed values: "
+                f"{', '.join(_ALLOWED_PADDING_TYPES)}."
+            )
         layer.padding_type = padding_type
         # Track explicit so 'valid' (= metamodel default) still round-trips
         # when the user actually picked it.
@@ -1000,6 +1007,12 @@ def create_pooling_layer(element, elements):
 
     padding_type = get_element_attribute(element, 'PaddingTypeAttribute', elements)
     if padding_type:
+        if padding_type not in _ALLOWED_PADDING_TYPES:
+            raise ValueError(
+                f"PoolingLayer '{name}' has invalid padding_type "
+                f"'{padding_type}'. Allowed values: "
+                f"{', '.join(_ALLOWED_PADDING_TYPES)}."
+            )
         layer.padding_type = padding_type
         mark_explicit(layer, 'padding_type')
 

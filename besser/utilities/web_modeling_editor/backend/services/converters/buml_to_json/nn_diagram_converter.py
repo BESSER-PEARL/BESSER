@@ -190,6 +190,13 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
+        # Pooling inherits permute_in / permute_out from Layer too (the
+        # processor reads them and the builder writes them). Mirror here so
+        # BUML→JSON preserves the user's choice on round-trip.
+        if _is_attr_set(module, 'permute_in'):
+            fields.append(('permute_in', module.permute_in, 'bool', False))
+        if _is_attr_set(module, 'permute_out'):
+            fields.append(('permute_out', module.permute_out, 'bool', False))
 
     elif cls in ('SimpleRNNLayer', 'LSTMLayer', 'GRULayer'):
         fields.append(('name', module.name, 'str', True))
@@ -287,15 +294,15 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
         if tns_type == 'concatenate':
             if module.concatenate_dim is not None:
                 fields.append(('concatenate_dim', module.concatenate_dim, 'int', False))
-            if module.layers_of_tensors:
+            if module.layers_of_tensors is not None:
                 fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
-        elif tns_type in ('multiply', 'matmultiply') and module.layers_of_tensors:
+        elif tns_type in ('multiply', 'matmultiply') and module.layers_of_tensors is not None:
             fields.append(('layers_of_tensors', module.layers_of_tensors, 'List', False))
-        elif tns_type == 'reshape' and module.reshape_dim:
+        elif tns_type == 'reshape' and module.reshape_dim is not None:
             fields.append(('reshape_dim', module.reshape_dim, 'List', False))
-        elif tns_type == 'transpose' and module.transpose_dim:
+        elif tns_type == 'transpose' and module.transpose_dim is not None:
             fields.append(('transpose_dim', module.transpose_dim, 'List', False))
-        elif tns_type == 'permute' and module.permute_dim:
+        elif tns_type == 'permute' and module.permute_dim is not None:
             fields.append(('permute_dim', module.permute_dim, 'List', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))

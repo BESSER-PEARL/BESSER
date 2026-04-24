@@ -1971,6 +1971,40 @@ class TestNNDiagramRoundtrip:
             f'expected 3 containers (parent + 2 same-named sub-NNs), got {len(containers)}'
         )
 
+    def test_conv_invalid_padding_type_lists_allowed_values(self):
+        """Unknown padding_type raises with the whitelist in the message
+        (mirrors pooling_type/optimizer/etc. pattern)."""
+        payload = self._single_layer_json('Conv2DLayer', [
+            ('Conv2D', 'name', 'c1'),
+            ('Conv2D', 'kernel_dim', '[3, 3]'),
+            ('Conv2D', 'out_channels', '16'),
+            ('Conv2D', 'padding_type', 'Same'),  # wrong capitalization
+        ])
+        with pytest.raises(ValueError, match=r"padding_type.*Allowed values"):
+            process_nn_diagram(payload)
+
+    def test_pooling_permute_in_roundtrips_via_converter(self):
+        """PoolingLayer permute_in/out must round-trip through the BUML→JSON
+        converter — before iter-19 the Pooling branch of _module_fields
+        silently dropped them even though processor+builder handled them."""
+        from besser.BUML.metamodel.nn import NN, PoolingLayer
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import mark_explicit
+        nn = NN(name='PoolPermute')
+        pool = PoolingLayer(
+            name='p', pooling_type='max', dimension='2D', kernel_dim=[2, 2],
+        )
+        pool.permute_in = True
+        mark_explicit(pool, 'permute_in')
+        nn.add_layer(pool)
+        out = nn_model_to_json(nn)
+        elements = _resolve_elements(out)
+        pools = _extract_elements_by_type(out, 'PoolingLayer')
+        assert pools, 'PoolingLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value']
+                 for aid in pools[0]['attributes']}
+        assert attrs.get('permute_in') == 'true', \
+            f'permute_in must round-trip on Pooling; got attrs={attrs}'
+
     def test_parse_float_rejects_european_decimal(self):
         """parse_float with '0,5' (European comma) raises rather than
         silently returning the default."""

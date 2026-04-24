@@ -521,23 +521,26 @@ def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
 
     tns_type = tensor_op.tns_type
 
-    # Only output attributes relevant to the specific tns_type
+    # Only output attributes relevant to the specific tns_type. Use
+    # ``is not None`` rather than truthiness so an explicit empty list or
+    # ``0`` survives round-trip — the metamodel setters validate content
+    # themselves, so we don't want to silently drop values here.
     if tns_type == 'concatenate':
         if tensor_op.concatenate_dim is not None:
             params.append(f"concatenate_dim={tensor_op.concatenate_dim}")
-        if tensor_op.layers_of_tensors:
+        if tensor_op.layers_of_tensors is not None:
             params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
     elif tns_type in ('multiply', 'matmultiply'):
-        if tensor_op.layers_of_tensors:
+        if tensor_op.layers_of_tensors is not None:
             params.append(f"layers_of_tensors={tensor_op.layers_of_tensors}")
     elif tns_type == 'reshape':
-        if tensor_op.reshape_dim:
+        if tensor_op.reshape_dim is not None:
             params.append(f"reshape_dim={tensor_op.reshape_dim}")
     elif tns_type == 'transpose':
-        if tensor_op.transpose_dim:
+        if tensor_op.transpose_dim is not None:
             params.append(f"transpose_dim={tensor_op.transpose_dim}")
     elif tns_type == 'permute':
-        if tensor_op.permute_dim:
+        if tensor_op.permute_dim is not None:
             params.append(f"permute_dim={tensor_op.permute_dim}")
 
     # input_reused is optional for all types - only output when explicitly set

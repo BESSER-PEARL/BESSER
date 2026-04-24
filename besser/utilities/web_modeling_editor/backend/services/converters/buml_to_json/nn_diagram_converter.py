@@ -90,7 +90,11 @@ def _fmt_value(value: Any) -> str:
         return ''
     if isinstance(value, bool):
         return 'true' if value else 'false'
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
+        # Tuples reach here when the metamodel setter accepted a tuple for
+        # a list-typed field (e.g. a hand-authored kernel_dim=(3, 3)). Treat
+        # them the same as lists so round-trip doesn't stringify the tuple
+        # syntax into something the processor can't re-parse cleanly.
         parts = []
         for v in value:
             formatted = _fmt_value(v)

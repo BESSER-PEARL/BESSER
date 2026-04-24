@@ -30,6 +30,22 @@ import ast
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.utils import sanitize_name
 from besser.utilities.buml_code_builder.nn_explicit_attrs import mark_explicit
 
+# Keep these aligned with the whitelists the NN metamodel setters enforce
+# (besser/BUML/metamodel/nn/neural_network.py). Re-asserting them here lets
+# us raise a user-facing error that names the diagram element, before the
+# raw metamodel ValueError (which knows nothing about which layer failed).
+_ALLOWED_POOLING_TYPES = (
+    'average', 'adaptive_average', 'max', 'adaptive_max',
+    'global_average', 'global_max',
+)
+_ALLOWED_RETURN_TYPES = ('hidden', 'last', 'full')
+_ALLOWED_TASK_TYPES = ('binary', 'multi_class', 'regression')
+_ALLOWED_INPUT_FORMATS = ('csv', 'images')
+_ALLOWED_OPTIMIZERS = ('sgd', 'adam', 'adamW', 'adagrad')
+_ALLOWED_LOSS_FUNCTIONS = ('crossentropy', 'binary_crossentropy', 'mse')
+_ALLOWED_METRICS = ('accuracy', 'precision', 'recall', 'f1-score', 'mae')
+_CONV_EXPECTED_DIMS = {'Conv1D': 1, 'Conv2D': 2, 'Conv3D': 3}
+
 
 def _get_attr_by_name(element: dict, attr_name: str, elements: dict, default=None):
     """Get an attribute value by its attributeName field (used for dataset elements)."""
@@ -50,7 +66,17 @@ def create_dataset(element: dict, elements: dict) -> Dataset:
         raise ValueError("Dataset missing mandatory 'path_data' attribute")
 
     task_type = _get_attr_by_name(element, 'task_type', elements) or None
+    if task_type is not None and task_type not in _ALLOWED_TASK_TYPES:
+        raise ValueError(
+            f"Dataset '{name}' has invalid task_type '{task_type}'. "
+            f"Allowed values: {', '.join(_ALLOWED_TASK_TYPES)}."
+        )
     input_format = _get_attr_by_name(element, 'input_format', elements) or None
+    if input_format is not None and input_format not in _ALLOWED_INPUT_FORMATS:
+        raise ValueError(
+            f"Dataset '{name}' has invalid input_format '{input_format}'. "
+            f"Allowed values: {', '.join(_ALLOWED_INPUT_FORMATS)}."
+        )
 
     image = None
     if input_format == 'images':
@@ -715,6 +741,16 @@ def _create_conv_layer(element, elements, conv_class, default_stride):
     if kernel_dim is None:
         raise ValueError(f"{class_name} layer '{name}' missing mandatory 'kernel_dim' attribute")
 
+    # Validate kernel_dim length before passing to the constructor — otherwise
+    # the metamodel setter raises ("kernel_dim list must have exactly N elements")
+    # without naming the layer, which surfaces as a cryptic 400 to the user.
+    expected_dim = _CONV_EXPECTED_DIMS.get(class_name)
+    if expected_dim is not None and len(kernel_dim) != expected_dim:
+        raise ValueError(
+            f"{class_name} layer '{name}' kernel_dim has {len(kernel_dim)} "
+            f"element(s), expected {expected_dim}."
+        )
+
     out_channels_raw = get_element_attribute(element, 'OutChannelsAttribute', elements)
     out_channels = parse_tuple_or_int(out_channels_raw)
     if out_channels is None:
@@ -729,7 +765,14 @@ def _create_conv_layer(element, elements, conv_class, default_stride):
     # Optional attributes
     stride = get_element_attribute(element, 'StrideDimAttribute', elements)
     if stride is not None:
-        layer.stride_dim = parse_list_of_ints(stride, default_stride)
+        stride_dim_parsed = parse_list_of_ints(stride, default_stride)
+        if expected_dim is not None and stride_dim_parsed is not None \
+                and len(stride_dim_parsed) != expected_dim:
+            raise ValueError(
+                f"{class_name} layer '{name}' stride_dim has "
+                f"{len(stride_dim_parsed)} element(s), expected {expected_dim}."
+            )
+        layer.stride_dim = stride_dim_parsed
 
     in_channels = get_element_attribute(element, 'InChannelsAttribute', elements)
     if in_channels is not None:
@@ -795,6 +838,11 @@ def create_pooling_layer(element, elements):
     pooling_type = get_element_attribute(element, 'PoolingTypeAttribute', elements)
     if not pooling_type:
         raise ValueError(f"PoolingLayer '{name}' missing mandatory 'pooling_type' attribute")
+    if pooling_type not in _ALLOWED_POOLING_TYPES:
+        raise ValueError(
+            f"PoolingLayer '{name}' has invalid pooling_type '{pooling_type}'. "
+            f"Allowed values: {', '.join(_ALLOWED_POOLING_TYPES)}."
+        )
 
     dimension_raw = get_element_attribute(element, 'DimensionAttribute', elements)
     dimension = parse_dimension(dimension_raw)
@@ -884,6 +932,12 @@ def _create_rnn_like_layer(element, elements, rnn_class):
     # Optional attributes
     return_type = get_element_attribute(element, 'ReturnTypeAttribute', elements)
     if return_type:
+        if return_type not in _ALLOWED_RETURN_TYPES:
+            raise ValueError(
+                f"{class_name} '{name}' has invalid return_type "
+                f"'{return_type}'. Allowed values: "
+                f"{', '.join(_ALLOWED_RETURN_TYPES)}."
+            )
         layer.return_type = return_type
 
     input_size = get_element_attribute(element, 'InputSizeAttribute', elements)
@@ -1270,10 +1324,20 @@ def create_configuration(element, elements):
     optimizer = get_element_attribute(element, 'OptimizerAttribute', elements)
     if not optimizer:
         raise ValueError("Configuration missing mandatory 'optimizer' attribute")
+    if optimizer not in _ALLOWED_OPTIMIZERS:
+        raise ValueError(
+            f"Configuration has invalid optimizer '{optimizer}'. "
+            f"Allowed values: {', '.join(_ALLOWED_OPTIMIZERS)}."
+        )
 
     loss_function = get_element_attribute(element, 'LossFunctionAttribute', elements)
     if not loss_function:
         raise ValueError("Configuration missing mandatory 'loss_function' attribute")
+    if loss_function not in _ALLOWED_LOSS_FUNCTIONS:
+        raise ValueError(
+            f"Configuration has invalid loss_function '{loss_function}'. "
+            f"Allowed values: {', '.join(_ALLOWED_LOSS_FUNCTIONS)}."
+        )
 
     metrics_str = get_element_attribute(element, 'MetricsAttribute', elements)
     if not metrics_str:
@@ -1291,6 +1355,12 @@ def create_configuration(element, elements):
         metrics = metrics_str
     else:
         raise ValueError("Configuration 'metrics' attribute has invalid format")
+    invalid_metrics = [m for m in metrics if m not in _ALLOWED_METRICS]
+    if invalid_metrics:
+        raise ValueError(
+            f"Configuration has invalid metric(s) {invalid_metrics}. "
+            f"Allowed values: {', '.join(_ALLOWED_METRICS)}."
+        )
 
     config = Configuration(
         batch_size=batch_size,

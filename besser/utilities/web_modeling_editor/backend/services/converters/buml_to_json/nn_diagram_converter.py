@@ -5,11 +5,42 @@ Converts a BUML NN model into the element/relationship structure consumed
 by the web editor for NNDiagrams.
 """
 
+import threading
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 from besser.BUML.metamodel.nn import NN, Configuration, Dataset
 from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
+
+
+# Stable namespace for uuid5-based element IDs. Using a fixed UUID here means
+# the same BUML NN model, converted twice, produces byte-identical JSON — which
+# makes round-trip snapshot tests reliable and helps downstream content-addressing.
+_NN_JSON_NAMESPACE = uuid.UUID('7a1a0c7e-0e9d-4e1c-a0e6-6e5b4e0c7e00')
+
+# Thread-local monotonically-increasing counter. Reset at the top of every
+# public conversion call (see nn_model_to_json). Thread-local so concurrent
+# requests in the FastAPI thread pool don't interleave counter states.
+_id_state = threading.local()
+
+
+def _reset_id_state() -> None:
+    """Reset the deterministic-ID counter for a fresh conversion."""
+    _id_state.counter = 0
+
+
+def _new_id(hint: str = '') -> str:
+    """Return a deterministic UUID for the next element in the current conversion.
+
+    Sequence number is derived from a thread-local counter that ``nn_model_to_json``
+    resets. The optional ``hint`` (e.g. 'container', 'attr:name') is folded into
+    the uuid5 key so different call sites at the same counter position still
+    produce distinct IDs — and identical inputs produce identical IDs across runs.
+    """
+    counter = getattr(_id_state, 'counter', 0)
+    _id_state.counter = counter + 1
+    key = f"{counter}:{hint}"
+    return str(uuid.uuid5(_NN_JSON_NAMESPACE, key))
 
 
 # Metamodel class → (frontend parent type, attribute type suffix)
@@ -29,10 +60,6 @@ _MODULE_TYPE_MAP = {
     'BatchNormLayer':  ('BatchNormalizationLayer',  'BatchNorm'),
     'TensorOp':        ('TensorOp',                 'TensorOp'),
 }
-
-
-def _new_id() -> str:
-    return str(uuid.uuid4())
 
 
 def _is_attr_set(obj, attr_name: str) -> bool:
@@ -459,6 +486,10 @@ def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
     Convert a BUML NN instance into a web-editor NNDiagram model dict
     (the inner `model` payload).
     """
+    # Deterministic IDs: reset the per-conversion counter so the same input
+    # produces the same JSON bytes on every call (helpful for round-trip tests
+    # and for diffing BUML-to-JSON output).
+    _reset_id_state()
     elements: Dict[str, Dict[str, Any]] = {}
     relationships: Dict[str, Dict[str, Any]] = {}
 

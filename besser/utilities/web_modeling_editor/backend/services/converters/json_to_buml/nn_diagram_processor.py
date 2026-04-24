@@ -572,13 +572,48 @@ def process_nn_diagram(json_data):
     # These are "standalone" sub-networks
     referenced_names = set(nn_references.values())
 
-    # Process containers: first the referenced ones, then the main ones
-    container_order = []
-    for cid, cname in containers.items():
-        if cname in referenced_names:
-            container_order.insert(0, (cid, cname))  # Referenced containers first
-        else:
-            container_order.append((cid, cname))  # Main containers last
+    # Build a reference graph (container_name -> set of referenced container_names)
+    # so we can order containers by dependency: referenced containers must be
+    # created before the containers that reference them, at any depth.
+    name_by_id = dict(containers.items())
+    ref_graph = {cname: set() for cname in name_by_id.values()}
+    for c_id, refs in refs_by_container.items():
+        c_name = name_by_id.get(c_id)
+        if not c_name:
+            continue
+        for _, ref_name in refs:
+            if ref_name:
+                ref_graph[c_name].add(ref_name)
+
+    # Depth-first post-order traversal: emits each container after all its
+    # transitive dependencies. GRAY coloring detects any cycle (direct or
+    # through intermediaries) and surfaces a clear error listing the chain.
+    _WHITE, _GRAY, _BLACK = 0, 1, 2
+    color = {cname: _WHITE for cname in name_by_id.values()}
+    dep_order: list = []
+
+    def _visit_container(name: str, path: list) -> None:
+        if color.get(name) == _GRAY:
+            cycle_chain = ' -> '.join(path + [name])
+            raise ValueError(
+                f"NNReference cycle detected among NNContainers: {cycle_chain}. "
+                f"Break the cycle by removing one of the NNReference links."
+            )
+        if color.get(name) != _WHITE:
+            return
+        color[name] = _GRAY
+        for dep in sorted(ref_graph.get(name, ())):
+            if dep in color:  # ignore references that don't resolve (handled later)
+                _visit_container(dep, path + [name])
+        color[name] = _BLACK
+        dep_order.append(name)
+
+    for cname in name_by_id.values():
+        if color[cname] == _WHITE:
+            _visit_container(cname, [])
+
+    name_to_id = {cname: cid for cid, cname in name_by_id.items()}
+    container_order = [(name_to_id[cname], cname) for cname in dep_order]
 
     for container_id, container_name in container_order:
         nn = NN(name=container_name)

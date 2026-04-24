@@ -59,6 +59,7 @@ def _collect_valid_diagrams(project):
         "GUINoCodeDiagram",
         "QuantumCircuitDiagram",
         "UserDiagram",
+        "NNDiagram",
     ]
 
     result = {}
@@ -182,7 +183,7 @@ def json_to_buml_project(project):
         quantum_model = process_quantum_diagram(quantum_diag.model_dump())
         model_list.append(quantum_model)
 
-    # ── Process ALL StateMachineDiagrams ────────────────────────────────
+    # ── Process ALL StateMachineDiagrams ──────────────────────────────
     for sm_diag in diagrams.get("StateMachineDiagram", []):
         try:
             sm_model = process_state_machine(sm_diag.model_dump())
@@ -192,6 +193,13 @@ def json_to_buml_project(project):
                 "StateMachineDiagram '%s' could not be processed: %s",
                 getattr(sm_diag, "title", "unknown"), e,
             )
+
+    # ── Process ALL NNDiagrams ────────────────────────────────────────
+    from .nn_diagram_processor import process_nn_diagram
+
+    for nn_diag in diagrams.get("NNDiagram", []):
+        nn_model = process_nn_diagram(nn_diag.model_dump())
+        model_list.append(nn_model)
 
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the

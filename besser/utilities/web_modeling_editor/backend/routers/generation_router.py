@@ -40,6 +40,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_object_diagram,
     process_gui_diagram,
     process_quantum_diagram,
+    process_nn_diagram,
 )
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
@@ -93,10 +94,23 @@ SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'a
 
 
 def _safe_path(base_dir: str, user_filename: str) -> str:
-    """Resolve a user-provided filename safely within base_dir."""
+    """Resolve a user-provided filename safely within ``base_dir``.
+
+    Uses ``os.path.commonpath`` rather than ``startswith``: a simple prefix
+    check returns a false positive when two directories share a prefix
+    (e.g. ``/tmp/besser_abc`` vs ``/tmp/besser_abcd``). ``commonpath``
+    respects actual path boundaries. The caller-side ``os.path.basename``
+    already strips directory separators; this is defense in depth.
+    """
     safe_name = os.path.basename(user_filename)
-    full_path = os.path.realpath(os.path.join(base_dir, safe_name))
-    if not full_path.startswith(os.path.realpath(base_dir)):
+    real_base = os.path.realpath(base_dir)
+    full_path = os.path.realpath(os.path.join(real_base, safe_name))
+    try:
+        common = os.path.commonpath([full_path, real_base])
+    except ValueError:
+        # Paths on different drives (Windows) — not inside base_dir.
+        raise ValueError("Invalid path")
+    if common != real_base:
         raise ValueError("Invalid path")
     return full_path
 
@@ -282,6 +296,25 @@ async def generate_code_output_from_project(input_data: ProjectInput):
         )
         return await generate_code_output(diagram_input)
 
+    # Handle NN generators (require NNDiagram)
+    if generator_type in ("pytorch", "tensorflow"):
+        nn_diagram = input_data.get_active_diagram("NNDiagram")
+        if not nn_diagram:
+            raise HTTPException(
+                status_code=400,
+                detail="NNDiagram is required for neural network generators"
+            )
+        diagram_input = DiagramInput(
+            id=nn_diagram.id,
+            title=nn_diagram.title,
+            model=nn_diagram.model,
+            lastUpdate=nn_diagram.lastUpdate,
+            generator=generator_type,
+            config=config,
+            referenceDiagramData=nn_diagram.referenceDiagramData if hasattr(nn_diagram, 'referenceDiagramData') else None
+        )
+        return await generate_code_output(diagram_input)
+
     # For other generators, use the current diagram
     current_diagram = input_data.get_active_diagram(input_data.currentDiagramType)
     if not current_diagram:
@@ -339,6 +372,10 @@ async def generate_code_output(input_data: DiagramInput):
         # Handle quantum generators
         if generator_info.category == "quantum":
             return await _generate_qiskit(json_data, generator_info.generator_class, input_data.config, temp_dir)
+
+        # Handle neural network generators
+        if generator_info.category == "neural_network":
+            return await _generate_nn(json_data, generator_type, generator_info.generator_class, input_data.config, temp_dir)
 
         if generator_info.category == "object_model":
             diagram_type = _get_diagram_type(json_data)
@@ -870,6 +907,61 @@ async def _generate_jsonschema(buml_model, generator_class, config: dict, temp_d
         )
     else:
         return _create_file_response(temp_dir, "jsonschema")
+
+
+async def _generate_nn(json_data: dict, generator_type: str, generator_class, config: dict, temp_dir: str):
+    """Generate neural network code (PyTorch or TensorFlow)."""
+    if generator_class is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Generator '{generator_type}' is not available. Please install the required dependencies."
+        )
+    try:
+        nn_model = process_nn_diagram(json_data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (KeyError, TypeError, AttributeError) as exc:
+        # Malformed NN payload (dangling element id, non-dict element,
+        # non-string attribute value). Surface as 400 with context instead
+        # of letting the generic handler in error_handler.py turn it into
+        # a 500. Matches the pattern in /export-buml.
+        raise HTTPException(
+            status_code=400,
+            detail=f"Malformed NN diagram payload: {exc}",
+        ) from exc
+
+    generation_type = config.get("generation_type", "subclassing") if config else "subclassing"
+    if generator_type == "tensorflow":
+        generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type)
+    else:
+        channel_last = config.get("channel_last", False) if config else False
+        generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type, channel_last=channel_last)
+    await asyncio.to_thread(generator_instance.generate)
+
+    # The NN generator strips the trailing ".py" from its configured file_name
+    # and appends "_{generation_type}.py" (see NNCodeGenerator.generate), so
+    # the actual artifact is e.g. pytorch_nn_subclassing.py / tf_nn_sequential.py.
+    prefix = "tf" if generator_type == "tensorflow" else "pytorch"
+    download_filename = f"{prefix}_nn_{generation_type}.py"
+
+    # Read the known-named file emitted by the generator. Scanning the
+    # directory and picking "the first file" is fragile — if the generator
+    # drops helpers alongside the main artifact we'd ship the wrong one.
+    output_file_path = _safe_path(temp_dir, download_filename)
+    if not os.path.isfile(output_file_path):
+        raise ValueError(
+            f"{generator_type} generation failed: expected output "
+            f"{download_filename!r} was not produced."
+        )
+    with open(output_file_path, "rb") as f:
+        file_content = f.read()
+
+    return Response(
+        content=file_content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{download_filename}"'},
+    )
+
 
 async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_dir: str):
     """Generate Qiskit code."""

@@ -22,6 +22,7 @@ from besser.utilities.buml_code_builder.domain_model_builder import (
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
+from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code, _name_to_var
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -85,6 +86,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     gui_models = []
     quantum_models = []
     state_machine_models = []   # StateMachine models
+    nn_models = []
 
     # Import GUIModel locally to avoid circular imports
     try:
@@ -97,6 +99,12 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
         from besser.BUML.metamodel.quantum import QuantumCircuit
     except ImportError:
         QuantumCircuit = None
+
+    # Import NN locally
+    try:
+        from besser.BUML.metamodel.nn import NN
+    except ImportError:
+        NN = None
 
     for model in project.models:
         if isinstance(model, DomainModel):
@@ -117,6 +125,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             gui_models.append(model)
         elif QuantumCircuit and isinstance(model, QuantumCircuit):
             quantum_models.append(model)
+        elif NN and isinstance(model, NN):
+            nn_models.append(model)
 
     # If we have user object models but no user domain model, use the
     # reference one shipped with the editor backend (when available).
@@ -155,6 +165,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     n_gui = len(gui_models)
     n_quantum = len(quantum_models)
     n_sm = len(state_machine_models)
+    n_nn = len(nn_models)
 
     # Variable names collected for the final Project(...) definition
     model_vars = []
@@ -332,6 +343,27 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                     file_path=tmp_path,
                     model_var_name=var_name,
                 )
+                _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
+            # NN MODELS                                                  #
+            # ---------------------------------------------------------- #
+            for idx, nm in enumerate(nn_models, start=1):
+                var_name = _suffixed_name(_name_to_var(nm.name), idx, n_nn)
+
+                section = ""
+                if n_nn > 1:
+                    label = getattr(nm, "name", f"NN {idx}")
+                    section = f"# NN MODEL {idx}: \"{label}\" #\n\n"
+
+                tmp_path = os.path.join(temp_dir, f"nn_model_{idx}.py")
+                # Thread the suffixed var_name through so the NN builder
+                # writes ``my_nn_1 = NN(...)`` instead of ``my_nn = NN(...)``.
+                # Previously the Project(...) line referenced ``my_nn_1`` but
+                # the actual binding was ``my_nn`` → NameError on exec() when
+                # a project held more than one NN.
+                nn_model_to_code(model=nm, file_path=tmp_path, model_var_name=var_name)
                 _write_temp_to_output(tmp_path, f, section_header=section)
                 model_vars.append(var_name)
 

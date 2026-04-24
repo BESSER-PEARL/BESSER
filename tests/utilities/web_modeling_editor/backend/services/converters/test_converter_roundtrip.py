@@ -28,6 +28,12 @@ from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_js
 from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.object_diagram_processor import (
     process_object_diagram,
 )
+from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+    process_nn_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.services.converters.buml_to_json.nn_diagram_converter import (
+    nn_model_to_json,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1315,3 +1321,711 @@ class TestObjectDiagramRoundtrip:
                     for slot in obj.slots
                 }
                 assert slot_values.get("name") == "Fitzgerald"
+
+
+# ===========================================================================
+# NN Diagram Roundtrip: JSON -> NN -> JSON
+# ===========================================================================
+
+class TestNNDiagramRoundtrip:
+    """Roundtrip tests for NNDiagram: JSON -> NN -> JSON preserves essential data."""
+
+    @staticmethod
+    def _minimal_nn_json():
+        """A minimal NN diagram: container + Conv2D + Linear + configuration + datasets."""
+        return {
+            "title": "TestNet",
+            "model": {
+                "type": "NNDiagram",
+                "version": "3.0.0",
+                "size": {"width": 1400, "height": 740},
+                "elements": {
+                    "c1": {"id": "c1", "type": "NNContainer", "name": "TestNet", "owner": None, "bounds": {"x": 0, "y": 0, "width": 600, "height": 200}},
+                    "l1": {"id": "l1", "type": "Conv2DLayer", "name": "Conv2DLayer", "owner": "c1", "bounds": {"x": 20, "y": 60, "width": 110, "height": 110}, "attributes": ["l1a1", "l1a2", "l1a3"], "methods": []},
+                    "l1a1": {"id": "l1a1", "type": "NameAttributeConv2D", "attributeName": "name", "value": "c1", "owner": "l1"},
+                    "l1a2": {"id": "l1a2", "type": "KernelDimAttributeConv2D", "attributeName": "kernel_dim", "value": "[3, 3]", "owner": "l1"},
+                    "l1a3": {"id": "l1a3", "type": "OutChannelsAttributeConv2D", "attributeName": "out_channels", "value": "16", "owner": "l1"},
+                    "l2": {"id": "l2", "type": "LinearLayer", "name": "LinearLayer", "owner": "c1", "bounds": {"x": 150, "y": 60, "width": 110, "height": 110}, "attributes": ["l2a1", "l2a2"], "methods": []},
+                    "l2a1": {"id": "l2a1", "type": "NameAttributeLinear", "attributeName": "name", "value": "lin", "owner": "l2"},
+                    "l2a2": {"id": "l2a2", "type": "OutFeaturesAttributeLinear", "attributeName": "out_features", "value": "10", "owner": "l2"},
+                    "cfg": {"id": "cfg", "type": "Configuration", "name": "Configuration", "owner": None, "bounds": {"x": 700, "y": 0, "width": 160, "height": 200}, "attributes": ["cfg1", "cfg2", "cfg3", "cfg4", "cfg5", "cfg6"], "methods": []},
+                    "cfg1": {"id": "cfg1", "type": "BatchSizeAttributeConfiguration", "attributeName": "batch_size", "value": "32", "owner": "cfg"},
+                    "cfg2": {"id": "cfg2", "type": "EpochsAttributeConfiguration", "attributeName": "epochs", "value": "10", "owner": "cfg"},
+                    "cfg3": {"id": "cfg3", "type": "LearningRateAttributeConfiguration", "attributeName": "learning_rate", "value": "0.001", "owner": "cfg"},
+                    "cfg4": {"id": "cfg4", "type": "OptimizerAttributeConfiguration", "attributeName": "optimizer", "value": "adam", "owner": "cfg"},
+                    "cfg5": {"id": "cfg5", "type": "LossFunctionAttributeConfiguration", "attributeName": "loss_function", "value": "crossentropy", "owner": "cfg"},
+                    "cfg6": {"id": "cfg6", "type": "MetricsAttributeConfiguration", "attributeName": "metrics", "value": "[accuracy]", "owner": "cfg"},
+                    "ds1": {"id": "ds1", "type": "TrainingDataset", "name": "TrainingDataset", "owner": None, "bounds": {"x": 0, "y": 400, "width": 110, "height": 110}, "attributes": ["ds1a1", "ds1a2", "ds1a3", "ds1a4", "ds1a5", "ds1a6"], "methods": []},
+                    "ds1a1": {"id": "ds1a1", "attributeName": "name", "value": "train", "owner": "ds1"},
+                    "ds1a2": {"id": "ds1a2", "attributeName": "path_data", "value": "/data/train", "owner": "ds1"},
+                    "ds1a3": {"id": "ds1a3", "attributeName": "task_type", "value": "multi_class", "owner": "ds1"},
+                    "ds1a4": {"id": "ds1a4", "attributeName": "input_format", "value": "images", "owner": "ds1"},
+                    "ds1a5": {"id": "ds1a5", "attributeName": "shape", "value": "[32, 32, 3]", "owner": "ds1"},
+                    "ds1a6": {"id": "ds1a6", "attributeName": "normalize", "value": "false", "owner": "ds1"},
+                    "ds2": {"id": "ds2", "type": "TestDataset", "name": "TestDataset", "owner": None, "bounds": {"x": 300, "y": 400, "width": 110, "height": 110}, "attributes": ["ds2a1", "ds2a2"], "methods": []},
+                    "ds2a1": {"id": "ds2a1", "attributeName": "name", "value": "test", "owner": "ds2"},
+                    "ds2a2": {"id": "ds2a2", "attributeName": "path_data", "value": "/data/test", "owner": "ds2"},
+                },
+                "relationships": {
+                    "r1": {"id": "r1", "type": "NNNext", "source": {"element": "l1"}, "target": {"element": "l2"}, "name": "next"},
+                },
+                "interactive": {"elements": {}, "relationships": {}},
+                "assessments": {},
+            },
+        }
+
+    def _roundtrip(self, json_in):
+        nn = process_nn_diagram(json_in)
+        return nn_model_to_json(nn)
+
+    def test_diagram_type_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        assert out["type"] == "NNDiagram"
+
+    def test_container_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        containers = _extract_elements_by_type(out, "NNContainer")
+        assert len(containers) == 1
+        assert containers[0]["name"] == "TestNet"
+
+    def test_layers_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        assert len(_extract_elements_by_type(out, "Conv2DLayer")) == 1
+        assert len(_extract_elements_by_type(out, "LinearLayer")) == 1
+
+    def test_nnnext_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        nexts = _extract_relationships_by_type(out, "NNNext")
+        assert len(nexts) == 1
+
+    def test_configuration_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        configs = _extract_elements_by_type(out, "Configuration")
+        assert len(configs) == 1
+        elements = _resolve_elements(out)
+        attr_values = {elements[aid]["attributeName"]: elements[aid]["value"] for aid in configs[0]["attributes"]}
+        assert attr_values["batch_size"] == "32"
+        assert attr_values["optimizer"] == "adam"
+
+    def test_training_dataset_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        training = _extract_elements_by_type(out, "TrainingDataset")
+        assert len(training) == 1
+        elements = _resolve_elements(out)
+        attrs = {elements[aid]["attributeName"]: elements[aid]["value"] for aid in training[0]["attributes"]}
+        assert attrs["name"] == "train"
+        assert attrs["path_data"] == "/data/train"
+        assert attrs["task_type"] == "multi_class"
+        assert attrs["input_format"] == "images"
+        assert attrs["shape"] == "[32, 32, 3]"
+        assert attrs["normalize"] == "false"
+
+    def test_test_dataset_preserved(self):
+        out = self._roundtrip(self._minimal_nn_json())
+        testing = _extract_elements_by_type(out, "TestDataset")
+        assert len(testing) == 1
+        elements = _resolve_elements(out)
+        attrs = {elements[aid]["attributeName"]: elements[aid]["value"] for aid in testing[0]["attributes"]}
+        assert attrs["name"] == "test"
+        assert attrs["path_data"] == "/data/test"
+        assert "input_format" not in attrs
+
+    def test_double_roundtrip_stable(self):
+        """Second roundtrip yields the same structural shape."""
+        from collections import Counter
+        first = self._roundtrip(self._minimal_nn_json())
+        second = self._roundtrip(first)
+        def counts(j):
+            return Counter(e.get("type") for e in _resolve_elements(j).values() if "Attribute" not in (e.get("type") or ""))
+        assert counts(first) == counts(second)
+
+    def test_nn_model_to_json_is_deterministic(self):
+        """Identical NN input must produce byte-identical JSON across calls.
+
+        Locks in the uuid5 + thread-local counter scheme in nn_diagram_converter.
+        Regression guard: if anyone reintroduces uuid.uuid4() for IDs, the two
+        serializations will diverge and this test fails.
+        """
+        import json
+        nn = process_nn_diagram(self._minimal_nn_json())
+        first = json.dumps(nn_model_to_json(nn), sort_keys=True)
+        second = json.dumps(nn_model_to_json(nn), sort_keys=True)
+        assert first == second, "nn_model_to_json output must be deterministic"
+
+    def test_nnreference_cycle_is_rejected(self):
+        """Two NNContainers that reference each other must raise a clear error."""
+        cyclic = {
+            "title": "CyclicRefs",
+            "model": {
+                "type": "NNDiagram",
+                "version": "3.0.0",
+                "size": {"width": 1200, "height": 600},
+                "elements": {
+                    "cA": {"id": "cA", "type": "NNContainer", "name": "A", "owner": None, "bounds": {"x": 0, "y": 0, "width": 400, "height": 200}},
+                    "cB": {"id": "cB", "type": "NNContainer", "name": "B", "owner": None, "bounds": {"x": 500, "y": 0, "width": 400, "height": 200}},
+                    "rA": {"id": "rA", "type": "NNReference", "name": "ref-to-B", "owner": "cA", "referencedNN": "B", "bounds": {"x": 20, "y": 60, "width": 140, "height": 40}},
+                    "rB": {"id": "rB", "type": "NNReference", "name": "ref-to-A", "owner": "cB", "referencedNN": "A", "bounds": {"x": 520, "y": 60, "width": 140, "height": 40}},
+                },
+                "relationships": {},
+                "interactive": {"elements": {}, "relationships": {}},
+                "assessments": {},
+            },
+        }
+        with pytest.raises(ValueError, match="NNReference cycle"):
+            process_nn_diagram(cyclic)
+
+    def test_padding_type_valid_roundtrips_when_explicit(self):
+        """When the user explicitly picks padding_type='valid' (the metamodel
+        default), the sidecar ``mark_explicit`` path must make sure the JSON
+        output still carries the attribute. Without sidecar gating, the legacy
+        ``!= 'valid'`` guard silently strips it."""
+        payload = self._minimal_nn_json()
+        conv_id = 'l1'
+        payload['model']['elements'][conv_id]['attributes'].append('l1pt')
+        payload['model']['elements']['l1pt'] = {
+            'id': 'l1pt', 'type': 'PaddingTypeAttributeConv2D',
+            'attributeName': 'padding_type', 'value': 'valid', 'owner': conv_id,
+        }
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        conv_elts = _extract_elements_by_type(out, 'Conv2DLayer')
+        assert conv_elts, 'expected at least one Conv2DLayer in output'
+        attr_names = {
+            elements[aid]['attributeName']: elements[aid]['value']
+            for aid in conv_elts[0]['attributes']
+        }
+        assert attr_names.get('padding_type') == 'valid', \
+            f'padding_type=valid must round-trip when set explicitly, got {attr_names}'
+
+    def test_flatten_start_dim_and_end_dim_defaults_roundtrip_when_explicit(self):
+        """Flatten layer with start_dim=1 and end_dim=-1 (both metamodel
+        defaults) must round-trip when set explicitly in the source JSON."""
+        base = self._minimal_nn_json()
+        base['model']['elements']['fl1'] = {
+            'id': 'fl1', 'type': 'FlattenLayer', 'name': 'FlattenLayer',
+            'owner': 'c1',
+            'bounds': {'x': 300, 'y': 60, 'width': 110, 'height': 110},
+            'attributes': ['fl1n', 'fl1s', 'fl1e'], 'methods': [],
+        }
+        base['model']['elements']['fl1n'] = {
+            'id': 'fl1n', 'type': 'NameAttributeFlatten',
+            'attributeName': 'name', 'value': 'flat', 'owner': 'fl1',
+        }
+        base['model']['elements']['fl1s'] = {
+            'id': 'fl1s', 'type': 'StartDimAttributeFlatten',
+            'attributeName': 'start_dim', 'value': '1', 'owner': 'fl1',
+        }
+        base['model']['elements']['fl1e'] = {
+            'id': 'fl1e', 'type': 'EndDimAttributeFlatten',
+            'attributeName': 'end_dim', 'value': '-1', 'owner': 'fl1',
+        }
+        out = self._roundtrip(base)
+        elements = _resolve_elements(out)
+        flat = _extract_elements_by_type(out, 'FlattenLayer')
+        assert flat, 'FlattenLayer missing from output'
+        attrs = {
+            elements[aid]['attributeName']: elements[aid]['value']
+            for aid in flat[0]['attributes']
+        }
+        assert 'start_dim' in attrs, f'start_dim should round-trip when explicit; got {attrs}'
+        assert 'end_dim' in attrs, f'end_dim should round-trip when explicit; got {attrs}'
+
+    def test_tensorop_concatenate_preserves_float_in_layers_of_tensors(self):
+        """TensorOp ``layers_of_tensors=[0.5, 'name']`` must preserve the 0.5
+        as a float (not the string '0.5') after round-trip, so downstream
+        generators can distinguish numeric weights from layer-name references."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            process_nn_diagram,
+        )
+        payload = {
+            'title': 'op',
+            'model': {
+                'type': 'NNDiagram', 'version': '3.0.0',
+                'size': {'width': 1000, 'height': 400},
+                'elements': {
+                    'c': {'id': 'c', 'type': 'NNContainer', 'name': 'op',
+                          'owner': None,
+                          'bounds': {'x': 0, 'y': 0, 'width': 400, 'height': 200}},
+                    't': {'id': 't', 'type': 'TensorOp', 'name': 'TensorOp',
+                          'owner': 'c',
+                          'bounds': {'x': 20, 'y': 60, 'width': 110, 'height': 110},
+                          'attributes': ['tn', 'tt', 'tc', 'tl'], 'methods': []},
+                    'tn': {'id': 'tn', 'type': 'NameAttributeTensorOp',
+                           'attributeName': 'name', 'value': 'op1', 'owner': 't'},
+                    'tt': {'id': 'tt', 'type': 'TnsTypeAttributeTensorOp',
+                           'attributeName': 'tns_type', 'value': 'concatenate',
+                           'owner': 't'},
+                    'tc': {'id': 'tc', 'type': 'ConcatenateDimAttributeTensorOp',
+                           'attributeName': 'concatenate_dim', 'value': '1', 'owner': 't'},
+                    'tl': {'id': 'tl',
+                           'type': 'LayersOfTensorsAttributeTensorOp',
+                           'attributeName': 'layers_of_tensors',
+                           'value': "[0.5, 'other']", 'owner': 't'},
+                },
+                'relationships': {},
+                'interactive': {'elements': {}, 'relationships': {}},
+                'assessments': {},
+            },
+        }
+        nn = process_nn_diagram(payload)
+        top = [m for m in nn.modules if type(m).__name__ == 'TensorOp'][0]
+        assert top.layers_of_tensors[0] == 0.5, \
+            f"first item should be float 0.5, got {top.layers_of_tensors[0]!r}"
+        assert isinstance(top.layers_of_tensors[0], float)
+        assert top.layers_of_tensors[1] == 'other'
+
+    def test_transitive_nnreference_cycle_detected(self):
+        """Three-container NNReference cycle A→B→C→A must raise with the
+        cycle chain in the error message."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            process_nn_diagram,
+        )
+        cyclic = {
+            'title': 'transitive',
+            'model': {
+                'type': 'NNDiagram', 'version': '3.0.0',
+                'size': {'width': 1800, 'height': 600},
+                'elements': {
+                    'A': {'id': 'A', 'type': 'NNContainer', 'name': 'A', 'owner': None,
+                          'bounds': {'x': 0, 'y': 0, 'width': 400, 'height': 200}},
+                    'B': {'id': 'B', 'type': 'NNContainer', 'name': 'B', 'owner': None,
+                          'bounds': {'x': 500, 'y': 0, 'width': 400, 'height': 200}},
+                    'C': {'id': 'C', 'type': 'NNContainer', 'name': 'C', 'owner': None,
+                          'bounds': {'x': 1000, 'y': 0, 'width': 400, 'height': 200}},
+                    'rA': {'id': 'rA', 'type': 'NNReference', 'name': 'A->B', 'owner': 'A',
+                           'referencedNN': 'B',
+                           'bounds': {'x': 20, 'y': 60, 'width': 140, 'height': 40}},
+                    'rB': {'id': 'rB', 'type': 'NNReference', 'name': 'B->C', 'owner': 'B',
+                           'referencedNN': 'C',
+                           'bounds': {'x': 520, 'y': 60, 'width': 140, 'height': 40}},
+                    'rC': {'id': 'rC', 'type': 'NNReference', 'name': 'C->A', 'owner': 'C',
+                           'referencedNN': 'A',
+                           'bounds': {'x': 1020, 'y': 60, 'width': 140, 'height': 40}},
+                },
+                'relationships': {},
+                'interactive': {'elements': {}, 'relationships': {}},
+                'assessments': {},
+            },
+        }
+        with pytest.raises(ValueError, match="NNReference cycle"):
+            process_nn_diagram(cyclic)
+
+    def test_conv3d_kernel_dim_wrong_length_raises_with_layer_name(self):
+        """Conv3D with kernel_dim=[3,3] must raise a user-facing error that
+        names the layer and expected dimensionality."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            process_nn_diagram,
+        )
+        payload = {
+            'title': 'conv',
+            'model': {
+                'type': 'NNDiagram', 'version': '3.0.0',
+                'size': {'width': 800, 'height': 400},
+                'elements': {
+                    'c': {'id': 'c', 'type': 'NNContainer', 'name': 'net',
+                          'owner': None,
+                          'bounds': {'x': 0, 'y': 0, 'width': 400, 'height': 200}},
+                    'l': {'id': 'l', 'type': 'Conv3DLayer', 'name': 'Conv3DLayer',
+                          'owner': 'c',
+                          'bounds': {'x': 20, 'y': 60, 'width': 110, 'height': 110},
+                          'attributes': ['ln', 'lk', 'lo'], 'methods': []},
+                    'ln': {'id': 'ln', 'type': 'NameAttributeConv3D',
+                           'attributeName': 'name', 'value': 'volume', 'owner': 'l'},
+                    'lk': {'id': 'lk', 'type': 'KernelDimAttributeConv3D',
+                           'attributeName': 'kernel_dim',
+                           'value': '[3, 3]', 'owner': 'l'},
+                    'lo': {'id': 'lo', 'type': 'OutChannelsAttributeConv3D',
+                           'attributeName': 'out_channels', 'value': '8', 'owner': 'l'},
+                },
+                'relationships': {},
+                'interactive': {'elements': {}, 'relationships': {}},
+                'assessments': {},
+            },
+        }
+        with pytest.raises(ValueError, match=r"Conv3D.*volume.*kernel_dim.*expected 3"):
+            process_nn_diagram(payload)
+
+    @staticmethod
+    def _single_layer_json(layer_type: str, attrs: list, rels: dict = None):
+        """Build a minimal NN diagram with a single layer of the given type.
+
+        ``attrs`` is a list of (suffix, attributeName, value) tuples. Each
+        becomes an attribute element owned by the layer.
+        """
+        layer_id = 'L'
+        attr_elements = {}
+        attr_ids = []
+        for idx, (suffix, aname, avalue) in enumerate(attrs):
+            aid = f'a{idx}'
+            attr_ids.append(aid)
+            attr_elements[aid] = {
+                'id': aid,
+                'type': f'{aname.title().replace("_", "")}Attribute{suffix}'.replace(' ', ''),
+                'attributeName': aname,
+                'value': avalue,
+                'owner': layer_id,
+            }
+        return {
+            'title': 'single',
+            'model': {
+                'type': 'NNDiagram', 'version': '3.0.0',
+                'size': {'width': 800, 'height': 400},
+                'elements': {
+                    'c': {'id': 'c', 'type': 'NNContainer', 'name': 'net', 'owner': None,
+                          'bounds': {'x': 0, 'y': 0, 'width': 400, 'height': 200}},
+                    layer_id: {'id': layer_id, 'type': layer_type, 'name': layer_type, 'owner': 'c',
+                               'bounds': {'x': 20, 'y': 60, 'width': 110, 'height': 110},
+                               'attributes': attr_ids, 'methods': []},
+                    **attr_elements,
+                },
+                'relationships': rels or {},
+                'interactive': {'elements': {}, 'relationships': {}},
+                'assessments': {},
+            },
+        }
+
+    def test_lstm_roundtrip(self):
+        payload = self._single_layer_json('LSTMLayer', [
+            ('LSTM', 'name', 'lstm1'),
+            ('LSTM', 'hidden_size', '128'),
+            ('LSTM', 'input_size', '64'),
+            ('LSTM', 'return_type', 'last'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        lstm = _extract_elements_by_type(out, 'LSTMLayer')
+        assert lstm, 'LSTMLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in lstm[0]['attributes']}
+        assert attrs.get('name') == 'lstm1'
+        assert attrs.get('hidden_size') == '128'
+        assert attrs.get('input_size') == '64'
+        assert attrs.get('return_type') == 'last'
+
+    def test_gru_roundtrip(self):
+        payload = self._single_layer_json('GRULayer', [
+            ('GRU', 'name', 'gru1'),
+            ('GRU', 'hidden_size', '32'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        gru = _extract_elements_by_type(out, 'GRULayer')
+        assert gru, 'GRULayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in gru[0]['attributes']}
+        assert attrs.get('name') == 'gru1'
+        assert attrs.get('hidden_size') == '32'
+
+    def test_embedding_roundtrip(self):
+        payload = self._single_layer_json('EmbeddingLayer', [
+            ('Embedding', 'name', 'emb'),
+            ('Embedding', 'num_embeddings', '1000'),
+            ('Embedding', 'embedding_dim', '64'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        emb = _extract_elements_by_type(out, 'EmbeddingLayer')
+        assert emb, 'EmbeddingLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in emb[0]['attributes']}
+        assert attrs.get('num_embeddings') == '1000'
+        assert attrs.get('embedding_dim') == '64'
+
+    def test_batchnorm_roundtrip(self):
+        payload = self._single_layer_json('BatchNormalizationLayer', [
+            ('BatchNormalization', 'name', 'bn'),
+            ('BatchNormalization', 'num_features', '64'),
+            ('BatchNormalization', 'dimension', '2D'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        bn = _extract_elements_by_type(out, 'BatchNormalizationLayer')
+        assert bn, 'BatchNormalizationLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in bn[0]['attributes']}
+        assert attrs.get('num_features') == '64'
+        assert attrs.get('dimension') == '2D'
+
+    def test_layernorm_roundtrip(self):
+        payload = self._single_layer_json('LayerNormalizationLayer', [
+            ('LayerNormalization', 'name', 'ln'),
+            ('LayerNormalization', 'normalized_shape', '[32, 32]'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        ln = _extract_elements_by_type(out, 'LayerNormalizationLayer')
+        assert ln, 'LayerNormalizationLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ln[0]['attributes']}
+        assert attrs.get('normalized_shape') == '[32, 32]'
+
+    def test_dropout_roundtrip(self):
+        payload = self._single_layer_json('DropoutLayer', [
+            ('Dropout', 'name', 'drop'),
+            ('Dropout', 'rate', '0.5'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        drop = _extract_elements_by_type(out, 'DropoutLayer')
+        assert drop, 'DropoutLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in drop[0]['attributes']}
+        assert attrs.get('rate') == '0.5'
+
+    def test_conv1d_roundtrip(self):
+        payload = self._single_layer_json('Conv1DLayer', [
+            ('Conv1D', 'name', 'c1'),
+            ('Conv1D', 'kernel_dim', '[3]'),
+            ('Conv1D', 'out_channels', '16'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        c1 = _extract_elements_by_type(out, 'Conv1DLayer')
+        assert c1, 'Conv1DLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in c1[0]['attributes']}
+        assert attrs.get('kernel_dim') == '[3]'
+        assert attrs.get('out_channels') == '16'
+
+    def test_pooling_roundtrip(self):
+        payload = self._single_layer_json('PoolingLayer', [
+            ('Pooling', 'name', 'pool'),
+            ('Pooling', 'pooling_type', 'max'),
+            ('Pooling', 'dimension', '2D'),
+            ('Pooling', 'kernel_dim', '[2, 2]'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        pool = _extract_elements_by_type(out, 'PoolingLayer')
+        assert pool, 'PoolingLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in pool[0]['attributes']}
+        assert attrs.get('pooling_type') == 'max'
+        assert attrs.get('dimension') == '2D'
+        assert attrs.get('kernel_dim') == '[2, 2]'
+
+    def test_simple_rnn_roundtrip(self):
+        payload = self._single_layer_json('RNNLayer', [
+            ('RNN', 'name', 'rnn1'),
+            ('RNN', 'hidden_size', '64'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        rnn = _extract_elements_by_type(out, 'RNNLayer')
+        assert rnn, 'RNNLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in rnn[0]['attributes']}
+        assert attrs.get('hidden_size') == '64'
+
+    @staticmethod
+    def _tensor_op_json(tns_type: str, extra_attrs: list):
+        """Build a minimal NN diagram containing a single TensorOp."""
+        attrs = [('TensorOp', 'name', f'{tns_type}_op'),
+                 ('TensorOp', 'tns_type', tns_type)] + extra_attrs
+        return TestNNDiagramRoundtrip._single_layer_json('TensorOp', attrs)
+
+    def test_tensorop_concatenate_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('concatenate', [
+            ('TensorOp', 'concatenate_dim', '1'),
+            ('TensorOp', 'layers_of_tensors', "['layer_a', 'layer_b']"),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        assert ops, 'TensorOp missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'concatenate'
+        assert attrs.get('concatenate_dim') == '1'
+
+    def test_tensorop_multiply_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('multiply', [
+            ('TensorOp', 'layers_of_tensors', "['a', 'b']"),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'multiply'
+
+    def test_tensorop_matmultiply_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('matmultiply', [
+            ('TensorOp', 'layers_of_tensors', "['a', 'b']"),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'matmultiply'
+
+    def test_tensorop_reshape_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('reshape', [
+            ('TensorOp', 'reshape_dim', '[1, -1]'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'reshape'
+        assert attrs.get('reshape_dim') == '[1, -1]'
+
+    def test_tensorop_transpose_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('transpose', [
+            ('TensorOp', 'transpose_dim', '[0, 2, 1]'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'transpose'
+        assert attrs.get('transpose_dim') == '[0, 2, 1]'
+
+    def test_tensorop_permute_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('permute', [
+            ('TensorOp', 'permute_dim', '[0, 3, 1, 2]'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'permute'
+        assert attrs.get('permute_dim') == '[0, 3, 1, 2]'
+
+    def test_pooling_invalid_pooling_type_lists_allowed_values(self):
+        """Unknown pooling_type raises with the whitelist in the message."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            process_nn_diagram,
+        )
+        payload = self._single_layer_json('PoolingLayer', [
+            ('Pooling', 'name', 'p'),
+            ('Pooling', 'pooling_type', 'avg'),  # legacy / typo
+            ('Pooling', 'dimension', '2D'),
+        ])
+        with pytest.raises(ValueError, match=r"Allowed values"):
+            process_nn_diagram(payload)
+
+    def test_conv_permute_in_true_roundtrips(self):
+        """permute_in=True must round-trip via the sidecar (iter-7/8). A
+        regression dropping the ``bool`` end-to-end path would turn
+        permute_in back into an int or tuple, or drop it entirely."""
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
+        payload = self._single_layer_json('Conv2DLayer', [
+            ('Conv2D', 'name', 'c1'),
+            ('Conv2D', 'kernel_dim', '[3, 3]'),
+            ('Conv2D', 'out_channels', '16'),
+            ('Conv2D', 'permute_in', 'true'),
+        ])
+        nn = process_nn_diagram(payload)
+        convs = [m for m in nn.modules if type(m).__name__ == 'Conv2D']
+        assert convs and convs[0].permute_in is True
+        assert is_explicit(convs[0], 'permute_in')
+
+    def test_rnn_bidirectional_dropout_batch_first_roundtrip(self):
+        """LSTM with bidirectional/dropout/batch_first set explicitly must
+        round-trip all three via the sidecar."""
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
+        payload = self._single_layer_json('LSTMLayer', [
+            ('LSTM', 'name', 'lstm1'),
+            ('LSTM', 'hidden_size', '128'),
+            ('LSTM', 'bidirectional', 'true'),
+            ('LSTM', 'dropout', '0.3'),
+            ('LSTM', 'batch_first', 'true'),
+        ])
+        nn = process_nn_diagram(payload)
+        lstms = [m for m in nn.modules if type(m).__name__ == 'LSTMLayer']
+        assert lstms
+        lstm = lstms[0]
+        assert lstm.bidirectional is True
+        assert lstm.dropout == 0.3
+        assert lstm.batch_first is True
+        assert is_explicit(lstm, 'bidirectional')
+        assert is_explicit(lstm, 'dropout')
+        assert is_explicit(lstm, 'batch_first')
+
+    def test_tensorop_invalid_tns_type_raises(self):
+        """Unknown tns_type raises with the whitelist in the message."""
+        payload = self._tensor_op_json('concatinate', [  # typo
+            ('TensorOp', 'concatenate_dim', '1'),
+            ('TensorOp', 'layers_of_tensors', "['a', 'b']"),
+        ])
+        with pytest.raises(ValueError, match=r"invalid tns_type.*Allowed values"):
+            process_nn_diagram(payload)
+
+    def test_conv_permute_in_false_explicitly_marked(self):
+        """permute_in=False must round-trip via the sidecar too — an
+        explicit False is semantically different from "unset" and must
+        reach the generator."""
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
+        payload = self._single_layer_json('Conv2DLayer', [
+            ('Conv2D', 'name', 'c1'),
+            ('Conv2D', 'kernel_dim', '[3, 3]'),
+            ('Conv2D', 'out_channels', '16'),
+            ('Conv2D', 'permute_in', 'false'),
+        ])
+        nn = process_nn_diagram(payload)
+        convs = [m for m in nn.modules if type(m).__name__ == 'Conv2D']
+        assert convs and convs[0].permute_in is False
+        assert is_explicit(convs[0], 'permute_in'), \
+            "explicit False must be tracked via mark_explicit too"
+
+    def test_sibling_sub_nn_same_name_emits_distinct_containers(self):
+        """Two sibling sub-NNs with identical display names must emit
+        distinct containers — pins the iter-17 id-keyed sub_nn_ids fix."""
+        from besser.BUML.metamodel.nn import NN, LinearLayer
+        # Build the NN directly (testing the converter side)
+        nn = NN(name='Parent')
+        block_a = NN(name='Block')
+        block_a.add_layer(LinearLayer(name='a_lin', out_features=4))
+        block_b = NN(name='Block')
+        block_b.add_layer(LinearLayer(name='b_lin', out_features=8))
+        nn.add_sub_nn(block_a)
+        nn.add_sub_nn(block_b)
+        out = nn_model_to_json(nn)
+        containers = _extract_elements_by_type(out, 'NNContainer')
+        # Parent + 2 sibling sub-NN containers = 3
+        assert len(containers) == 3, (
+            f'expected 3 containers (parent + 2 same-named sub-NNs), got {len(containers)}'
+        )
+
+    def test_conv_invalid_padding_type_lists_allowed_values(self):
+        """Unknown padding_type raises with the whitelist in the message
+        (mirrors pooling_type/optimizer/etc. pattern)."""
+        payload = self._single_layer_json('Conv2DLayer', [
+            ('Conv2D', 'name', 'c1'),
+            ('Conv2D', 'kernel_dim', '[3, 3]'),
+            ('Conv2D', 'out_channels', '16'),
+            ('Conv2D', 'padding_type', 'Same'),  # wrong capitalization
+        ])
+        with pytest.raises(ValueError, match=r"padding_type.*Allowed values"):
+            process_nn_diagram(payload)
+
+    def test_pooling_permute_in_roundtrips_via_converter(self):
+        """PoolingLayer permute_in/out must round-trip through the BUML→JSON
+        converter — before iter-19 the Pooling branch of _module_fields
+        silently dropped them even though processor+builder handled them."""
+        from besser.BUML.metamodel.nn import NN, PoolingLayer
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import mark_explicit
+        nn = NN(name='PoolPermute')
+        pool = PoolingLayer(
+            name='p', pooling_type='max', dimension='2D', kernel_dim=[2, 2],
+        )
+        pool.permute_in = True
+        mark_explicit(pool, 'permute_in')
+        nn.add_layer(pool)
+        out = nn_model_to_json(nn)
+        elements = _resolve_elements(out)
+        pools = _extract_elements_by_type(out, 'PoolingLayer')
+        assert pools, 'PoolingLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value']
+                 for aid in pools[0]['attributes']}
+        assert attrs.get('permute_in') == 'true', \
+            f'permute_in must round-trip on Pooling; got attrs={attrs}'
+
+    def test_parse_float_rejects_european_decimal(self):
+        """parse_float with '0,5' (European comma) raises rather than
+        silently returning the default."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            parse_float,
+        )
+        with pytest.raises(ValueError, match=r"not a valid number"):
+            parse_float("0,5")
+
+    def test_configuration_invalid_optimizer_lists_allowed_values(self):
+        """Unknown optimizer raises with the whitelist in the message."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            process_nn_diagram,
+        )
+        payload = self._single_layer_json('Configuration', [
+            ('Configuration', 'batch_size', '32'),
+            ('Configuration', 'epochs', '10'),
+            ('Configuration', 'learning_rate', '0.001'),
+            ('Configuration', 'optimizer', 'rmsprop'),  # not in whitelist
+            ('Configuration', 'loss_function', 'crossentropy'),
+            ('Configuration', 'metrics', '[accuracy]'),
+        ])
+        with pytest.raises(ValueError, match=r"optimizer.*Allowed values"):
+            process_nn_diagram(payload)

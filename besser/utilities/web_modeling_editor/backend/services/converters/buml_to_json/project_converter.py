@@ -16,6 +16,7 @@ from .agent_diagram_converter import agent_buml_to_json
 from .object_diagram_converter import object_buml_to_json
 from .gui_diagram_converter import gui_buml_to_json
 from .quantum_diagram_converter import quantum_buml_to_json
+from .nn_diagram_converter import nn_buml_to_json
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +28,11 @@ SECTION_CONFIG = {
     'gui_model': ('GUI', 'GUINoCodeDiagram', 'GUI Diagram'),
     'quantum_model': ('QUANTUM', 'QuantumCircuitDiagram', 'Quantum Circuit Diagram'),
     'sm': ('STATE MACHINE', 'StateMachineDiagram', 'State Machine Diagram'),
+    'nn_model': ('NN', 'NNDiagram', 'NN Diagram'),
 }
 
 # All known section header keywords used as boundary markers
-ALL_SECTION_KEYWORDS = ['STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE']
+ALL_SECTION_KEYWORDS = ['STRUCTURAL', 'OBJECT', 'AGENT', 'GUI', 'QUANTUM', 'STATE MACHINE', 'NN']
 
 
 def empty_model(diagram_type: str) -> Dict[str, Any]:
@@ -186,6 +188,9 @@ def _convert_section(
         elif model_name == "quantum_model":
             model = quantum_buml_to_json(section_code)
 
+        elif model_name == "nn_model":
+            model = nn_buml_to_json(section_code)
+
         elif model_name == "sm":
             model = state_machine_to_json(section_code)
 
@@ -313,6 +318,7 @@ def project_to_json(content: str) -> Dict[str, Any]:
         "StateMachineDiagram": "StateMachineDiagram",
         "GUINoCodeDiagram": "GUINoCodeDiagram",
         "QuantumCircuitDiagram": "QuantumCircuitDiagram",
+        "NNDiagram": "NNDiagram",
     }
 
     for diagram_type, model_type in diagram_defaults.items():

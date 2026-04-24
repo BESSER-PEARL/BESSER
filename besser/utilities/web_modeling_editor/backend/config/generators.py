@@ -183,7 +183,6 @@ SUPPORTED_GENERATORS: Dict[str, GeneratorInfo] = {
         category="deployment",
         requires_class_diagram=False
     ),
-
 }
 
 # Neural network generators are conditionally registered since they

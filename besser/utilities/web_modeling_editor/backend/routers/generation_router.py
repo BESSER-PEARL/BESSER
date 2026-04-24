@@ -907,6 +907,15 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
         nn_model = process_nn_diagram(json_data)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except (KeyError, TypeError, AttributeError) as exc:
+        # Malformed NN payload (dangling element id, non-dict element,
+        # non-string attribute value). Surface as 400 with context instead
+        # of letting the generic handler in error_handler.py turn it into
+        # a 500. Matches the pattern in /export-buml.
+        raise HTTPException(
+            status_code=400,
+            detail=f"Malformed NN diagram payload: {exc}",
+        ) from exc
 
     generation_type = config.get("generation_type", "subclassing") if config else "subclassing"
     if generator_type == "tensorflow":

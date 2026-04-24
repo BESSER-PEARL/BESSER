@@ -78,9 +78,15 @@ def create_dataset(element: dict, elements: dict) -> Dataset:
             f"Allowed values: {', '.join(_ALLOWED_INPUT_FORMATS)}."
         )
 
+    # Reconstruct Image whenever shape/normalize attributes are present,
+    # matching the converter's emission rule (which emits shape/normalize
+    # whenever dataset.image is not None, independent of input_format). The
+    # old "only when input_format == 'images'" guard dropped images on any
+    # round-trip of a hand-authored BUML Dataset with a non-'images' format.
     image = None
-    if input_format == 'images':
-        shape_raw = _get_attr_by_name(element, 'shape', elements)
+    shape_raw = _get_attr_by_name(element, 'shape', elements)
+    normalize_raw = _get_attr_by_name(element, 'normalize', elements)
+    if shape_raw is not None or normalize_raw is not None or input_format == 'images':
         if shape_raw is None or shape_raw == '':
             shape = [256, 256]
         elif isinstance(shape_raw, (list, tuple)):
@@ -99,7 +105,6 @@ def create_dataset(element: dict, elements: dict) -> Dataset:
                     f"(got {type(shape).__name__})"
                 )
             shape = list(shape)
-        normalize_raw = _get_attr_by_name(element, 'normalize', elements)
         normalize = str(normalize_raw).lower() == 'true' if normalize_raw is not None else False
         image = Image(shape=shape, normalize=normalize)
 

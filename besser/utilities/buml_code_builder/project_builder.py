@@ -358,7 +358,12 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                     section = f"# NN MODEL {idx}: \"{label}\" #\n\n"
 
                 tmp_path = os.path.join(temp_dir, f"nn_model_{idx}.py")
-                nn_model_to_code(model=nm, file_path=tmp_path)
+                # Thread the suffixed var_name through so the NN builder
+                # writes ``my_nn_1 = NN(...)`` instead of ``my_nn = NN(...)``.
+                # Previously the Project(...) line referenced ``my_nn_1`` but
+                # the actual binding was ``my_nn`` → NameError on exec() when
+                # a project held more than one NN.
+                nn_model_to_code(model=nm, file_path=tmp_path, model_var_name=var_name)
                 _write_temp_to_output(tmp_path, f, section_header=section)
                 model_vars.append(var_name)
 

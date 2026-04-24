@@ -10,7 +10,7 @@ from besser.BUML.metamodel.nn import (
     DropoutLayer, LayerNormLayer, BatchNormLayer,
     Dataset,
 )
-from besser.utilities.buml_code_builder.common import _escape_python_string
+from besser.utilities.buml_code_builder.common import _escape_python_string, safe_var_name
 from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
 
 
@@ -85,7 +85,7 @@ def _collect_used_types(model: NN, used_types: set = None) -> set:
     return used_types
 
 
-def nn_model_to_code(model: NN, file_path: str):
+def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None):
     """
     Generates Python code for an NN model, including any sub_nns.
 
@@ -96,6 +96,10 @@ def nn_model_to_code(model: NN, file_path: str):
     Args:
         model (NN): The neural network model.
         file_path (str): The path to save the generated code.
+        model_var_name (str, optional): Override the main NN's Python variable
+            name (used by ``project_to_code`` so multiple NNs in one project
+            get unique suffixes — ``my_nn_1`` / ``my_nn_2`` — instead of
+            colliding on the same ``my_nn`` binding).
     """
     # Collect only the types actually used in the model
     used_types = _collect_used_types(model)
@@ -106,15 +110,27 @@ def nn_model_to_code(model: NN, file_path: str):
         f.write(f"    {', '.join(sorted(used_types))},\n")
         f.write(")\n\n")
 
-        # Track variable names for sub_nns
+        # Main NN's variable name — caller can override for project-level
+        # disambiguation; otherwise derive from the model's name.
+        main_var = model_var_name if model_var_name else _name_to_var(model.name)
+
+        # Track which variable names are already bound in this file so that
+        # sub-NNs never collide with the main NN, sibling sub-NNs, layers,
+        # tensor_ops, config, or datasets. Seed with the reserved prefixes
+        # used below and with the main NN's own var name.
+        used_names = {main_var, 'image', 'config', 'train_data', 'test_data'}
+
+        # Track variable names for sub_nns keyed by id(sub_nn) — two sibling
+        # sub-NNs with the same display name are still distinct objects and
+        # must get distinct variable names, or the second silently clobbers
+        # the first when emitted as ``add_sub_nn(<var>)``.
         sub_nn_vars = {}
 
         # First, write all sub_nns (recursively)
         if model.sub_nns:
-            _write_all_sub_nns(f, model.sub_nns, sub_nn_vars)
+            _write_all_sub_nns(f, model.sub_nns, sub_nn_vars, used_names=used_names,
+                               name_prefix=main_var)
 
-        # Main NN model
-        main_var = _name_to_var(model.name)
         f.write(f"# Neural Network: {model.name}\n")
         f.write(f"{main_var} = NN(name='{_esc(model.name)}')\n")
 
@@ -127,18 +143,22 @@ def nn_model_to_code(model: NN, file_path: str):
             for module in model.modules:
                 module_type = module.__class__.__name__
                 if module_type == "NN":
-                    # Sub-NN
-                    sub_var = sub_nn_vars.get(module.name, _name_to_var(module.name))
+                    # Sub-NN — resolve by identity, not by name, so two
+                    # siblings with the same display name still get their
+                    # own bindings.
+                    sub_var = sub_nn_vars.get(id(module))
+                    if sub_var is None:
+                        # Fall back to a fresh unique name (shouldn't happen
+                        # if _write_all_sub_nns ran; defensive only).
+                        sub_var = _unique_var(_name_to_var(module.name), used_names)
                     f.write(f"{main_var}.add_sub_nn({sub_var})\n\n")
                 elif module_type == "TensorOp":
-                    # TensorOp
-                    tensor_op_var = f"tensor_op_{tensor_op_counter}"
+                    tensor_op_var = _unique_var(f"tensor_op_{tensor_op_counter}", used_names)
                     _write_tensor_op(f, module, tensor_op_var)
                     f.write(f"{main_var}.add_tensor_op({tensor_op_var})\n\n")
                     tensor_op_counter += 1
                 else:
-                    # Layer
-                    layer_var = f"layer_{layer_counter}"
+                    layer_var = _unique_var(f"layer_{layer_counter}", used_names)
                     _write_layer(f, module, layer_var)
                     f.write(f"{main_var}.add_layer({layer_var})\n\n")
                     layer_counter += 1
@@ -161,39 +181,77 @@ def nn_model_to_code(model: NN, file_path: str):
 
 
 def _name_to_var(name: str) -> str:
-    """Convert an NN name to a valid Python variable name."""
-    # Replace spaces and hyphens with underscores, lowercase
-    var = name.replace(' ', '_').replace('-', '_').lower()
-    # Ensure it starts with a letter
-    if var and var[0].isdigit():
-        var = 'nn_' + var
-    return var if var else 'nn_model'
+    """Convert an NN name to a valid Python variable name.
+
+    Delegates to :func:`safe_var_name` in ``common.py`` so Python keywords,
+    non-identifier characters, leading digits, consecutive underscores, and
+    empty strings are all handled consistently. Previously this helper only
+    replaced spaces/hyphens, which meant a layer named ``class`` or
+    ``my.net`` produced invalid Python at ``exec()`` time.
+    """
+    return safe_var_name(name) if name else 'nn_model'
 
 
-def _write_all_sub_nns(f, sub_nns: list, sub_nn_vars: dict, written: set = None):
+def _unique_var(base: str, used_names: set) -> str:
+    """Return ``base`` (or ``base_2``, ``base_3``, …) not already in ``used_names``.
+
+    Mutates ``used_names`` to include the returned value so subsequent calls
+    see it as taken. Needed because two siblings with colliding safe names
+    (``my-net`` and ``my_net`` both map to ``my_net``) would otherwise clobber
+    each other when emitted as top-level variable bindings.
+    """
+    if base not in used_names:
+        used_names.add(base)
+        return base
+    i = 2
+    while f"{base}_{i}" in used_names:
+        i += 1
+    picked = f"{base}_{i}"
+    used_names.add(picked)
+    return picked
+
+
+def _write_all_sub_nns(f, sub_nns: list, sub_nn_vars: dict, written: set = None,
+                       used_names: set = None, name_prefix: str = None):
     """
     Recursively write all sub_nns, ensuring dependencies are written first.
 
     Args:
         f: File handle
         sub_nns: List of sub NN models
-        sub_nn_vars: Dict to track variable names (name -> var_name)
-        written: Set of already written NN names
+        sub_nn_vars: Dict to track variable names, keyed by ``id(sub_nn)`` so
+            two siblings with the same display name still get distinct vars.
+        written: Set of ``id(sub_nn)`` values already written (also keyed by
+            identity — two distinct sub-NNs with the same name must both be
+            emitted, not collapsed).
+        used_names: Set of variable names already bound in this file. New
+            sub-NN vars are chosen via :func:`_unique_var` so they never
+            shadow the main NN's bindings, layer counters, or each other.
+        name_prefix: Optional prefix (typically the main NN's var name) to
+            scope sub-NN variables. Prevents cross-NN collisions when
+            ``project_to_code`` concatenates multiple NNs that each contain
+            a sub-NN with the same display name.
     """
     if written is None:
         written = set()
+    if used_names is None:
+        used_names = set()
 
     for sub_nn in sub_nns:
-        if sub_nn.name in written:
+        if id(sub_nn) in written:
             continue
 
         # First, recursively write any nested sub_nns
         if sub_nn.sub_nns:
-            _write_all_sub_nns(f, sub_nn.sub_nns, sub_nn_vars, written)
+            _write_all_sub_nns(f, sub_nn.sub_nns, sub_nn_vars, written,
+                               used_names=used_names, name_prefix=name_prefix)
 
-        # Now write this sub_nn
-        var_name = _name_to_var(sub_nn.name)
-        sub_nn_vars[sub_nn.name] = var_name
+        # Pick a unique variable name for this sub-NN
+        base_var = _name_to_var(sub_nn.name)
+        if name_prefix and name_prefix != base_var:
+            base_var = f"{name_prefix}_{base_var}"
+        var_name = _unique_var(base_var, used_names)
+        sub_nn_vars[id(sub_nn)] = var_name
 
         f.write(f"# Sub-Network: {sub_nn.name}\n")
         f.write(f"{var_name} = NN(name='{_esc(sub_nn.name)}')\n")
@@ -205,24 +263,24 @@ def _write_all_sub_nns(f, sub_nns: list, sub_nn_vars: dict, written: set = None)
             for module in sub_nn.modules:
                 module_type = module.__class__.__name__
                 if module_type == "NN":
-                    # Nested sub-NN
-                    nested_var = sub_nn_vars.get(module.name, _name_to_var(module.name))
+                    # Nested sub-NN — resolve by identity
+                    nested_var = sub_nn_vars.get(id(module))
+                    if nested_var is None:
+                        nested_var = _unique_var(_name_to_var(module.name), used_names)
                     f.write(f"{var_name}.add_sub_nn({nested_var})\n")
                 elif module_type == "TensorOp":
-                    # TensorOp
-                    tensor_op_var = f"{var_name}_tensor_op_{tensor_op_counter}"
+                    tensor_op_var = _unique_var(f"{var_name}_tensor_op_{tensor_op_counter}", used_names)
                     _write_tensor_op(f, module, tensor_op_var)
                     f.write(f"{var_name}.add_tensor_op({tensor_op_var})\n")
                     tensor_op_counter += 1
                 else:
-                    # Layer
-                    layer_var = f"{var_name}_layer_{layer_counter}"
+                    layer_var = _unique_var(f"{var_name}_layer_{layer_counter}", used_names)
                     _write_layer(f, module, layer_var)
                     f.write(f"{var_name}.add_layer({layer_var})\n")
                     layer_counter += 1
 
         f.write("\n")
-        written.add(sub_nn.name)
+        written.add(id(sub_nn))
 
 
 def _write_layer(f, layer, var_name: str):

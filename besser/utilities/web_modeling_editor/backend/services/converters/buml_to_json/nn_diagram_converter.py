@@ -470,7 +470,11 @@ def _emit_nn_container(nn: NN, y_base: int,
         x = container_x + 20 + i * step
         y = y_base + 60
         module_type = type(module).__name__
-        if module_type == 'NN' and sub_nn_ids is not None:
+        # Pass sub_nn_ids through even when we recurse into a sub-NN's own
+        # container, so nested ``NN``-in-``modules`` entries route to
+        # _emit_nn_reference instead of _emit_module (which would KeyError
+        # on ``_MODULE_TYPE_MAP['NN']``).
+        if module_type == 'NN' and sub_nn_ids and module.name in sub_nn_ids:
             element_id = _emit_nn_reference(module.name, container_id, x, y, elements)
         else:
             element_id = _emit_module(module, container_id, x, y, elements)
@@ -479,6 +483,27 @@ def _emit_nn_container(nn: NN, y_base: int,
         prev_id = element_id
 
     return container_id
+
+
+def _collect_all_sub_nns(nn_model: NN) -> list:
+    """Return every transitively-reachable sub-NN in DFS post-order.
+
+    Ensures deeply nested NNReferences (A → B → C) resolve — each level gets
+    its own container emitted, not just the top-level sub_nns list.
+    """
+    ordered: list = []
+    seen: set = set()
+
+    def _visit(node: NN) -> None:
+        for child in getattr(node, 'sub_nns', ()) or ():
+            if id(child) in seen:
+                continue
+            seen.add(id(child))
+            _visit(child)
+            ordered.append(child)
+
+    _visit(nn_model)
+    return ordered
 
 
 def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
@@ -493,11 +518,16 @@ def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
     elements: Dict[str, Dict[str, Any]] = {}
     relationships: Dict[str, Dict[str, Any]] = {}
 
-    # Sub-NN containers first, stacked above the main one so NNReference lookups work by name
+    # Emit every transitively-reachable sub-NN, not just the top-level list.
+    # The processor traverses NNReferences at any depth; we must emit a
+    # container for each one or the resulting NNReferences in deeper
+    # containers won't resolve on round-trip.
     sub_nn_ids: Dict[str, str] = {}
     y_cursor = -700
-    for sub_nn in nn_model.sub_nns:
-        cid = _emit_nn_container(sub_nn, y_cursor, elements, relationships)
+    for sub_nn in _collect_all_sub_nns(nn_model):
+        # Build sub_nn_ids incrementally so a sub-NN's own container can
+        # reference deeper sub-NNs already emitted.
+        cid = _emit_nn_container(sub_nn, y_cursor, elements, relationships, sub_nn_ids=sub_nn_ids)
         sub_nn_ids[sub_nn.name] = cid
         y_cursor += 300
 

@@ -4,7 +4,6 @@ The rule source is the literature synthesis in:
 "Papers_where_they_say_changing_X_in_chatbot_is_good_for_user_with_characteristc_Y.pdf".
 """
 
-import json
 import re
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Set

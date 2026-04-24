@@ -38,12 +38,20 @@ PRIMITIVE_TYPE_MAPPING = {
 RESERVED_NAMES = ['Class', 'Property', 'Method', 'Parameter', 'Enumeration']
 
 
-def safe_var_name(name: str) -> str:
+def safe_var_name(name: str, lowercase: bool = False) -> str:
     """
     Convert a name to a safe Python variable name.
 
+    By default the original casing of ``name`` is preserved, because callers
+    that emit Python identifiers (agent generation, gui model builder, etc.)
+    rely on the user-supplied casing round-tripping unchanged. Callers that
+    need a lowercased identifier — e.g. filesystem slugs or container /
+    hostname fragments — can opt in via ``lowercase=True``.
+
     Args:
         name: Original name
+        lowercase: If True, lowercase the result. Defaults to False so code
+            generators keep the user's original casing.
 
     Returns:
         Safe variable name
@@ -58,7 +66,9 @@ def safe_var_name(name: str) -> str:
     # Remove consecutive underscores
     while '__' in safe_name:
         safe_name = safe_name.replace('__', '_')
-    safe_name = safe_name.strip('_').lower() or "unnamed"
+    safe_name = safe_name.strip('_') or "unnamed"
+    if lowercase:
+        safe_name = safe_name.lower()
     if keyword.iskeyword(safe_name):
         safe_name = f"{safe_name}_"
     return safe_name

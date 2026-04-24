@@ -15,17 +15,16 @@ import tempfile
 import importlib.util
 import asyncio
 import json
-import re
-from collections import defaultdict
-from copy import deepcopy
-from typing import Any, Dict, List, Optional, Set
+from datetime import datetime, timezone
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Body, HTTPException
 from fastapi.responses import StreamingResponse, Response
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.generators.agents.baf_generator import GenerationMode
+from besser.generators.agents.agent_personalization import call_openai_chat
 
 # Backend models
 from besser.utilities.web_modeling_editor.backend.models import (
@@ -54,6 +53,21 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_generatio
     handle_variation_generation,
     handle_configuration_variants,
     handle_personalized_agent,
+)
+from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_recommendation_utils import (
+    RECOMMENDATION_ALLOWED_VALUES,
+    load_default_agent_recommendation_config,
+    extract_json_object,
+    normalize_recommended_agent_config,
+)
+from besser.utilities.web_modeling_editor.backend.services.utils.agent_config_manual_mapping_utils import (
+    get_manual_agent_config_mapping,
+    build_manual_mapping_recommendation,
+)
+from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
+    generate_user_profile_document as _generate_user_profile_document,
+    normalize_user_model_output as _normalize_user_model_output,
+    safe_path as _safe_path,
 )
 
 # Backend configuration
@@ -92,21 +106,119 @@ logger = logging.getLogger(__name__)
 SENSITIVE_KEYS = {'api_key', 'openai_api_key', 'secret', 'password', 'token', 'apikey', 'api-key'}
 
 
-def _safe_path(base_dir: str, user_filename: str) -> str:
-    """Resolve a user-provided filename safely within base_dir."""
-    safe_name = os.path.basename(user_filename)
-    full_path = os.path.realpath(os.path.join(base_dir, safe_name))
-    if not full_path.startswith(os.path.realpath(base_dir)):
-        raise ValueError("Invalid path")
-    return full_path
-
-
 def sanitize_config(config: dict) -> dict:
     """Return a shallow copy of config with sensitive values masked."""
     return {k: '***' if any(s in k.lower() for s in SENSITIVE_KEYS) else v for k, v in config.items()}
 
 
 router = APIRouter(prefix="/besser_api", tags=["generation"])
+
+
+@router.post("/recommend-agent-config-llm")
+@handle_endpoint_errors("recommend_agent_config_llm")
+async def recommend_agent_config_llm(payload: Dict[str, Any] = Body(...)):
+    """Recommend a structured agent configuration from a user profile using an LLM."""
+    user_profile_model = payload.get("userProfileModel")
+    if not isinstance(user_profile_model, dict):
+        raise HTTPException(status_code=400, detail="userProfileModel is required and must be a JSON object")
+
+    user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
+    current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
+    llm_model = payload.get("model") if isinstance(payload.get("model"), str) and payload.get("model").strip() else "gpt-5"
+
+    profile_document = _generate_user_profile_document(user_profile_model)
+    default_config = load_default_agent_recommendation_config()
+
+    allowed_values_payload = {
+        key: value
+        for key, value in RECOMMENDATION_ALLOWED_VALUES.items()
+        if key not in {"llmProvider", "openaiModels"}
+    }
+
+    system_prompt = (
+        "You are an assistant that recommends a valid agent configuration JSON for a user profile. "
+        "Return ONLY a JSON object with this exact shape: "
+        "{presentation:{...}, modality:{...}, behavior:{...}, content:{...}, system:{...}}. "
+        "Use only allowed values and keep output concise and deterministic. "
+        "Do not include markdown, comments, or explanatory text."
+    )
+    user_prompt = (
+        "Create a recommended configuration adapted to this user profile.\n\n"
+        f"Selected profile name: {user_profile_name or 'N/A'}\n\n"
+        f"Default config baseline:\n{json.dumps(default_config, ensure_ascii=False, indent=2)}\n\n"
+        f"Allowed values:\n{json.dumps(allowed_values_payload, ensure_ascii=False, indent=2)}\n\n"
+        f"Current config context (optional):\n{json.dumps(current_config, ensure_ascii=False, indent=2)}\n\n"
+        f"User profile document:\n{json.dumps(profile_document, ensure_ascii=False, indent=2)}\n\n"
+        "Return only the JSON object."
+    )
+
+    try:
+        recommendation_text = await asyncio.to_thread(
+            call_openai_chat,
+            system_prompt,
+            user_prompt,
+            model=llm_model,
+            openai_api_key=extract_openai_api_key(payload if isinstance(payload, dict) else {}),
+            config=payload,
+        )
+        parsed_recommendation = extract_json_object(recommendation_text)
+        normalized_config = normalize_recommended_agent_config(parsed_recommendation, user_profile_name)
+
+        return {
+            "config": normalized_config,
+            "source": "openai",
+            "model": llm_model,
+            "generatedAt": datetime.now(timezone.utc).isoformat(),
+        }
+    except RuntimeError as runtime_error:
+        raise HTTPException(status_code=400, detail=str(runtime_error)) from runtime_error
+    except ValueError as parse_error:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Failed to parse LLM recommendation response: {parse_error}",
+        ) from parse_error
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to generate LLM recommendation: {exc}") from exc
+
+
+@router.get("/agent-config-manual-mapping")
+@handle_endpoint_errors("get_agent_config_manual_mapping")
+async def get_agent_config_manual_mapping():
+    """Return the complete rule mapping used for deterministic recommendations."""
+    return {
+        "mapping": get_manual_agent_config_mapping(),
+        "source": "manual_mapping",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+@router.post("/recommend-agent-config-mapping")
+@handle_endpoint_errors("recommend_agent_config_mapping")
+async def recommend_agent_config_mapping(payload: Dict[str, Any] = Body(...)):
+    """Recommend a structured agent configuration using deterministic mapping rules."""
+    user_profile_model = payload.get("userProfileModel")
+    if not isinstance(user_profile_model, dict):
+        raise HTTPException(status_code=400, detail="userProfileModel is required and must be a JSON object")
+
+    user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
+    current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
+
+    profile_document = _generate_user_profile_document(user_profile_model)
+    recommendation = build_manual_mapping_recommendation(
+        user_profile_document=profile_document,
+        user_profile_name=user_profile_name,
+        current_config=current_config,
+    )
+
+    return {
+        "config": recommendation["config"],
+        "matchedRules": recommendation.get("matchedRules", []),
+        "signals": recommendation.get("signals", {}),
+        "source": "manual_mapping",
+        "generatedAt": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 def generate_agent_files(
@@ -558,172 +670,6 @@ async def _handle_user_diagram_generation(
     _normalize_user_model_output(object_model, temp_dir)
 
     return _create_file_response(temp_dir, generator_type)
-
-
-def _generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate the normalized JSON document for a stored user profile diagram."""
-    if not isinstance(user_profile_model, dict):
-        raise HTTPException(status_code=400, detail="userProfileModel must contain a serialized UserDiagram")
-
-    diagram_title = (
-        user_profile_model.get("title")
-        or user_profile_model.get("name")
-        or user_profile_model.get("id")
-        or "UserProfile"
-    )
-    prepared_payload = {
-        "title": diagram_title,
-        "diagramType": "UserDiagram",
-        "model": deepcopy(user_profile_model),
-        "generator": "jsonobject",
-    }
-
-    model_section = prepared_payload["model"]
-    if isinstance(model_section, dict):
-        model_section.setdefault("type", "UserDiagram")
-
-    try:
-        with tempfile.TemporaryDirectory(prefix=f"user_profile_{uuid.uuid4().hex}_") as temp_dir:
-            object_model = process_object_diagram(prepared_payload, user_reference_domain_model)
-            generator_info = get_generator_info("jsonobject")
-            if not generator_info:
-                raise HTTPException(status_code=500, detail="JSONObject generator is not configured")
-            generator_class = generator_info.generator_class
-            generator_instance = generator_class(object_model, output_dir=temp_dir)
-            generator_instance.generate()
-
-            _normalize_user_model_output(object_model, temp_dir)
-
-            file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
-            json_path = _safe_path(temp_dir, f"{file_name}.json")
-            if not os.path.isfile(json_path):
-                raise HTTPException(status_code=500, detail="Failed to render user profile JSON document")
-
-            with open(json_path, "r", encoding="utf-8") as handle:
-                return json.load(handle)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to convert user profile model")
-        raise HTTPException(status_code=400, detail="Failed to convert user profile model. Please check the input data.") from exc
-
-
-def _normalize_user_model_output(object_model, temp_dir: str) -> None:
-    file_name = _sanitize_object_model_filename(getattr(object_model, "name", None))
-    json_path = _safe_path(temp_dir, f"{file_name}.json")
-    if not os.path.isfile(json_path):
-        return
-
-    try:
-        with open(json_path, "r", encoding="utf-8") as source:
-            document = json.load(source)
-    except (OSError, json.JSONDecodeError):
-        return
-
-    normalized_document = _build_user_model_hierarchy(document)
-    if not normalized_document:
-        return
-
-    with open(json_path, "w", encoding="utf-8") as target:
-        json.dump(normalized_document, target, indent=2, ensure_ascii=False)
-
-
-def _build_user_model_hierarchy(document: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    objects = document.get("objects")
-    if not isinstance(objects, list):
-        return None
-
-    objects_by_id: Dict[str, Dict[str, Any]] = {}
-    for obj in objects:
-        if not isinstance(obj, dict):
-            continue
-        object_id = obj.get("id")
-        if object_id:
-            objects_by_id[object_id] = obj
-
-    if not objects_by_id:
-        return None
-
-    root_id = next(
-        (obj_id for obj_id, obj in objects_by_id.items() if obj.get("class") == "User"),
-        None,
-    )
-    if not root_id:
-        return None
-
-    root_model = _build_user_model_node(root_id, objects_by_id, include_identity=True, path=set())
-    if root_model is None:
-        return None
-
-    normalized_document = {key: value for key, value in document.items() if key != "objects"}
-    normalized_document["model"] = root_model
-    return normalized_document
-
-
-def _build_user_model_node(
-    object_id: str,
-    objects_by_id: Dict[str, Dict[str, Any]],
-    include_identity: bool,
-    path: Set[str],
-) -> Optional[Dict[str, Any]]:
-    if object_id in path:
-        return None
-
-    obj = objects_by_id.get(object_id)
-    if not obj:
-        return None
-
-    path.add(object_id)
-    try:
-        node: Dict[str, Any] = {}
-        if include_identity:
-            node["id"] = obj.get("id")
-            node["class"] = obj.get("class")
-
-        attributes = obj.get("attributes")
-        if isinstance(attributes, dict):
-            node.update(attributes)
-
-        child_groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
-
-        relationships = obj.get("relationships")
-        if isinstance(relationships, dict):
-            for target_ids in relationships.values():
-                if not isinstance(target_ids, list):
-                    continue
-                for target_id in target_ids:
-                    child_obj = objects_by_id.get(target_id)
-                    if not child_obj:
-                        continue
-                    child_node = _build_user_model_node(
-                        target_id,
-                        objects_by_id,
-                        include_identity=False,
-                        path=path,
-                    )
-                    if child_node is None:
-                        continue
-                    key = child_obj.get("class") or child_obj.get("id")
-                    if not key:
-                        continue
-                    child_groups[key].append(child_node)
-
-        for child_key, children in child_groups.items():
-            if not children:
-                continue
-            if len(children) == 1:
-                node[child_key] = children[0]
-            else:
-                node[child_key] = children
-
-        return node
-    finally:
-        path.remove(object_id)
-
-
-def _sanitize_object_model_filename(name: Optional[str]) -> str:
-    cleaned = re.sub(r'[^a-zA-Z0-9_-]', '_', (name or "object_model").strip())
-    return cleaned or "object_model"
 
 
 def _extract_reference_class_diagram(json_data: dict):

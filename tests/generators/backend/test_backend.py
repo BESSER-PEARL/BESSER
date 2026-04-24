@@ -170,8 +170,12 @@ def test_relationship_fk_placement(relationship_model, tmpdir):
     # Test 1: PhysicalAsset should NOT have any FK
     assert "class PhysicalAsset(Base):" in sqlalchemy_code
     assert "PhysicalAsset" in sqlalchemy_code
-    # Extract only the class definition (before relationship definitions)
-    physicalasset_section = sqlalchemy_code.split("class PhysicalAsset(Base):")[1].split("#---")[0]
+    # Extract only the class body. Split on the next ``class `` declaration so
+    # this works regardless of where PhysicalAsset falls in the class ordering
+    # (which is non-deterministic across runs because ``classes_sorted_by_inheritance``
+    # resolves timestamp ties via set iteration). This mirrors the robust pattern
+    # used in ``test_no_circular_dependency`` below.
+    physicalasset_section = sqlalchemy_code.split("class PhysicalAsset(Base):")[1].split("class ")[0]
     assert "ForeignKey" not in physicalasset_section, "PhysicalAsset should not have any ForeignKey"
     # Make sure it only has id (primary key) and attribute, not dt_id FK column
     assert "dt_id" not in physicalasset_section, "PhysicalAsset should not have dt_id FK"

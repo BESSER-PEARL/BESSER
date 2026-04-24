@@ -147,7 +147,7 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
         fields.append(('name', module.name, 'str', True))
         fields.append(('kernel_dim', module.kernel_dim, 'List', True))
         fields.append(('out_channels', module.out_channels, 'int', True))
-        if module.in_channels:
+        if module.in_channels is not None:
             fields.append(('in_channels', module.in_channels, 'int', False))
         if module.stride_dim is not None:
             fields.append(('stride_dim', module.stride_dim, 'List', False))
@@ -193,7 +193,7 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
     elif cls in ('SimpleRNNLayer', 'LSTMLayer', 'GRULayer'):
         fields.append(('name', module.name, 'str', True))
         fields.append(('hidden_size', module.hidden_size, 'int', True))
-        if module.input_size:
+        if module.input_size is not None:
             fields.append(('input_size', module.input_size, 'int', False))
         if module.return_type:
             fields.append(('return_type', module.return_type, 'str', False))
@@ -213,7 +213,7 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
     elif cls == 'LinearLayer':
         fields.append(('name', module.name, 'str', True))
         fields.append(('out_features', module.out_features, 'int', True))
-        if module.in_features:
+        if module.in_features is not None:
             fields.append(('in_features', module.in_features, 'int', False))
         if module.actv_func:
             fields.append(('actv_func', module.actv_func, 'str', False))

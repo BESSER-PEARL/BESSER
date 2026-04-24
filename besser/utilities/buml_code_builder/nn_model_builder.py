@@ -315,7 +315,7 @@ def _write_conv(f, layer, var_name: str):
         f"kernel_dim={layer.kernel_dim}",
         f"out_channels={layer.out_channels}",
     ]
-    if layer.in_channels:
+    if layer.in_channels is not None:
         params.append(f"in_channels={layer.in_channels}")
     if layer.stride_dim is not None:
         params.append(f"stride_dim={layer.stride_dim}")
@@ -379,7 +379,7 @@ def _write_rnn_like(f, layer, var_name: str):
         f"name='{_esc(layer.name)}'",
         f"hidden_size={layer.hidden_size}",
     ]
-    if layer.input_size:
+    if layer.input_size is not None:
         params.append(f"input_size={layer.input_size}")
     if layer.return_type:
         params.append(f"return_type='{_esc(layer.return_type)}'")
@@ -405,7 +405,7 @@ def _write_linear(f, layer: LinearLayer, var_name: str):
         f"name='{_esc(layer.name)}'",
         f"out_features={layer.out_features}",
     ]
-    if layer.in_features:
+    if layer.in_features is not None:
         params.append(f"in_features={layer.in_features}")
     if layer.actv_func:
         params.append(f"actv_func='{_esc(layer.actv_func)}'")

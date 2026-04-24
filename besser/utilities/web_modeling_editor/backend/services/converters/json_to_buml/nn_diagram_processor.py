@@ -88,6 +88,9 @@ def create_dataset(element: dict, elements: dict) -> Dataset:
     normalize_raw = _get_attr_by_name(element, 'normalize', elements)
     if shape_raw is not None or normalize_raw is not None or input_format == 'images':
         if shape_raw is None or shape_raw == '':
+            # Documented default; downstream generators treat it as "user
+            # didn't specify". Keep as-is to avoid breaking existing models
+            # that rely on the fallback.
             shape = [256, 256]
         elif isinstance(shape_raw, (list, tuple)):
             shape = list(shape_raw)
@@ -288,9 +291,27 @@ def parse_bool(value, default=False):
 
 
 def parse_float(value, default=None):
-    """Parse a value as float."""
+    """Parse a value as float.
+
+    Raises ``ValueError`` on a non-empty, non-parseable string so a user
+    typing ``"0,5"`` (European decimal) or ``"abc"`` sees an actionable
+    error instead of the attribute silently falling back to the default.
+    Empty strings and ``None`` still yield the default (means "no user
+    input"), matching the old contract used by optional attributes.
+    """
     if value is None:
         return default
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == '':
+            return default
+        try:
+            return float(stripped)
+        except ValueError as exc:
+            raise ValueError(
+                f"'{value}' is not a valid number — expected a float "
+                f"(use '.' as the decimal separator, e.g. '0.5')."
+            ) from exc
     try:
         return float(value)
     except (ValueError, TypeError):
@@ -634,8 +655,19 @@ def process_nn_diagram(json_data):
                          set(container_tensor_ops.keys()) |
                          set(ref_id for ref_id, _ in container_refs))
 
-        # Topologically sort modules based on NNNext within this container
-        ordered_modules = topological_sort(all_module_ids, outgoing_connections)
+        # Topologically sort modules based on NNNext within this container.
+        # Tie-break by module name so two zero-in-degree starts produce a
+        # user-legible ordering instead of a UUID-alphabetic one.
+        module_name_by_id = {}
+        for mid, layer in container_layers.items():
+            module_name_by_id[mid] = getattr(layer, 'name', '') or ''
+        for mid, top in container_tensor_ops.items():
+            module_name_by_id[mid] = getattr(top, 'name', '') or ''
+        for rid, rname in container_refs:
+            module_name_by_id[rid] = rname or ''
+        ordered_modules = topological_sort(
+            all_module_ids, outgoing_connections, name_by_id=module_name_by_id,
+        )
 
         # Add modules in order
         container_refs_dict = dict(container_refs)
@@ -715,7 +747,7 @@ def process_nn_diagram(json_data):
     return main_nn
 
 
-def topological_sort(module_ids, outgoing_connections):
+def topological_sort(module_ids, outgoing_connections, name_by_id=None):
     """
     Topologically sort modules based on their NNNext connections.
     First layer = the one with no incoming connections from other modules.
@@ -723,6 +755,9 @@ def topological_sort(module_ids, outgoing_connections):
     Args:
         module_ids: Set of module IDs
         outgoing_connections: Dict mapping source_id to list of target_ids
+        name_by_id: Optional dict module_id -> display name. When supplied,
+            ties are broken by ``(name, id)`` instead of by raw UUID so the
+            resulting order is user-legible. Still deterministic either way.
 
     Returns:
         List of module IDs in topological order
@@ -737,9 +772,18 @@ def topological_sort(module_ids, outgoing_connections):
                 if target_id in in_degree:
                     in_degree[target_id] += 1
 
+    def _sort_key(mid):
+        # (display_name, id) — falls back to id if no name is known.
+        if name_by_id is None:
+            return mid
+        return (name_by_id.get(mid, ''), mid)
+
     # Find all nodes with in-degree 0 (first layers - no incoming from other modules)
     # Sort for deterministic ordering when multiple nodes share in-degree 0
-    queue = sorted(mid for mid, deg in in_degree.items() if deg == 0)
+    queue = sorted(
+        (mid for mid, deg in in_degree.items() if deg == 0),
+        key=_sort_key,
+    )
     result = []
 
     while queue:
@@ -751,7 +795,20 @@ def topological_sort(module_ids, outgoing_connections):
             if target_id in in_degree:
                 in_degree[target_id] -= 1
                 if in_degree[target_id] == 0:
-                    bisect.insort(queue, target_id)
+                    # bisect.insort needs a comparable key; when we have
+                    # names, do a linear insert over the (name, id) key.
+                    if name_by_id is None:
+                        bisect.insort(queue, target_id)
+                    else:
+                        tkey = _sort_key(target_id)
+                        lo, hi = 0, len(queue)
+                        while lo < hi:
+                            mid = (lo + hi) // 2
+                            if _sort_key(queue[mid]) < tkey:
+                                lo = mid + 1
+                            else:
+                                hi = mid
+                        queue.insert(lo, target_id)
 
     # Any nodes still missing from the result have a non-zero in-degree,
     # which means they participate in a cycle (disconnected components
@@ -1409,16 +1466,17 @@ def create_configuration(element, elements):
     if not metrics_str:
         raise ValueError("Configuration missing mandatory 'metrics' attribute")
 
-    # Parse metrics (could be comma-separated or list notation)
+    # Parse metrics (could be comma-separated, list notation, or quoted list
+    # like "['accuracy', 'precision']"). Strip quotes after splitting so the
+    # whitelist check sees the bare metric name.
     if isinstance(metrics_str, str):
-        # Handle "[accuracy]" format
         if metrics_str.startswith('[') and metrics_str.endswith(']'):
             inner = metrics_str[1:-1].strip()
-            metrics = [m.strip() for m in inner.split(',') if m.strip()]
+            metrics = [m.strip().strip("'\"") for m in inner.split(',') if m.strip()]
         else:
-            metrics = [m.strip() for m in metrics_str.split(',') if m.strip()]
+            metrics = [m.strip().strip("'\"") for m in metrics_str.split(',') if m.strip()]
     elif isinstance(metrics_str, list):
-        metrics = metrics_str
+        metrics = [m.strip("'\"") if isinstance(m, str) else m for m in metrics_str]
     else:
         raise ValueError("Configuration 'metrics' attribute has invalid format")
     invalid_metrics = [m for m in metrics if m not in _ALLOWED_METRICS]

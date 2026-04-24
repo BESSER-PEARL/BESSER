@@ -1473,3 +1473,174 @@ class TestNNDiagramRoundtrip:
         }
         with pytest.raises(ValueError, match="NNReference cycle"):
             process_nn_diagram(cyclic)
+
+    def test_padding_type_valid_roundtrips_when_explicit(self):
+        """When the user explicitly picks padding_type='valid' (the metamodel
+        default), the sidecar ``mark_explicit`` path must make sure the JSON
+        output still carries the attribute. Without sidecar gating, the legacy
+        ``!= 'valid'`` guard silently strips it."""
+        payload = self._minimal_nn_json()
+        conv_id = 'l1'
+        payload['model']['elements'][conv_id]['attributes'].append('l1pt')
+        payload['model']['elements']['l1pt'] = {
+            'id': 'l1pt', 'type': 'PaddingTypeAttributeConv2D',
+            'attributeName': 'padding_type', 'value': 'valid', 'owner': conv_id,
+        }
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        conv_elts = _extract_elements_by_type(out, 'Conv2DLayer')
+        assert conv_elts, 'expected at least one Conv2DLayer in output'
+        attr_names = {
+            elements[aid]['attributeName']: elements[aid]['value']
+            for aid in conv_elts[0]['attributes']
+        }
+        assert attr_names.get('padding_type') == 'valid', \
+            f'padding_type=valid must round-trip when set explicitly, got {attr_names}'
+
+    def test_flatten_start_dim_and_end_dim_defaults_roundtrip_when_explicit(self):
+        """Flatten layer with start_dim=1 and end_dim=-1 (both metamodel
+        defaults) must round-trip when set explicitly in the source JSON."""
+        base = self._minimal_nn_json()
+        base['model']['elements']['fl1'] = {
+            'id': 'fl1', 'type': 'FlattenLayer', 'name': 'FlattenLayer',
+            'owner': 'c1',
+            'bounds': {'x': 300, 'y': 60, 'width': 110, 'height': 110},
+            'attributes': ['fl1n', 'fl1s', 'fl1e'], 'methods': [],
+        }
+        base['model']['elements']['fl1n'] = {
+            'id': 'fl1n', 'type': 'NameAttributeFlatten',
+            'attributeName': 'name', 'value': 'flat', 'owner': 'fl1',
+        }
+        base['model']['elements']['fl1s'] = {
+            'id': 'fl1s', 'type': 'StartDimAttributeFlatten',
+            'attributeName': 'start_dim', 'value': '1', 'owner': 'fl1',
+        }
+        base['model']['elements']['fl1e'] = {
+            'id': 'fl1e', 'type': 'EndDimAttributeFlatten',
+            'attributeName': 'end_dim', 'value': '-1', 'owner': 'fl1',
+        }
+        out = self._roundtrip(base)
+        elements = _resolve_elements(out)
+        flat = _extract_elements_by_type(out, 'FlattenLayer')
+        assert flat, 'FlattenLayer missing from output'
+        attrs = {
+            elements[aid]['attributeName']: elements[aid]['value']
+            for aid in flat[0]['attributes']
+        }
+        assert 'start_dim' in attrs, f'start_dim should round-trip when explicit; got {attrs}'
+        assert 'end_dim' in attrs, f'end_dim should round-trip when explicit; got {attrs}'
+
+    def test_tensorop_concatenate_preserves_float_in_layers_of_tensors(self):
+        """TensorOp ``layers_of_tensors=[0.5, 'name']`` must preserve the 0.5
+        as a float (not the string '0.5') after round-trip, so downstream
+        generators can distinguish numeric weights from layer-name references."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            process_nn_diagram,
+        )
+        payload = {
+            'title': 'op',
+            'model': {
+                'type': 'NNDiagram', 'version': '3.0.0',
+                'size': {'width': 1000, 'height': 400},
+                'elements': {
+                    'c': {'id': 'c', 'type': 'NNContainer', 'name': 'op',
+                          'owner': None,
+                          'bounds': {'x': 0, 'y': 0, 'width': 400, 'height': 200}},
+                    't': {'id': 't', 'type': 'TensorOp', 'name': 'TensorOp',
+                          'owner': 'c',
+                          'bounds': {'x': 20, 'y': 60, 'width': 110, 'height': 110},
+                          'attributes': ['tn', 'tt', 'tc', 'tl'], 'methods': []},
+                    'tn': {'id': 'tn', 'type': 'NameAttributeTensorOp',
+                           'attributeName': 'name', 'value': 'op1', 'owner': 't'},
+                    'tt': {'id': 'tt', 'type': 'TnsTypeAttributeTensorOp',
+                           'attributeName': 'tns_type', 'value': 'concatenate',
+                           'owner': 't'},
+                    'tc': {'id': 'tc', 'type': 'ConcatenateDimAttributeTensorOp',
+                           'attributeName': 'concatenate_dim', 'value': '1', 'owner': 't'},
+                    'tl': {'id': 'tl',
+                           'type': 'LayersOfTensorsAttributeTensorOp',
+                           'attributeName': 'layers_of_tensors',
+                           'value': "[0.5, 'other']", 'owner': 't'},
+                },
+                'relationships': {},
+                'interactive': {'elements': {}, 'relationships': {}},
+                'assessments': {},
+            },
+        }
+        nn = process_nn_diagram(payload)
+        top = [m for m in nn.modules if type(m).__name__ == 'TensorOp'][0]
+        assert top.layers_of_tensors[0] == 0.5, \
+            f"first item should be float 0.5, got {top.layers_of_tensors[0]!r}"
+        assert isinstance(top.layers_of_tensors[0], float)
+        assert top.layers_of_tensors[1] == 'other'
+
+    def test_transitive_nnreference_cycle_detected(self):
+        """Three-container NNReference cycle A→B→C→A must raise with the
+        cycle chain in the error message."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            process_nn_diagram,
+        )
+        cyclic = {
+            'title': 'transitive',
+            'model': {
+                'type': 'NNDiagram', 'version': '3.0.0',
+                'size': {'width': 1800, 'height': 600},
+                'elements': {
+                    'A': {'id': 'A', 'type': 'NNContainer', 'name': 'A', 'owner': None,
+                          'bounds': {'x': 0, 'y': 0, 'width': 400, 'height': 200}},
+                    'B': {'id': 'B', 'type': 'NNContainer', 'name': 'B', 'owner': None,
+                          'bounds': {'x': 500, 'y': 0, 'width': 400, 'height': 200}},
+                    'C': {'id': 'C', 'type': 'NNContainer', 'name': 'C', 'owner': None,
+                          'bounds': {'x': 1000, 'y': 0, 'width': 400, 'height': 200}},
+                    'rA': {'id': 'rA', 'type': 'NNReference', 'name': 'A->B', 'owner': 'A',
+                           'referencedNN': 'B',
+                           'bounds': {'x': 20, 'y': 60, 'width': 140, 'height': 40}},
+                    'rB': {'id': 'rB', 'type': 'NNReference', 'name': 'B->C', 'owner': 'B',
+                           'referencedNN': 'C',
+                           'bounds': {'x': 520, 'y': 60, 'width': 140, 'height': 40}},
+                    'rC': {'id': 'rC', 'type': 'NNReference', 'name': 'C->A', 'owner': 'C',
+                           'referencedNN': 'A',
+                           'bounds': {'x': 1020, 'y': 60, 'width': 140, 'height': 40}},
+                },
+                'relationships': {},
+                'interactive': {'elements': {}, 'relationships': {}},
+                'assessments': {},
+            },
+        }
+        with pytest.raises(ValueError, match="NNReference cycle"):
+            process_nn_diagram(cyclic)
+
+    def test_conv3d_kernel_dim_wrong_length_raises_with_layer_name(self):
+        """Conv3D with kernel_dim=[3,3] must raise a user-facing error that
+        names the layer and expected dimensionality."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            process_nn_diagram,
+        )
+        payload = {
+            'title': 'conv',
+            'model': {
+                'type': 'NNDiagram', 'version': '3.0.0',
+                'size': {'width': 800, 'height': 400},
+                'elements': {
+                    'c': {'id': 'c', 'type': 'NNContainer', 'name': 'net',
+                          'owner': None,
+                          'bounds': {'x': 0, 'y': 0, 'width': 400, 'height': 200}},
+                    'l': {'id': 'l', 'type': 'Conv3DLayer', 'name': 'Conv3DLayer',
+                          'owner': 'c',
+                          'bounds': {'x': 20, 'y': 60, 'width': 110, 'height': 110},
+                          'attributes': ['ln', 'lk', 'lo'], 'methods': []},
+                    'ln': {'id': 'ln', 'type': 'NameAttributeConv3D',
+                           'attributeName': 'name', 'value': 'volume', 'owner': 'l'},
+                    'lk': {'id': 'lk', 'type': 'KernelDimAttributeConv3D',
+                           'attributeName': 'kernel_dim',
+                           'value': '[3, 3]', 'owner': 'l'},
+                    'lo': {'id': 'lo', 'type': 'OutChannelsAttributeConv3D',
+                           'attributeName': 'out_channels', 'value': '8', 'owner': 'l'},
+                },
+                'relationships': {},
+                'interactive': {'elements': {}, 'relationships': {}},
+                'assessments': {},
+            },
+        }
+        with pytest.raises(ValueError, match=r"Conv3D.*volume.*kernel_dim.*expected 3"):
+            process_nn_diagram(payload)

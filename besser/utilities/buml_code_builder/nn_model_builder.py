@@ -317,11 +317,13 @@ def _write_conv(f, layer, var_name: str):
     ]
     if layer.in_channels:
         params.append(f"in_channels={layer.in_channels}")
-    if layer.stride_dim:
+    if layer.stride_dim is not None:
         params.append(f"stride_dim={layer.stride_dim}")
-    if layer.padding_amount:
+    if _is_attr_set(layer, 'padding_amount') or layer.padding_amount:
         params.append(f"padding_amount={layer.padding_amount}")
-    if layer.padding_type and layer.padding_type != "valid":
+    if _is_attr_set(layer, 'padding_type') or (
+        layer.padding_type and layer.padding_type != "valid"
+    ):
         params.append(f"padding_type='{_esc(layer.padding_type)}'")
     if layer.actv_func:
         params.append(f"actv_func='{_esc(layer.actv_func)}'")
@@ -344,15 +346,17 @@ def _write_pooling(f, layer: PoolingLayer, var_name: str):
         f"pooling_type='{_esc(layer.pooling_type)}'",
         f"dimension='{_esc(layer.dimension)}'",
     ]
-    if layer.kernel_dim:
+    if layer.kernel_dim is not None:
         params.append(f"kernel_dim={layer.kernel_dim}")
-    if layer.stride_dim:
+    if layer.stride_dim is not None:
         params.append(f"stride_dim={layer.stride_dim}")
-    if layer.padding_amount:
+    if _is_attr_set(layer, 'padding_amount') or layer.padding_amount:
         params.append(f"padding_amount={layer.padding_amount}")
-    if layer.padding_type and layer.padding_type != "valid":
+    if _is_attr_set(layer, 'padding_type') or (
+        layer.padding_type and layer.padding_type != "valid"
+    ):
         params.append(f"padding_type='{_esc(layer.padding_type)}'")
-    if layer.output_dim:
+    if _is_attr_set(layer, 'output_dim') or layer.output_dim:
         params.append(f"output_dim={layer.output_dim}")
     if layer.actv_func:
         params.append(f"actv_func='{_esc(layer.actv_func)}'")
@@ -416,9 +420,13 @@ def _write_linear(f, layer: LinearLayer, var_name: str):
 def _write_flatten(f, layer: FlattenLayer, var_name: str):
     """Write FlattenLayer definition."""
     params = [f"name='{_esc(layer.name)}'"]
-    if layer.start_dim is not None and layer.start_dim != 1:
+    if _is_attr_set(layer, 'start_dim') or (
+        layer.start_dim is not None and layer.start_dim != 1
+    ):
         params.append(f"start_dim={layer.start_dim}")
-    if layer.end_dim is not None and layer.end_dim != -1:
+    if _is_attr_set(layer, 'end_dim') or (
+        layer.end_dim is not None and layer.end_dim != -1
+    ):
         params.append(f"end_dim={layer.end_dim}")
     if layer.actv_func:
         params.append(f"actv_func='{_esc(layer.actv_func)}'")

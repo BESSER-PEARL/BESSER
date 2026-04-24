@@ -821,10 +821,16 @@ def _create_conv_layer(element, elements, conv_class, default_stride):
     padding = get_element_attribute(element, 'PaddingAmountAttribute', elements)
     if padding is not None:
         layer.padding_amount = parse_tuple_or_int(padding, 0)
+        # Mark explicit so the converter/builder can distinguish a user-set
+        # 0 (valid, must round-trip) from the metamodel default of 0.
+        mark_explicit(layer, 'padding_amount')
 
     padding_type = get_element_attribute(element, 'PaddingTypeAttribute', elements)
     if padding_type:
         layer.padding_type = padding_type
+        # Track explicit so 'valid' (= metamodel default) still round-trips
+        # when the user actually picked it.
+        mark_explicit(layer, 'padding_type')
 
     actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
     if actv_func:
@@ -916,14 +922,17 @@ def create_pooling_layer(element, elements):
     padding = get_element_attribute(element, 'PaddingAmountAttribute', elements)
     if padding is not None:
         layer.padding_amount = parse_tuple_or_int(padding, 0)
+        mark_explicit(layer, 'padding_amount')
 
     padding_type = get_element_attribute(element, 'PaddingTypeAttribute', elements)
     if padding_type:
         layer.padding_type = padding_type
+        mark_explicit(layer, 'padding_type')
 
     output_dim = get_element_attribute(element, 'OutputDimAttribute', elements)
     if output_dim is not None:
         layer.output_dim = parse_list_of_ints(output_dim)
+        mark_explicit(layer, 'output_dim')
 
     actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
     if actv_func:
@@ -1079,10 +1088,16 @@ def create_flatten_layer(element, elements):
     start_dim = get_element_attribute(element, 'StartDimAttribute', elements)
     if start_dim is not None:
         layer.start_dim = parse_tuple_or_int(start_dim)
+        # Mark explicit so the converter emits start_dim even when the user
+        # set it to the metamodel default (1). Without this, a user who
+        # intentionally typed "1" into the editor sees the attribute vanish
+        # from the exported JSON.
+        mark_explicit(layer, 'start_dim')
 
     end_dim = get_element_attribute(element, 'EndDimAttribute', elements)
     if end_dim is not None:
         layer.end_dim = parse_tuple_or_int(end_dim)
+        mark_explicit(layer, 'end_dim')
 
     actv_func = get_element_attribute(element, 'ActvFuncAttribute', elements)
     if actv_func:
@@ -1259,16 +1274,27 @@ def create_tensor_op(element, elements):
     layers_of_tensors_raw = get_element_attribute(element, 'LayersOfTensorsAttribute', elements)
     layers_of_tensors = None
     if layers_of_tensors_raw:
+        # The metamodel declares this as List[Union[str, float]]. Preserve
+        # numeric items as floats so round-trip doesn't quietly rewrite
+        # e.g. [0.5, 'x'] to ['0.5', 'x'].
+        def _coerce(item):
+            if isinstance(item, (int, float)) and not isinstance(item, bool):
+                return item
+            s = str(item).strip().strip("'\"")
+            if not s:
+                return s
+            try:
+                return float(s)
+            except ValueError:
+                return s
         if isinstance(layers_of_tensors_raw, str):
             # Handle "['layer1', 'layer2']" or "[layer1, layer2]" or "layer1, layer2" format
             val = layers_of_tensors_raw.strip()
             if val.startswith('[') and val.endswith(']'):
                 val = val[1:-1]
-            # Split by comma and strip whitespace and quotes from each layer name
-            layers_of_tensors = [layer.strip().strip("'\"") for layer in val.split(',') if layer.strip()]
+            layers_of_tensors = [_coerce(layer) for layer in val.split(',') if layer.strip()]
         elif isinstance(layers_of_tensors_raw, list):
-            # Also strip quotes from list items
-            layers_of_tensors = [layer.strip("'\"") if isinstance(layer, str) else layer for layer in layers_of_tensors_raw]
+            layers_of_tensors = [_coerce(layer) for layer in layers_of_tensors_raw]
 
     reshape_dim = get_element_attribute(element, 'ReshapeDimAttribute', elements)
     if reshape_dim is not None:

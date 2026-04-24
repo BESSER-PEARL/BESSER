@@ -145,11 +145,12 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
         fields.append(('out_channels', module.out_channels, 'int', True))
         if module.in_channels:
             fields.append(('in_channels', module.in_channels, 'int', False))
-        if module.stride_dim:
+        if module.stride_dim is not None:
             fields.append(('stride_dim', module.stride_dim, 'List', False))
-        if module.padding_amount:
+        if _is_attr_set(module, 'padding_amount') or module.padding_amount:
+            # Emit when user explicitly set (even to 0) or when non-default.
             fields.append(('padding_amount', module.padding_amount, 'int', False))
-        if module.padding_type and module.padding_type != 'valid':
+        if _is_attr_set(module, 'padding_type') or (module.padding_type and module.padding_type != 'valid'):
             fields.append(('padding_type', module.padding_type, 'str', False))
         if module.actv_func:
             fields.append(('actv_func', module.actv_func, 'str', False))
@@ -168,15 +169,15 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
         fields.append(('name', module.name, 'str', True))
         fields.append(('pooling_type', module.pooling_type, 'str', True))
         fields.append(('dimension', module.dimension, 'str', True))
-        if module.kernel_dim:
+        if module.kernel_dim is not None:
             fields.append(('kernel_dim', module.kernel_dim, 'List', False))
-        if module.stride_dim:
+        if module.stride_dim is not None:
             fields.append(('stride_dim', module.stride_dim, 'List', False))
-        if module.padding_amount:
+        if _is_attr_set(module, 'padding_amount') or module.padding_amount:
             fields.append(('padding_amount', module.padding_amount, 'int', False))
-        if module.padding_type and module.padding_type != 'valid':
+        if _is_attr_set(module, 'padding_type') or (module.padding_type and module.padding_type != 'valid'):
             fields.append(('padding_type', module.padding_type, 'str', False))
-        if module.output_dim:
+        if _is_attr_set(module, 'output_dim') or module.output_dim:
             fields.append(('output_dim', module.output_dim, 'List', False))
         if module.actv_func:
             fields.append(('actv_func', module.actv_func, 'str', False))
@@ -219,9 +220,13 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
 
     elif cls == 'FlattenLayer':
         fields.append(('name', module.name, 'str', True))
-        if module.start_dim is not None and module.start_dim != 1:
+        if _is_attr_set(module, 'start_dim') or (
+            module.start_dim is not None and module.start_dim != 1
+        ):
             fields.append(('start_dim', module.start_dim, 'int', False))
-        if module.end_dim is not None and module.end_dim != -1:
+        if _is_attr_set(module, 'end_dim') or (
+            module.end_dim is not None and module.end_dim != -1
+        ):
             fields.append(('end_dim', module.end_dim, 'int', False))
         if module.actv_func:
             fields.append(('actv_func', module.actv_func, 'str', False))

@@ -1387,7 +1387,11 @@ class TestDomainModelBuilderAdvanced:
 # nn_model_builder.py
 # ---------------------------------------------------------------------------
 from besser.BUML.metamodel.nn import (
-    NN, Conv2D, LinearLayer, FlattenLayer, Configuration, Dataset, Image,
+    NN, Conv1D, Conv2D, Conv3D, PoolingLayer,
+    SimpleRNNLayer, LSTMLayer, GRULayer,
+    LinearLayer, FlattenLayer, EmbeddingLayer,
+    DropoutLayer, LayerNormLayer, BatchNormLayer,
+    TensorOp, Configuration, Dataset, Image,
 )
 from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 
@@ -1493,3 +1497,93 @@ class TestNNModelBuilder:
         header = code.split(")")[0]  # first import block ends at ")"
         assert "Dataset" not in header
         assert "Image" not in header
+
+    # ------------------------------------------------------------------ #
+    # Exec-round-trip coverage per layer class                            #
+    # ------------------------------------------------------------------ #
+    # Each test constructs an NN with one instance of the layer, serializes
+    # via nn_model_to_code, then exec()'s the output and asserts the layer
+    # survived. Regression guard against any future emitter change that
+    # drops required kwargs or generates syntactically invalid Python for
+    # a specific class.
+
+    @staticmethod
+    def _exec_and_get_nn(tmp_path, nn):
+        path = str(tmp_path / f"nn_{nn.name}.py")
+        nn_model_to_code(nn, path)
+        with open(path, "r", encoding="utf-8") as f:
+            code = f.read()
+        ns: dict = {}
+        exec(code, ns)
+        # The main NN binding matches _name_to_var(nn.name); with safe_var_name
+        # this is the lowercase identifier form of nn.name.
+        candidates = [v for v in ns.values() if isinstance(v, NN) and v.name == nn.name]
+        assert candidates, f"No NN named {nn.name!r} in exec namespace"
+        return candidates[0]
+
+    def test_conv1d_exec_roundtrip(self, tmp_path):
+        nn = NN(name="Conv1DNet")
+        nn.add_layer(Conv1D(name="c", kernel_dim=[3], out_channels=8))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert any(type(m).__name__ == "Conv1D" for m in out.modules)
+
+    def test_conv3d_exec_roundtrip(self, tmp_path):
+        nn = NN(name="Conv3DNet")
+        nn.add_layer(Conv3D(name="c", kernel_dim=[3, 3, 3], out_channels=4))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert any(type(m).__name__ == "Conv3D" for m in out.modules)
+
+    def test_pooling_exec_roundtrip(self, tmp_path):
+        nn = NN(name="PoolNet")
+        nn.add_layer(PoolingLayer(
+            name="p", pooling_type="max", dimension="2D", kernel_dim=[2, 2],
+        ))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        assert any(type(m).__name__ == "PoolingLayer" for m in out.modules)
+
+    def test_rnn_variants_exec_roundtrip(self, tmp_path):
+        nn = NN(name="RNNs")
+        nn.add_layer(SimpleRNNLayer(name="r", hidden_size=8))
+        nn.add_layer(LSTMLayer(name="l", hidden_size=16))
+        nn.add_layer(GRULayer(name="g", hidden_size=32))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        names = {type(m).__name__ for m in out.modules}
+        assert {"SimpleRNNLayer", "LSTMLayer", "GRULayer"} <= names
+
+    def test_embedding_dropout_exec_roundtrip(self, tmp_path):
+        nn = NN(name="EmbDrop")
+        nn.add_layer(EmbeddingLayer(name="emb", num_embeddings=1000, embedding_dim=64))
+        nn.add_layer(DropoutLayer(name="drop", rate=0.5))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        names = {type(m).__name__ for m in out.modules}
+        assert "EmbeddingLayer" in names and "DropoutLayer" in names
+
+    def test_norm_layers_exec_roundtrip(self, tmp_path):
+        nn = NN(name="Norms")
+        nn.add_layer(LayerNormLayer(name="ln", normalized_shape=[32]))
+        nn.add_layer(BatchNormLayer(name="bn", num_features=32, dimension="2D"))
+        out = self._exec_and_get_nn(tmp_path, nn)
+        names = {type(m).__name__ for m in out.modules}
+        assert {"LayerNormLayer", "BatchNormLayer"} <= names
+
+    def test_tensor_op_exec_roundtrip_for_every_tns_type(self, tmp_path):
+        """Build one NN per tns_type and assert exec() produces a TensorOp
+        with the right type. Regression guard against the per-branch emit
+        logic in _write_tensor_op."""
+        cases = [
+            ("concatenate", {"concatenate_dim": 1, "layers_of_tensors": ["a", "b"]}),
+            ("multiply",    {"layers_of_tensors": ["a", "b"]}),
+            ("matmultiply", {"layers_of_tensors": ["a", "b"]}),
+            ("reshape",     {"reshape_dim": [1, -1]}),
+            ("transpose",   {"transpose_dim": [0, 2, 1]}),
+            ("permute",     {"permute_dim": [0, 3, 1, 2]}),
+        ]
+        for tns_type, kwargs in cases:
+            nn = NN(name=f"OP_{tns_type}")
+            nn.add_tensor_op(TensorOp(name=f"op_{tns_type}", tns_type=tns_type, **kwargs))
+            out = self._exec_and_get_nn(tmp_path, nn)
+            ops = [m for m in out.modules if type(m).__name__ == "TensorOp"]
+            assert ops, f"No TensorOp exec'd for {tns_type}"
+            assert ops[0].tns_type == tns_type, (
+                f"tns_type mismatch: expected {tns_type}, got {ops[0].tns_type}"
+            )

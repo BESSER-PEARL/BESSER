@@ -463,7 +463,7 @@ def _emit_dataset(dataset: Dataset, parent_type: str, x: int, y: int,
 def _emit_nn_container(nn: NN, y_base: int,
                        elements: Dict[str, Dict[str, Any]],
                        relationships: Dict[str, Dict[str, Any]],
-                       sub_nn_ids: Optional[Dict[str, str]] = None) -> str:
+                       sub_nn_ids: Optional[Dict[int, str]] = None) -> str:
     """
     Emit a container holding the modules of a single NN.
     Returns the container id. Lays out modules left-to-right with NNNext relationships.
@@ -483,8 +483,10 @@ def _emit_nn_container(nn: NN, y_base: int,
         # Pass sub_nn_ids through even when we recurse into a sub-NN's own
         # container, so nested ``NN``-in-``modules`` entries route to
         # _emit_nn_reference instead of _emit_module (which would KeyError
-        # on ``_MODULE_TYPE_MAP['NN']``).
-        if module_type == 'NN' and sub_nn_ids and module.name in sub_nn_ids:
+        # on ``_MODULE_TYPE_MAP['NN']``). Keyed by id(module), not name —
+        # two sibling sub-NNs with identical display names are still distinct
+        # objects and must resolve to their own containers.
+        if module_type == 'NN' and sub_nn_ids and id(module) in sub_nn_ids:
             element_id = _emit_nn_reference(module.name, container_id, x, y, elements)
         else:
             element_id = _emit_module(module, container_id, x, y, elements)
@@ -532,13 +534,17 @@ def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
     # The processor traverses NNReferences at any depth; we must emit a
     # container for each one or the resulting NNReferences in deeper
     # containers won't resolve on round-trip.
-    sub_nn_ids: Dict[str, str] = {}
+    # Keyed by id(sub_nn) — two sibling sub-NNs with the same display name
+    # are still distinct objects; keying by name would let the second
+    # overwrite the first and silently reroute references (mirrors the
+    # iter-7 id-based bookkeeping in nn_model_builder).
+    sub_nn_ids: Dict[int, str] = {}
     y_cursor = -700
     for sub_nn in _collect_all_sub_nns(nn_model):
         # Build sub_nn_ids incrementally so a sub-NN's own container can
         # reference deeper sub-NNs already emitted.
         cid = _emit_nn_container(sub_nn, y_cursor, elements, relationships, sub_nn_ids=sub_nn_ids)
-        sub_nn_ids[sub_nn.name] = cid
+        sub_nn_ids[id(sub_nn)] = cid
         y_cursor += 300
 
     # Main container
@@ -642,9 +648,24 @@ def _parse_nn_buml_ast(content: str, nn_module):
                 raise ValueError(
                     f"Call to non-whitelisted class {node.func.id!r}"
                 )
+            # Reject ``*args`` / ``**kwargs`` splats explicitly so an obscure
+            # downstream "missing required argument" doesn't hide what the
+            # visitor is refusing. The previous silent-drop behavior meant
+            # ``Conv2D(**malicious_dict)`` produced a cryptic metamodel error.
+            for a in node.args:
+                if isinstance(a, ast.Starred):
+                    raise ValueError(
+                        "Positional *args unpacking is not supported in NN BUML; "
+                        "pass arguments explicitly."
+                    )
+            for kw in node.keywords:
+                if kw.arg is None:
+                    raise ValueError(
+                        "**kwargs unpacking is not supported in NN BUML; "
+                        "pass keyword arguments explicitly."
+                    )
             args = [_eval(a, env) for a in node.args]
-            kwargs = {kw.arg: _eval(kw.value, env) for kw in node.keywords
-                      if kw.arg is not None}
+            kwargs = {kw.arg: _eval(kw.value, env) for kw in node.keywords}
             return func(*args, **kwargs)
         raise ValueError(
             f"Disallowed expression in NN BUML: {type(node).__name__}"
@@ -683,10 +704,22 @@ def _parse_nn_buml_ast(content: str, nn_module):
                         f"Disallowed method call {method!r} in NN BUML; "
                         f"allowed: {sorted(allowed_add_methods)}"
                     )
+                for a in stmt.value.args:
+                    if isinstance(a, ast.Starred):
+                        raise ValueError(
+                            "Positional *args unpacking is not supported in "
+                            "NN BUML add_* builder calls."
+                        )
+                for kw in stmt.value.keywords:
+                    if kw.arg is None:
+                        raise ValueError(
+                            "**kwargs unpacking is not supported in NN BUML "
+                            "add_* builder calls."
+                        )
                 target = _eval(stmt.value.func.value, env)
                 args = [_eval(a, env) for a in stmt.value.args]
                 kwargs = {kw.arg: _eval(kw.value, env)
-                          for kw in stmt.value.keywords if kw.arg is not None}
+                          for kw in stmt.value.keywords}
                 getattr(target, method)(*args, **kwargs)
                 return
             raise ValueError(
@@ -725,6 +758,23 @@ def nn_buml_to_json(content: str) -> Dict[str, Any]:
 
     referenced = {id(s) for nn in all_nns for s in nn.sub_nns}
     main_nns = [nn for nn in all_nns if id(nn) not in referenced]
-    main_nn = main_nns[-1] if main_nns else all_nns[-1]
+    if len(main_nns) > 1:
+        # Symmetric with the processor (which already rejects this case);
+        # silently picking one of several top-level NNs is surprising.
+        names = ', '.join(sorted(n.name for n in main_nns))
+        raise ValueError(
+            f"NN BUML contains {len(main_nns)} top-level NN instances "
+            f"({names}); exactly one is required. Link the others via "
+            f"add_sub_nn(...) to mark them as sub-networks."
+        )
+    if not main_nns:
+        # Every NN is referenced by another → cyclic; the processor raises
+        # the same way, keep the messages aligned.
+        raise ValueError(
+            "NN BUML has no top-level NN: every NN instance is referenced "
+            "as a sub-network by another. Remove one of the add_sub_nn "
+            "links to designate a main network."
+        )
+    main_nn = main_nns[0]
 
     return nn_model_to_json(main_nn)

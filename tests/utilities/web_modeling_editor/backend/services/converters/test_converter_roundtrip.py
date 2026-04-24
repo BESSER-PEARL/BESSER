@@ -1888,6 +1888,62 @@ class TestNNDiagramRoundtrip:
         with pytest.raises(ValueError, match=r"Allowed values"):
             process_nn_diagram(payload)
 
+    def test_conv_permute_in_true_roundtrips(self):
+        """permute_in=True must round-trip via the sidecar (iter-7/8). A
+        regression dropping the ``bool`` end-to-end path would turn
+        permute_in back into an int or tuple, or drop it entirely."""
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
+        payload = self._single_layer_json('Conv2DLayer', [
+            ('Conv2D', 'name', 'c1'),
+            ('Conv2D', 'kernel_dim', '[3, 3]'),
+            ('Conv2D', 'out_channels', '16'),
+            ('Conv2D', 'permute_in', 'true'),
+        ])
+        nn = process_nn_diagram(payload)
+        convs = [m for m in nn.modules if type(m).__name__ == 'Conv2D']
+        assert convs and convs[0].permute_in is True
+        assert is_explicit(convs[0], 'permute_in')
+
+    def test_rnn_bidirectional_dropout_batch_first_roundtrip(self):
+        """LSTM with bidirectional/dropout/batch_first set explicitly must
+        round-trip all three via the sidecar."""
+        from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
+        payload = self._single_layer_json('LSTMLayer', [
+            ('LSTM', 'name', 'lstm1'),
+            ('LSTM', 'hidden_size', '128'),
+            ('LSTM', 'bidirectional', 'true'),
+            ('LSTM', 'dropout', '0.3'),
+            ('LSTM', 'batch_first', 'true'),
+        ])
+        nn = process_nn_diagram(payload)
+        lstms = [m for m in nn.modules if type(m).__name__ == 'LSTMLayer']
+        assert lstms
+        lstm = lstms[0]
+        assert lstm.bidirectional is True
+        assert lstm.dropout == 0.3
+        assert lstm.batch_first is True
+        assert is_explicit(lstm, 'bidirectional')
+        assert is_explicit(lstm, 'dropout')
+        assert is_explicit(lstm, 'batch_first')
+
+    def test_tensorop_invalid_tns_type_raises(self):
+        """Unknown tns_type raises with the whitelist in the message."""
+        payload = self._tensor_op_json('concatinate', [  # typo
+            ('TensorOp', 'concatenate_dim', '1'),
+            ('TensorOp', 'layers_of_tensors', "['a', 'b']"),
+        ])
+        with pytest.raises(ValueError, match=r"invalid tns_type.*Allowed values"):
+            process_nn_diagram(payload)
+
+    def test_parse_float_rejects_european_decimal(self):
+        """parse_float with '0,5' (European comma) raises rather than
+        silently returning the default."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            parse_float,
+        )
+        with pytest.raises(ValueError, match=r"not a valid number"):
+            parse_float("0,5")
+
     def test_configuration_invalid_optimizer_lists_allowed_values(self):
         """Unknown optimizer raises with the whitelist in the message."""
         from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (

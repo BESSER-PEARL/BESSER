@@ -44,6 +44,9 @@ _ALLOWED_INPUT_FORMATS = ('csv', 'images')
 _ALLOWED_OPTIMIZERS = ('sgd', 'adam', 'adamW', 'adagrad')
 _ALLOWED_LOSS_FUNCTIONS = ('crossentropy', 'binary_crossentropy', 'mse')
 _ALLOWED_METRICS = ('accuracy', 'precision', 'recall', 'f1-score', 'mae')
+_ALLOWED_TNS_TYPES = (
+    'concatenate', 'multiply', 'matmultiply', 'reshape', 'transpose', 'permute',
+)
 _CONV_EXPECTED_DIMS = {'Conv1D': 1, 'Conv2D': 2, 'Conv3D': 3}
 
 
@@ -1321,6 +1324,11 @@ def create_tensor_op(element, elements):
     tns_type = get_element_attribute(element, 'TnsTypeAttribute', elements)
     if not tns_type:
         raise ValueError(f"TensorOp '{name}' missing mandatory 'tns_type' attribute")
+    if tns_type not in _ALLOWED_TNS_TYPES:
+        raise ValueError(
+            f"TensorOp '{name}' has invalid tns_type '{tns_type}'. "
+            f"Allowed values: {', '.join(_ALLOWED_TNS_TYPES)}."
+        )
 
     # Parse all attributes first before creating TensorOp
     # (because TensorOp validates required attributes in tns_type setter)

@@ -24,6 +24,8 @@ from .buml_to_json import (
     parse_gui_buml_content,
     project_to_json,
     empty_model,
+    nn_model_to_json,
+    nn_buml_to_json,
 )
 
 __all__ = [
@@ -46,4 +48,6 @@ __all__ = [
     "parse_gui_buml_content",
     "project_to_json",
     "empty_model",
+    "nn_model_to_json",
+    "nn_buml_to_json",
 ]

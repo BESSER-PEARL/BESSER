@@ -10,12 +10,35 @@ from besser.BUML.metamodel.nn import (
     DropoutLayer, LayerNormLayer, BatchNormLayer,
     Dataset,
 )
+from besser.utilities.buml_code_builder.common import _escape_python_string
 from besser.utilities.buml_code_builder.nn_explicit_attrs import is_explicit
 
 
 def _is_attr_set(layer, attr_name: str) -> bool:
     """Check if an attribute was explicitly set (ticked/entered) in the editor."""
     return is_explicit(layer, attr_name)
+
+
+def _esc(value) -> str:
+    """Escape a user-controlled string for safe interpolation into a single-
+    quoted Python literal.
+
+    Guards against code injection when the generated file is later `exec()`'d
+    (the documented contract for BUML builder output). Returns an empty string
+    for ``None`` so callers always get a string.
+    """
+    if value is None:
+        return ''
+    return _escape_python_string(str(value))
+
+
+def _fmt_metrics(metrics) -> str:
+    """Format a list of metric names as a Python list literal, escaping each
+    entry so user-controlled strings cannot break out of the quotes."""
+    if not metrics:
+        return '[]'
+    escaped = [f"'{_esc(m)}'" for m in metrics]
+    return '[' + ', '.join(escaped) + ']'
 
 
 def _collect_used_types(model: NN, used_types: set = None) -> set:
@@ -93,7 +116,7 @@ def nn_model_to_code(model: NN, file_path: str):
         # Main NN model
         main_var = _name_to_var(model.name)
         f.write(f"# Neural Network: {model.name}\n")
-        f.write(f"{main_var} = NN(name='{model.name}')\n")
+        f.write(f"{main_var} = NN(name='{_esc(model.name)}')\n")
 
         # Add modules in order (sub_nns, layers, tensor_ops)
         # Using model.modules preserves the order from the diagram's NNNext relationships
@@ -173,7 +196,7 @@ def _write_all_sub_nns(f, sub_nns: list, sub_nn_vars: dict, written: set = None)
         sub_nn_vars[sub_nn.name] = var_name
 
         f.write(f"# Sub-Network: {sub_nn.name}\n")
-        f.write(f"{var_name} = NN(name='{sub_nn.name}')\n")
+        f.write(f"{var_name} = NN(name='{_esc(sub_nn.name)}')\n")
 
         # Add modules in order (preserves NNNext relationship order)
         if sub_nn.modules:
@@ -230,7 +253,7 @@ def _write_conv(f, layer, var_name: str):
     """Write a convolutional layer (Conv1D, Conv2D, or Conv3D) definition."""
     class_name = type(layer).__name__
     params = [
-        f"name='{layer.name}'",
+        f"name='{_esc(layer.name)}'",
         f"kernel_dim={layer.kernel_dim}",
         f"out_channels={layer.out_channels}",
     ]
@@ -241,16 +264,16 @@ def _write_conv(f, layer, var_name: str):
     if layer.padding_amount:
         params.append(f"padding_amount={layer.padding_amount}")
     if layer.padding_type and layer.padding_type != "valid":
-        params.append(f"padding_type='{layer.padding_type}'")
+        params.append(f"padding_type='{_esc(layer.padding_type)}'")
     if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
+        params.append(f"actv_func='{_esc(layer.actv_func)}'")
     if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
+        params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
-    if layer.permute_in:
+    if _is_attr_set(layer, 'permute_in'):
         params.append(f"permute_in={layer.permute_in}")
-    if layer.permute_out:
+    if _is_attr_set(layer, 'permute_out'):
         params.append(f"permute_out={layer.permute_out}")
 
     f.write(f"{var_name} = {class_name}({', '.join(params)})\n")
@@ -259,9 +282,9 @@ def _write_conv(f, layer, var_name: str):
 def _write_pooling(f, layer: PoolingLayer, var_name: str):
     """Write PoolingLayer definition."""
     params = [
-        f"name='{layer.name}'",
-        f"pooling_type='{layer.pooling_type}'",
-        f"dimension='{layer.dimension}'",
+        f"name='{_esc(layer.name)}'",
+        f"pooling_type='{_esc(layer.pooling_type)}'",
+        f"dimension='{_esc(layer.dimension)}'",
     ]
     if layer.kernel_dim:
         params.append(f"kernel_dim={layer.kernel_dim}")
@@ -270,18 +293,18 @@ def _write_pooling(f, layer: PoolingLayer, var_name: str):
     if layer.padding_amount:
         params.append(f"padding_amount={layer.padding_amount}")
     if layer.padding_type and layer.padding_type != "valid":
-        params.append(f"padding_type='{layer.padding_type}'")
+        params.append(f"padding_type='{_esc(layer.padding_type)}'")
     if layer.output_dim:
         params.append(f"output_dim={layer.output_dim}")
     if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
+        params.append(f"actv_func='{_esc(layer.actv_func)}'")
     if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
+        params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
-    if layer.permute_in:
+    if _is_attr_set(layer, 'permute_in'):
         params.append(f"permute_in={layer.permute_in}")
-    if layer.permute_out:
+    if _is_attr_set(layer, 'permute_out'):
         params.append(f"permute_out={layer.permute_out}")
 
     f.write(f"{var_name} = PoolingLayer({', '.join(params)})\n")
@@ -291,13 +314,13 @@ def _write_rnn_like(f, layer, var_name: str):
     """Write an RNN-like layer (SimpleRNNLayer, LSTMLayer, or GRULayer) definition."""
     class_name = type(layer).__name__
     params = [
-        f"name='{layer.name}'",
+        f"name='{_esc(layer.name)}'",
         f"hidden_size={layer.hidden_size}",
     ]
     if layer.input_size:
         params.append(f"input_size={layer.input_size}")
     if layer.return_type:
-        params.append(f"return_type='{layer.return_type}'")
+        params.append(f"return_type='{_esc(layer.return_type)}'")
     if _is_attr_set(layer, 'bidirectional'):
         params.append(f"bidirectional={layer.bidirectional}")
     if _is_attr_set(layer, 'dropout'):
@@ -305,9 +328,9 @@ def _write_rnn_like(f, layer, var_name: str):
     if _is_attr_set(layer, 'batch_first'):
         params.append(f"batch_first={layer.batch_first}")
     if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
+        params.append(f"actv_func='{_esc(layer.actv_func)}'")
     if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
+        params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
 
@@ -317,15 +340,15 @@ def _write_rnn_like(f, layer, var_name: str):
 def _write_linear(f, layer: LinearLayer, var_name: str):
     """Write LinearLayer definition."""
     params = [
-        f"name='{layer.name}'",
+        f"name='{_esc(layer.name)}'",
         f"out_features={layer.out_features}",
     ]
     if layer.in_features:
         params.append(f"in_features={layer.in_features}")
     if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
+        params.append(f"actv_func='{_esc(layer.actv_func)}'")
     if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
+        params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
 
@@ -334,15 +357,15 @@ def _write_linear(f, layer: LinearLayer, var_name: str):
 
 def _write_flatten(f, layer: FlattenLayer, var_name: str):
     """Write FlattenLayer definition."""
-    params = [f"name='{layer.name}'"]
+    params = [f"name='{_esc(layer.name)}'"]
     if layer.start_dim is not None and layer.start_dim != 1:
         params.append(f"start_dim={layer.start_dim}")
     if layer.end_dim is not None and layer.end_dim != -1:
         params.append(f"end_dim={layer.end_dim}")
     if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
+        params.append(f"actv_func='{_esc(layer.actv_func)}'")
     if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
+        params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
 
@@ -352,14 +375,14 @@ def _write_flatten(f, layer: FlattenLayer, var_name: str):
 def _write_embedding(f, layer: EmbeddingLayer, var_name: str):
     """Write EmbeddingLayer definition."""
     params = [
-        f"name='{layer.name}'",
+        f"name='{_esc(layer.name)}'",
         f"num_embeddings={layer.num_embeddings}",
         f"embedding_dim={layer.embedding_dim}",
     ]
     if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
+        params.append(f"actv_func='{_esc(layer.actv_func)}'")
     if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
+        params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
 
@@ -369,11 +392,11 @@ def _write_embedding(f, layer: EmbeddingLayer, var_name: str):
 def _write_dropout(f, layer: DropoutLayer, var_name: str):
     """Write DropoutLayer definition."""
     params = [
-        f"name='{layer.name}'",
+        f"name='{_esc(layer.name)}'",
         f"rate={layer.rate}",
     ]
     if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
+        params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
 
@@ -383,13 +406,13 @@ def _write_dropout(f, layer: DropoutLayer, var_name: str):
 def _write_layer_norm(f, layer: LayerNormLayer, var_name: str):
     """Write LayerNormLayer definition."""
     params = [
-        f"name='{layer.name}'",
+        f"name='{_esc(layer.name)}'",
         f"normalized_shape={layer.normalized_shape}",
     ]
     if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
+        params.append(f"actv_func='{_esc(layer.actv_func)}'")
     if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
+        params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
 
@@ -399,14 +422,14 @@ def _write_layer_norm(f, layer: LayerNormLayer, var_name: str):
 def _write_batch_norm(f, layer: BatchNormLayer, var_name: str):
     """Write BatchNormLayer definition."""
     params = [
-        f"name='{layer.name}'",
+        f"name='{_esc(layer.name)}'",
         f"num_features={layer.num_features}",
-        f"dimension='{layer.dimension}'",
+        f"dimension='{_esc(layer.dimension)}'",
     ]
     if layer.actv_func:
-        params.append(f"actv_func='{layer.actv_func}'")
+        params.append(f"actv_func='{_esc(layer.actv_func)}'")
     if layer.name_module_input:
-        params.append(f"name_module_input='{layer.name_module_input}'")
+        params.append(f"name_module_input='{_esc(layer.name_module_input)}'")
     if _is_attr_set(layer, 'input_reused'):
         params.append(f"input_reused={layer.input_reused}")
 
@@ -426,8 +449,8 @@ def _write_tensor_op(f, tensor_op: TensorOp, var_name: str):
     - input_reused is optional for all types
     """
     params = [
-        f"name='{tensor_op.name}'",
-        f"tns_type='{tensor_op.tns_type}'",
+        f"name='{_esc(tensor_op.name)}'",
+        f"tns_type='{_esc(tensor_op.tns_type)}'",
     ]
 
     tns_type = tensor_op.tns_type
@@ -464,15 +487,15 @@ def _write_dataset(f, dataset: Dataset, var_name: str):
         image = dataset.image
         f.write(f"image = Image(shape={image.shape}, normalize={image.normalize})\n")
     params = [
-        f"name='{dataset.name}'",
-        f"path_data='{dataset.path_data}'",
+        f"name='{_esc(dataset.name)}'",
+        f"path_data='{_esc(dataset.path_data)}'",
     ]
     task_type = getattr(dataset, 'task_type', None)
     if task_type:
-        params.append(f"task_type='{task_type}'")
+        params.append(f"task_type='{_esc(task_type)}'")
     input_format = getattr(dataset, 'input_format', None)
     if input_format:
-        params.append(f"input_format='{input_format}'")
+        params.append(f"input_format='{_esc(input_format)}'")
     if dataset.image is not None:
         params.append("image=image")
     f.write(f"{var_name} = Dataset({', '.join(params)})\n")
@@ -484,9 +507,9 @@ def _write_configuration(f, config: Configuration, var_name: str):
         f"batch_size={config.batch_size}",
         f"epochs={config.epochs}",
         f"learning_rate={config.learning_rate}",
-        f"optimizer='{config.optimizer}'",
-        f"loss_function='{config.loss_function}'",
-        f"metrics={config.metrics}",
+        f"optimizer='{_esc(config.optimizer)}'",
+        f"loss_function='{_esc(config.loss_function)}'",
+        f"metrics={_fmt_metrics(config.metrics)}",
     ]
     if _is_attr_set(config, 'weight_decay') or (
         config.weight_decay is not None and config.weight_decay != 0

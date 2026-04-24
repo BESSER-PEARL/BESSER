@@ -757,12 +757,16 @@ def _create_conv_layer(element, elements, conv_class, default_stride):
         mark_explicit(layer, 'input_reused')
 
     permute_in = get_element_attribute(element, 'PermuteInAttribute', elements)
-    if permute_in:
-        layer.permute_in = parse_tuple_or_int(permute_in)
+    if permute_in is not None and str(permute_in).strip() != '':
+        # permute_in/out are booleans in the metamodel, not integer lists —
+        # they toggle dimension permutation in the PyTorch generator.
+        layer.permute_in = parse_bool(permute_in)
+        mark_explicit(layer, 'permute_in')
 
     permute_out = get_element_attribute(element, 'PermuteOutAttribute', elements)
-    if permute_out:
-        layer.permute_out = parse_tuple_or_int(permute_out)
+    if permute_out is not None and str(permute_out).strip() != '':
+        layer.permute_out = parse_bool(permute_out)
+        mark_explicit(layer, 'permute_out')
 
     return layer
 
@@ -847,12 +851,15 @@ def create_pooling_layer(element, elements):
         mark_explicit(layer, 'input_reused')
 
     permute_in = get_element_attribute(element, 'PermuteInAttribute', elements)
-    if permute_in:
-        layer.permute_in = parse_tuple_or_int(permute_in)
+    if permute_in is not None and str(permute_in).strip() != '':
+        # permute_in/out are booleans in the metamodel, not integer lists.
+        layer.permute_in = parse_bool(permute_in)
+        mark_explicit(layer, 'permute_in')
 
     permute_out = get_element_attribute(element, 'PermuteOutAttribute', elements)
-    if permute_out:
-        layer.permute_out = parse_tuple_or_int(permute_out)
+    if permute_out is not None and str(permute_out).strip() != '':
+        layer.permute_out = parse_bool(permute_out)
+        mark_explicit(layer, 'permute_out')
 
     return layer
 

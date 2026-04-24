@@ -57,6 +57,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     agent_buml_to_json,
     gui_buml_to_json,
     project_to_json,
+    nn_buml_to_json,
 )
 
 # Backend services - Other services
@@ -348,7 +349,18 @@ async def export_buml(input_data: DiagramInput):
             )
 
         elif elements_data.get("type") == "NNDiagram":
-            nn_model = process_nn_diagram(json_data)
+            try:
+                nn_model = process_nn_diagram(json_data)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except (KeyError, TypeError, AttributeError) as exc:
+                # Malformed NN payload (dangling element IDs, wrong types on
+                # attribute values, non-dict elements). Surface as 400 so the
+                # frontend can display a structured error instead of 500.
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Malformed NN diagram payload: {exc}",
+                ) from exc
             output_file_path = os.path.join(temp_dir, "nn_model.py")
             nn_model_to_code(model=nn_model, file_path=output_file_path)
             file_content = await _read_file(output_file_path, "rb")
@@ -416,6 +428,11 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
 
     is_gui_model = any(keyword in content_lower for keyword in [
         'guimodel(', '.new_screen(', '.new_module(', 'viewcomponent', 'viewcontainer'
+    ])
+
+    is_nn_model = any(keyword in content_lower for keyword in [
+        '.add_layer(', '.add_tensor_op(', '.add_sub_nn(', '.add_configuration(',
+        '.add_train_data(', '.add_test_data('
     ])
 
     is_project = 'project(' in content_lower or 'def create_project' in content_lower
@@ -500,11 +517,23 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
         except Exception as gui_error:
             logger.error("GUI diagram parsing failed: %s", str(gui_error))
 
+    elif is_nn_model:
+        try:
+            logger.info("Detected NN diagram, parsing...")
+            nn_json = nn_buml_to_json(buml_content)
+            diagram_data = {
+                "title": diagram_title,
+                "model": nn_json
+            }
+            diagram_type = "NNDiagram"
+        except Exception as nn_error:
+            logger.error("NN diagram parsing failed: %s", str(nn_error))
+
     # Check if we successfully parsed any diagram
     if diagram_data is None or diagram_type is None:
         raise ValueError(
             "Could not parse BUML file. The file format was not recognized as a valid BUML diagram or project. "
-            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, or Project."
+            "Supported formats: ClassDiagram, ObjectDiagram, StateMachineDiagram, AgentDiagram, GUINoCodeDiagram, NNDiagram, or Project."
         )
 
     # Return the diagram in the format expected by the frontend

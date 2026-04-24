@@ -911,26 +911,25 @@ async def _generate_nn(json_data: dict, generator_type: str, generator_class, co
     generation_type = config.get("generation_type", "subclassing") if config else "subclassing"
     if generator_type == "tensorflow":
         generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type)
-        expected_filename = "tf_nn.py"
     else:
         channel_last = config.get("channel_last", False) if config else False
         generator_instance = generator_class(nn_model, output_dir=temp_dir, generation_type=generation_type, channel_last=channel_last)
-        expected_filename = "pytorch_nn.py"
     await asyncio.to_thread(generator_instance.generate)
 
-    # Build user-facing filename with architecture type
-    # (e.g. pytorch_nn_subclassing.py / tf_nn_subclassing.py)
+    # The NN generator strips the trailing ".py" from its configured file_name
+    # and appends "_{generation_type}.py" (see NNCodeGenerator.generate), so
+    # the actual artifact is e.g. pytorch_nn_subclassing.py / tf_nn_sequential.py.
     prefix = "tf" if generator_type == "tensorflow" else "pytorch"
     download_filename = f"{prefix}_nn_{generation_type}.py"
 
     # Read the known-named file emitted by the generator. Scanning the
     # directory and picking "the first file" is fragile — if the generator
     # drops helpers alongside the main artifact we'd ship the wrong one.
-    output_file_path = _safe_path(temp_dir, expected_filename)
+    output_file_path = _safe_path(temp_dir, download_filename)
     if not os.path.isfile(output_file_path):
         raise ValueError(
             f"{generator_type} generation failed: expected output "
-            f"{expected_filename!r} was not produced."
+            f"{download_filename!r} was not produced."
         )
     with open(output_file_path, "rb") as f:
         file_content = f.read()

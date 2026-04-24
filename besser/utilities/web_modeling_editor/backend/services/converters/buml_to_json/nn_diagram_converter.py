@@ -130,10 +130,12 @@ def _module_fields(module) -> List[Tuple[str, Any, str, bool]]:
             fields.append(('name_module_input', module.name_module_input, 'str', False))
         if _is_attr_set(module, 'input_reused'):
             fields.append(('input_reused', module.input_reused, 'bool', False))
-        if module.permute_in:
-            fields.append(('permute_in', module.permute_in, 'List', False))
-        if module.permute_out:
-            fields.append(('permute_out', module.permute_out, 'List', False))
+        # permute_in/out are bools in the metamodel; gate by explicit-set so
+        # a user-toggled False also round-trips back to the editor.
+        if _is_attr_set(module, 'permute_in'):
+            fields.append(('permute_in', module.permute_in, 'bool', False))
+        if _is_attr_set(module, 'permute_out'):
+            fields.append(('permute_out', module.permute_out, 'bool', False))
 
     elif cls == 'PoolingLayer':
         fields.append(('name', module.name, 'str', True))

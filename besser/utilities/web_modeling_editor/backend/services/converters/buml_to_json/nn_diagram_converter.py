@@ -5,6 +5,7 @@ Converts a BUML NN model into the element/relationship structure consumed
 by the web editor for NNDiagrams.
 """
 
+import ast
 import threading
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
@@ -567,52 +568,158 @@ def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
     }
 
 
-def nn_buml_to_json(content: str) -> Dict[str, Any]:
-    """
-    Convert an NN model Python section to the editor NNDiagram model dict.
+def _nn_add_method_whitelist():
+    """Instance methods callable at top level on an already-constructed value.
 
-    Executes the BUML code, finds the top-level NN instance (the one that is not
-    referenced as a sub_nn of another), and converts it to JSON.
+    Kept narrow on purpose: only the add_* builder methods and a couple of
+    harmless configuration setters. Anything else (e.g. ``__class__``
+    traversals or ``os.system``) is rejected by the AST visitor.
+    """
+    return {
+        'add_layer', 'add_tensor_op', 'add_sub_nn',
+        'add_configuration', 'add_train_data', 'add_test_data',
+    }
+
+
+def _parse_nn_buml_ast(content: str, nn_module):
+    """Safely reconstruct an NN model from Python-looking BUML.
+
+    Replaces the previous ``exec()``-based parser with an ``ast.parse`` +
+    whitelist visitor. Only a handful of top-level statement shapes survive:
+
+    - ``import …`` / ``from … import …``      — skipped (metamodel names
+      are resolved from ``nn_module`` directly via the allowlist)
+    - ``name = <expr>``                       — simple-target assignment
+    - ``obj.add_*(…)``                        — builder method call
+
+    And only these expression shapes are evaluable: Constant, Name (bound
+    to a prior assignment OR to a whitelisted metamodel class), List /
+    Tuple / Dict of allowed expressions, unary minus, and Call where the
+    callable is a whitelisted class.
+
+    This stops the classic sandbox escape ``().__class__.__bases__[0]
+    .__subclasses__()`` because ``Attribute`` access on arbitrary values
+    is not evaluable — only the ``x.add_*(…)`` top-level method-call
+    pattern reaches ``getattr``, and the method name itself is
+    whitelisted.
+    """
+    allowed_classes = {
+        name: getattr(nn_module, name)
+        for name in dir(nn_module) if not name.startswith('_')
+    }
+    allowed_add_methods = _nn_add_method_whitelist()
+
+    def _eval(node, env):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            return -_eval(node.operand, env)
+        if isinstance(node, ast.Name):
+            if node.id in env:
+                return env[node.id]
+            if node.id in allowed_classes:
+                return allowed_classes[node.id]
+            raise ValueError(f"Unknown name in NN BUML: {node.id!r}")
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return [_eval(e, env) for e in node.elts]
+        if isinstance(node, ast.Dict):
+            return {_eval(k, env): _eval(v, env)
+                    for k, v in zip(node.keys, node.values)}
+        if isinstance(node, ast.Set):
+            return {_eval(e, env) for e in node.elts}
+        if isinstance(node, ast.Call):
+            # Only allow calls whose callable is a whitelisted metamodel
+            # class — reject every attribute-based call (``foo.bar(…)``)
+            # except in the statement-level ``obj.add_*`` dispatcher below.
+            if not isinstance(node.func, ast.Name):
+                raise ValueError(
+                    "Only calls to whitelisted NN metamodel classes are "
+                    "allowed in expressions; got "
+                    f"{ast.dump(node.func, annotate_fields=False)!r}"
+                )
+            func = _eval(node.func, env)
+            if func not in allowed_classes.values():
+                raise ValueError(
+                    f"Call to non-whitelisted class {node.func.id!r}"
+                )
+            args = [_eval(a, env) for a in node.args]
+            kwargs = {kw.arg: _eval(kw.value, env) for kw in node.keywords
+                      if kw.arg is not None}
+            return func(*args, **kwargs)
+        raise ValueError(
+            f"Disallowed expression in NN BUML: {type(node).__name__}"
+        )
+
+    def _run_stmt(stmt, env):
+        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            return  # silently skipped; all metamodel names are already in scope
+        if isinstance(stmt, ast.Assign):
+            # Validate targets BEFORE evaluating value, so an attribute-target
+            # assignment (``obj.x = ...``) is rejected without running the
+            # right-hand side (which might construct an NN object with side
+            # effects).
+            for target in stmt.targets:
+                if not isinstance(target, ast.Name):
+                    raise ValueError(
+                        "Only simple-name assignment targets are allowed "
+                        "in NN BUML."
+                    )
+            value = _eval(stmt.value, env)
+            for target in stmt.targets:
+                env[target.id] = value
+            return
+        if isinstance(stmt, ast.Expr):
+            # Top-level expression — most commonly an ``obj.add_*(…)``
+            # builder call. Docstrings and other bare expressions are
+            # ignored.
+            if isinstance(stmt.value, ast.Constant):
+                return  # docstring or stray literal
+            if isinstance(stmt.value, ast.Call) and \
+                    isinstance(stmt.value.func, ast.Attribute) and \
+                    isinstance(stmt.value.func.value, ast.Name):
+                method = stmt.value.func.attr
+                if method not in allowed_add_methods:
+                    raise ValueError(
+                        f"Disallowed method call {method!r} in NN BUML; "
+                        f"allowed: {sorted(allowed_add_methods)}"
+                    )
+                target = _eval(stmt.value.func.value, env)
+                args = [_eval(a, env) for a in stmt.value.args]
+                kwargs = {kw.arg: _eval(kw.value, env)
+                          for kw in stmt.value.keywords if kw.arg is not None}
+                getattr(target, method)(*args, **kwargs)
+                return
+            raise ValueError(
+                f"Disallowed top-level expression: "
+                f"{ast.dump(stmt.value, annotate_fields=False)!r}"
+            )
+        raise ValueError(
+            f"Disallowed top-level statement: {type(stmt).__name__}"
+        )
+
+    try:
+        tree = ast.parse(content, mode='exec')
+    except SyntaxError as exc:
+        raise ValueError(f"Failed to parse NN BUML content: {exc}") from exc
+
+    env: Dict[str, Any] = {}
+    for stmt in tree.body:
+        _run_stmt(stmt, env)
+    return env
+
+
+def nn_buml_to_json(content: str) -> Dict[str, Any]:
+    """Convert an NN model Python section to the editor NNDiagram model dict.
+
+    Uses an ``ast.parse`` whitelist visitor rather than ``exec`` so that
+    uploaded BUML content cannot escape the sandbox (``().__class__.__bases__
+    .__subclasses__()``-style tricks) or run arbitrary system calls.
     """
     import besser.BUML.metamodel.nn as nn_module
 
-    safe_globals: Dict[str, Any] = {
-        '__builtins__': {
-            'set': set, 'list': list, 'dict': dict, 'tuple': tuple,
-            'str': str, 'int': int, 'float': float, 'bool': bool,
-            'len': len, 'range': range,
-            'True': True, 'False': False, 'None': None,
-            'print': lambda *a, **kw: None,
-        },
-    }
-    for name in dir(nn_module):
-        if not name.startswith('_'):
-            safe_globals[name] = getattr(nn_module, name)
+    env = _parse_nn_buml_ast(content, nn_module)
 
-    # Strip imports (all metamodel names are already in safe_globals)
-    cleaned_lines: List[str] = []
-    in_import_block = False
-    for line in content.splitlines():
-        stripped = line.lstrip()
-        if in_import_block:
-            if ')' in line:
-                in_import_block = False
-            continue
-        if stripped.startswith(('import ', 'from ')):
-            if '(' in line and ')' not in line:
-                in_import_block = True
-            continue
-        cleaned_lines.append(line)
-    cleaned_content = '\n'.join(cleaned_lines)
-
-    local_vars: Dict[str, Any] = {}
-    try:
-        exec(cleaned_content, safe_globals, local_vars)
-    except Exception as exc:
-        raise ValueError(f"Failed to execute NN BUML content: {exc}") from exc
-
-    # Find the main NN (not a sub_nn of any other NN in local scope)
-    all_nns = [v for v in local_vars.values() if isinstance(v, NN)]
+    all_nns = [v for v in env.values() if isinstance(v, NN)]
     if not all_nns:
         raise ValueError("No NN instance found in the NN BUML content")
 

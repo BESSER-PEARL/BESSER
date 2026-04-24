@@ -577,6 +577,12 @@ def _write_configuration(f, config: Configuration, var_name: str):
         f"loss_function='{_esc(config.loss_function)}'",
         f"metrics={_fmt_metrics(config.metrics)}",
     ]
+    # ``weight_decay`` and ``momentum`` default to 0 in the metamodel.
+    # Emit when the editor explicitly marked the attribute (via the sidecar),
+    # OR when the value diverges from 0 — the fallback covers Configurations
+    # constructed programmatically in BUML code rather than the editor,
+    # where mark_explicit never ran. The editor path still round-trips an
+    # explicit 0 correctly via the first branch.
     if _is_attr_set(config, 'weight_decay') or (
         config.weight_decay is not None and config.weight_decay != 0
     ):

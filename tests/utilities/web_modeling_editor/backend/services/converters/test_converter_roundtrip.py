@@ -1765,3 +1765,141 @@ class TestNNDiagramRoundtrip:
         assert drop, 'DropoutLayer missing from output'
         attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in drop[0]['attributes']}
         assert attrs.get('rate') == '0.5'
+
+    def test_conv1d_roundtrip(self):
+        payload = self._single_layer_json('Conv1DLayer', [
+            ('Conv1D', 'name', 'c1'),
+            ('Conv1D', 'kernel_dim', '[3]'),
+            ('Conv1D', 'out_channels', '16'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        c1 = _extract_elements_by_type(out, 'Conv1DLayer')
+        assert c1, 'Conv1DLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in c1[0]['attributes']}
+        assert attrs.get('kernel_dim') == '[3]'
+        assert attrs.get('out_channels') == '16'
+
+    def test_pooling_roundtrip(self):
+        payload = self._single_layer_json('PoolingLayer', [
+            ('Pooling', 'name', 'pool'),
+            ('Pooling', 'pooling_type', 'max'),
+            ('Pooling', 'dimension', '2D'),
+            ('Pooling', 'kernel_dim', '[2, 2]'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        pool = _extract_elements_by_type(out, 'PoolingLayer')
+        assert pool, 'PoolingLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in pool[0]['attributes']}
+        assert attrs.get('pooling_type') == 'max'
+        assert attrs.get('dimension') == '2D'
+        assert attrs.get('kernel_dim') == '[2, 2]'
+
+    def test_simple_rnn_roundtrip(self):
+        payload = self._single_layer_json('RNNLayer', [
+            ('RNN', 'name', 'rnn1'),
+            ('RNN', 'hidden_size', '64'),
+        ])
+        out = self._roundtrip(payload)
+        elements = _resolve_elements(out)
+        rnn = _extract_elements_by_type(out, 'RNNLayer')
+        assert rnn, 'RNNLayer missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in rnn[0]['attributes']}
+        assert attrs.get('hidden_size') == '64'
+
+    @staticmethod
+    def _tensor_op_json(tns_type: str, extra_attrs: list):
+        """Build a minimal NN diagram containing a single TensorOp."""
+        attrs = [('TensorOp', 'name', f'{tns_type}_op'),
+                 ('TensorOp', 'tns_type', tns_type)] + extra_attrs
+        return TestNNDiagramRoundtrip._single_layer_json('TensorOp', attrs)
+
+    def test_tensorop_concatenate_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('concatenate', [
+            ('TensorOp', 'concatenate_dim', '1'),
+            ('TensorOp', 'layers_of_tensors', "['layer_a', 'layer_b']"),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        assert ops, 'TensorOp missing from output'
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'concatenate'
+        assert attrs.get('concatenate_dim') == '1'
+
+    def test_tensorop_multiply_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('multiply', [
+            ('TensorOp', 'layers_of_tensors', "['a', 'b']"),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'multiply'
+
+    def test_tensorop_matmultiply_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('matmultiply', [
+            ('TensorOp', 'layers_of_tensors', "['a', 'b']"),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'matmultiply'
+
+    def test_tensorop_reshape_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('reshape', [
+            ('TensorOp', 'reshape_dim', '[1, -1]'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'reshape'
+        assert attrs.get('reshape_dim') == '[1, -1]'
+
+    def test_tensorop_transpose_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('transpose', [
+            ('TensorOp', 'transpose_dim', '[0, 2, 1]'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'transpose'
+        assert attrs.get('transpose_dim') == '[0, 2, 1]'
+
+    def test_tensorop_permute_roundtrip(self):
+        out = self._roundtrip(self._tensor_op_json('permute', [
+            ('TensorOp', 'permute_dim', '[0, 3, 1, 2]'),
+        ]))
+        elements = _resolve_elements(out)
+        ops = _extract_elements_by_type(out, 'TensorOp')
+        attrs = {elements[aid]['attributeName']: elements[aid]['value'] for aid in ops[0]['attributes']}
+        assert attrs.get('tns_type') == 'permute'
+        assert attrs.get('permute_dim') == '[0, 3, 1, 2]'
+
+    def test_pooling_invalid_pooling_type_lists_allowed_values(self):
+        """Unknown pooling_type raises with the whitelist in the message."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            process_nn_diagram,
+        )
+        payload = self._single_layer_json('PoolingLayer', [
+            ('Pooling', 'name', 'p'),
+            ('Pooling', 'pooling_type', 'avg'),  # legacy / typo
+            ('Pooling', 'dimension', '2D'),
+        ])
+        with pytest.raises(ValueError, match=r"Allowed values"):
+            process_nn_diagram(payload)
+
+    def test_configuration_invalid_optimizer_lists_allowed_values(self):
+        """Unknown optimizer raises with the whitelist in the message."""
+        from besser.utilities.web_modeling_editor.backend.services.converters.json_to_buml.nn_diagram_processor import (
+            process_nn_diagram,
+        )
+        payload = self._single_layer_json('Configuration', [
+            ('Configuration', 'batch_size', '32'),
+            ('Configuration', 'epochs', '10'),
+            ('Configuration', 'learning_rate', '0.001'),
+            ('Configuration', 'optimizer', 'rmsprop'),  # not in whitelist
+            ('Configuration', 'loss_function', 'crossentropy'),
+            ('Configuration', 'metrics', '[accuracy]'),
+        ])
+        with pytest.raises(ValueError, match=r"optimizer.*Allowed values"):
+            process_nn_diagram(payload)

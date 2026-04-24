@@ -1438,3 +1438,38 @@ class TestNNDiagramRoundtrip:
         def counts(j):
             return Counter(e.get("type") for e in _resolve_elements(j).values() if "Attribute" not in (e.get("type") or ""))
         assert counts(first) == counts(second)
+
+    def test_nn_model_to_json_is_deterministic(self):
+        """Identical NN input must produce byte-identical JSON across calls.
+
+        Locks in the uuid5 + thread-local counter scheme in nn_diagram_converter.
+        Regression guard: if anyone reintroduces uuid.uuid4() for IDs, the two
+        serializations will diverge and this test fails.
+        """
+        import json
+        nn = process_nn_diagram(self._minimal_nn_json())
+        first = json.dumps(nn_model_to_json(nn), sort_keys=True)
+        second = json.dumps(nn_model_to_json(nn), sort_keys=True)
+        assert first == second, "nn_model_to_json output must be deterministic"
+
+    def test_nnreference_cycle_is_rejected(self):
+        """Two NNContainers that reference each other must raise a clear error."""
+        cyclic = {
+            "title": "CyclicRefs",
+            "model": {
+                "type": "NNDiagram",
+                "version": "3.0.0",
+                "size": {"width": 1200, "height": 600},
+                "elements": {
+                    "cA": {"id": "cA", "type": "NNContainer", "name": "A", "owner": None, "bounds": {"x": 0, "y": 0, "width": 400, "height": 200}},
+                    "cB": {"id": "cB", "type": "NNContainer", "name": "B", "owner": None, "bounds": {"x": 500, "y": 0, "width": 400, "height": 200}},
+                    "rA": {"id": "rA", "type": "NNReference", "name": "ref-to-B", "owner": "cA", "referencedNN": "B", "bounds": {"x": 20, "y": 60, "width": 140, "height": 40}},
+                    "rB": {"id": "rB", "type": "NNReference", "name": "ref-to-A", "owner": "cB", "referencedNN": "A", "bounds": {"x": 520, "y": 60, "width": 140, "height": 40}},
+                },
+                "relationships": {},
+                "interactive": {"elements": {}, "relationships": {}},
+                "assessments": {},
+            },
+        }
+        with pytest.raises(ValueError, match="NNReference cycle"):
+            process_nn_diagram(cyclic)

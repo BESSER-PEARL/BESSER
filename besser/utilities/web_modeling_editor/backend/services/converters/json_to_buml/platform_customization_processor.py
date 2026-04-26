@@ -107,6 +107,7 @@ def _positive_int_or_none(value: Any) -> Optional[int]:
 def _parse_class_customization(data: Dict[str, Any]) -> ClassCustomization:
     return ClassCustomization(
         is_container=bool(data.get("isContainer", False)),
+        is_resizable=bool(data.get("isResizable", False)),
         default_width=_positive_int_or_none(data.get("defaultWidth")),
         default_height=_positive_int_or_none(data.get("defaultHeight")),
         node_shape=_enum_or_none(NodeShape, data.get("nodeShape")),

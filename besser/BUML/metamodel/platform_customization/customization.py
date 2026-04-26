@@ -120,6 +120,7 @@ class ClassCustomization:
     """
 
     is_container: bool = False
+    is_resizable: bool = False
     default_width: Optional[int] = None
     default_height: Optional[int] = None
 
@@ -136,6 +137,10 @@ class ClassCustomization:
     label_position: Optional[LabelPosition] = None
 
     def __post_init__(self):
+        if not isinstance(self.is_container, bool):
+            raise ValueError("is_container must be a bool")
+        if not isinstance(self.is_resizable, bool):
+            raise ValueError("is_resizable must be a bool")
         if self.default_width is not None and self.default_width <= 0:
             raise ValueError("default_width must be a positive integer")
         if self.default_height is not None and self.default_height <= 0:

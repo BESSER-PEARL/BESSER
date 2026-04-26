@@ -115,6 +115,7 @@ export interface ClassMetadata {
   name: string;
   icon?: string; // SVG icon as plain text
   isContainer?: boolean; // container classes render as drop-zone rectangles
+  isResizable?: boolean; // shows xyflow NodeResizer handles when selected
   defaultSize?: { width: number; height: number };
   attributes: AttributeMetadata[];
   associations: AssociationMetadata[];
@@ -157,6 +158,9 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
     {%- endif %}
     {%- if cls_cust and cls_cust.is_container %}
     isContainer: true,
+    {%- endif %}
+    {%- if cls_cust and cls_cust.is_resizable %}
+    isResizable: true,
     {%- endif %}
     {%- if cls_cust and cls_cust.default_width and cls_cust.default_height %}
     defaultSize: { width: {{ cls_cust.default_width }}, height: {{ cls_cust.default_height }} },

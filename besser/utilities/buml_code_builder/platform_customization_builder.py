@@ -20,6 +20,7 @@ from besser.utilities.buml_code_builder.common import _escape_python_string
 
 _CLASS_FIELDS = (
     ("is_container", False),
+    ("is_resizable", False),
     ("default_width", None),
     ("default_height", None),
     ("node_shape", None),

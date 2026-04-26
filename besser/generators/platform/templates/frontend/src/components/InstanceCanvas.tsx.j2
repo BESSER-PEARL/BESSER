@@ -177,6 +177,10 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   } | null>(null);
 
   const nodePositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Tracks which parent each child had on the previous render so we can detect
+  // newly-nested nodes and reset their stored absolute position (otherwise the
+  // child renders at flow coords instead of relative-to-parent coords).
+  const prevParentByChildRef = React.useRef<Map<string, string>>(new Map());
 
   // Remember which handle (top/right/bottom/left) the user actually clicked when
   // they drew each edge, so re-renders don't fall back to the default 'top' handle.
@@ -229,24 +233,68 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   }, []);
 
   React.useEffect(() => {
-    // First pass: identify containment relationships so children get parentId.
-    // A link is treated as containment ONLY when it's via an association the
-    // user explicitly flagged as a container association — every other link
-    // (even from a container source class) renders as a normal edge.
+    // Identify containment relationships so children get parentId. A link is
+    // treated as containment ONLY when its association is flagged
+    // isContainerAssociation. The detection is bidirectional because the
+    // backend stores each link on whichever side called createLink:
+    //   - dropped on container → link stored on container side
+    //   - chosen via "city: …" picker on Library → link stored on Library side
+    // Either direction must produce the same parent/child nesting.
     const parentByChild = new Map<string, string>();
+
+    const remember = (childId: string, parentId: string) => {
+      // Don't nest a node under itself (defensive for self-associations).
+      if (childId === parentId) return;
+      if (!parentByChild.has(childId)) parentByChild.set(childId, parentId);
+    };
+
     for (const instance of instances) {
       const srcMeta = availableClasses.find((c) => c.name === instance.class_name);
-      if (!srcMeta?.isContainer) continue;
       for (const link of instance.links) {
-        const assocMeta = srcMeta.associations.find(
-          (a) => a.name === link.association_name && a.targetClass === link.target_class,
+        // Direction A: source is the container, target is the child.
+        if (srcMeta?.isContainer) {
+          const assocMeta = srcMeta.associations.find(
+            (a) => a.name === link.association_name && a.targetClass === link.target_class,
+          );
+          if (assocMeta?.isContainerAssociation) {
+            remember(link.target_id, instance.id);
+            continue;
+          }
+        }
+        // Direction B: source is the child, target is the container.
+        const tgtInstance = instances.find((i) => i.id === link.target_id);
+        if (!tgtInstance) continue;
+        const tgtMeta = availableClasses.find((c) => c.name === tgtInstance.class_name);
+        if (!tgtMeta?.isContainer) continue;
+        const reverseAssoc = tgtMeta.associations.find(
+          (a) => a.name === link.association_name && a.targetClass === instance.class_name,
         );
-        if (!assocMeta?.isContainerAssociation) continue;
-        if (!parentByChild.has(link.target_id)) {
-          parentByChild.set(link.target_id, instance.id);
+        if (reverseAssoc?.isContainerAssociation) {
+          remember(instance.id, tgtInstance.id);
         }
       }
     }
+
+    // Detect transitions: any node whose parent assignment changed since the
+    // last render needs its stored absolute position cleared, otherwise xyflow
+    // will treat that absolute position as relative-to-parent and place the
+    // child far outside the container's visible bounds.
+    for (const [childId, parentId] of parentByChild.entries()) {
+      if (prevParentByChildRef.current.get(childId) !== parentId) {
+        nodePositionsRef.current.delete(childId);
+      }
+    }
+    for (const [childId] of prevParentByChildRef.current.entries()) {
+      if (!parentByChild.has(childId)) {
+        // Was nested, no longer nested → drop the now-relative coords too.
+        nodePositionsRef.current.delete(childId);
+      }
+    }
+    prevParentByChildRef.current = parentByChild;
+
+    // Lay out children in a tidy column inside their parent so multiple
+    // siblings don't overlap each other or the container's title bar.
+    const childOrderByParent = new Map<string, number>();
 
     const flowNodes: Node[] = instances.map((instance, index) => {
       const classMetadata = availableClasses.find((c) => c.name === instance.class_name);
@@ -254,12 +302,20 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       const isContainer = Boolean(classMetadata?.isContainer);
       const parentId = parentByChild.get(instance.id);
 
-      // Containers are always laid out in absolute canvas coords. Children of a
-      // container are stored with coords relative to the parent; if we don't yet
-      // have a stored position, default to a small inset inside the container.
-      const defaultPosition = parentId
-        ? { x: 24, y: 48 + (index % 4) * 60 }
-        : { x: 100 + (index % 5) * 250, y: 100 + Math.floor(index / 5) * 200 };
+      // Containers are always laid out in absolute canvas coords. Children of
+      // a container are positioned relative to the parent; defaults stack
+      // siblings vertically below the container's ~48px title bar.
+      let defaultPosition: { x: number; y: number };
+      if (parentId) {
+        const order = childOrderByParent.get(parentId) ?? 0;
+        childOrderByParent.set(parentId, order + 1);
+        defaultPosition = { x: 24, y: 56 + order * 80 };
+      } else {
+        defaultPosition = {
+          x: 100 + (index % 5) * 250,
+          y: 100 + Math.floor(index / 5) * 200,
+        };
+      }
       const position = storedPosition ?? defaultPosition;
       if (!storedPosition) {
         nodePositionsRef.current.set(instance.id, position);
@@ -284,6 +340,14 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         node.parentId = parentId;
         node.extent = 'parent';
       }
+      // Containers render behind other nodes so unrelated overlapping
+      // instances stay legible. xyflow stacks parent/child correctly on top
+      // of this baseline once parentId is set.
+      if (isContainer) {
+        node.zIndex = 0;
+      } else {
+        node.zIndex = 1;
+      }
       return node;
     });
 
@@ -299,16 +363,23 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         const edgeStyle: EdgeStyle | undefined = assocMeta?.style;
         const edgeColor = edgeStyle?.color ?? assocMeta?.edgeColor;
 
-        // Hide the edge only when the link is actually a containment one (the
-        // association has isContainerAssociation = true and the source is a
-        // container that owns this child) — the nesting already conveys it,
-        // and other associations between the same pair must stay visible.
-        const sourceIsContainer = Boolean(sourceMeta?.isContainer);
-        const isContainmentLink = Boolean(assocMeta?.isContainerAssociation);
-        const childOfSource =
-          sourceIsContainer &&
-          isContainmentLink &&
+        // Hide the edge whenever this link expresses a containment that's
+        // already shown via parent-child nesting in either direction. Without
+        // the bidirectional check, the link added by "pick city while creating
+        // library" would show as both a nested child AND a stray edge.
+        const targetMeta = availableClasses.find((c) => c.name === targetInstance?.class_name);
+        const isContainmentForward =
+          Boolean(sourceMeta?.isContainer) &&
+          Boolean(assocMeta?.isContainerAssociation) &&
           parentByChild.get(link.target_id) === instance.id;
+        const reverseAssocMeta = targetMeta?.associations.find(
+          (a) => a.name === link.association_name && a.targetClass === instance.class_name,
+        );
+        const isContainmentReverse =
+          Boolean(targetMeta?.isContainer) &&
+          Boolean(reverseAssocMeta?.isContainerAssociation) &&
+          parentByChild.get(instance.id) === link.target_id;
+        const childOfSource = isContainmentForward || isContainmentReverse;
 
         const edgeId = `${instance.id}::${link.target_id}::${link.association_name}`;
         const savedHandles = edgeHandlesRef.current.get(edgeId);
@@ -475,20 +546,46 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     [instances, availableClasses]
   );
 
-  /** Diff `next` selected links against the instance's current outgoing links;
-   * fire the appropriate POST/DELETE /links calls. Used by the edit modal. */
+  /** Diff `next` selected links against the instance's current outgoing AND
+   * inbound links and fire the appropriate POST/DELETE /links calls. The
+   * inbound side matters when the link was originally created from the other
+   * end (e.g. picking "city: …" while creating a library stores the link on
+   * the library side; un-checking that library from the city's edit modal has
+   * to delete it from the library's side). */
   const reconcileLinks = useCallback(
     async (
       instance: BaseInstance,
       next: Array<{ associationName: string; targetClass: string; targetId: string }>,
     ) => {
       const keyOf = (a: string, t: string) => `${a}::${t}`;
-      const existing = new Set(instance.links.map((l) => keyOf(l.association_name, l.target_id)));
+
+      const directExisting = new Map<string, { link: BaseInstance['links'][number] }>();
+      for (const link of instance.links) {
+        directExisting.set(keyOf(link.association_name, link.target_id), { link });
+      }
+
+      // Build an inverse-existing map: for each (assoc, target_id) where some
+      // OTHER instance has a link pointing to `instance` via the same assoc.
+      const inverseExisting = new Map<
+        string,
+        { otherInstance: BaseInstance; link: BaseInstance['links'][number] }
+      >();
+      for (const other of instances) {
+        if (other.id === instance.id) continue;
+        for (const link of other.links) {
+          if (link.target_id !== instance.id) continue;
+          // The selection on `instance` side keys by (assocName, otherInstance.id),
+          // so use that as the lookup key.
+          inverseExisting.set(keyOf(link.association_name, other.id), { otherInstance: other, link });
+        }
+      }
+
       const desired = new Set(next.map((l) => keyOf(l.associationName, l.targetId)));
 
-      // Add the ones the user picked but that aren't already present.
+      // Adds: anything the user selected that isn't represented in either direction.
       for (const sel of next) {
-        if (existing.has(keyOf(sel.associationName, sel.targetId))) continue;
+        const k = keyOf(sel.associationName, sel.targetId);
+        if (directExisting.has(k) || inverseExisting.has(k)) continue;
         try {
           await api.createLink({
             source_class: instance.class_name,
@@ -501,9 +598,9 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           console.error('Failed to add link:', error);
         }
       }
-      // Remove the ones that existed but the user un-checked.
-      for (const link of instance.links) {
-        if (desired.has(keyOf(link.association_name, link.target_id))) continue;
+      // Direct removes.
+      for (const [k, { link }] of directExisting.entries()) {
+        if (desired.has(k)) continue;
         try {
           await api.deleteLink(
             instance.class_name,
@@ -516,8 +613,23 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           console.error('Failed to remove link:', error);
         }
       }
+      // Inverse removes — issue the delete call against the other side.
+      for (const [k, { otherInstance, link }] of inverseExisting.entries()) {
+        if (desired.has(k)) continue;
+        try {
+          await api.deleteLink(
+            otherInstance.class_name,
+            otherInstance.id,
+            link.target_class,
+            link.target_id,
+            link.association_name,
+          );
+        } catch (error) {
+          console.error('Failed to remove inverse link:', error);
+        }
+      }
     },
-    [],
+    [instances],
   );
 
   const handleUpdateInstance = async (

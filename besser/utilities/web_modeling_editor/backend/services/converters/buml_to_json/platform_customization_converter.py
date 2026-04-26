@@ -30,6 +30,8 @@ def _class_customization_to_json(cust: ClassCustomization) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     if cust.is_container:
         out["isContainer"] = True
+    if cust.is_resizable:
+        out["isResizable"] = True
     _set_if(out, "defaultWidth", cust.default_width)
     _set_if(out, "defaultHeight", cust.default_height)
     _set_if(out, "nodeShape", _enum_value(cust.node_shape))

@@ -190,15 +190,28 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
     [classMetadata.associations, availableClasses],
   );
 
-  // Pre-populate selections from the instance's current outgoing links.
+  // Pre-populate selections by reading links from BOTH ends. The backend stores
+  // each link on whichever side called createLink, so to surface, say, the
+  // libraries already linked to a city (when the link was authored from the
+  // library side via the "city: …" picker) we have to search every other
+  // instance for inbound links via the same association name.
   const [selections, setSelections] = useState<Record<string, string[]>>(() => {
     const initial: Record<string, string[]> = {};
     for (const assoc of classMetadata.associations) {
-      initial[assoc.name] = instance.links
+      const direct = instance.links
         .filter(
           (l) => l.association_name === assoc.name && l.target_class === assoc.targetClass,
         )
         .map((l) => l.target_id);
+      const inverse = existingInstances
+        .filter((i) => i.class_name === assoc.targetClass && i.id !== instance.id)
+        .filter((i) =>
+          i.links.some(
+            (l) => l.association_name === assoc.name && l.target_id === instance.id,
+          ),
+        )
+        .map((i) => i.id);
+      initial[assoc.name] = Array.from(new Set([...direct, ...inverse]));
     }
     return initial;
   });

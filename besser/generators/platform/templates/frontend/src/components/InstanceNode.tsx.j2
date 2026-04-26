@@ -5,7 +5,7 @@
  */
 {% raw %}
 import React from 'react';
-import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
+import { Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflow/react';
 import { Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -103,6 +103,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
   const [isHovered, setIsHovered] = React.useState(false);
   const hasIcon = Boolean(classMetadata.icon);
   const isContainer = Boolean(classMetadata.isContainer);
+  const isResizable = Boolean(classMetadata.isResizable);
   const style = classMetadata.style;
   const shape = style?.shape;
   const labelPosition = style?.labelPosition; // top | bottom | inside
@@ -115,11 +116,20 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
     return (
       <div
         className={cn(
-          'relative rounded-xl border-2 border-dashed border-primary/60 bg-primary/5 shadow-sm transition-colors',
+          'relative h-full w-full rounded-xl border-2 border-dashed border-primary/60 bg-primary/5 shadow-sm transition-colors',
           selected && 'border-primary ring-2 ring-ring ring-offset-2 ring-offset-background'
         )}
-        style={{ width: size.width, height: size.height, ...inlineStyle }}
+        style={{ minWidth: size.width, minHeight: size.height, ...inlineStyle }}
       >
+        {isResizable && (
+          <NodeResizer
+            minWidth={Math.min(160, size.width)}
+            minHeight={Math.min(120, size.height)}
+            isVisible={selected}
+            lineClassName="!border-primary"
+            handleClassName="!h-2 !w-2 !rounded-sm !border !border-primary !bg-background"
+          />
+        )}
         {HANDLE_POSITIONS.map(({ id, position, offset }) => (
           <Handle
             key={id}

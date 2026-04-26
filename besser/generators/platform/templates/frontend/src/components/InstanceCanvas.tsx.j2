@@ -11,24 +11,101 @@ import {
   Controls,
   Background,
   BackgroundVariant,
+  MarkerType,
   useNodesState,
   useEdgesState,
   Connection,
   ConnectionMode,
   Panel,
   NodeChange,
+  type EdgeMarker,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { InstanceNode } from './InstanceNode';
 import { PropertyEditor } from './PropertyEditor';
 import { AssociationSelector } from './AssociationSelector';
 import { InstanceCreationModal } from './InstanceCreationModal';
-import type { BaseInstance, ClassMetadata, AssociationMetadata } from '../types/models';
+import { DIAGRAM_STYLE } from '../types/models';
+import type { BaseInstance, ClassMetadata, AssociationMetadata, EdgeStyle, ArrowStyleName } from '../types/models';
 import * as api from '../api/instances';
 
 const nodeTypes = {
   instance: InstanceNode,
 };
+
+const DASH_FOR_LINE: Record<string, string | undefined> = {
+  solid: undefined,
+  dashed: '8 4',
+  dotted: '2 4',
+};
+
+/** Translate an ArrowStyleName to either an xyflow MarkerType or a custom
+ * url() reference into the shared <defs> block injected by SvgMarkerDefs. */
+function arrowMarker(arrow: ArrowStyleName | undefined): EdgeMarker | string | undefined {
+  if (!arrow || arrow === 'none') return undefined;
+  switch (arrow) {
+    case 'filled_triangle':
+      return { type: MarkerType.ArrowClosed };
+    case 'open_triangle':
+      return { type: MarkerType.Arrow };
+    case 'diamond':
+      return 'url(#platform-diamond)';
+    case 'open_diamond':
+      return 'url(#platform-open-diamond)';
+    case 'circle':
+      return 'url(#platform-circle)';
+    default:
+      return undefined;
+  }
+}
+
+/** SVG <defs> with custom markers (diamond, open diamond, circle). xyflow ships
+ * only Arrow / ArrowClosed natively, so the rest live here and are referenced
+ * from edges via `markerEnd: 'url(#platform-diamond)'` etc. */
+const SvgMarkerDefs: React.FC = () => (
+  <svg style={{ position: 'absolute', width: 0, height: 0 }} aria-hidden>
+    <defs>
+      <marker
+        id="platform-diamond"
+        viewBox="0 0 12 12"
+        refX="11"
+        refY="6"
+        markerWidth="12"
+        markerHeight="12"
+        orient="auto-start-reverse"
+      >
+        <polygon points="0,6 6,0 12,6 6,12" fill="currentColor" />
+      </marker>
+      <marker
+        id="platform-open-diamond"
+        viewBox="0 0 12 12"
+        refX="11"
+        refY="6"
+        markerWidth="12"
+        markerHeight="12"
+        orient="auto-start-reverse"
+      >
+        <polygon
+          points="0,6 6,0 12,6 6,12"
+          fill="hsl(var(--card))"
+          stroke="currentColor"
+          strokeWidth="1.5"
+        />
+      </marker>
+      <marker
+        id="platform-circle"
+        viewBox="0 0 12 12"
+        refX="11"
+        refY="6"
+        markerWidth="12"
+        markerHeight="12"
+        orient="auto-start-reverse"
+      >
+        <circle cx="6" cy="6" r="4.5" fill="currentColor" />
+      </marker>
+    </defs>
+  </svg>
+);
 
 /** Find the innermost container instance whose bounds contain the given canvas coords. */
 function findContainerAt(
@@ -204,7 +281,8 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
         const assocMeta: AssociationMetadata | undefined = sourceMeta?.associations.find(
           (a) => a.name === link.association_name && a.targetClass === (targetInstance?.class_name ?? '')
         );
-        const edgeColor = assocMeta?.edgeColor;
+        const edgeStyle: EdgeStyle | undefined = assocMeta?.style;
+        const edgeColor = edgeStyle?.color ?? assocMeta?.edgeColor;
 
         // Hide the edge when the source is a container and the target is its child:
         // the containment is visually obvious from the nesting, a line just adds noise.
@@ -214,18 +292,32 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
         const edgeId = `${instance.id}::${link.target_id}::${link.association_name}`;
         const savedHandles = edgeHandlesRef.current.get(edgeId);
 
+        const lineWidth = edgeStyle?.lineWidth ?? 2;
+        const dash = edgeStyle?.lineStyle ? DASH_FOR_LINE[edgeStyle.lineStyle] : undefined;
+        const lineCss: React.CSSProperties = { strokeWidth: lineWidth };
+        if (edgeColor) lineCss.stroke = edgeColor;
+        if (dash) lineCss.strokeDasharray = dash;
+
+        const labelVisible = edgeStyle?.labelVisible !== false;
+
         return {
           id: edgeId,
           source: instance.id,
           target: link.target_id,
           sourceHandle: savedHandles?.sourceHandle,
           targetHandle: savedHandles?.targetHandle,
-          label: link.association_name,
+          label: labelVisible ? link.association_name : undefined,
           type: 'default',
           animated: false,
           hidden: childOfSource,
-          style: edgeColor ? { stroke: edgeColor, strokeWidth: 2 } : undefined,
-          labelStyle: { fontSize: 11, fontWeight: 600 },
+          style: lineCss,
+          markerStart: arrowMarker(edgeStyle?.sourceArrow),
+          markerEnd: arrowMarker(edgeStyle?.targetArrow),
+          labelStyle: {
+            fontSize: edgeStyle?.labelFontSize ?? 11,
+            fontWeight: 600,
+            fill: edgeStyle?.labelFontColor,
+          },
           labelBgStyle: { fill: 'hsl(var(--card))' },
           labelBgPadding: [6, 3] as [number, number],
           labelBgBorderRadius: 4,
@@ -415,8 +507,15 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
     setCreateInstanceModal(null);
   };
 
+  const gridSize = DIAGRAM_STYLE.gridSize ?? 24;
+  const gridVisible = DIAGRAM_STYLE.gridVisible !== false;
+  const snapEnabled = Boolean(DIAGRAM_STYLE.snapToGrid);
+  const wrapperStyle: React.CSSProperties = {};
+  if (DIAGRAM_STYLE.backgroundColor) wrapperStyle.backgroundColor = DIAGRAM_STYLE.backgroundColor;
+
   return (
-    <div className="relative flex h-full w-full flex-1">
+    <div className="relative flex h-full w-full flex-1" style={wrapperStyle}>
+      <SvgMarkerDefs />
       <div className="flex-1" onDrop={onDrop} onDragOver={onDragOver}>
         <ReactFlow
           nodes={nodes}
@@ -432,15 +531,19 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
           edgesFocusable
           edgesReconnectable={false}
           fitView
+          snapToGrid={snapEnabled}
+          snapGrid={[gridSize, gridSize]}
           proOptions={{ hideAttribution: true }}
         >
           <Controls className="!bg-card !border-border !shadow-sm [&>button]:!bg-card [&>button]:!border-border [&>button:hover]:!bg-accent" />
-          <Background
-            variant={BackgroundVariant.Dots}
-            gap={24}
-            size={1.5}
-            color="hsl(var(--border))"
-          />
+          {gridVisible && (
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={gridSize}
+              size={1.5}
+              color="hsl(var(--border))"
+            />
+          )}
 
           <Panel position="top-left">
             <div className="rounded-lg border bg-card px-4 py-3 shadow-sm">

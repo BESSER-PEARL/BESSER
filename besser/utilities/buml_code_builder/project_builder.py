@@ -22,6 +22,9 @@ from besser.utilities.buml_code_builder.domain_model_builder import (
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
+from besser.utilities.buml_code_builder.platform_customization_builder import (
+    platform_customization_to_code,
+)
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -98,6 +101,14 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     except ImportError:
         QuantumCircuit = None
 
+    # Import PlatformCustomizationModel locally
+    try:
+        from besser.BUML.metamodel.platform_customization import PlatformCustomizationModel
+    except ImportError:
+        PlatformCustomizationModel = None
+
+    platform_customization_models = []
+
     for model in project.models:
         if isinstance(model, DomainModel):
             if contains_user_class(model):
@@ -117,6 +128,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             gui_models.append(model)
         elif QuantumCircuit and isinstance(model, QuantumCircuit):
             quantum_models.append(model)
+        elif PlatformCustomizationModel and isinstance(model, PlatformCustomizationModel):
+            platform_customization_models.append(model)
 
     # If we have user object models but no user domain model, use the
     # reference one shipped with the editor backend (when available).
@@ -155,6 +168,7 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
     n_gui = len(gui_models)
     n_quantum = len(quantum_models)
     n_sm = len(state_machine_models)
+    n_pc = len(platform_customization_models)
 
     # Variable names collected for the final Project(...) definition
     model_vars = []
@@ -329,6 +343,26 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 tmp_path = os.path.join(temp_dir, f"state_machine_{idx}.py")
                 state_machine_to_code(
                     model=smm,
+                    file_path=tmp_path,
+                    model_var_name=var_name,
+                )
+                _write_temp_to_output(tmp_path, f, section_header=section)
+                model_vars.append(var_name)
+
+            # ---------------------------------------------------------- #
+            # PLATFORM CUSTOMIZATION MODELS                              #
+            # ---------------------------------------------------------- #
+            for idx, pcm in enumerate(platform_customization_models, start=1):
+                var_name = _suffixed_name("platform_customization", idx, n_pc)
+
+                section = ""
+                if n_pc > 1:
+                    label = getattr(pcm, "name", f"Platform Customization {idx}")
+                    section = f"# PLATFORM CUSTOMIZATION MODEL {idx}: \"{label}\" #\n\n"
+
+                tmp_path = os.path.join(temp_dir, f"platform_customization_{idx}.py")
+                platform_customization_to_code(
+                    model=pcm,
                     file_path=tmp_path,
                     model_var_name=var_name,
                 )

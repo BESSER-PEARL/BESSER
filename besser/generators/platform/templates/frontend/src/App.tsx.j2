@@ -9,13 +9,41 @@ import { Download, FileCode, RefreshCw, Trash2 } from 'lucide-react';
 import { InstanceCanvas } from './components/InstanceCanvas';
 import { ClassPalette } from './components/ClassPalette';
 import { Button } from './components/ui/button';
-import { DOMAIN_CLASSES } from './types/models';
+import { DIAGRAM_STYLE, DOMAIN_CLASSES } from './types/models';
 import type { BaseInstance } from './types/models';
 import * as api from './api/instances';
 
 const queryClient = new QueryClient();
 
+/** Apply the configured theme to the document root. 'auto' follows the OS. */
+function useDiagramTheme() {
+  useEffect(() => {
+    const theme = DIAGRAM_STYLE.theme;
+    if (!theme) return;
+    const root = document.documentElement;
+    const apply = (dark: boolean) => root.classList.toggle('dark', dark);
+    if (theme === 'dark') {
+      apply(true);
+      return () => apply(false);
+    }
+    if (theme === 'light') {
+      apply(false);
+      return undefined;
+    }
+    // 'auto': watch prefers-color-scheme and react to changes.
+    const media = window.matchMedia('(prefers-color-scheme: dark)');
+    apply(media.matches);
+    const onChange = (e: MediaQueryListEvent) => apply(e.matches);
+    media.addEventListener('change', onChange);
+    return () => {
+      media.removeEventListener('change', onChange);
+      apply(false);
+    };
+  }, []);
+}
+
 function AppContent() {
+  useDiagramTheme();
   const [instances, setInstances] = useState<BaseInstance[]>([]);
   const [loading, setLoading] = useState(false);
 

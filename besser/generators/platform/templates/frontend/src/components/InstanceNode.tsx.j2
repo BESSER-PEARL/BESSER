@@ -1,6 +1,7 @@
 /**
  * InstanceNode Component
- * Visual representation of a domain model instance with optional SVG icon
+ * Visual representation of a domain model instance with optional SVG icon.
+ * Consumes the per-class style overrides exposed via classMetadata.style.
  */
 {% raw %}
 import React from 'react';
@@ -8,7 +9,7 @@ import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { BaseInstance, ClassMetadata } from '../types/models';
+import type { BaseInstance, ClassMetadata, NodeStyle } from '../types/models';
 
 export type InstanceNodeData = {
   instance: BaseInstance;
@@ -30,11 +31,82 @@ const HANDLE_POSITIONS: Array<{
   { id: 'left', position: Position.Left, offset: { left: -10 } },
 ];
 
+/** Translate a NodeStyle to inline CSS the box / container variant can spread. */
+function nodeBoxStyle(style?: NodeStyle): React.CSSProperties {
+  if (!style) return {};
+  const css: React.CSSProperties = {};
+  if (style.fillColor) css.backgroundColor = style.fillColor;
+  if (style.borderColor) css.borderColor = style.borderColor;
+  if (style.borderWidth !== undefined) css.borderWidth = style.borderWidth;
+  if (style.borderStyle) css.borderStyle = style.borderStyle;
+  if (style.borderRadius !== undefined) css.borderRadius = style.borderRadius;
+  if (style.fontSize !== undefined) css.fontSize = style.fontSize;
+  if (style.fontWeight) css.fontWeight = style.fontWeight;
+  if (style.fontColor) css.color = style.fontColor;
+  return css;
+}
+
+/** Background for non-rectangular shapes. Renders an absolutely-positioned SVG
+ * behind the node label so handles and label keep working unchanged. */
+const ShapeBackground: React.FC<{
+  shape: NodeStyle['shape'];
+  fill: string;
+  stroke: string;
+  strokeWidth: number;
+  strokeDasharray?: string;
+}> = ({ shape, fill, stroke, strokeWidth, strokeDasharray }) => {
+  const common = { fill, stroke, strokeWidth, strokeDasharray };
+  if (shape === 'ellipse') {
+    return (
+      <svg
+        className="absolute inset-0 h-full w-full"
+        preserveAspectRatio="none"
+        viewBox="0 0 100 100"
+      >
+        <ellipse cx="50" cy="50" rx="48" ry="48" {...common} />
+      </svg>
+    );
+  }
+  if (shape === 'diamond') {
+    return (
+      <svg
+        className="absolute inset-0 h-full w-full"
+        preserveAspectRatio="none"
+        viewBox="0 0 100 100"
+      >
+        <polygon points="50,2 98,50 50,98 2,50" {...common} />
+      </svg>
+    );
+  }
+  if (shape === 'hexagon') {
+    return (
+      <svg
+        className="absolute inset-0 h-full w-full"
+        preserveAspectRatio="none"
+        viewBox="0 0 100 100"
+      >
+        <polygon points="25,2 75,2 98,50 75,98 25,98 2,50" {...common} />
+      </svg>
+    );
+  }
+  return null;
+};
+
+const DASH_FOR_LINE: Record<string, string | undefined> = {
+  solid: undefined,
+  dashed: '8 4',
+  dotted: '2 4',
+};
+
 export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, selected }) => {
   const { instance, classMetadata, onEdit, onDelete } = data;
   const [isHovered, setIsHovered] = React.useState(false);
   const hasIcon = Boolean(classMetadata.icon);
   const isContainer = Boolean(classMetadata.isContainer);
+  const style = classMetadata.style;
+  const shape = style?.shape;
+  const labelPosition = style?.labelPosition; // top | bottom | inside
+  const inlineStyle = nodeBoxStyle(style);
 
   // Container variant: a big rounded drop-zone with a header bar. Children land
   // inside via xyflow's parentId subflow mechanism.
@@ -46,7 +118,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
           'relative rounded-xl border-2 border-dashed border-primary/60 bg-primary/5 shadow-sm transition-colors',
           selected && 'border-primary ring-2 ring-ring ring-offset-2 ring-offset-background'
         )}
-        style={{ width: size.width, height: size.height }}
+        style={{ width: size.width, height: size.height, ...inlineStyle }}
       >
         {HANDLE_POSITIONS.map(({ id, position, offset }) => (
           <Handle
@@ -98,6 +170,56 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
     );
   }
 
+  // Non-rectangular SVG-backed shape variant (ellipse / diamond / hexagon).
+  // Only meaningful when the class has no icon (icons already define a shape).
+  if (!hasIcon && shape && shape !== 'rectangle' && shape !== 'rounded_rect') {
+    const size = classMetadata.defaultSize ?? { width: 160, height: 100 };
+    const fill = style?.fillColor ?? 'hsl(var(--card))';
+    const stroke = style?.borderColor ?? 'hsl(var(--primary))';
+    const strokeWidth = style?.borderWidth ?? 2;
+    const dash = style?.borderStyle ? DASH_FOR_LINE[style.borderStyle] : undefined;
+    return (
+      <div
+        className={cn(
+          'relative flex items-center justify-center text-center',
+          selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background'
+        )}
+        style={{ width: size.width, height: size.height }}
+        onMouseEnter={() => setIsHovered(true)}
+        onMouseLeave={() => setIsHovered(false)}
+        onClick={onEdit}
+      >
+        {HANDLE_POSITIONS.map(({ id, position, offset }) => (
+          <Handle
+            key={id}
+            type="source"
+            position={position}
+            id={id}
+            style={offset}
+            className="!h-4 !w-4 !border-2 !border-background !bg-primary transition-all hover:!h-5 hover:!w-5 hover:!bg-primary/90"
+          />
+        ))}
+        <ShapeBackground
+          shape={shape}
+          fill={fill}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          strokeDasharray={dash}
+        />
+        <div
+          className="relative z-10 max-w-[60%] truncate px-2 text-center"
+          style={{
+            fontSize: style?.fontSize,
+            fontWeight: style?.fontWeight ?? 'bold',
+            color: style?.fontColor ?? 'hsl(var(--foreground))',
+          }}
+        >
+          {instance.instance_name}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       className="relative flex min-w-[100px] flex-col items-center"
@@ -117,6 +239,14 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
           className="!h-4 !w-4 !border-2 !border-background !bg-primary transition-all hover:!h-5 hover:!w-5 hover:!bg-primary/90"
         />
       ))}
+
+      {/* Label-on-top is opt-in via labelPosition: 'top'. The icon variant
+          defaults to "bottom"; the box variant defaults to "inside". */}
+      {hasIcon && labelPosition === 'top' && (
+        <div className="mb-2 max-w-[140px] truncate rounded border bg-card px-2 py-1 text-center text-xs font-semibold text-foreground shadow-sm">
+          {instance.instance_name}
+        </div>
+      )}
 
       {hasIcon ? (
         <button
@@ -142,11 +272,21 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
             isHovered && 'scale-[1.03] shadow-md',
             selected && 'ring-2 ring-ring ring-offset-2 ring-offset-background'
           )}
+          style={inlineStyle}
         >
-          <div className="bg-primary px-3 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wider text-primary-foreground">
-            {instance.class_name}
-          </div>
-          <div className="px-3 py-2 text-center text-sm font-bold text-foreground">
+          {labelPosition !== 'top' && (
+            <div className="bg-primary px-3 py-1.5 text-center text-[11px] font-semibold uppercase tracking-wider text-primary-foreground">
+              {instance.class_name}
+            </div>
+          )}
+          <div
+            className="px-3 py-2 text-center text-sm font-bold text-foreground"
+            style={{
+              fontSize: style?.fontSize,
+              fontWeight: style?.fontWeight,
+              color: style?.fontColor,
+            }}
+          >
             {instance.instance_name}
           </div>
           <div className="space-y-1 px-3 pb-3">
@@ -170,7 +310,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
         </button>
       )}
 
-      {hasIcon && (
+      {hasIcon && labelPosition !== 'top' && (
         <>
           <div className="mt-2 max-w-[140px] truncate rounded border bg-card px-2 py-1 text-center text-xs font-semibold text-foreground shadow-sm">
             {instance.instance_name}

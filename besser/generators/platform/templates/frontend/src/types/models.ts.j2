@@ -61,6 +61,55 @@ export interface {{ cls.name }}Instance extends BaseInstance {
 // Union type of all instances
 export type DomainInstance = {% for cls in classes %}{{ cls.name }}Instance{% if not loop.last %} | {% endif %}{% endfor %};
 
+// ---------------------------------------------------------------------------
+// Customization style types (visual overrides applied at runtime)
+// ---------------------------------------------------------------------------
+
+export type NodeShape = 'rectangle' | 'rounded_rect' | 'ellipse' | 'diamond' | 'hexagon';
+export type LineStyleName = 'solid' | 'dashed' | 'dotted';
+export type ArrowStyleName =
+  | 'none'
+  | 'filled_triangle'
+  | 'open_triangle'
+  | 'diamond'
+  | 'open_diamond'
+  | 'circle';
+export type FontWeightName = 'normal' | 'bold';
+export type LabelPositionName = 'top' | 'bottom' | 'inside';
+export type ThemeName = 'light' | 'dark' | 'auto';
+
+export interface NodeStyle {
+  shape?: NodeShape;
+  fillColor?: string;
+  borderColor?: string;
+  borderWidth?: number;
+  borderStyle?: LineStyleName;
+  borderRadius?: number;
+  fontSize?: number;
+  fontWeight?: FontWeightName;
+  fontColor?: string;
+  labelPosition?: LabelPositionName;
+}
+
+export interface EdgeStyle {
+  color?: string;
+  lineWidth?: number;
+  lineStyle?: LineStyleName;
+  sourceArrow?: ArrowStyleName;
+  targetArrow?: ArrowStyleName;
+  labelVisible?: boolean;
+  labelFontSize?: number;
+  labelFontColor?: string;
+}
+
+export interface DiagramStyle {
+  backgroundColor?: string;
+  gridVisible?: boolean;
+  gridSize?: number;
+  snapToGrid?: boolean;
+  theme?: ThemeName;
+}
+
 // Class metadata
 export interface ClassMetadata {
   name: string;
@@ -69,6 +118,7 @@ export interface ClassMetadata {
   defaultSize?: { width: number; height: number };
   attributes: AttributeMetadata[];
   associations: AssociationMetadata[];
+  style?: NodeStyle; // Per-class appearance overrides
 }
 
 export interface AttributeMetadata {
@@ -87,6 +137,7 @@ export interface AssociationMetadata {
     max: number;
   };
   edgeColor?: string; // CSS color (hex, hsl, etc.); omitted uses the theme default
+  style?: EdgeStyle; // Per-association edge overrides
 }
 
 // Available classes in the domain model
@@ -103,6 +154,22 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
     {%- endif %}
     {%- if cls_cust and cls_cust.default_width and cls_cust.default_height %}
     defaultSize: { width: {{ cls_cust.default_width }}, height: {{ cls_cust.default_height }} },
+    {%- endif %}
+    {%- set node_style_parts = [] %}
+    {%- if cls_cust %}
+      {%- if cls_cust.node_shape is not none %}{% do node_style_parts.append("shape: '" ~ (cls_cust.node_shape | enum_value) ~ "'") %}{% endif %}
+      {%- if cls_cust.fill_color is not none %}{% do node_style_parts.append("fillColor: '" ~ cls_cust.fill_color ~ "'") %}{% endif %}
+      {%- if cls_cust.border_color is not none %}{% do node_style_parts.append("borderColor: '" ~ cls_cust.border_color ~ "'") %}{% endif %}
+      {%- if cls_cust.border_width is not none %}{% do node_style_parts.append("borderWidth: " ~ cls_cust.border_width) %}{% endif %}
+      {%- if cls_cust.border_style is not none %}{% do node_style_parts.append("borderStyle: '" ~ (cls_cust.border_style | enum_value) ~ "'") %}{% endif %}
+      {%- if cls_cust.border_radius is not none %}{% do node_style_parts.append("borderRadius: " ~ cls_cust.border_radius) %}{% endif %}
+      {%- if cls_cust.font_size is not none %}{% do node_style_parts.append("fontSize: " ~ cls_cust.font_size) %}{% endif %}
+      {%- if cls_cust.font_weight is not none %}{% do node_style_parts.append("fontWeight: '" ~ (cls_cust.font_weight | enum_value) ~ "'") %}{% endif %}
+      {%- if cls_cust.font_color is not none %}{% do node_style_parts.append("fontColor: '" ~ cls_cust.font_color ~ "'") %}{% endif %}
+      {%- if cls_cust.label_position is not none %}{% do node_style_parts.append("labelPosition: '" ~ (cls_cust.label_position | enum_value) ~ "'") %}{% endif %}
+    {%- endif %}
+    {%- if node_style_parts %}
+    style: { {{ node_style_parts | join(', ') }} },
     {%- endif %}
     attributes: [
       {%- for attr in cls.attributes | union(cls.inherited_attributes()) %}
@@ -128,9 +195,34 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
           max: {{ end.multiplicity.max }}
         }{% if assoc_cust and assoc_cust.edge_color %},
         edgeColor: '{{ assoc_cust.edge_color }}'{% endif %}
+        {%- set edge_style_parts = [] %}
+        {%- if assoc_cust %}
+          {%- if assoc_cust.edge_color is not none %}{% do edge_style_parts.append("color: '" ~ assoc_cust.edge_color ~ "'") %}{% endif %}
+          {%- if assoc_cust.line_width is not none %}{% do edge_style_parts.append("lineWidth: " ~ assoc_cust.line_width) %}{% endif %}
+          {%- if assoc_cust.line_style is not none %}{% do edge_style_parts.append("lineStyle: '" ~ (assoc_cust.line_style | enum_value) ~ "'") %}{% endif %}
+          {%- if assoc_cust.source_arrow_style is not none %}{% do edge_style_parts.append("sourceArrow: '" ~ (assoc_cust.source_arrow_style | enum_value) ~ "'") %}{% endif %}
+          {%- if assoc_cust.target_arrow_style is not none %}{% do edge_style_parts.append("targetArrow: '" ~ (assoc_cust.target_arrow_style | enum_value) ~ "'") %}{% endif %}
+          {%- if assoc_cust.label_visible is not none %}{% do edge_style_parts.append("labelVisible: " ~ ('true' if assoc_cust.label_visible else 'false')) %}{% endif %}
+          {%- if assoc_cust.label_font_size is not none %}{% do edge_style_parts.append("labelFontSize: " ~ assoc_cust.label_font_size) %}{% endif %}
+          {%- if assoc_cust.label_font_color is not none %}{% do edge_style_parts.append("labelFontColor: '" ~ assoc_cust.label_font_color ~ "'") %}{% endif %}
+        {%- endif %}
+        {%- if edge_style_parts %},
+        style: { {{ edge_style_parts | join(', ') }} }{% endif %}
       }{% if not loop.last %},{% endif %}
       {%- endfor %}
     ]
   }{% if not loop.last %},{% endif %}
   {%- endfor %}
 ];
+
+// Diagram-level style overrides; emitted only when set in the customization.
+{%- set diagram_style_parts = [] %}
+{%- if customization and customization.diagram_customization %}
+  {%- set dc = customization.diagram_customization %}
+  {%- if dc.background_color is not none %}{% do diagram_style_parts.append("backgroundColor: '" ~ dc.background_color ~ "'") %}{% endif %}
+  {%- if dc.grid_visible is not none %}{% do diagram_style_parts.append("gridVisible: " ~ ('true' if dc.grid_visible else 'false')) %}{% endif %}
+  {%- if dc.grid_size is not none %}{% do diagram_style_parts.append("gridSize: " ~ dc.grid_size) %}{% endif %}
+  {%- if dc.snap_to_grid is not none %}{% do diagram_style_parts.append("snapToGrid: " ~ ('true' if dc.snap_to_grid else 'false')) %}{% endif %}
+  {%- if dc.theme is not none %}{% do diagram_style_parts.append("theme: '" ~ (dc.theme | enum_value) ~ "'") %}{% endif %}
+{%- endif %}
+export const DIAGRAM_STYLE: DiagramStyle = { {{ diagram_style_parts | join(', ') }} };

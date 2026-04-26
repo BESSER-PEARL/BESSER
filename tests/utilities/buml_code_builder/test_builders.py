@@ -1315,3 +1315,83 @@ class TestDomainModelBuilderAdvanced:
 
         assert "MethodImplementationType.CODE" in code
         assert "return 42" in code
+
+
+# ---------------------------------------------------------------------------
+# platform_customization_builder.py
+# ---------------------------------------------------------------------------
+from besser.BUML.metamodel.platform_customization import (
+    AssociationCustomization,
+    ClassCustomization,
+    DiagramCustomization,
+    NodeShape,
+    PlatformCustomizationModel,
+    Theme,
+)
+from besser.utilities.buml_code_builder.platform_customization_builder import (
+    platform_customization_to_code,
+)
+
+
+class TestPlatformCustomizationBuilder:
+    def test_empty_model_emits_compilable_code(self, tmp_path):
+        model = PlatformCustomizationModel(name="Empty")
+        file_path = str(tmp_path / "pc_empty.py")
+        code = platform_customization_to_code(model, file_path=file_path)
+
+        compile(code, file_path, "exec")
+        assert "PlatformCustomizationModel" in code
+        assert 'name="Empty"' in code
+
+    def test_full_model_round_trips_via_exec(self, tmp_path):
+        original = PlatformCustomizationModel(
+            name="Full",
+            class_overrides={
+                "Region": ClassCustomization(
+                    is_container=True,
+                    default_width=400,
+                    default_height=300,
+                    node_shape=NodeShape.HEXAGON,
+                    fill_color="#fef3c7",
+                    border_width=4,
+                ),
+            },
+            association_overrides={
+                "has": AssociationCustomization(edge_color="#22c55e", line_width=3),
+            },
+            diagram_customization=DiagramCustomization(theme=Theme.DARK, grid_size=32),
+        )
+
+        file_path = str(tmp_path / "pc_full.py")
+        code = platform_customization_to_code(original, file_path=file_path)
+        compile(code, file_path, "exec")
+
+        namespace = {}
+        exec(code, namespace)
+        rebuilt = namespace["platform_customization"]
+
+        assert rebuilt.name == "Full"
+        region = rebuilt.get_class_customization("Region")
+        assert region.is_container is True
+        assert region.node_shape is NodeShape.HEXAGON
+        assert region.fill_color == "#fef3c7"
+        assert region.border_width == 4
+        has = rebuilt.get_association_customization("has")
+        assert has.edge_color == "#22c55e"
+        assert has.line_width == 3
+        assert rebuilt.diagram_customization is not None
+        assert rebuilt.diagram_customization.theme is Theme.DARK
+        assert rebuilt.diagram_customization.grid_size == 32
+
+    def test_only_imports_used_enums(self, tmp_path):
+        model = PlatformCustomizationModel(
+            name="Lean",
+            class_overrides={"X": ClassCustomization(fill_color="#fff")},
+        )
+        code = platform_customization_to_code(model)
+        # No enums used → no enum imports
+        assert "NodeShape" not in code
+        assert "LineStyle" not in code
+        assert "FontWeight" not in code
+        assert "DiagramCustomization" not in code
+        assert "ClassCustomization" in code

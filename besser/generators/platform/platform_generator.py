@@ -14,6 +14,7 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.BUML.metamodel.platform_customization import PlatformCustomizationModel
 from besser.generators import GeneratorInterface
+from besser.generators.platform.template_helpers import dash_for, enum_value, marker_for
 
 
 class PlatformGenerator(GeneratorInterface):
@@ -84,6 +85,9 @@ class PlatformGenerator(GeneratorInterface):
         self.env.filters['python_type'] = self._get_python_type
         self.env.filters['ts_type'] = self._get_typescript_type
         self.env.filters['union'] = self._union_filter
+        self.env.filters['dash_for'] = dash_for
+        self.env.filters['marker_for'] = marker_for
+        self.env.filters['enum_value'] = enum_value
     
     def generate(self):
         """
@@ -329,19 +333,20 @@ class PlatformGenerator(GeneratorInterface):
         # Generate InstanceCanvas component (main editor)
         template = self.env.get_template('frontend/src/components/InstanceCanvas.tsx.j2')
         output_path = os.path.join(components_dir, 'InstanceCanvas.tsx')
-        
+
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render(
                 model=self.domain_model,
-                classes=self.domain_model.get_classes()
+                classes=self.domain_model.get_classes(),
+                customization=self.customization,
             ))
-        
+
         # Generate InstanceNode component (visual representation of instances)
         template = self.env.get_template('frontend/src/components/InstanceNode.tsx.j2')
         output_path = os.path.join(components_dir, 'InstanceNode.tsx')
-        
+
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(template.render())
+            f.write(template.render(customization=self.customization))
         
         # Generate PropertyEditor component
         template = self.env.get_template('frontend/src/components/PropertyEditor.tsx.j2')
@@ -391,10 +396,11 @@ class PlatformGenerator(GeneratorInterface):
         """Generates the main App component."""
         template = self.env.get_template('frontend/src/App.tsx.j2')
         output_path = os.path.join(frontend_dir, 'src', 'App.tsx')
-        
+
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(template.render(
-                model=self.domain_model
+                model=self.domain_model,
+                customization=self.customization,
             ))
     
     def _generate_frontend_index(self, frontend_dir):

@@ -215,8 +215,7 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
   {%- endfor %}
 ];
 
-// Diagram-level style overrides; emitted only when set in the customization.
-{%- set diagram_style_parts = [] %}
+{% set diagram_style_parts = [] %}
 {%- if customization and customization.diagram_customization %}
   {%- set dc = customization.diagram_customization %}
   {%- if dc.background_color is not none %}{% do diagram_style_parts.append("backgroundColor: '" ~ dc.background_color ~ "'") %}{% endif %}
@@ -225,4 +224,5 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
   {%- if dc.snap_to_grid is not none %}{% do diagram_style_parts.append("snapToGrid: " ~ ('true' if dc.snap_to_grid else 'false')) %}{% endif %}
   {%- if dc.theme is not none %}{% do diagram_style_parts.append("theme: '" ~ (dc.theme | enum_value) ~ "'") %}{% endif %}
 {%- endif %}
+// Diagram-level style overrides (emitted only when set in the customization).
 export const DIAGRAM_STYLE: DiagramStyle = { {{ diagram_style_parts | join(', ') }} };

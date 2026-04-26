@@ -1,9 +1,12 @@
 /**
  * PropertyEditor Component
- * shadcn Dialog-based editor for instance attributes.
+ * shadcn Dialog-based editor for instance attributes AND outgoing links.
+ * Pre-populates association fields from the instance's current links so the
+ * user sees existing relationships and can add / remove them in one place.
  */
 {% raw %}
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
+import { AlertCircle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -15,12 +18,22 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { BaseInstance, ClassMetadata } from '../types/models';
+import type { AssociationMetadata, BaseInstance, ClassMetadata } from '../types/models';
+
+export interface SelectedLink {
+  associationName: string;
+  targetClass: string;
+  targetId: string;
+}
 
 interface PropertyEditorProps {
   instance: BaseInstance;
   classMetadata: ClassMetadata;
-  onSave: (instance: BaseInstance) => void;
+  /** All known classes; used to resolve association target metadata. */
+  availableClasses: ClassMetadata[];
+  /** Every existing instance in the editor; used to populate target pickers. */
+  existingInstances: BaseInstance[];
+  onSave: (instance: BaseInstance, selectedLinks: SelectedLink[]) => void;
   onClose: () => void;
 }
 
@@ -36,22 +49,203 @@ const inputTypeFor = (attrType: string): string => {
   return 'text';
 };
 
+const multiplicityKind = (
+  m: AssociationMetadata['multiplicity'],
+): 'optional_single' | 'required_single' | 'optional_many' | 'required_many' => {
+  const isMany = m.max > 1 || m.max < 0;
+  const isRequired = m.min > 0;
+  if (isMany) return isRequired ? 'required_many' : 'optional_many';
+  return isRequired ? 'required_single' : 'optional_single';
+};
+
+const multiplicityLabel = (m: AssociationMetadata['multiplicity']): string => {
+  const max = m.max < 0 || m.max >= 9999 ? '*' : String(m.max);
+  return `${m.min}..${max}`;
+};
+
+interface AssociationFieldProps {
+  association: AssociationMetadata;
+  candidates: BaseInstance[];
+  values: string[];
+  onChange: (values: string[]) => void;
+}
+
+const AssociationField: React.FC<AssociationFieldProps> = ({
+  association,
+  candidates,
+  values,
+  onChange,
+}) => {
+  const kind = multiplicityKind(association.multiplicity);
+  const fieldId = `edit-assoc-${association.name}`;
+  const required = kind === 'required_single' || kind === 'required_many';
+
+  if (candidates.length === 0) {
+    return (
+      <div className="space-y-1.5 rounded-md border border-dashed border-muted bg-muted/20 p-3">
+        <Label className="text-sm font-medium">
+          {association.targetEndName || association.name}
+          {required && <span className="ml-1 text-destructive">*</span>}
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            ({association.targetClass}, {multiplicityLabel(association.multiplicity)})
+          </span>
+        </Label>
+        <p className="text-xs italic text-muted-foreground">
+          No {association.targetClass} instances exist to link.
+        </p>
+      </div>
+    );
+  }
+
+  if (kind === 'optional_single' || kind === 'required_single') {
+    return (
+      <div className="space-y-1.5">
+        <Label htmlFor={fieldId} className="text-sm font-medium">
+          {association.targetEndName || association.name}
+          {required && <span className="ml-1 text-destructive">*</span>}
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            ({association.targetClass}, {multiplicityLabel(association.multiplicity)})
+          </span>
+        </Label>
+        <select
+          id={fieldId}
+          value={values[0] ?? ''}
+          onChange={(e) => onChange(e.target.value ? [e.target.value] : [])}
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          required={required}
+        >
+          <option value="">{required ? '— Select one —' : '— None —'}</option>
+          {candidates.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.instance_name}
+            </option>
+          ))}
+        </select>
+      </div>
+    );
+  }
+
+  const minRequired = association.multiplicity.min;
+  const tooFew = required && values.length < minRequired;
+  return (
+    <div className="space-y-1.5">
+      <Label className="text-sm font-medium">
+        {association.targetEndName || association.name}
+        {required && <span className="ml-1 text-destructive">*</span>}
+        <span className="ml-2 text-xs font-normal text-muted-foreground">
+          ({association.targetClass}, {multiplicityLabel(association.multiplicity)})
+        </span>
+      </Label>
+      <div className="max-h-40 overflow-y-auto rounded-md border border-input bg-background p-2">
+        {candidates.map((c) => {
+          const checked = values.includes(c.id);
+          return (
+            <label
+              key={c.id}
+              className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent"
+            >
+              <input
+                type="checkbox"
+                className="size-4 cursor-pointer accent-primary"
+                checked={checked}
+                onChange={(e) => {
+                  if (e.target.checked) {
+                    onChange([...values, c.id]);
+                  } else {
+                    onChange(values.filter((v) => v !== c.id));
+                  }
+                }}
+              />
+              <span className="truncate">{c.instance_name}</span>
+            </label>
+          );
+        })}
+      </div>
+      {tooFew && (
+        <p className="flex items-center gap-1 text-xs text-destructive">
+          <AlertCircle className="size-3" />
+          Select at least {minRequired} {minRequired === 1 ? 'item' : 'items'}.
+        </p>
+      )}
+    </div>
+  );
+};
+
 export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   instance,
   classMetadata,
+  availableClasses,
+  existingInstances,
   onSave,
   onClose,
 }) => {
   const [instanceName, setInstanceName] = useState(instance.instance_name);
   const [attributes, setAttributes] = useState<Record<string, any>>(instance.attributes);
 
+  const associations = useMemo(
+    () =>
+      classMetadata.associations.filter((a) =>
+        availableClasses.some((c) => c.name === a.targetClass),
+      ),
+    [classMetadata.associations, availableClasses],
+  );
+
+  // Pre-populate selections from the instance's current outgoing links.
+  const [selections, setSelections] = useState<Record<string, string[]>>(() => {
+    const initial: Record<string, string[]> = {};
+    for (const assoc of classMetadata.associations) {
+      initial[assoc.name] = instance.links
+        .filter(
+          (l) => l.association_name === assoc.name && l.target_class === assoc.targetClass,
+        )
+        .map((l) => l.target_id);
+    }
+    return initial;
+  });
+
+  const candidatesByAssociation = useMemo(() => {
+    const map: Record<string, BaseInstance[]> = {};
+    for (const assoc of associations) {
+      // Exclude the instance itself from candidates for self-associations.
+      map[assoc.name] = existingInstances.filter(
+        (i) => i.class_name === assoc.targetClass && i.id !== instance.id,
+      );
+    }
+    return map;
+  }, [associations, existingInstances, instance.id]);
+
   const handleAttributeChange = (key: string, value: any) => {
     setAttributes((prev) => ({ ...prev, [key]: value }));
   };
 
+  const validationError = useMemo<string | null>(() => {
+    for (const assoc of associations) {
+      const min = assoc.multiplicity.min;
+      if (min <= 0) continue;
+      const picked = (selections[assoc.name] ?? []).length;
+      if (picked < min) {
+        return `"${assoc.targetEndName || assoc.name}" requires at least ${min}.`;
+      }
+    }
+    return null;
+  }, [associations, selections]);
+
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave({ ...instance, instance_name: instanceName, attributes });
+    if (validationError) return;
+
+    const selectedLinks: SelectedLink[] = [];
+    for (const assoc of associations) {
+      const targets = selections[assoc.name] ?? [];
+      for (const targetId of targets) {
+        selectedLinks.push({
+          associationName: assoc.name,
+          targetClass: assoc.targetClass,
+          targetId,
+        });
+      }
+    }
+    onSave({ ...instance, instance_name: instanceName, attributes }, selectedLinks);
   };
 
   return (
@@ -120,13 +314,36 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 );
               })}
             </div>
+
+            {associations.length > 0 && (
+              <div className="space-y-4">
+                <h4 className="text-sm font-semibold text-foreground">Associations</h4>
+                {associations.map((assoc) => (
+                  <AssociationField
+                    key={assoc.name + ':' + assoc.targetClass}
+                    association={assoc}
+                    candidates={candidatesByAssociation[assoc.name] ?? []}
+                    values={selections[assoc.name] ?? []}
+                    onChange={(vs) => setSelections((prev) => ({ ...prev, [assoc.name]: vs }))}
+                  />
+                ))}
+              </div>
+            )}
           </div>
 
           <DialogFooter className="border-t bg-accent/40 px-6 py-4">
+            {validationError && (
+              <p className="mr-auto flex items-center gap-1 text-xs text-destructive">
+                <AlertCircle className="size-3.5" />
+                {validationError}
+              </p>
+            )}
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
             </Button>
-            <Button type="submit">Save Changes</Button>
+            <Button type="submit" disabled={validationError !== null}>
+              Save Changes
+            </Button>
           </DialogFooter>
         </form>
       </DialogContent>

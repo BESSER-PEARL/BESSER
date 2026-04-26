@@ -55,6 +55,8 @@ def _association_customization_to_json(cust: AssociationCustomization) -> Dict[s
     _set_if(out, "labelVisible", cust.label_visible)
     _set_if(out, "labelFontSize", cust.label_font_size)
     _set_if(out, "labelFontColor", cust.label_font_color)
+    if cust.is_container_association:
+        out["isContainerAssociation"] = True
     return out
 
 

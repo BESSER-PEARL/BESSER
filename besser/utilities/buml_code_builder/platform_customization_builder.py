@@ -43,6 +43,7 @@ _ASSOC_FIELDS = (
     ("label_visible", None),
     ("label_font_size", None),
     ("label_font_color", None),
+    ("is_container_association", False),
 )
 
 _DIAGRAM_FIELDS = (

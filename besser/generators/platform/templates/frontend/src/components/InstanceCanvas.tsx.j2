@@ -6,6 +6,7 @@
 import React, { useCallback, useState } from 'react';
 import {
   ReactFlow,
+  ReactFlowProvider,
   Node,
   Edge,
   Controls,
@@ -14,6 +15,7 @@ import {
   MarkerType,
   useNodesState,
   useEdgesState,
+  useReactFlow,
   Connection,
   ConnectionMode,
   Panel,
@@ -154,7 +156,8 @@ interface InstanceCanvasProps {
   onInstanceCreate: (className: string, position: { x: number; y: number }) => void;
 }
 
-export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
+/** Inner component — needs a ReactFlowProvider parent so useReactFlow works. */
+const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   instances,
   availableClasses,
   onInstanceUpdate,
@@ -162,6 +165,7 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
   onLinkCreate,
   onInstanceCreate,
 }) => {
+  const reactFlow = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selectedInstance, setSelectedInstance] = useState<BaseInstance | null>(null);
@@ -196,22 +200,27 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
       const className = event.dataTransfer.getData('className');
       if (!className) return;
 
-      const bounds = event.currentTarget.getBoundingClientRect();
-      const position = {
-        x: event.clientX - bounds.left - 100,
-        y: event.clientY - bounds.top - 50,
-      };
+      // Convert the viewport-pixel drop point into xyflow's flow coordinate
+      // space — this is what node.position uses, and is the only coordinate
+      // system in which container hit-testing returns the right answer
+      // regardless of the user's pan / zoom state.
+      const flowPoint = reactFlow.screenToFlowPosition({
+        x: event.clientX,
+        y: event.clientY,
+      });
+      // Center the new node on the cursor (nodes default to ~200x100).
+      const position = { x: flowPoint.x - 100, y: flowPoint.y - 50 };
 
       // If the drop lands inside a container instance, remember it so we can
       // auto-create the containment association after the instance is created.
-      const container = findContainerAt(position, nodes, availableClasses);
+      const container = findContainerAt(flowPoint, nodes, availableClasses);
       const parentContainerId = container?.id;
       const parentContainerClass = (container?.data as { instance?: BaseInstance } | undefined)
         ?.instance?.class_name;
 
       setCreateInstanceModal({ className, position, parentContainerId, parentContainerClass });
     },
-    [nodes, availableClasses]
+    [nodes, availableClasses, reactFlow]
   );
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
@@ -221,12 +230,18 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
 
   React.useEffect(() => {
     // First pass: identify containment relationships so children get parentId.
-    // A link from a container instance is treated as containment of its target.
+    // A link is treated as containment ONLY when it's via an association the
+    // user explicitly flagged as a container association — every other link
+    // (even from a container source class) renders as a normal edge.
     const parentByChild = new Map<string, string>();
     for (const instance of instances) {
       const srcMeta = availableClasses.find((c) => c.name === instance.class_name);
       if (!srcMeta?.isContainer) continue;
       for (const link of instance.links) {
+        const assocMeta = srcMeta.associations.find(
+          (a) => a.name === link.association_name && a.targetClass === link.target_class,
+        );
+        if (!assocMeta?.isContainerAssociation) continue;
         if (!parentByChild.has(link.target_id)) {
           parentByChild.set(link.target_id, instance.id);
         }
@@ -284,10 +299,16 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
         const edgeStyle: EdgeStyle | undefined = assocMeta?.style;
         const edgeColor = edgeStyle?.color ?? assocMeta?.edgeColor;
 
-        // Hide the edge when the source is a container and the target is its child:
-        // the containment is visually obvious from the nesting, a line just adds noise.
+        // Hide the edge only when the link is actually a containment one (the
+        // association has isContainerAssociation = true and the source is a
+        // container that owns this child) — the nesting already conveys it,
+        // and other associations between the same pair must stay visible.
         const sourceIsContainer = Boolean(sourceMeta?.isContainer);
-        const childOfSource = sourceIsContainer && parentByChild.get(link.target_id) === instance.id;
+        const isContainmentLink = Boolean(assocMeta?.isContainerAssociation);
+        const childOfSource =
+          sourceIsContainer &&
+          isContainmentLink &&
+          parentByChild.get(link.target_id) === instance.id;
 
         const edgeId = `${instance.id}::${link.target_id}::${link.association_name}`;
         const savedHandles = edgeHandlesRef.current.get(edgeId);
@@ -454,14 +475,64 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
     [instances, availableClasses]
   );
 
-  const handleUpdateInstance = async (updatedInstance: BaseInstance) => {
+  /** Diff `next` selected links against the instance's current outgoing links;
+   * fire the appropriate POST/DELETE /links calls. Used by the edit modal. */
+  const reconcileLinks = useCallback(
+    async (
+      instance: BaseInstance,
+      next: Array<{ associationName: string; targetClass: string; targetId: string }>,
+    ) => {
+      const keyOf = (a: string, t: string) => `${a}::${t}`;
+      const existing = new Set(instance.links.map((l) => keyOf(l.association_name, l.target_id)));
+      const desired = new Set(next.map((l) => keyOf(l.associationName, l.targetId)));
+
+      // Add the ones the user picked but that aren't already present.
+      for (const sel of next) {
+        if (existing.has(keyOf(sel.associationName, sel.targetId))) continue;
+        try {
+          await api.createLink({
+            source_class: instance.class_name,
+            source_id: instance.id,
+            target_class: sel.targetClass,
+            target_id: sel.targetId,
+            association_name: sel.associationName,
+          });
+        } catch (error) {
+          console.error('Failed to add link:', error);
+        }
+      }
+      // Remove the ones that existed but the user un-checked.
+      for (const link of instance.links) {
+        if (desired.has(keyOf(link.association_name, link.target_id))) continue;
+        try {
+          await api.deleteLink(
+            instance.class_name,
+            instance.id,
+            link.target_class,
+            link.target_id,
+            link.association_name,
+          );
+        } catch (error) {
+          console.error('Failed to remove link:', error);
+        }
+      }
+    },
+    [],
+  );
+
+  const handleUpdateInstance = async (
+    updatedInstance: BaseInstance,
+    selectedLinks: Array<{ associationName: string; targetClass: string; targetId: string }>,
+  ) => {
     await onInstanceUpdate(updatedInstance);
+    await reconcileLinks(updatedInstance, selectedLinks);
     setSelectedInstance(null);
   };
 
   const handleCreateFromModal = async (
     instanceName: string,
-    attributes: Record<string, any>
+    attributes: Record<string, any>,
+    selectedLinks: Array<{ associationName: string; targetClass: string; targetId: string }>,
   ) => {
     if (!createInstanceModal) return;
     try {
@@ -471,26 +542,47 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
         attributes,
       });
 
+      // First, materialise any links the user picked in the create modal
+      // (target instances chosen via association fields). Each one becomes a
+      // POST /links call.
+      if (created?.id) {
+        for (const sel of selectedLinks) {
+          try {
+            await api.createLink({
+              source_class: createInstanceModal.className,
+              source_id: created.id,
+              target_class: sel.targetClass,
+              target_id: sel.targetId,
+              association_name: sel.associationName,
+            });
+          } catch (error) {
+            console.error('Failed to create link from modal selection:', error);
+          }
+        }
+      }
+
       // If dropped inside a container, auto-create the containment association.
+      // Only associations marked isContainerAssociation are considered — that's
+      // how the user opts in to the "drop = link" behavior per association.
       const { parentContainerId, parentContainerClass, className } = createInstanceModal;
       if (parentContainerId && parentContainerClass && created?.id) {
         const parentMeta = availableClasses.find((c) => c.name === parentContainerClass);
-        const matchingAssoc = parentMeta?.associations.filter(
-          (a) => a.targetClass === className
+        const containerAssocs = parentMeta?.associations.filter(
+          (a) => a.targetClass === className && a.isContainerAssociation,
         ) ?? [];
-        if (matchingAssoc.length === 1) {
+        if (containerAssocs.length === 1) {
           try {
             await api.createLink({
               source_class: parentContainerClass,
               source_id: parentContainerId,
               target_class: className,
               target_id: created.id,
-              association_name: matchingAssoc[0].name,
+              association_name: containerAssocs[0].name,
             });
           } catch (error) {
             console.error('Failed to auto-create containment link:', error);
           }
-        } else if (matchingAssoc.length > 1) {
+        } else if (containerAssocs.length > 1) {
           setPendingConnection({
             sourceId: parentContainerId,
             targetId: created.id,
@@ -498,6 +590,9 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
             targetClass: className,
           });
         }
+        // containerAssocs.length === 0: source class is a container but no
+        // association is flagged as container — the user must wire the link
+        // explicitly. Silent no-op.
       }
 
       onInstanceCreate(createInstanceModal.className, createInstanceModal.position);
@@ -579,6 +674,8 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
           classMetadata={
             availableClasses.find((c) => c.name === selectedInstance.class_name)!
           }
+          availableClasses={availableClasses}
+          existingInstances={instances}
           onSave={handleUpdateInstance}
           onClose={() => setSelectedInstance(null)}
         />
@@ -599,6 +696,8 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
           classMetadata={
             availableClasses.find((c) => c.name === createInstanceModal.className)!
           }
+          availableClasses={availableClasses}
+          existingInstances={instances}
           onSubmit={handleCreateFromModal}
           onCancel={() => setCreateInstanceModal(null)}
         />
@@ -606,4 +705,12 @@ export const InstanceCanvas: React.FC<InstanceCanvasProps> = ({
     </div>
   );
 };
+
+/** Public wrapper that supplies the ReactFlowProvider context the inner
+ * component needs (useReactFlow + screenToFlowPosition). */
+export const InstanceCanvas: React.FC<InstanceCanvasProps> = (props) => (
+  <ReactFlowProvider>
+    <InstanceCanvasInner {...props} />
+  </ReactFlowProvider>
+);
 {% endraw %}

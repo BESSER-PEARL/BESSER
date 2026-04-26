@@ -138,6 +138,12 @@ export interface AssociationMetadata {
   };
   edgeColor?: string; // CSS color (hex, hsl, etc.); omitted uses the theme default
   style?: EdgeStyle; // Per-association edge overrides
+  /**
+   * Marks this association as the containment relationship: when the source
+   * class is a container, dropping a target instance inside one of its
+   * instances auto-creates this link and visually nests the child node.
+   */
+  isContainerAssociation?: boolean;
 }
 
 // Available classes in the domain model
@@ -194,7 +200,8 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
           min: {{ end.multiplicity.min }},
           max: {{ end.multiplicity.max }}
         }{% if assoc_cust and assoc_cust.edge_color %},
-        edgeColor: '{{ assoc_cust.edge_color }}'{% endif %}
+        edgeColor: '{{ assoc_cust.edge_color }}'{% endif %}{% if assoc_cust and assoc_cust.is_container_association %},
+        isContainerAssociation: true{% endif %}
         {%- set edge_style_parts = [] %}
         {%- if assoc_cust %}
           {%- if assoc_cust.edge_color is not none %}{% do edge_style_parts.append("color: '" ~ assoc_cust.edge_color ~ "'") %}{% endif %}

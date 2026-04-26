@@ -132,6 +132,7 @@ def _parse_association_customization(data: Dict[str, Any]) -> AssociationCustomi
         label_visible=_bool_or_none(data.get("labelVisible")),
         label_font_size=_int_in_range_or_none(data.get("labelFontSize"), 8, 18),
         label_font_color=_str_or_none(data.get("labelFontColor")),
+        is_container_association=bool(data.get("isContainerAssociation", False)),
     )
 
 

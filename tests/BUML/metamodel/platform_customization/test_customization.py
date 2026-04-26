@@ -187,6 +187,18 @@ class TestAssociationCustomization:
         with pytest.raises(ValueError, match="label_visible"):
             AssociationCustomization(label_visible="yes")  # type: ignore[arg-type]
 
+    def test_is_container_association_default_false(self):
+        a = AssociationCustomization()
+        assert a.is_container_association is False
+
+    def test_is_container_association_accepts_true(self):
+        a = AssociationCustomization(is_container_association=True)
+        assert a.is_container_association is True
+
+    def test_is_container_association_must_be_bool(self):
+        with pytest.raises(ValueError, match="is_container_association"):
+            AssociationCustomization(is_container_association="yes")  # type: ignore[arg-type]
+
 
 class TestDiagramCustomization:
     def test_defaults(self):

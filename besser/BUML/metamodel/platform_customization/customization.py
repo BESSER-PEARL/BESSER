@@ -162,7 +162,14 @@ class ClassCustomization:
 
 @dataclass
 class AssociationCustomization:
-    """Per-association overrides consumed by the platform generator."""
+    """Per-association overrides consumed by the platform generator.
+
+    `is_container_association` flips the runtime behavior: when true *and* the
+    source class of the association is a container, dropping a target-class
+    instance inside the container instance auto-creates this association and
+    nests the child node visually. When false (default), the association is
+    rendered as a normal edge regardless of the source class's container flag.
+    """
 
     edge_color: Optional[str] = None
     line_width: Optional[int] = None
@@ -172,6 +179,7 @@ class AssociationCustomization:
     label_visible: Optional[bool] = None
     label_font_size: Optional[int] = None
     label_font_color: Optional[str] = None
+    is_container_association: bool = False
 
     def __post_init__(self):
         _validate_color(self.edge_color, "edge_color")
@@ -190,6 +198,8 @@ class AssociationCustomization:
 
         if self.label_visible is not None and not isinstance(self.label_visible, bool):
             raise ValueError("label_visible must be a bool or None")
+        if not isinstance(self.is_container_association, bool):
+            raise ValueError("is_container_association must be a bool")
 
 
 # ---------------------------------------------------------------------------

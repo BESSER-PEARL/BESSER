@@ -177,6 +177,10 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   } | null>(null);
 
   const nodePositionsRef = React.useRef<Map<string, { x: number; y: number }>>(new Map());
+  // Persists user-driven NodeResizer changes across re-renders. Without it, the
+  // useEffect below would re-apply defaultSize on every instances/availableClasses
+  // change and undo any resize the user just performed.
+  const nodeSizesRef = React.useRef<Map<string, { width: number; height: number }>>(new Map());
   // Tracks which parent each child had on the previous render so we can detect
   // newly-nested nodes and reset their stored absolute position (otherwise the
   // child renders at flow coords instead of relative-to-parent coords).
@@ -332,24 +336,35 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
           onDelete: () => onInstanceDelete(instance.class_name, instance.id),
         },
       };
-      if (isContainer && classMetadata?.defaultSize) {
-        node.width = classMetadata.defaultSize.width;
-        node.height = classMetadata.defaultSize.height;
+      if (isContainer) {
+        // Resized dimensions take precedence; fall back to defaultSize from the
+        // customization, otherwise let the InstanceNode div's CSS minWidth /
+        // minHeight govern.
+        const storedSize = nodeSizesRef.current.get(instance.id);
+        const size = storedSize ?? classMetadata?.defaultSize;
+        if (size) {
+          node.width = size.width;
+          node.height = size.height;
+        }
       }
       if (parentId) {
         node.parentId = parentId;
         node.extent = 'parent';
       }
-      // Containers render behind other nodes so unrelated overlapping
-      // instances stay legible. xyflow stacks parent/child correctly on top
-      // of this baseline once parentId is set.
-      if (isContainer) {
-        node.zIndex = 0;
-      } else {
-        node.zIndex = 1;
-      }
+      // Containers stay pinned BEHIND other nodes (zIndex 0) so they don't
+      // visually consume children when selected. Children sit on top
+      // (zIndex 10) so they remain visible no matter the click order.
+      // xyflow respects an explicit zIndex on a node, so selection no longer
+      // bumps the container in front.
+      node.zIndex = isContainer ? 0 : 10;
       return node;
     });
+
+    // xyflow requires a parent node to appear earlier in the array than its
+    // children — otherwise parentId binding silently fails and the child is
+    // placed at absolute coords (this is exactly what users see when a
+    // freshly-created child appears beside the container instead of inside).
+    flowNodes.sort((a, b) => (a.parentId ? 1 : 0) - (b.parentId ? 1 : 0));
 
     setNodes(flowNodes);
 
@@ -430,6 +445,20 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       changes.forEach((change) => {
         if (change.type === 'position' && 'position' in change && change.position) {
           nodePositionsRef.current.set(change.id, change.position);
+        }
+        // NodeResizer dispatches dimensions changes — capture them so the next
+        // re-render of this useEffect doesn't reset the size back to defaultSize.
+        if (
+          change.type === 'dimensions' &&
+          'dimensions' in change &&
+          change.dimensions &&
+          typeof change.dimensions.width === 'number' &&
+          typeof change.dimensions.height === 'number'
+        ) {
+          nodeSizesRef.current.set(change.id, {
+            width: change.dimensions.width,
+            height: change.dimensions.height,
+          });
         }
       });
       onNodesChange(changes);

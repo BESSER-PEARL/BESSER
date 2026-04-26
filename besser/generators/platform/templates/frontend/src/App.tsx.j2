@@ -5,7 +5,7 @@
 {% raw %}
 import { useState, useEffect } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Download, FileCode, RefreshCw, Trash2 } from 'lucide-react';
+import { Braces, FileCode2, RotateCw, Trash2 } from 'lucide-react';
 import { InstanceCanvas } from './components/InstanceCanvas';
 import { ClassPalette } from './components/ClassPalette';
 import { Button } from './components/ui/button';
@@ -155,31 +155,80 @@ function AppContent() {
     }
   };
 
+  const instanceCount = instances.length;
+
   return (
     <div className="flex h-screen flex-col bg-background">
-      <header className="flex items-center justify-between border-b bg-card px-6 py-3 shadow-sm">
-        <div className="flex items-center gap-3">
+      <header className="flex items-center justify-between gap-4 border-b border-border/60 bg-card/80 px-6 py-3 backdrop-blur-sm">
+        <div className="flex min-w-0 items-center gap-3">
 {% endraw %}
-          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-lg font-bold text-primary-foreground">{{ model.name[0] | upper }}</div>
-          <div>
-            <h1 className="font-sans text-lg font-bold leading-tight text-foreground">{{ model.name }} Instance Editor</h1>
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-primary to-primary/70 text-base font-bold text-primary-foreground shadow-sm">{{ model.name[0] | upper }}</div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h1 className="truncate font-sans text-base font-bold leading-tight text-foreground">{{ model.name }}</h1>
 {% raw %}
-            <p className="text-xs text-muted-foreground">Create and link instances of your domain classes</p>
+              <span
+                className="inline-flex h-5 min-w-[1.5rem] items-center justify-center rounded-full bg-muted px-2 text-[10px] font-semibold tabular-nums text-muted-foreground"
+                title={`${instanceCount} instance${instanceCount === 1 ? '' : 's'}`}
+              >
+                {instanceCount}
+              </span>
+            </div>
+            <p className="text-[11px] leading-tight text-muted-foreground">
+              Instance editor
+            </p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={loadInstances} disabled={loading}>
-            <RefreshCw className={loading ? 'animate-spin' : ''} />
-            {loading ? 'Loading...' : 'Refresh'}
+
+        {/* Action toolbar — utility (refresh) | export group | destructive.
+            Visual weight ramps from neutral → muted brand → ghost-destructive. */}
+        <div className="flex items-center gap-1">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={loadInstances}
+            disabled={loading}
+            title="Refresh"
+            aria-label="Refresh"
+            className="text-muted-foreground hover:text-foreground"
+          >
+            <RotateCw className={loading ? 'animate-spin' : ''} />
           </Button>
-          <Button variant="success" size="sm" onClick={handleExportJson}>
-            <Download /> JSON
+
+          <span className="mx-1 h-6 w-px bg-border" aria-hidden />
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportJson}
+            title="Download instances as JSON"
+            className="gap-1.5"
+          >
+            <Braces className="text-primary/80" />
+            <span>JSON</span>
           </Button>
-          <Button variant="warning" size="sm" onClick={handleExportPython}>
-            <FileCode /> Python
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleExportPython}
+            title="Download instances as Python"
+            className="gap-1.5"
+          >
+            <FileCode2 className="text-primary/80" />
+            <span>Python</span>
           </Button>
-          <Button variant="destructive" size="sm" onClick={handleClearAll}>
-            <Trash2 /> Clear All
+
+          <span className="mx-1 h-6 w-px bg-border" aria-hidden />
+
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={handleClearAll}
+            title="Clear all instances"
+            aria-label="Clear all instances"
+            className="text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+          >
+            <Trash2 />
           </Button>
         </div>
       </header>

@@ -781,29 +781,23 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
             />
           )}
 
-          <Panel position="top-left">
-            <div className="rounded-lg border bg-card px-4 py-3 shadow-sm">
-{% endraw %}
-              <h3 className="mb-1 text-sm font-semibold text-foreground">{{ model.name }} Instances</h3>
-{% raw %}
-              <p className="text-xs text-muted-foreground">Total: {instances.length}</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                Click a link, press <kbd className="rounded border bg-muted px-1 text-[10px] font-semibold">Del</kbd> to remove it
-              </p>
-            </div>
-          </Panel>
+          {instances.length === 0 && (
+            <Panel position="top-center" className="!pointer-events-none !top-12">
+              <div className="rounded-full border border-border/60 bg-card/80 px-4 py-1.5 text-xs text-muted-foreground shadow-sm backdrop-blur-sm">
+                Drag a class from the left panel to create your first instance.
+              </div>
+            </Panel>
+          )}
 
           <Panel position="bottom-right">
             <a
               href="https://editor.besser-pearl.org"
               target="_blank"
               rel="noopener noreferrer"
-              className="block rounded-lg border-2 border-primary bg-card px-3 py-2 shadow-sm transition-all hover:scale-105 hover:shadow-md"
+              className="group inline-flex items-center gap-1.5 rounded-md border border-border/60 bg-card/70 px-2.5 py-1 text-[10px] uppercase tracking-wider text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:border-primary/40 hover:text-primary"
             >
-              <div className="text-lg font-bold tracking-wider text-primary">BESSER</div>
-              <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
-                Powered by
-              </div>
+              <span>Built with</span>
+              <span className="font-semibold tracking-[0.2em] text-primary group-hover:text-primary">BESSER</span>
             </a>
           </Panel>
         </ReactFlow>

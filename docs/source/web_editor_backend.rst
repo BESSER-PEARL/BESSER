@@ -54,8 +54,9 @@ and return a structured agent configuration.
 
 - ``POST /recommend-agent-config-llm`` -- LLM-based recommendation. Body:
   ``{userProfileModel, userProfileName?, currentConfig?, model?}``. Requires an
-  OpenAI API key (passed in the body, via ``system.openaiApiKey`` on the config,
-  or via ``OPENAI_API_KEY`` env var). Returns
+  OpenAI API key (passed in the request body, top-level
+  ``openai_api_key``/``openaiApiKey``/``apiKey``, or under
+  ``system.openaiApiKey``, or via ``OPENAI_API_KEY`` env var). Returns
   ``{config, source: "openai", model, generatedAt}``.
 - ``POST /recommend-agent-config-mapping`` -- Deterministic rule-based
   recommendation. Same request body shape (no OpenAI key needed). Returns

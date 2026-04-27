@@ -520,28 +520,28 @@ gen_OtherTrait_Trait = Generalization(general=Trait, specific=OtherTrait)
 constraint_personal_info_age_range = Constraint(
     name="pi_age_range",
     context=Personal_Information,
-    expression="context Personal_Information inv age_range: self.age >= 0 and self.age <= 120",
+    expression="context Personal_Information inv pi_age_range: self.age >= 0 and self.age <= 120",
     language="OCL",
 )
 
 constraint_skill_name_not_empty = Constraint(
     name="skill_name_not_empty",
     context=Skill,
-    expression="context Skill inv name_not_empty: self.name <> ''",
+    expression="context Skill inv skill_name_not_empty: self.name <> ''",
     language="OCL",
 )
 
 constraint_education_required_fields = Constraint(
     name="education_required_fields",
     context=Education,
-    expression="context Education inv required_degree_fields: self.degreeName <> '' and self.providedBy <> ''",
+    expression="context Education inv education_required_fields: self.degreeName <> '' and self.providedBy <> ''",
     language="OCL",
 )
 
 constraint_disability_description_not_empty = Constraint(
     name="disability_description_not_empty",
     context=Disability,
-    expression="context Disability inv description_not_empty: self.description <> ''",
+    expression="context Disability inv disability_description_not_empty: self.description <> ''",
     language="OCL",
 )
 

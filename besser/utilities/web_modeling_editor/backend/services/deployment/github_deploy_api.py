@@ -300,9 +300,20 @@ async def deploy_webapp_to_github(
                     logger.warning("Failed to export agent B-UML model — continuing without it", exc_info=True)
 
                 try:
+                    # Prefer the V2 project-export the frontend already builds via
+                    # `exportProjectAsJson` — writing it as-is keeps `diagrams.json`
+                    # re-importable through the editor's "Import Project" action.
+                    project_export = body.get("projectExport") if isinstance(body, dict) else None
+                    diagrams_payload = project_export if isinstance(project_export, dict) else diagrams
+                    if not isinstance(project_export, dict):
+                        logger.warning(
+                            "Deploy body did not include 'projectExport'; falling back to "
+                            "raw diagrams. The resulting diagrams.json will not be "
+                            "re-importable via the editor."
+                        )
                     json_path = os.path.join(buml_dir, "diagrams.json")
                     with open(json_path, "w", encoding="utf-8") as f:
-                        json.dump(diagrams, f, indent=2, default=str)
+                        json.dump(diagrams_payload, f, indent=2, default=str)
                 except Exception:
                     logger.warning("Failed to export diagram JSON — continuing without it", exc_info=True)
 
@@ -482,11 +493,23 @@ async def deploy_webapp_to_github(
             except Exception:
                 logger.warning("Failed to export B-UML models — continuing without them", exc_info=True)
 
-            # Store the raw JSON diagrams as well
+            # Prefer the V2 project-export the frontend already builds via
+            # `exportProjectAsJson` so the resulting diagrams.json can be
+            # re-imported via the editor's "Import Project" action. Fall back
+            # to the raw diagrams payload only when the frontend has not been
+            # updated to send `projectExport` yet.
             try:
+                project_export = body.get("projectExport") if isinstance(body, dict) else None
+                diagrams_payload = project_export if isinstance(project_export, dict) else diagrams
+                if not isinstance(project_export, dict):
+                    logger.warning(
+                        "Deploy body did not include 'projectExport'; falling back to "
+                        "raw diagrams. The resulting diagrams.json will not be "
+                        "re-importable via the editor."
+                    )
                 json_path = os.path.join(buml_dir, "diagrams.json")
                 with open(json_path, "w", encoding="utf-8") as f:
-                    json.dump(diagrams, f, indent=2, default=str)
+                    json.dump(diagrams_payload, f, indent=2, default=str)
             except Exception:
                 logger.warning("Failed to export diagram JSON — continuing without it", exc_info=True)
 

@@ -128,3 +128,18 @@ def test_object_completeness_warning_only_for_classes_with_attributes():
     assert len(result["warnings"]) == 1
     assert "obj_with_attrs" in result["warnings"][0]
     assert "obj_without_attrs" not in result["warnings"][0]
+
+
+def test_object_completeness_warning_for_inherited_attributes():
+    parent_class = Class(name="ParentClass", attributes={Property(name="parent_attr", type=StringType)})
+    child_class = Class(name="ChildClass", attributes=set())
+    Generalization(general=parent_class, specific=child_class)
+
+    obj_child = Object(name="obj_child", classifier=child_class, slots=[])
+
+    model = ObjectModel(name="InheritanceCompletenessModel", objects={obj_child})
+    result = model.validate(raise_exception=False)
+
+    assert len(result["warnings"]) == 1
+    assert "obj_child" in result["warnings"][0]
+    assert "ChildClass" in result["warnings"][0]

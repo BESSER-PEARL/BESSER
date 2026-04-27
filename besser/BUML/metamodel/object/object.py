@@ -590,13 +590,7 @@ class ObjectModel(NamedElement):
         """Warn about objects with no attribute values defined."""
         for obj in self.__objects:
             classifier = obj.classifier
-            class_attributes = set(getattr(classifier, "attributes", set()))
-            inherited_attributes = (
-                classifier.inherited_attributes()
-                if hasattr(classifier, "inherited_attributes")
-                else set()
-            )
-            all_attributes = class_attributes | set(inherited_attributes)
+            all_attributes = classifier.attributes | classifier.inherited_attributes()
 
             if all_attributes and not obj.slots:
                 warnings.append(

@@ -228,11 +228,13 @@ def test_generate_user_profile_document_smoke_uses_user_profile_temp_prefix():
         "model": {"elements": {}, "relationships": {}},
     }
 
+    # `get_generator_info` is imported lazily inside generate_user_profile_document
+    # (to break a circular import), so patch it at its source module rather than
+    # at user_profile_utils — the lazy import resolves it at call time.
     with patch.object(
         user_profile_utils, "process_object_diagram", return_value=fake_object_model
-    ), patch.object(
-        user_profile_utils,
-        "get_generator_info",
+    ), patch(
+        "besser.utilities.web_modeling_editor.backend.config.get_generator_info",
         return_value=SimpleNamespace(generator_class=_FakeGenerator),
     ), patch.object(
         user_profile_utils.tempfile, "TemporaryDirectory", side_effect=_spy_temporary_directory
@@ -253,8 +255,9 @@ def test_generate_user_profile_document_500_when_generator_not_configured():
     user_profile_payload = {"id": "x", "model": {}}
     with patch.object(
         user_profile_utils, "process_object_diagram", return_value=SimpleNamespace(name="x")
-    ), patch.object(
-        user_profile_utils, "get_generator_info", return_value=None
+    ), patch(
+        "besser.utilities.web_modeling_editor.backend.config.get_generator_info",
+        return_value=None,
     ):
         with pytest.raises(HTTPException) as exc_info:
             generate_user_profile_document(user_profile_payload)

@@ -8,7 +8,7 @@ New Features and Improvements
  
 **User Diagram**
  
-* Added **UserDiagram** as a first-class diagram type for describing the different user profiles of created apps capturing personal information, language profile, competences, accessibility contraints abilities and cultural dimensions in the same metamodel space as the rest of B-UML.
+* Added **UserDiagram** as a first-class diagram type for describing the different user profiles of created apps, capturing personal information, language profile, competences, accessibility constraints, abilities, and cultural dimensions in the same metamodel space as the rest of B-UML.
 * Shipped an OCL constraint set (``pi_age_range``, ``skill_name_not_empty``, ``education_required_fields``, ``disability_description_not_empty``) declared in ``constants/user_buml_model.py`` and evaluated by the existing ``check_ocl_constraint`` pipeline.
 * Extended the validation router so the same ``/validate-diagram`` endpoint covers UserDiagram payloads alongside the existing diagram types.
 * Added a dedicated palette in the Web Modeling Editor (``UserModelName``, ``UserModelAttribute``, ``UserModelIcon``).
@@ -19,7 +19,7 @@ New Features and Improvements
  
  
 * Based on a given agent model, user model, and agent profile (defining user specific customizations), a personalized model can be generated, reflecting the customizations
-* The BAF_generator can now ingest multiple agent models with a user profile to agent model mapping and generate an agent that provides a personalized experienced based on the available profiles
+* The BAF_generator can now ingest multiple agent models with a user-profile-to-agent-model mapping and generate an agent that provides a personalized experience based on the available profiles.
 * Documentation: ``docs/source/generators/agent_personalization.rst``.
  
 **Standalone Chatbot Deploy**

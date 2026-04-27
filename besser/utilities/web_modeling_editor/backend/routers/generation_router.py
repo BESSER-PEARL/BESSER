@@ -94,11 +94,13 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
     DEFAULT_DJANGO_APP_NAME,
 )
 
-# Backend exceptions
-
 # Centralized error handling
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    GenerationError,
+    ValidationError,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,17 +116,27 @@ def sanitize_config(config: dict) -> dict:
 router = APIRouter(prefix="/besser_api", tags=["generation"])
 
 
+def _utc_now_iso() -> str:
+    """Return the current UTC time as an ISO-8601 string."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 @router.post("/recommend-agent-config-llm")
 @handle_endpoint_errors("recommend_agent_config_llm")
 async def recommend_agent_config_llm(payload: Dict[str, Any] = Body(...)):
     """Recommend a structured agent configuration from a user profile using an LLM."""
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
-        raise HTTPException(status_code=400, detail="userProfileModel is required and must be a JSON object")
+        raise ValidationError("userProfileModel is required and must be a JSON object")
 
     user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
     current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
-    llm_model = payload.get("model") if isinstance(payload.get("model"), str) and payload.get("model").strip() else "gpt-5"
+    requested_model = payload.get("model")
+    llm_model = (
+        requested_model
+        if isinstance(requested_model, str) and requested_model.strip()
+        else "gpt-5"
+    )
 
     profile_document = _generate_user_profile_document(user_profile_model)
     default_config = load_default_agent_recommendation_config()
@@ -168,19 +180,18 @@ async def recommend_agent_config_llm(payload: Dict[str, Any] = Body(...)):
             "config": normalized_config,
             "source": "openai",
             "model": llm_model,
-            "generatedAt": datetime.now(timezone.utc).isoformat(),
+            "generatedAt": _utc_now_iso(),
         }
     except RuntimeError as runtime_error:
-        raise HTTPException(status_code=400, detail=str(runtime_error)) from runtime_error
+        raise ValidationError(str(runtime_error)) from runtime_error
     except ValueError as parse_error:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to parse LLM recommendation response: {parse_error}",
-        ) from parse_error
+        logger.exception("Failed to parse LLM recommendation response")
+        raise GenerationError("Failed to parse LLM recommendation response") from parse_error
     except HTTPException:
         raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to generate LLM recommendation: {exc}") from exc
+        logger.exception("Failed to generate LLM recommendation")
+        raise GenerationError("Failed to generate LLM recommendation") from exc
 
 
 @router.get("/agent-config-manual-mapping")
@@ -190,7 +201,7 @@ async def get_agent_config_manual_mapping():
     return {
         "mapping": get_manual_agent_config_mapping(),
         "source": "manual_mapping",
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "generatedAt": _utc_now_iso(),
     }
 
 
@@ -200,7 +211,7 @@ async def recommend_agent_config_mapping(payload: Dict[str, Any] = Body(...)):
     """Recommend a structured agent configuration using deterministic mapping rules."""
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
-        raise HTTPException(status_code=400, detail="userProfileModel is required and must be a JSON object")
+        raise ValidationError("userProfileModel is required and must be a JSON object")
 
     user_profile_name = payload.get("userProfileName") if isinstance(payload.get("userProfileName"), str) else None
     current_config = payload.get("currentConfig") if isinstance(payload.get("currentConfig"), dict) else {}
@@ -217,7 +228,7 @@ async def recommend_agent_config_mapping(payload: Dict[str, Any] = Body(...)):
         "matchedRules": recommendation.get("matchedRules", []),
         "signals": recommendation.get("signals", {}),
         "source": "manual_mapping",
-        "generatedAt": datetime.now(timezone.utc).isoformat(),
+        "generatedAt": _utc_now_iso(),
     }
 
 
@@ -390,7 +401,11 @@ async def generate_code_output_from_project(input_data: ProjectInput):
             lastUpdate=quantum_diagram.lastUpdate,
             generator=generator_type,
             config=config,
-            referenceDiagramData=quantum_diagram.referenceDiagramData if hasattr(quantum_diagram, 'referenceDiagramData') else None
+            referenceDiagramData=(
+                quantum_diagram.referenceDiagramData
+                if hasattr(quantum_diagram, 'referenceDiagramData')
+                else None
+            ),
         )
         return await generate_code_output(diagram_input)
 
@@ -549,7 +564,10 @@ def _streaming_zip(zip_buffer: io.BytesIO, file_name: str) -> StreamingResponse:
 async def _handle_agent_generation(json_data: dict):
     """Handle agent diagram generation by dispatching to specialized helpers."""
     config = json_data.get('config', {})
-    logger.debug("[Agent generation] config: %s", json.dumps(sanitize_config(config), indent=2, default=str) if config else 'None')
+    sanitized_config_log = (
+        json.dumps(sanitize_config(config), indent=2, default=str) if config else 'None'
+    )
+    logger.debug("[Agent generation] config: %s", sanitized_config_log)
 
     if config is None:
         agent_model = process_agent_diagram(json_data)
@@ -824,10 +842,14 @@ async def _generate_qiskit(json_data: dict, generator_class, config: dict, temp_
     if not isinstance(model_data, dict) or 'cols' not in model_data:
         # Check if this looks like a ClassDiagram or other diagram type
         diagram_type = model_data.get('type', 'unknown') if isinstance(model_data, dict) else 'unknown'
+        detail_message = (
+            f"Invalid diagram type for Qiskit generator. Expected QuantumCircuitDiagram "
+            f"but received '{diagram_type}'. Please use the 'generate-output-from-project' "
+            f"endpoint or select the Quantum Circuit diagram."
+        )
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid diagram type for Qiskit generator. Expected QuantumCircuitDiagram but received '{diagram_type}'. "
-                   f"Please use the 'generate-output-from-project' endpoint or select the Quantum Circuit diagram."
+            detail=detail_message,
         )
 
     quantum_model = process_quantum_diagram(json_data)

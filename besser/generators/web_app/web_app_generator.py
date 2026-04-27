@@ -16,9 +16,9 @@ def agent_slug(name) -> str:
     Accepts either a string or an object exposing ``.name``.
 
     Filesystem paths, container names, and hostnames are conventionally
-    lowercase, so this explicitly opts in to ``safe_var_name``'s
-    ``lowercase=True`` mode — unlike code-generation callers that must
-    preserve the user's original casing.
+    lowercase. ``lowercase=True`` is currently ``safe_var_name``'s default,
+    but we pass it explicitly here to document the requirement and to keep
+    this slug stable if the default ever changes.
     """
     raw = getattr(name, "name", name) if not isinstance(name, str) else name
     return safe_var_name(raw, lowercase=True) if raw else "agent"

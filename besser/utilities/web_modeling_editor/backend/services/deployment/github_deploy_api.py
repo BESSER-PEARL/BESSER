@@ -36,6 +36,7 @@ from besser.utilities.buml_code_builder import (
     agent_model_to_code,
 )
 from besser.generators.web_app.web_app_generator import agent_slug
+from besser.utilities.buml_code_builder.common import safe_var_name
 from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
     sanitize_config,
 )
@@ -793,12 +794,14 @@ def _add_chatbot_deployment_configs(
         "openai_cfg['api_key'] = api_key if api_key else openai_cfg.get('api_key', ''); "
         "yaml.safe_dump(c, open('config.yaml','w'))"
     )
-    # Sanitize the script path: NamedElement.name allows quotes/backticks/etc.,
-    # which would break out of the f-string into the shell startCommand or the
-    # embedded Python literal. Route through agent_slug so we only ever embed
-    # filesystem-safe identifiers.
+    # The BAFGenerator writes the agent file as f"{model.name}.py" with the
+    # name normalized through safe_var_name(name, lowercase=False) (case
+    # preserved, spaces and special chars → underscores). agent_slug() lowercases,
+    # which mismatches the actual file on disk: e.g. "Greeting Agent" → file
+    # "Greeting_Agent.py" but agent_slug → "greeting_agent" — Render then fails
+    # to find the script. Mirror the BAFGenerator's transformation here.
     raw_agent_name = getattr(agent_model, "name", "agent")
-    agent_script = f"{agent_slug(raw_agent_name)}.py"
+    agent_script = f"{safe_var_name(raw_agent_name, lowercase=False)}.py"
     start_cmd = f'python -c "{yaml_patch}" && python -u "{agent_script}"'
 
     env_var_lines: list[str] = [
@@ -1156,10 +1159,11 @@ def _add_deployment_configs(
             stable_key=f"{app_name}:agent:{slug}",
         )
         agent_service_names.append(agent_service_name)
-        # Sanitize via agent_slug — agent.name is user-controlled and may contain
-        # quotes/backticks that would escape the shell startCommand or the
-        # embedded ``pathlib.Path('{agent_script}')`` Python literal below.
-        agent_script = f"{slug}.py"
+        # The BAFGenerator writes f"{model.name}.py" with case preserved
+        # (spaces → underscores, special chars → underscores). agent_slug
+        # lowercases, which would mismatch the on-disk filename. Use
+        # safe_var_name(..., lowercase=False) to match the BAFGenerator output.
+        agent_script = f"{safe_var_name(agent.name, lowercase=False)}.py"
 
         cfg = agent_configs.get(agent.name) or {}
         ic_tech = cfg.get("intentRecognitionTechnology") if isinstance(cfg, dict) else None

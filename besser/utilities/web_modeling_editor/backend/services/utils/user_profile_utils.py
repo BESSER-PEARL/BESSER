@@ -23,7 +23,6 @@ from typing import Any, Dict, List, Optional, Set
 
 from fastapi import HTTPException
 
-from besser.utilities.web_modeling_editor.backend.config import get_generator_info
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
@@ -177,6 +176,12 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
         HTTPException(500): if JSONObject generator is not configured or fails
             to render the user profile document.
     """
+    # Local import to avoid a circular import at package load time:
+    # ``backend.config`` -> ``BAFGenerator`` -> ``services.converters`` ->
+    # ``services.utils``. Importing here keeps this module safe to eagerly
+    # re-export from ``services.utils.__init__``.
+    from besser.utilities.web_modeling_editor.backend.config import get_generator_info
+
     if not isinstance(user_profile_model, dict):
         raise HTTPException(
             status_code=400,

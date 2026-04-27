@@ -87,6 +87,9 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -742,13 +745,10 @@ async def transform_agent_model_json(input_data: DiagramInput):
                 personalized_json = agent_buml_to_json(personalized_buml)
             except Exception as conversion_error:
                 logger.exception("Failed to build fallback personalized agent JSON")
-                raise HTTPException(
-                    status_code=500,
-                    detail=(
-                        "personalized_agent_model.json not found after generation "
-                        f"and fallback conversion failed: {conversion_error}"
-                    ),
-                )
+                raise ConversionError(
+                    "personalized_agent_model.json not found after generation "
+                    f"and fallback conversion failed: {conversion_error}"
+                ) from conversion_error
 
         return {
             "model": personalized_json,

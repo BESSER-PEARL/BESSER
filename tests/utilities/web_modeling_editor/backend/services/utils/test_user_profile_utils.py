@@ -15,8 +15,11 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
-from fastapi import HTTPException
 
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    GenerationError,
+    ValidationError,
+)
 from besser.utilities.web_modeling_editor.backend.services.utils import user_profile_utils
 from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
     build_user_model_hierarchy,
@@ -186,9 +189,10 @@ def test_normalize_user_model_output_silent_when_file_missing(tmp_path):
 
 
 def test_generate_user_profile_document_rejects_non_dict_payload():
-    with pytest.raises(HTTPException) as exc_info:
+    # Service-layer raises ValidationError; the router's @handle_endpoint_errors
+    # decorator translates that to HTTP 400.
+    with pytest.raises(ValidationError):
         generate_user_profile_document("not a dict")  # type: ignore[arg-type]
-    assert exc_info.value.status_code == 400
 
 
 class _FakeGenerator:
@@ -251,7 +255,7 @@ def test_generate_user_profile_document_smoke_uses_user_profile_temp_prefix():
     ), f"expected a user_profile_ prefix, got: {captured_prefixes!r}"
 
 
-def test_generate_user_profile_document_500_when_generator_not_configured():
+def test_generate_user_profile_document_raises_generation_error_when_generator_not_configured():
     user_profile_payload = {"id": "x", "model": {}}
     with patch.object(
         user_profile_utils, "process_object_diagram", return_value=SimpleNamespace(name="x")
@@ -259,10 +263,7 @@ def test_generate_user_profile_document_500_when_generator_not_configured():
         "besser.utilities.web_modeling_editor.backend.config.get_generator_info",
         return_value=None,
     ):
-        with pytest.raises(HTTPException) as exc_info:
+        # Service-layer raises GenerationError; @handle_endpoint_errors at the
+        # router boundary translates it to HTTP 500.
+        with pytest.raises(GenerationError):
             generate_user_profile_document(user_profile_payload)
-    # The function wraps unexpected errors into 400, but the missing-generator
-    # branch raises 500 directly — and the outer handler re-raises HTTPException
-    # untouched. Either is acceptable for a configuration error; assert the
-    # documented behavior.
-    assert exc_info.value.status_code == 500

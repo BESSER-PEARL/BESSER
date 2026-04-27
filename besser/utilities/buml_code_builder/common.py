@@ -69,9 +69,11 @@ def safe_var_name(name: str, lowercase: bool = True) -> str:
     safe_name = safe_name.strip('_') or "unnamed"
     if lowercase:
         safe_name = safe_name.lower()
-    # Apply the keyword guard regardless of casing so e.g.
-    # ``safe_var_name("Class", lowercase=False)`` is still escaped.
-    if keyword.iskeyword(safe_name.lower()):
+    # Only escape names that are *actually* reserved Python keywords. Python
+    # keywords are all lowercase (``class``, ``from``, ``return``, ...), so a
+    # PascalCase identifier like ``Class`` is a perfectly valid attribute or
+    # variable name and should round-trip unchanged when ``lowercase=False``.
+    if keyword.iskeyword(safe_name):
         safe_name = f"{safe_name}_"
     return safe_name
 

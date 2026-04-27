@@ -4,9 +4,10 @@ These helpers were previously colocated in ``generation_router.py`` but are
 needed from both the router and ``services/deployment/github_deploy_api.py``.
 Keeping them here avoids the circular import between router and deployment.
 
-Pattern: this module is specific to the FastAPI backend context, mirroring
-``agent_generation_utils.py`` — it is therefore fine to raise ``HTTPException``
-directly so callers do not need to translate domain errors.
+This module is service-layer code: it raises BESSER's custom exceptions
+(``ValidationError``, ``GenerationError``) rather than ``HTTPException`` so
+the same helpers can be reused outside the FastAPI request lifecycle, and
+router callers translate to HTTP status codes via ``@handle_endpoint_errors``.
 """
 
 from __future__ import annotations
@@ -21,13 +22,15 @@ from collections import defaultdict
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Set
 
-from fastapi import HTTPException
-
 from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
     domain_model as user_reference_domain_model,
 )
 from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_object_diagram,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    GenerationError,
+    ValidationError,
 )
 
 logger = logging.getLogger(__name__)
@@ -41,10 +44,14 @@ def safe_path(base_dir: str, user_filename: str) -> str:
     try:
         if os.path.commonpath([full_path, real_base]) != real_base:
             raise ValueError("Invalid path")
-    except ValueError:
+    except ValueError as exc:
         # commonpath raises ValueError when paths are on different drives
         # (Windows) or otherwise incomparable — treat as not contained.
-        raise ValueError("Invalid path")
+        # Re-raise the explicit traversal-rejection with its real cause; only
+        # the cross-drive fallback should swallow the original exception.
+        if "Invalid path" in str(exc):
+            raise
+        raise ValueError("Invalid path") from None
     return full_path
 
 
@@ -172,9 +179,10 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
     """Generate the normalized JSON document for a stored user profile diagram.
 
     Raises:
-        HTTPException(400): if the input payload is not a valid UserDiagram.
-        HTTPException(500): if JSONObject generator is not configured or fails
-            to render the user profile document.
+        ValidationError: if the input payload is not a valid UserDiagram or
+            cannot be converted from UML JSON.
+        GenerationError: if the JSONObject generator is not configured or
+            fails to render the user profile document.
     """
     # Local import to avoid a circular import at package load time:
     # ``backend.config`` -> ``BAFGenerator`` -> ``services.converters`` ->
@@ -183,10 +191,7 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
     from besser.utilities.web_modeling_editor.backend.config import get_generator_info
 
     if not isinstance(user_profile_model, dict):
-        raise HTTPException(
-            status_code=400,
-            detail="userProfileModel must contain a serialized UserDiagram",
-        )
+        raise ValidationError("userProfileModel must contain a serialized UserDiagram")
 
     diagram_title = (
         user_profile_model.get("title")
@@ -210,7 +215,7 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
             object_model = process_object_diagram(prepared_payload, user_reference_domain_model)
             generator_info = get_generator_info("jsonobject")
             if not generator_info:
-                raise HTTPException(status_code=500, detail="JSONObject generator is not configured")
+                raise GenerationError("JSONObject generator is not configured")
             generator_class = generator_info.generator_class
             generator_instance = generator_class(object_model, output_dir=temp_dir)
             generator_instance.generate()
@@ -220,18 +225,14 @@ def generate_user_profile_document(user_profile_model: Dict[str, Any]) -> Dict[s
             file_name = sanitize_object_model_filename(getattr(object_model, "name", None))
             json_path = safe_path(temp_dir, f"{file_name}.json")
             if not os.path.isfile(json_path):
-                raise HTTPException(
-                    status_code=500,
-                    detail="Failed to render user profile JSON document",
-                )
+                raise GenerationError("Failed to render user profile JSON document")
 
             with open(json_path, "r", encoding="utf-8") as handle:
                 return json.load(handle)
-    except HTTPException:
+    except (ValidationError, GenerationError):
         raise
     except Exception as exc:
         logger.exception("Failed to convert user profile model")
-        raise HTTPException(
-            status_code=400,
-            detail="Failed to convert user profile model. Please check the input data.",
+        raise ValidationError(
+            "Failed to convert user profile model. Please check the input data."
         ) from exc

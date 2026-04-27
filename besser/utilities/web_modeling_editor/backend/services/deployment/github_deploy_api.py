@@ -47,6 +47,10 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_generatio
 from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
     generate_user_profile_document,
 )
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    GenerationError,
+    ValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +231,7 @@ async def deploy_webapp_to_github(
             with tempfile.TemporaryDirectory(prefix=f"besser_github_{uuid.uuid4().hex}_") as temp_dir:
                 generator_info = get_generator_info("agent")
                 if not generator_info:
-                    raise HTTPException(status_code=500, detail="Agent generator is not configured.")
+                    raise GenerationError("Agent generator is not configured.")
                 generator_class = generator_info.generator_class
                 generator = generator_class(
                     agent_model,
@@ -343,10 +347,7 @@ async def deploy_webapp_to_github(
                     preserve_existing_files=reused_repo,
                 )
                 if not push_results.get("commit_sha"):
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Failed to create GitHub commit for generated files.",
-                    )
+                    raise GenerationError("Failed to create GitHub commit for generated files.")
 
                 deployment_urls = github.get_deployment_urls(username, repo_name)
                 is_first_deploy = existing_suffix is None
@@ -586,6 +587,14 @@ async def deploy_webapp_to_github(
 
     except HTTPException:
         raise
+    except ValidationError as e:
+        # Service-layer validation failures map to HTTP 400 with the original message.
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except GenerationError as e:
+        # Service-layer generation/deployment failures map to HTTP 500 with the
+        # original message so the frontend can surface the cause to the user.
+        logger.exception("Generation error in deploy_webapp_to_github")
+        raise HTTPException(status_code=500, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:

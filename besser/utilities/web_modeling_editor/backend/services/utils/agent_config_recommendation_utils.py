@@ -1,6 +1,5 @@
 """Utilities for LLM-based agent configuration recommendation."""
 
-import functools
 import json
 import logging
 from copy import deepcopy
@@ -32,7 +31,7 @@ RECOMMENDATION_ALLOWED_VALUES = {
     "agentPlatform": ["websocket", "streamlit", "telegram"],
     "intentRecognitionTechnology": ["classical", "llm-based"],
     "llmProvider": ["openai", "huggingface", "huggingfaceapi", "replicate"],
-    "openaiModels": ["gpt-5", "gpt-5-mini", "gpt-5-nano"],
+    "openaiModels": ["gpt-5.5", "gpt-5", "gpt-5-mini", "gpt-5-nano"],
 }
 
 
@@ -47,13 +46,11 @@ def merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return result
 
 
-@functools.lru_cache(maxsize=1)
 def load_default_agent_recommendation_config() -> Dict[str, Any]:
     """Load default structured agent configuration and complete missing sections.
 
-    Note: result is cached via ``functools.lru_cache``. Tests that mutate
-    ``default_config.json`` between calls must invoke
-    ``load_default_agent_recommendation_config.cache_clear()`` to force a reload.
+    The file is re-read on every call so hot edits to ``default_config.json``
+    are picked up without needing to restart the process or clear a cache.
     """
     fallback = {
         "presentation": {
@@ -107,6 +104,12 @@ def load_default_agent_recommendation_config() -> Dict[str, Any]:
         logger.warning("Failed to load default_config.json for recommendations: %s", exc)
 
     return fallback
+
+
+# Backwards-compat shim: callers (and tests) used to clear an ``lru_cache``
+# wrapping the loader. The cache is gone, but exposing a no-op ``cache_clear``
+# keeps existing fixtures working without forcing a coordinated test rewrite.
+load_default_agent_recommendation_config.cache_clear = lambda: None  # type: ignore[attr-defined]
 
 
 def extract_json_object(raw_text: str) -> Dict[str, Any]:

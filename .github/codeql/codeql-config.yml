@@ -12,6 +12,13 @@ name: BESSER CodeQL config
 # break searchability and grep-ability of the deploy code without buying any
 # real safety. Disable the query and lean on review for cleartext-storage bugs
 # in this small, infrequently-changing surface.
+#
+# NOTE on scope: CodeQL does not natively support per-file query exclusion in
+# a single rule (without authoring a custom query suite), so this exclusion is
+# repository-wide. If a future change introduces a real cleartext-storage bug
+# elsewhere in the codebase, this filter will hide it — reviewers must catch
+# it manually. Re-evaluate moving to a custom suite if/when other call sites
+# legitimately need this rule.
 query-filters:
   - exclude:
       id: py/clear-text-storage-sensitive-data

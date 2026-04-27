@@ -740,7 +740,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
             try:
                 personalized_agent_file = os.path.join(temp_dir, "personalized_agent_model.py")
                 agent_model_to_code(generator_instance.model, personalized_agent_file)
-                
+
                 personalized_buml = await _read_file(personalized_agent_file, "r", encoding="utf-8")
                 personalized_json = agent_buml_to_json(personalized_buml)
             except Exception as conversion_error:

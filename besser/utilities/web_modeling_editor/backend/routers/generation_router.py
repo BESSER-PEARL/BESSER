@@ -164,7 +164,7 @@ async def recommend_agent_config_llm(
     llm_model = (
         requested_model
         if isinstance(requested_model, str) and requested_model.strip()
-        else "gpt-5"
+        else "gpt-5.5"
     )
 
     profile_document = _generate_user_profile_document(user_profile_model)

@@ -1435,6 +1435,40 @@ class TestRecommendationEndpoints:
         assert config["content"]["userProfileName"] == "Bob"
 
 
+class TestRecommendationEndpointsAuth:
+    """Auth-gate tests for the GitHub-session-protected recommendation endpoints.
+
+    This class deliberately does NOT define the ``_bypass_github_auth`` autouse
+    fixture used by ``TestRecommendationEndpoints`` so that ``_require_github_session``
+    runs for real and rejects requests missing the ``X-GitHub-Session`` header
+    with HTTP 401.
+    """
+
+    def test_recommend_agent_config_llm_requires_session(self):
+        response = client.post(
+            "/besser_api/recommend-agent-config-llm",
+            json={"userProfileModel": {}},
+        )
+        assert response.status_code == 401
+        detail = response.json().get("detail", "")
+        assert "GitHub" in detail
+
+    def test_agent_config_manual_mapping_requires_session(self):
+        response = client.get("/besser_api/agent-config-manual-mapping")
+        assert response.status_code == 401
+        detail = response.json().get("detail", "")
+        assert "GitHub" in detail
+
+    def test_recommend_agent_config_mapping_requires_session(self):
+        response = client.post(
+            "/besser_api/recommend-agent-config-mapping",
+            json={"userProfileModel": {}},
+        )
+        assert response.status_code == 401
+        detail = response.json().get("detail", "")
+        assert "GitHub" in detail
+
+
 # ---------------------------------------------------------------------------
 # Standalone Chatbot Deployment -- POST /besser_api/github/deploy-webapp
 # ---------------------------------------------------------------------------

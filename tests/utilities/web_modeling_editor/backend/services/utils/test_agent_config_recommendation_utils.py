@@ -137,11 +137,13 @@ def test_load_default_agent_recommendation_config_returns_expected_sections():
     assert "agentLanguage" in presentation
 
 
-def test_load_default_agent_recommendation_config_is_cached():
-    """Two calls must return the same cached object (lru_cache identity)."""
+def test_load_default_agent_recommendation_config_returns_consistent_shape():
+    """The function used to be lru_cache'd — that was dropped to allow
+    hot-edits to default_config.json. Two calls must still produce
+    equal dicts (the file hasn't changed between calls)."""
     a = load_default_agent_recommendation_config()
     b = load_default_agent_recommendation_config()
-    assert a is b
+    assert a == b
 
 
 # ---------------------------------------------------------------------------

@@ -51,7 +51,7 @@ async def validate_diagram(input_data: DiagramInput):
     This is the unified validation endpoint that:
     1. Converts JSON to BUML (construction validation)
     2. Calls .validate() method on the model for structured metamodel validation
-    3. For ClassDiagram/ObjectDiagram: runs OCL constraint checks if conversion succeeded
+    3. For ClassDiagram/ObjectDiagram/UserDiagram: runs OCL constraint checks if conversion succeeded
     4. Returns unified validation results with errors, warnings, and OCL results
     """
     diagram_type = input_data.model.get("type") if input_data.model else None
@@ -172,9 +172,9 @@ async def validate_diagram(input_data: DiagramInput):
 
     # Step 2: If BUML model created successfully AND it's a diagram with OCL support
     ocl_results = None
-    if buml_model and diagram_type in ["ClassDiagram", "ObjectDiagram"] and len(validation_errors) == 0:
+    if buml_model and diagram_type in ["ClassDiagram", "ObjectDiagram", "UserDiagram"] and len(validation_errors) == 0:
         try:
-            if diagram_type == "ObjectDiagram" and object_model:
+            if diagram_type in ["ObjectDiagram", "UserDiagram"] and object_model:
                 ocl_results = check_ocl_constraint(buml_model, object_model)
             else:
                 ocl_results = check_ocl_constraint(buml_model)

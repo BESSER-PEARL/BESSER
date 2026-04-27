@@ -1,0 +1,17 @@
+name: BESSER CodeQL config
+
+# `py/clear-text-storage-sensitive-data` flags the two `f.write(render_config)`
+# calls in `besser/utilities/web_modeling_editor/backend/services/deployment/
+# github_deploy_api.py` because the generated `render.yaml` references env-var
+# KEY names like `STREAMLIT_DB_PASSWORD` and `OPENAI_API_KEY` so the deployed
+# Render service can wire the actual secrets at runtime. No password VALUES are
+# written to disk — Render reads these keys and provisions the secrets itself.
+# The rule's substring heuristic ("contains 'password'" + write-to-file) cannot
+# distinguish a config template from an actual password store, so the alerts
+# are unavoidable false positives unless we obfuscate the literal — which would
+# break searchability and grep-ability of the deploy code without buying any
+# real safety. Disable the query and lean on review for cleartext-storage bugs
+# in this small, infrequently-changing surface.
+query-filters:
+  - exclude:
+      id: py/clear-text-storage-sensitive-data

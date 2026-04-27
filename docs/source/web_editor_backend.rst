@@ -45,6 +45,29 @@ Code Generation
 - ``POST /generate-output`` -- Single diagram to code generation
 - ``POST /generate-output-from-project`` -- Multi-diagram project generation (e.g., WebApp needs ClassDiagram + GUINoCodeDiagram)
 
+Agent Personalization
+^^^^^^^^^^^^^^^^^^^^^
+
+These endpoints back the :doc:`agent personalization <generators/agent_personalization>`
+workflow. They consume a serialized :doc:`UserDiagram <buml_language/model_types/user_diagram>`
+and return a structured agent configuration.
+
+- ``POST /recommend-agent-config-llm`` -- LLM-based recommendation. Body:
+  ``{userProfileModel, userProfileName?, currentConfig?, model?}``. Requires an
+  OpenAI API key (passed in the request body, top-level
+  ``openai_api_key``/``openaiApiKey``/``apiKey``, or under
+  ``system.openaiApiKey``, or via ``OPENAI_API_KEY`` env var). Returns
+  ``{config, source: "openai", model, generatedAt}``.
+- ``POST /recommend-agent-config-mapping`` -- Deterministic rule-based
+  recommendation. Same request body shape (no OpenAI key needed). Returns
+  ``{config, matchedRules, signals, source: "manual_mapping", generatedAt}``.
+- ``GET  /agent-config-manual-mapping`` -- The full rule table used by the
+  deterministic recommender (every rule, evidence, priority, and payload).
+  Useful for UIs that want to show "why this recommendation".
+- ``POST /transform-agent-model-json`` -- Apply an agent configuration to an
+  agent diagram and return the personalized agent model JSON (used by the
+  editor's "apply personalization" action).
+
 Conversion
 ^^^^^^^^^^
 
@@ -67,6 +90,22 @@ Deployment
 
 - ``POST /deploy-app`` -- Docker Compose deployment for Django projects
 - ``POST /feedback`` -- User feedback submission
+
+Standalone Chatbot Deployment
+"""""""""""""""""""""""""""""
+
+The GitHub deploy endpoint supports a ``target: "agent"`` flag in
+``deploy_config`` that switches the output from a full web-app to a standalone
+chatbot (Streamlit frontend, Python backend, single-service Render blueprint).
+This is the path used by the editor's "Deploy chatbot" action and reuses the
+personalization flow end-to-end:
+
+- Only an AgentDiagram is required (ClassDiagram / GUI are ignored).
+- If the agent config carries a ``personalizationMapping``, it is normalized
+  in-place before generation so the BAF generator sees profile *documents*
+  rather than raw UML payloads.
+- The generated ``render.yaml`` declares ``OPENAI_API_KEY`` as a secret env
+  var the user must fill in on Render.
 
 GitHub Integration
 ^^^^^^^^^^^^^^^^^^
@@ -100,7 +139,21 @@ Environment Variables
 
 **Optional:**
 
-- ``OPENAI_API_KEY`` -- Required for image-to-model and knowledge-graph-to-model conversion
+- ``OPENAI_API_KEY`` -- OpenAI key consumed by several features:
+
+  - image-to-model and knowledge-graph-to-model conversion,
+  - the :doc:`LLM-based agent recommendation <generators/agent_personalization>`
+    endpoint (``/recommend-agent-config-llm``),
+  - the BAF generator's personalization pipeline when ``agentLanguage`` /
+    ``agentStyle`` / ``languageComplexity`` / ``sentenceLength`` /
+    ``useAbbreviations`` differ from ``original`` (message re-writing and
+    translation),
+  - deployments that ship the generated agent to GitHub + Render
+    (the generated ``render.yaml`` declares it as a required secret).
+
+  The key can also be supplied per-request in the JSON body under
+  ``system.openaiApiKey`` (or ``openai_api_key``). If both are set, the
+  request-scoped key wins.
 - ``FEEDBACK_EMAIL`` -- Email recipients for feedback (comma-separated)
 - ``SMTP_HOST`` -- SMTP server (default: ``smtp.gmail.com``)
 - ``SMTP_PORT`` -- SMTP port (default: ``587``)
@@ -132,7 +185,10 @@ request body:
    * - **Qiskit**
      - ``backend`` (aer_simulator, fake_backend, ibm_quantum), ``shots``
    * - **Agent**
-     - ``openai_api_key``, ``languages``, ``variations``, ``configurations``, ``personalizationMapping``
+     - ``openai_api_key``, ``languages``, ``variations``, ``configurations``,
+       ``personalizationMapping`` — see
+       :doc:`generators/agent_personalization` for the variant mechanisms and
+       configuration schema
 
 
 Running the Backend

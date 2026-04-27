@@ -14,9 +14,14 @@ def agent_slug(name) -> str:
     Reused across the web-app generator (``agents/<slug>/`` directories,
     docker-compose build contexts) and the GitHub/Render deploy pipeline.
     Accepts either a string or an object exposing ``.name``.
+
+    Filesystem paths, container names, and hostnames are conventionally
+    lowercase. ``lowercase=True`` is currently ``safe_var_name``'s default,
+    but we pass it explicitly here to document the requirement and to keep
+    this slug stable if the default ever changes.
     """
     raw = getattr(name, "name", name) if not isinstance(name, str) else name
-    return safe_var_name(raw) if raw else "agent"
+    return safe_var_name(raw, lowercase=True) if raw else "agent"
 
 
 ##############################

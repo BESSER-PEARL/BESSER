@@ -25,6 +25,33 @@ The frontend is vendored into this repository as a git submodule at
 ``besser/utilities/web_modeling_editor/frontend``, while the backend services live here under
 ``besser/utilities/web_modeling_editor/backend``.
 
+Agent Personalization
+---------------------
+
+The editor exposes the full :doc:`agent personalization <generators/agent_personalization>`
+workflow under the *Agent* diagram type:
+
+- **User diagrams** (see :doc:`buml_language/model_types/user_diagram`) describe
+  an end-user — age, languages, skills, education, disabilities. They can be
+  created alongside the agent diagram in the same project.
+- The **Agent Configuration** panel lets you edit the structured configuration
+  (language, style, readability, modality, platform, LLM…) directly, or ask the
+  backend for a recommendation based on one of the saved user profiles.
+
+  - *Deterministic mapping* produces a configuration from a literature-backed
+    rule table — no OpenAI key needed.
+  - *LLM recommendation* calls the configured OpenAI model. An API key must be
+    set either in the panel or as the ``OPENAI_API_KEY`` environment variable
+    on the backend.
+- When generating or deploying, three variant mechanisms can run in parallel:
+  multi-language output, configuration variants, and per-profile
+  **personalization mappings** that bundle one agent variant per mapped user.
+
+The *Deploy chatbot* action reuses the same pipeline to push a standalone,
+Streamlit-based agent to a GitHub repository with a ready-to-use Render
+blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
+
+
 Backend API Reference
 ---------------------
 

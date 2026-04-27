@@ -7,6 +7,19 @@ from besser.BUML.metamodel.structural import (
 )
 
 
+def _class_body(code: str, header: str) -> str:
+    """Return the body of a generated SQLAlchemy class.
+
+    Splits at the next ``class `` declaration OR the ``#---`` relationship
+    block separator (whichever comes first), so the slice never bleeds into
+    sibling-class relationships when the target class happens to be last.
+    """
+    rest = code.split(header, 1)[1]
+    for terminator in ("\nclass ", "\n#---"):
+        rest = rest.split(terminator, 1)[0]
+    return rest
+
+
 @pytest.fixture
 def simple_model():
     """Simple N:M relationship test"""
@@ -170,12 +183,11 @@ def test_relationship_fk_placement(relationship_model, tmpdir):
     # Test 1: PhysicalAsset should NOT have any FK
     assert "class PhysicalAsset(Base):" in sqlalchemy_code
     assert "PhysicalAsset" in sqlalchemy_code
-    # Extract only the class body. Split on the next ``class `` declaration so
-    # this works regardless of where PhysicalAsset falls in the class ordering
-    # (which is non-deterministic across runs because ``classes_sorted_by_inheritance``
-    # resolves timestamp ties via set iteration). This mirrors the robust pattern
-    # used in ``test_no_circular_dependency`` below.
-    physicalasset_section = sqlalchemy_code.split("class PhysicalAsset(Base):")[1].split("class ")[0]
+    # Extract only the class body. Class ordering is non-deterministic across
+    # runs (``classes_sorted_by_inheritance`` resolves timestamp ties via set
+    # iteration), so we stop at the next ``class `` declaration OR the
+    # ``#---`` relationship-block separator — whichever comes first.
+    physicalasset_section = _class_body(sqlalchemy_code, "class PhysicalAsset(Base):")
     assert "ForeignKey" not in physicalasset_section, "PhysicalAsset should not have any ForeignKey"
     # Make sure it only has id (primary key) and attribute, not dt_id FK column
     assert "dt_id" not in physicalasset_section, "PhysicalAsset should not have dt_id FK"
@@ -186,7 +198,7 @@ def test_relationship_fk_placement(relationship_model, tmpdir):
     # When multiplicity.min == 0, nullable=True is explicitly set
     assert "dt_id: Mapped_[int] = mapped_column(ForeignKey_(\"digitaltwin.id\")" in sqlalchemy_code
     # Verify it's NOT nullable (shouldn't have nullable=True)
-    sensor_section = sqlalchemy_code.split("class Sensor(Base):")[1].split("class ")[0]
+    sensor_section = _class_body(sqlalchemy_code, "class Sensor(Base):")
     assert "dt_id" in sensor_section
     # If it's mandatory (min > 0), it should not have nullable=True
     dt_id_line = [line for line in sensor_section.split('\n') if 'dt_id' in line and 'mapped_column' in line][0]
@@ -197,7 +209,7 @@ def test_relationship_fk_placement(relationship_model, tmpdir):
     # For 1:1 mandatory relationships, nullable is not explicitly set (defaults to False), but unique=True is set
     assert "p_asset_id: Mapped_[int] = mapped_column(ForeignKey_(\"physicalasset.id\")" in sqlalchemy_code
     # Verify it has unique=True for 1:1 relationship
-    digitaltwin_section = sqlalchemy_code.split("class DigitalTwin(Base):")[1].split("class ")[0]
+    digitaltwin_section = _class_body(sqlalchemy_code, "class DigitalTwin(Base):")
     p_asset_id_line = [line for line in digitaltwin_section.split('\n') if 'p_asset_id' in line and 'mapped_column' in line][0]
     assert "unique=True" in p_asset_id_line, "1:1 relationship should have unique=True"
     assert "nullable=True" not in p_asset_id_line, "Mandatory FK should not have nullable=True"
@@ -320,16 +332,16 @@ def test_no_circular_dependency(relationship_model, tmpdir):
         pydantic_code = f.read()
 
     # PhysicalAsset should have no FKs (can be created first)
-    physicalasset_class = sqlalchemy_code.split("class PhysicalAsset(Base):")[1].split("class ")[0]
+    physicalasset_class = _class_body(sqlalchemy_code, "class PhysicalAsset(Base):")
     assert "ForeignKey" not in physicalasset_class, "PhysicalAsset should not have FKs"
 
     # DigitalTwin should only reference PhysicalAsset (can be created second)
-    digitaltwin_class = sqlalchemy_code.split("class DigitalTwin(Base):")[1].split("class ")[0] if "class DigitalTwin(Base):" in sqlalchemy_code else sqlalchemy_code.split("class DigitalTwin(Base):")[1].split("#---")[0]
+    digitaltwin_class = _class_body(sqlalchemy_code, "class DigitalTwin(Base):")
     assert "ForeignKey_(\"physicalasset.id\")" in digitaltwin_class
     assert "ForeignKey_(\"sensor.id\")" not in digitaltwin_class, "DigitalTwin should not reference Sensor"
 
     # Sensor should only reference DigitalTwin (can be created third)
-    sensor_class = sqlalchemy_code.split("class Sensor(Base):")[1].split("class ")[0] if "class Sensor(Base):" in sqlalchemy_code else sqlalchemy_code.split("class Sensor(Base):")[1].split("#---")[0]
+    sensor_class = _class_body(sqlalchemy_code, "class Sensor(Base):")
     assert "ForeignKey_(\"digitaltwin.id\")" in sensor_class
     assert "ForeignKey_(\"physicalasset.id\")" not in sensor_class, "Sensor should not reference PhysicalAsset"
 

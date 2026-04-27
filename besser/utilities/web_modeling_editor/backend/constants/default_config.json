@@ -1,0 +1,30 @@
+{
+  "presentation": {
+    "agentLanguage": "original",
+    "agentStyle": "original",
+    "languageComplexity": "original",
+    "sentenceLength": "concise",
+    "interfaceStyle": {
+      "size": 16,
+      "font": "sans",
+      "lineSpacing": 1.5,
+      "alignment": "left",
+      "color": "var(--apollon-primary-contrast)",
+      "contrast": "medium"
+    },
+    "voiceStyle": {
+      "gender": "male",
+      "speed": 1
+    },
+    "avatar": null,
+    "useAbbreviations": false
+  },
+  "modality": {
+    "inputModalities": [
+      "text"
+    ],
+    "outputModalities": [
+      "text"
+    ]
+  }
+}

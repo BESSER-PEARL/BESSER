@@ -18,8 +18,12 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Body, HTTPException
+from fastapi import APIRouter, Body, Header, HTTPException
 from fastapi.responses import StreamingResponse, Response
+
+from besser.utilities.web_modeling_editor.backend.services.deployment.github_oauth import (
+    get_user_token,
+)
 
 # BESSER utilities
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
@@ -116,6 +120,24 @@ def sanitize_config(config: dict) -> dict:
 router = APIRouter(prefix="/besser_api", tags=["generation"])
 
 
+def _require_github_session(github_session: Optional[str]) -> None:
+    """Verify a GitHub OAuth session is present and active.
+
+    Raises HTTPException(401) when the session header is missing or expired.
+    Mirrors the auth gate used by the deploy endpoints in github_deploy_api.py.
+    """
+    if not github_session:
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub authentication required. Please sign in with GitHub first.",
+        )
+    if not get_user_token(github_session):
+        raise HTTPException(
+            status_code=401,
+            detail="GitHub session expired. Please sign in again.",
+        )
+
+
 def _utc_now_iso() -> str:
     """Return the current UTC time as an ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()
@@ -123,8 +145,15 @@ def _utc_now_iso() -> str:
 
 @router.post("/recommend-agent-config-llm")
 @handle_endpoint_errors("recommend_agent_config_llm")
-async def recommend_agent_config_llm(payload: Dict[str, Any] = Body(...)):
-    """Recommend a structured agent configuration from a user profile using an LLM."""
+async def recommend_agent_config_llm(
+    payload: Dict[str, Any] = Body(...),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
+    """Recommend a structured agent configuration from a user profile using an LLM.
+
+    Requires authenticated GitHub session.
+    """
+    _require_github_session(github_session)
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")
@@ -196,8 +225,14 @@ async def recommend_agent_config_llm(payload: Dict[str, Any] = Body(...)):
 
 @router.get("/agent-config-manual-mapping")
 @handle_endpoint_errors("get_agent_config_manual_mapping")
-async def get_agent_config_manual_mapping():
-    """Return the complete rule mapping used for deterministic recommendations."""
+async def get_agent_config_manual_mapping(
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
+    """Return the complete rule mapping used for deterministic recommendations.
+
+    Requires authenticated GitHub session.
+    """
+    _require_github_session(github_session)
     return {
         "mapping": get_manual_agent_config_mapping(),
         "source": "manual_mapping",
@@ -207,8 +242,15 @@ async def get_agent_config_manual_mapping():
 
 @router.post("/recommend-agent-config-mapping")
 @handle_endpoint_errors("recommend_agent_config_mapping")
-async def recommend_agent_config_mapping(payload: Dict[str, Any] = Body(...)):
-    """Recommend a structured agent configuration using deterministic mapping rules."""
+async def recommend_agent_config_mapping(
+    payload: Dict[str, Any] = Body(...),
+    github_session: Optional[str] = Header(None, alias="X-GitHub-Session"),
+):
+    """Recommend a structured agent configuration using deterministic mapping rules.
+
+    Requires authenticated GitHub session.
+    """
+    _require_github_session(github_session)
     user_profile_model = payload.get("userProfileModel")
     if not isinstance(user_profile_model, dict):
         raise ValidationError("userProfileModel is required and must be a JSON object")

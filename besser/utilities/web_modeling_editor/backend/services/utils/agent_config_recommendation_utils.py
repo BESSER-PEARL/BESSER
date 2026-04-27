@@ -94,7 +94,7 @@ def load_default_agent_recommendation_config() -> Dict[str, Any]:
         },
     }
 
-    config_path = Path(__file__).resolve().parents[2] / "default_config.json"
+    config_path = Path(__file__).resolve().parents[2] / "constants" / "default_config.json"
     if not config_path.is_file():
         return fallback
 

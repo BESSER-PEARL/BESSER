@@ -4,8 +4,11 @@ The rule source is the literature synthesis in:
 "Papers_where_they_say_changing_X_in_chatbot_is_good_for_user_with_characteristc_Y.pdf".
 """
 
+import functools
+import json
 import re
 from copy import deepcopy
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
 from .agent_config_recommendation_utils import (
@@ -16,6 +19,84 @@ from .agent_config_recommendation_utils import (
 )
 
 PRIMARY_LANGUAGE_TOKEN = "__PRIMARY_LANGUAGE__"
+
+_MANUAL_MAPPING_RULES_PATH = (
+    Path(__file__).resolve().parents[2] / "constants" / "manual_mapping_rules.json"
+)
+
+_REQUIRED_RULE_KEYS = {"id", "label", "priority", "conditions", "recommendation"}
+_REQUIRED_CONDITION_KEYS = {"type"}
+
+
+def _validate_manual_mapping_rules(rules: Any) -> None:
+    """Fail-fast schema check for the externalized rule data."""
+    if not isinstance(rules, list):
+        raise RuntimeError(
+            f"manual_mapping_rules.json must contain a JSON array at the top level, "
+            f"got {type(rules).__name__}."
+        )
+    seen_ids: Set[str] = set()
+    for index, rule in enumerate(rules):
+        if not isinstance(rule, dict):
+            raise RuntimeError(
+                f"manual_mapping_rules.json entry #{index} must be an object, "
+                f"got {type(rule).__name__}."
+            )
+        missing = _REQUIRED_RULE_KEYS - rule.keys()
+        if missing:
+            raise RuntimeError(
+                f"manual_mapping_rules.json entry #{index} (id={rule.get('id')!r}) "
+                f"is missing required keys: {sorted(missing)}."
+            )
+        rule_id = rule["id"]
+        if not isinstance(rule_id, str) or not rule_id:
+            raise RuntimeError(
+                f"manual_mapping_rules.json entry #{index} has an invalid 'id': {rule_id!r}."
+            )
+        if rule_id in seen_ids:
+            raise RuntimeError(
+                f"manual_mapping_rules.json contains duplicate rule id: {rule_id!r}."
+            )
+        seen_ids.add(rule_id)
+        if not isinstance(rule["conditions"], list) or not rule["conditions"]:
+            raise RuntimeError(
+                f"manual_mapping_rules.json rule {rule_id!r} must have a non-empty "
+                f"'conditions' list."
+            )
+        for cond_index, condition in enumerate(rule["conditions"]):
+            if not isinstance(condition, dict):
+                raise RuntimeError(
+                    f"manual_mapping_rules.json rule {rule_id!r} condition #{cond_index} "
+                    f"must be an object."
+                )
+            missing_cond = _REQUIRED_CONDITION_KEYS - condition.keys()
+            if missing_cond:
+                raise RuntimeError(
+                    f"manual_mapping_rules.json rule {rule_id!r} condition #{cond_index} "
+                    f"is missing keys: {sorted(missing_cond)}."
+                )
+        if not isinstance(rule["recommendation"], dict):
+            raise RuntimeError(
+                f"manual_mapping_rules.json rule {rule_id!r} 'recommendation' must be an object."
+            )
+
+
+@functools.lru_cache(maxsize=1)
+def _load_manual_mapping_rules() -> List[Dict[str, Any]]:
+    """Load and validate the externalized manual mapping rule table."""
+    try:
+        with _MANUAL_MAPPING_RULES_PATH.open(encoding="utf-8") as fh:
+            rules = json.load(fh)
+    except FileNotFoundError as exc:
+        raise RuntimeError(
+            f"manual_mapping_rules.json not found at {_MANUAL_MAPPING_RULES_PATH}."
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"manual_mapping_rules.json is not valid JSON: {exc}."
+        ) from exc
+    _validate_manual_mapping_rules(rules)
+    return rules
 
 MANUAL_MAPPING_VERSION = "2026-04-16"
 MANUAL_MAPPING_SOURCE_DOCUMENT = (
@@ -47,265 +128,31 @@ LANGUAGE_CODE_TO_NAME = {
     "urd": "urdu",
 }
 
-MANUAL_AGENT_CONFIG_RULES: List[Dict[str, Any]] = [
-    {
-        "id": "older_adults_readability",
-        "label": "Older adults readability support",
-        "summary": "Increase readability and reduce linguistic complexity for older adults.",
-        "priority": 100,
-        "evidence": [
-            "Design Guidelines of Mobile Apps for Older Adults: Systematic Review and Thematic Analysis (2023)",
-            "A study to guide developers in building accessible conversational systems to the older people",
-            "Designing Conversational AI for Aging: A Systematic Review of Older Adults' Perceptions and Needs",
-        ],
-        "matchMode": "any",
-        "conditions": [
-            {"type": "age_gte", "value": 60},
-            {
-                "type": "profile_text_contains_any",
-                "values": ["older adult", "older adults", "elderly", "senior", "aging"],
-            },
-        ],
-        "recommendation": {
-            "presentation": {
-                "agentStyle": "formal",
-                "languageComplexity": "simple",
-                "sentenceLength": "concise",
-                "interfaceStyle": {
-                    "size": 20,
-                    "font": "sans",
-                    "lineSpacing": 1.8,
-                    "alignment": "left",
-                    "contrast": "high",
-                },
-                "useAbbreviations": False,
-            },
-            "behavior": {
-                "responseTiming": "instant",
-            },
-        },
-    },
-    {
-        "id": "adolescents_relatable_style",
-        "label": "Adolescents conversational style",
-        "summary": "Use a relatable, concise style for teenagers and adolescents.",
-        "priority": 200,
-        "evidence": [
-            "Developing A Conversational Interface for an ACT-based Online Program: Understanding Adolescents' Expectations of Conversational Style",
-            "On Being Cool - Exploring Interaction Design for Teenagers",
-            "UX Design for Teenagers (Ages 13-17)",
-        ],
-        "matchMode": "any",
-        "conditions": [
-            {"type": "age_between", "min": 13, "max": 17},
-            {
-                "type": "profile_text_contains_any",
-                "values": ["adolescent", "adolescents", "teen", "teenager", "teenagers", "youth"],
-            },
-        ],
-        "recommendation": {
-            "presentation": {
-                "agentStyle": "informal",
-                "languageComplexity": "medium",
-                "sentenceLength": "concise",
-            },
-            "behavior": {
-                "responseTiming": "instant",
-            },
-        },
-    },
-    {
-        "id": "children_short_attention",
-        "label": "Children language simplification",
-        "summary": "Prefer short and simple language for children.",
-        "priority": 210,
-        "evidence": [
-            "The Last Decade of HCI Research on Children and Voice-based Conversational Agents",
-            "Younger children tend to have shorter attention spans and more limited language skills.",
-        ],
-        "matchMode": "any",
-        "conditions": [
-            {"type": "age_lte", "value": 12},
-            {
-                "type": "profile_text_contains_any",
-                "values": ["child", "children", "kid", "kids", "toddler"],
-            },
-        ],
-        "recommendation": {
-            "presentation": {
-                "languageComplexity": "simple",
-                "sentenceLength": "concise",
-                "useAbbreviations": False,
-                "interfaceStyle": {
-                    "size": 18,
-                    "font": "sans",
-                    "lineSpacing": 1.7,
-                },
-            },
-            "behavior": {
-                "responseTiming": "instant",
-            },
-        },
-    },
-    {
-        "id": "low_literacy_accessibility",
-        "label": "Low literacy accessibility",
-        "summary": "Increase readability and multimodal support for low-literate users.",
-        "priority": 220,
-        "evidence": [
-            "Designing User Interfaces for Illiterate and Semi-Literate Users: A Systematic Review and Future Research Agenda",
-            "Actionable UI Design Guidelines for Smartphone Applications Inclusive of Low-Literate Users",
-        ],
-        "matchMode": "any",
-        "conditions": [
-            {
-                "type": "profile_text_contains_any",
-                "values": [
-                    "illiterate",
-                    "semi-literate",
-                    "semiliterate",
-                    "low-literate",
-                    "low literate",
-                    "low literacy",
-                    "basic literacy",
-                ],
-            },
-        ],
-        "recommendation": {
-            "presentation": {
-                "languageComplexity": "simple",
-                "sentenceLength": "concise",
-                "useAbbreviations": False,
-                "interfaceStyle": {
-                    "size": 22,
-                    "font": "sans",
-                    "lineSpacing": 2.0,
-                    "alignment": "left",
-                    "contrast": "high",
-                },
-            },
-            "modality": {
-                "inputModalities": ["text", "speech"],
-                "outputModalities": ["text", "speech"],
-            },
-        },
-    },
-    {
-        "id": "neurodivergent_support",
-        "label": "Neurodivergent user support",
-        "summary": "Favor clear and less overwhelming communication patterns.",
-        "priority": 230,
-        "evidence": [
-            "Designing Emerging Technologies for and with Neurodiverse Users",
-            "A scoping review of inclusive and adaptive human-AI interaction design for neurodivergent users",
-            "Chatbot Accessibility Guidance: A review and way forward",
-        ],
-        "matchMode": "any",
-        "conditions": [
-            {
-                "type": "profile_text_contains_any",
-                "values": ["neurodivergent", "neurodiverse", "autism", "adhd", "dyslexia", "cognitive disability"],
-            },
-        ],
-        "recommendation": {
-            "presentation": {
-                "languageComplexity": "simple",
-                "sentenceLength": "concise",
-                "interfaceStyle": {
-                    "font": "sans",
-                    "lineSpacing": 1.8,
-                    "alignment": "left",
-                    "contrast": "high",
-                },
-            },
-            "behavior": {
-                "responseTiming": "delayed",
-            },
-        },
-    },
-    {
-        "id": "multilingual_code_switching",
-        "label": "Multilingual code-switching support",
-        "summary": "For multilingual users, preserve language flexibility and strengthen language understanding.",
-        "priority": 240,
-        "evidence": [
-            "Multilingual adult users tend to strongly prefer chatbots that can code-mix or code-switch.",
-            "User Interface (UI) Design Issues for Multilingual Users: A Case Study",
-        ],
-        "matchMode": "any",
-        "conditions": [
-            {"type": "language_count_at_least", "value": 2},
-            {
-                "type": "profile_text_contains_any",
-                "values": ["multilingual", "bilingual", "code-switch", "code switch", "code-mix", "code mix"],
-            },
-        ],
-        "recommendation": {
-            "presentation": {
-                "agentLanguage": "original",
-                "languageComplexity": "medium",
-            },
-        },
-    },
-    {
-        "id": "single_language_localization",
-        "label": "Single language localization",
-        "summary": "When one supported language is clearly detected, localize the agent language.",
-        "priority": 250,
-        "evidence": [
-            "Cross-Cultural Web Design Guidelines",
-            "Culturally responsive AI chatbots: From framework to field evidence",
-        ],
-        "matchMode": "all",
-        "conditions": [
-            {"type": "language_count_equals", "value": 1},
-            {
-                "type": "detected_language_in",
-                "values": ["english", "french", "german", "spanish", "luxembourgish", "portuguese"],
-            },
-        ],
-        "recommendation": {
-            "presentation": {
-                "agentLanguage": PRIMARY_LANGUAGE_TOKEN,
-            },
-        },
-    },
-    {
-        "id": "rtl_layout_fallback",
-        "label": "Right-to-left language layout fallback",
-        "summary": "Bias alignment for right-to-left language contexts using available alignment options.",
-        "priority": 260,
-        "evidence": [
-            "Towards the Right Direction in BiDirectional User Interfaces",
-            "Left-right vs right-left reading in language contexts.",
-        ],
-        "matchMode": "any",
-        "conditions": [
-            {"type": "detected_language_in", "values": ["arabic", "persian", "hebrew", "urdu"]},
-            {"type": "profile_text_contains_any", "values": ["right-to-left", "rtl"]},
-        ],
-        "recommendation": {
-            "presentation": {
-                "sentenceLength": "concise",
-                "interfaceStyle": {
-                    "alignment": "justify",
-                },
-            },
-        },
-    },
+_MANUAL_MAPPING_NOTES: List[str] = [
+    "Rules are derived from the paper list and notes in the source PDF.",
+    "Rules are deterministic and only output currently supported agent configuration values.",
+    "These rules complement, but do not replace, explicit user choices.",
 ]
 
 
-MANUAL_AGENT_CONFIG_MAPPING: Dict[str, Any] = {
-    "version": MANUAL_MAPPING_VERSION,
-    "sourceDocument": MANUAL_MAPPING_SOURCE_DOCUMENT,
-    "notes": [
-        "Rules are derived from the paper list and notes in the source PDF.",
-        "Rules are deterministic and only output currently supported agent configuration values.",
-        "These rules complement, but do not replace, explicit user choices.",
-    ],
-    "rules": MANUAL_AGENT_CONFIG_RULES,
-}
+def __getattr__(name: str) -> Any:
+    """Lazy module-level accessors for backward-compatible public names.
+
+    The rule data was moved out of this module into
+    ``backend/constants/manual_mapping_rules.json``. To keep the previous
+    import surface working we expose ``MANUAL_AGENT_CONFIG_RULES`` and
+    ``MANUAL_AGENT_CONFIG_MAPPING`` as lazily-loaded attributes.
+    """
+    if name == "MANUAL_AGENT_CONFIG_RULES":
+        return deepcopy(_load_manual_mapping_rules())
+    if name == "MANUAL_AGENT_CONFIG_MAPPING":
+        return {
+            "version": MANUAL_MAPPING_VERSION,
+            "sourceDocument": MANUAL_MAPPING_SOURCE_DOCUMENT,
+            "notes": list(_MANUAL_MAPPING_NOTES),
+            "rules": deepcopy(_load_manual_mapping_rules()),
+        }
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _normalize_key(key: Any) -> str:
@@ -539,9 +386,9 @@ def get_manual_agent_config_mapping() -> Dict[str, Any]:
     return {
         "version": MANUAL_MAPPING_VERSION,
         "sourceDocument": MANUAL_MAPPING_SOURCE_DOCUMENT,
-        "notes": list(MANUAL_AGENT_CONFIG_MAPPING.get("notes", [])),
+        "notes": list(_MANUAL_MAPPING_NOTES),
         "allowedValues": deepcopy(RECOMMENDATION_ALLOWED_VALUES),
-        "rules": deepcopy(MANUAL_AGENT_CONFIG_RULES),
+        "rules": deepcopy(_load_manual_mapping_rules()),
     }
 
 
@@ -559,7 +406,7 @@ def build_manual_mapping_recommendation(
     matched_rules: List[Dict[str, Any]] = []
     rule_overrides: Dict[str, Any] = {}
 
-    for rule in sorted(MANUAL_AGENT_CONFIG_RULES, key=lambda entry: entry.get("priority", 1000)):
+    for rule in sorted(_load_manual_mapping_rules(), key=lambda entry: entry.get("priority", 1000)):
         if not _rule_matches(rule, signals):
             continue
 

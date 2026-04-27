@@ -6,19 +6,17 @@ in the user's account, enabling one-click deployment to platforms like Render.
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
-import uuid
 import tempfile
-import json
-import httpx
+import uuid
 from typing import Optional, List
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request, Body, Header, Query
 from pydantic import BaseModel, Field
-
-logger = logging.getLogger(__name__)
 
 from besser.utilities.web_modeling_editor.backend.services.deployment.github_service import (
     create_github_service
@@ -38,6 +36,9 @@ from besser.utilities.buml_code_builder import (
     agent_model_to_code,
 )
 from besser.generators.web_app.web_app_generator import agent_slug
+from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
+    sanitize_config,
+)
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     collect_agents_from_diagrams,
     extract_openai_api_key,
@@ -46,6 +47,21 @@ from besser.utilities.web_modeling_editor.backend.services.utils.agent_generatio
 from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
     generate_user_profile_document,
 )
+
+logger = logging.getLogger(__name__)
+
+# Module-level constants for repeated literals used in render.yaml emission.
+PYTHON_VERSION = "3.12.3"
+OPENAI_API_KEY_ENV = "OPENAI_API_KEY"
+STREAMLIT_DB_HOST_ENV = "STREAMLIT_DB_HOST"
+CHATBOT_DEPLOY_TARGETS = frozenset({
+    "agent",
+    "chatbot",
+    "standalone-agent",
+    "standalone_agent",
+    "standalone-chatbot",
+    "standalone_chatbot",
+})
 
 
 # Create router
@@ -187,8 +203,8 @@ async def deploy_webapp_to_github(
             agent_config = agent_diagram_data.get("config") or settings_config
 
             logger.info(
-                "[chatbot deploy] agent_config keys: %s; has personalizationMapping: %s (len=%s)",
-                list(agent_config.keys()) if isinstance(agent_config, dict) else type(agent_config).__name__,
+                "[chatbot deploy] agent_config: %s; has personalizationMapping: %s (len=%s)",
+                sanitize_config(agent_config) if isinstance(agent_config, dict) else type(agent_config).__name__,
                 isinstance(agent_config, dict) and isinstance(agent_config.get("personalizationMapping"), list),
                 len(agent_config.get("personalizationMapping", [])) if isinstance(agent_config, dict) and isinstance(agent_config.get("personalizationMapping"), list) else 0,
             )
@@ -380,7 +396,7 @@ async def deploy_webapp_to_github(
                 logger.debug(
                     "Resolved agent_config for %s: %s",
                     name,
-                    json.dumps(cfg, indent=2, default=str) if cfg else 'None',
+                    json.dumps(sanitize_config(cfg), indent=2, default=str) if isinstance(cfg, dict) else 'None',
                 )
 
         # Try to reuse the service suffix from a previous deployment so
@@ -594,15 +610,7 @@ def _normalize_deploy_target(raw_target: object) -> str:
         return "webapp"
 
     normalized = raw_target.strip().lower()
-    chatbot_targets = {
-        "agent",
-        "chatbot",
-        "standalone-agent",
-        "standalone_agent",
-        "standalone-chatbot",
-        "standalone_chatbot",
-    }
-    if normalized in chatbot_targets:
+    if normalized in CHATBOT_DEPLOY_TARGETS:
         return "agent"
     return "webapp"
 
@@ -739,7 +747,7 @@ def _add_chatbot_deployment_configs(
         "streamlit_cfg['port'] = int(os.environ['PORT']); "
         "c['db']['monitoring']['enabled'] = False; "
         "sdb = c['db'].setdefault('streamlit', {}); "
-        "db_host = os.environ.get('STREAMLIT_DB_HOST'); "
+        f"db_host = os.environ.get('{STREAMLIT_DB_HOST_ENV}'); "
         "sdb['enabled'] = bool(db_host); "
         "sdb['dialect'] = os.environ.get('STREAMLIT_DB_DIALECT', 'postgresql'); "
         "sdb['host'] = db_host or 'localhost'; "
@@ -749,20 +757,25 @@ def _add_chatbot_deployment_configs(
         "sdb['password'] = os.environ.get('STREAMLIT_DB_PASSWORD', ''); "
         "nlp_cfg = c.setdefault('nlp', {}); "
         "openai_cfg = nlp_cfg.setdefault('openai', {}); "
-        "api_key = os.environ.get('OPENAI_API_KEY'); "
+        f"api_key = os.environ.get('{OPENAI_API_KEY_ENV}'); "
         "openai_cfg['api_key'] = api_key if api_key else openai_cfg.get('api_key', ''); "
         "yaml.safe_dump(c, open('config.yaml','w'))"
     )
-    agent_script = f"{getattr(agent_model, 'name', 'agent')}.py"
+    # Sanitize the script path: NamedElement.name allows quotes/backticks/etc.,
+    # which would break out of the f-string into the shell startCommand or the
+    # embedded Python literal. Route through agent_slug so we only ever embed
+    # filesystem-safe identifiers.
+    raw_agent_name = getattr(agent_model, "name", "agent")
+    agent_script = f"{agent_slug(raw_agent_name)}.py"
     start_cmd = f'python -c "{yaml_patch}" && python -u "{agent_script}"'
 
     env_var_lines: list[str] = [
         "      - key: PYTHON_VERSION",
-        "        value: 3.12.3",
+        f"        value: {PYTHON_VERSION}",
     ]
     if ic_tech != "classical":
         env_var_lines += [
-            "      - key: OPENAI_API_KEY",
+            f"      - key: {OPENAI_API_KEY_ENV}",
             "        sync: false",
         ]
     if needs_user_db:
@@ -1066,7 +1079,7 @@ def _add_deployment_configs(
     startCommand: cd backend && uvicorn main_api:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.3
+        value: {PYTHON_VERSION}
 
   # Frontend (Free static site)
   - type: web
@@ -1111,7 +1124,10 @@ def _add_deployment_configs(
             stable_key=f"{app_name}:agent:{slug}",
         )
         agent_service_names.append(agent_service_name)
-        agent_script = f"{agent.name}.py"
+        # Sanitize via agent_slug — agent.name is user-controlled and may contain
+        # quotes/backticks that would escape the shell startCommand or the
+        # embedded ``pathlib.Path('{agent_script}')`` Python literal below.
+        agent_script = f"{slug}.py"
 
         cfg = agent_configs.get(agent.name) or {}
         ic_tech = cfg.get("intentRecognitionTechnology") if isinstance(cfg, dict) else None
@@ -1145,13 +1161,17 @@ def _add_deployment_configs(
             "c['platforms']['websocket']['port'] = int(os.environ['PORT']); "
             "c['db']['monitoring']['enabled'] = False; "
             "c['db']['streamlit']['enabled'] = False; "
-            "c['nlp']['openai']['api_key'] = os.environ.get('OPENAI_API_KEY') or c['nlp']['openai'].get('api_key', ''); "
+            f"c['nlp']['openai']['api_key'] = os.environ.get('{OPENAI_API_KEY_ENV}') or c['nlp']['openai'].get('api_key', ''); "
             "yaml.safe_dump(c, open('config.yaml','w')); "
             f"p = pathlib.Path('{agent_script}'); "
             "p.write_text(re.sub(r'use_ui=True', 'use_ui=False', p.read_text()))"
         )
         start_cmd = f'cd agents/{slug} && python -c "{yaml_patch}" && python -u "{agent_script}"'
-        extra_env_vars = "" if ic_tech == "classical" else "\n      - key: OPENAI_API_KEY\n        sync: false"
+        extra_env_vars = (
+            ""
+            if ic_tech == "classical"
+            else f"\n      - key: {OPENAI_API_KEY_ENV}\n        sync: false"
+        )
 
         render_config += f"""
   # Agent Service: {agent.name} (Free tier - WebSocket-based AI agent)
@@ -1163,7 +1183,7 @@ def _add_deployment_configs(
     startCommand: {start_cmd}
     envVars:
       - key: PYTHON_VERSION
-        value: 3.12.3{extra_env_vars}
+        value: {PYTHON_VERSION}{extra_env_vars}
 """
 
     render_path = os.path.join(directory, "render.yaml")

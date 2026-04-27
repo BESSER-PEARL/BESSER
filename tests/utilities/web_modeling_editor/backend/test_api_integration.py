@@ -11,6 +11,7 @@ do not support the legacy TestClient(app=...) pattern.
 
 import io
 import json
+import os
 import asyncio
 from functools import wraps
 from typing import Any, Dict, Optional
@@ -1098,6 +1099,14 @@ class TestProjectGeneration:
 class TestRecommendationEndpoints:
     """Tests for recommendation-related endpoints."""
 
+    _AUTH_HEADERS = {"X-GitHub-Session": "test-session"}
+
+    @pytest.fixture(autouse=True)
+    def _bypass_github_auth(self, monkeypatch):
+        """Neutralize the GitHub OAuth gate so the test can drive real logic."""
+        from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
+        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+
     def test_recommend_agent_config_llm_success_normalizes_output(self, monkeypatch):
         """LLM recommendation endpoint returns normalized config payload."""
         from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
@@ -1135,7 +1144,11 @@ class TestRecommendationEndpoints:
             "currentConfig": {},
         }
 
-        response = client.post("/besser_api/recommend-agent-config-llm", json=payload)
+        response = client.post(
+            "/besser_api/recommend-agent-config-llm",
+            json=payload,
+            headers=self._AUTH_HEADERS,
+        )
         assert response.status_code == 200
         data = response.json()
 
@@ -1155,12 +1168,13 @@ class TestRecommendationEndpoints:
         response = client.post(
             "/besser_api/recommend-agent-config-llm",
             json={"userProfileName": "Alice"},
+            headers=self._AUTH_HEADERS,
         )
         assert response.status_code == 400
         assert "userProfileModel" in response.json().get("detail", "")
 
-    def test_recommend_agent_config_llm_parse_error_returns_502(self, monkeypatch):
-        """Invalid LLM text should surface as parse failure with 502."""
+    def test_recommend_agent_config_llm_parse_error_returns_500(self, monkeypatch):
+        """Invalid LLM text should surface as a parse failure mapped to 500."""
         from besser.utilities.web_modeling_editor.backend.routers import generation_router as gr
 
         monkeypatch.setattr(gr, "_generate_user_profile_document", lambda _m: {"profile": {}})
@@ -1170,8 +1184,12 @@ class TestRecommendationEndpoints:
             "userProfileModel": {"type": "UserDiagram", "elements": {}, "relationships": {}},
             "userProfileName": "Alice",
         }
-        response = client.post("/besser_api/recommend-agent-config-llm", json=payload)
-        assert response.status_code == 502
+        response = client.post(
+            "/besser_api/recommend-agent-config-llm",
+            json=payload,
+            headers=self._AUTH_HEADERS,
+        )
+        assert response.status_code == 500
         assert "Failed to parse LLM recommendation response" in response.json().get("detail", "")
 
     def test_recommend_agent_config_llm_runtime_error_returns_400(self, monkeypatch):
@@ -1187,13 +1205,20 @@ class TestRecommendationEndpoints:
         payload = {
             "userProfileModel": {"type": "UserDiagram", "elements": {}, "relationships": {}},
         }
-        response = client.post("/besser_api/recommend-agent-config-llm", json=payload)
+        response = client.post(
+            "/besser_api/recommend-agent-config-llm",
+            json=payload,
+            headers=self._AUTH_HEADERS,
+        )
         assert response.status_code == 400
         assert "Missing OpenAI API key" in response.json().get("detail", "")
 
     def test_agent_config_manual_mapping_success(self):
         """Manual mapping endpoint returns mapping metadata."""
-        response = client.get("/besser_api/agent-config-manual-mapping")
+        response = client.get(
+            "/besser_api/agent-config-manual-mapping",
+            headers=self._AUTH_HEADERS,
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["source"] == "manual_mapping"
@@ -1223,7 +1248,11 @@ class TestRecommendationEndpoints:
             "currentConfig": {},
         }
 
-        response = client.post("/besser_api/recommend-agent-config-mapping", json=payload)
+        response = client.post(
+            "/besser_api/recommend-agent-config-mapping",
+            json=payload,
+            headers=self._AUTH_HEADERS,
+        )
         assert response.status_code == 200
         data = response.json()
         assert data["source"] == "manual_mapping"
@@ -1236,9 +1265,374 @@ class TestRecommendationEndpoints:
         response = client.post(
             "/besser_api/recommend-agent-config-mapping",
             json={"userProfileName": "Bob"},
+            headers=self._AUTH_HEADERS,
         )
         assert response.status_code == 400
         assert "userProfileModel" in response.json().get("detail", "")
+
+    # -----------------------------------------------------------------------
+    # Behavioral integration tests — exercise the real helpers (only mock the
+    # OpenAI HTTP call and the PyGithub wrapper). These complement the plumbing
+    # tests above by validating that the recommendation pipeline + chatbot
+    # deploy path produce the expected end-to-end behavior.
+    # -----------------------------------------------------------------------
+
+    @staticmethod
+    def _build_user_profile_diagram_payload(age: int) -> Dict[str, Any]:
+        """Return a real UserDiagram JSON with a User root and a Personal_Information
+        child object holding ``age``. The reference user_buml_model.User class
+        looks up children via the ``Personal_Information_end`` association, so
+        the User class needs an instance with that attribute populating the
+        ``age`` slot to drive the manual mapping rules deterministically.
+        """
+        return {
+            "type": "UserDiagram",
+            "elements": {
+                "user-1": {
+                    "id": "user-1",
+                    "type": "UserModelName",
+                    "name": "alice",
+                    "className": "User",
+                    "attributes": [],
+                },
+                "pi-1": {
+                    "id": "pi-1",
+                    "type": "UserModelName",
+                    "name": "alice_personal_info",
+                    "className": "Personal_Information",
+                    "attributes": ["pi-1-age"],
+                },
+                "pi-1-age": {
+                    "id": "pi-1-age",
+                    "type": "UserModelAttribute",
+                    "name": "age",
+                    "attributeOperator": "==",
+                    "attributeValue": str(age),
+                },
+            },
+            "relationships": {
+                "link-pi": {
+                    "type": "ObjectLink",
+                    "name": "Personal_Information_end",
+                    "source": {"element": "user-1"},
+                    "target": {"element": "pi-1"},
+                },
+            },
+        }
+
+    def test_recommend_agent_config_mapping_end_to_end_no_llm(self, monkeypatch):
+        """End-to-end: real ``_generate_user_profile_document`` + real
+        ``build_manual_mapping_recommendation``. A profile with age >= 60 must
+        trigger the ``older_adults_readability`` rule, which sets
+        ``presentation.interfaceStyle.size = 20`` (>= 18 per the rule).
+        """
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as gr,
+        )
+        # The mapping endpoint does not require GitHub auth, but neutralize the
+        # gate proactively in case item #1 adds it: our header is fake.
+        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+
+        payload = {
+            "userProfileModel": self._build_user_profile_diagram_payload(age=72),
+            "userProfileName": "GrandmaAlice",
+            "currentConfig": {},
+        }
+
+        response = client.post(
+            "/besser_api/recommend-agent-config-mapping",
+            json=payload,
+            headers={"X-GitHub-Session": "fake-session"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["source"] == "manual_mapping"
+
+        config = data["config"]
+        # Top-level structural keys must be present.
+        for top_key in ("presentation", "modality", "behavior", "content", "system"):
+            assert top_key in config, f"missing top-level key: {top_key}"
+
+        # Older-adults rule fired → font size at least 18 (rule sets 20, normalize
+        # caps at 32). The signal must surface in matchedRules + signals.
+        assert config["presentation"]["interfaceStyle"]["size"] >= 18
+        assert config["presentation"]["interfaceStyle"]["size"] <= 32
+        assert config["content"]["userProfileName"] == "GrandmaAlice"
+        assert config["content"]["adaptContentToUserProfile"] is True
+
+        matched_ids = {rule.get("id") for rule in data.get("matchedRules", [])}
+        assert "older_adults_readability" in matched_ids
+        # The age signal must be detected from the Personal_Information.age slot.
+        assert data.get("signals", {}).get("age") == 72
+
+    def test_recommend_agent_config_llm_real_normalization_clamps_out_of_range(self, monkeypatch):
+        """End-to-end LLM path: real ``_generate_user_profile_document`` and real
+        ``normalize_recommended_agent_config`` — only the OpenAI HTTP call
+        (``call_openai_chat``) is mocked. Out-of-range LLM values (size=999,
+        speed=5.0, agentLanguage=klingon) must be clamped/whitelisted by the
+        real normalizer.
+        """
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as gr,
+        )
+        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+
+        canned_llm_response = {
+            "presentation": {
+                "agentLanguage": "klingon",  # not in allow-list → fallback to default
+                "interfaceStyle": {
+                    "size": 999,             # clamped to <= 32
+                    "lineSpacing": 12,       # clamped to <= 3
+                },
+                "voiceStyle": {
+                    "speed": 5.0,            # clamped to <= 2.0
+                },
+            },
+            "modality": {"inputModalities": ["text"]},
+            "system": {"agentPlatform": "desktop_app"},  # not allowed → default
+        }
+
+        def _fake_call_openai_chat(*_args, **_kwargs):
+            return json.dumps(canned_llm_response)
+
+        # Only the OpenAI HTTP call is mocked.
+        monkeypatch.setattr(gr, "call_openai_chat", _fake_call_openai_chat)
+
+        payload = {
+            "userProfileModel": self._build_user_profile_diagram_payload(age=42),
+            "userProfileName": "Bob",
+            "model": "gpt-5-mini",
+            "currentConfig": {},
+        }
+
+        response = client.post(
+            "/besser_api/recommend-agent-config-llm",
+            json=payload,
+            headers={"X-GitHub-Session": "fake-session"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["source"] == "openai"
+        config = data["config"]
+
+        # size clamped to allowed [10, 32].
+        assert config["presentation"]["interfaceStyle"]["size"] <= 32
+        assert config["presentation"]["interfaceStyle"]["size"] >= 10
+        # lineSpacing clamped to allowed [1, 3].
+        assert config["presentation"]["interfaceStyle"]["lineSpacing"] <= 3
+        # voiceStyle.speed clamped to allowed [0.5, 2.0].
+        assert config["presentation"]["voiceStyle"]["speed"] <= 2.0
+        assert config["presentation"]["voiceStyle"]["speed"] >= 0.5
+        # agentLanguage falls back to a whitelist value (default "original").
+        assert config["presentation"]["agentLanguage"] in (
+            "original", "english", "french", "german", "spanish",
+            "luxembourgish", "portuguese",
+        )
+        # agentPlatform falls back to a whitelist value (default "streamlit").
+        assert config["system"]["agentPlatform"] in (
+            "websocket", "streamlit", "telegram",
+        )
+        assert config["content"]["userProfileName"] == "Bob"
+
+
+# ---------------------------------------------------------------------------
+# Standalone Chatbot Deployment -- POST /besser_api/github/deploy-webapp
+# ---------------------------------------------------------------------------
+
+class TestStandaloneChatbotDeploy:
+    """Behavioral test for the chatbot deploy path with mocked PyGithub."""
+
+    @staticmethod
+    def _minimal_agent_diagram() -> Dict[str, Any]:
+        """Return a minimal valid AgentDiagram (StateInitialNode + AgentState
+        connected by AgentStateTransitionInit). Element ids are strings to
+        match the frontend's Apollon JSON shape.
+        """
+        return {
+            "type": "AgentDiagram",
+            "elements": {
+                "init-node": {
+                    "id": "init-node",
+                    "type": "StateInitialNode",
+                    "name": "",
+                },
+                "state-1": {
+                    "id": "state-1",
+                    "type": "AgentState",
+                    "name": "Greet",
+                    "bodies": [],
+                    "fallbackBodies": [],
+                },
+            },
+            "relationships": {
+                "trans-init": {
+                    "type": "AgentStateTransitionInit",
+                    "name": "",
+                    "source": {"element": "init-node"},
+                    "target": {"element": "state-1"},
+                },
+            },
+        }
+
+    def test_deploy_target_agent_invokes_chatbot_path(self, monkeypatch):
+        """``deploy_target='agent'`` should drive the standalone-chatbot
+        deployment branch: response.deployment_type == 'chatbot' and the
+        mocked PyGithub helper must be called with a render.yaml that
+        contains ``python -u "<slug>.py"`` (the chatbot startCommand).
+        """
+        from besser.utilities.web_modeling_editor.backend.services.deployment import (
+            github_deploy_api as deploy_mod,
+        )
+        from besser.utilities.web_modeling_editor.backend.routers import (
+            generation_router as gr,
+        )
+
+        # Auth gate: pass through to the chatbot path with a fake token.
+        monkeypatch.setattr(deploy_mod, "get_user_token", lambda _session: "fake-token")
+        monkeypatch.setattr(gr, "get_user_token", lambda _session: "fake-token")
+
+        captured: Dict[str, Any] = {
+            "create_calls": 0,
+            "push_calls": [],
+            "render_yaml_content": None,
+            "deployment_type_in_readme": None,
+        }
+
+        # Build an async stub for the GithubService that records calls and
+        # snapshots the render.yaml content during push_directory_to_repo
+        # (before the temp dir is cleaned up).
+        class _FakeGithubService:
+            def __init__(self):
+                pass
+
+            async def get_authenticated_user(self):
+                return {"login": "octocat"}
+
+            async def get_file_content(self, *_args, **_kwargs):
+                # No prior render.yaml exists → first deploy.
+                return None
+
+            async def get_branches(self, *_args, **_kwargs):
+                return ["main"]
+
+            async def create_repository(self, *_args, **kwargs):
+                captured["create_calls"] += 1
+                return {"default_branch": "main"}
+
+            async def update_repository(self, *_args, **_kwargs):
+                return {}
+
+            async def push_directory_to_repo(
+                self,
+                owner: str,
+                repo_name: str,
+                directory_path: str,
+                commit_message: str = "",
+                branch: str = "main",
+                preserve_existing_files: bool = False,
+            ):
+                # Snapshot render.yaml *before* the caller's tempdir cleanup.
+                render_path = os.path.join(directory_path, "render.yaml")
+                if os.path.isfile(render_path):
+                    with open(render_path, "r", encoding="utf-8") as handle:
+                        captured["render_yaml_content"] = handle.read()
+                captured["push_calls"].append({
+                    "owner": owner,
+                    "repo_name": repo_name,
+                    "branch": branch,
+                    "commit_message": commit_message,
+                })
+                return {"total_files": 7, "commit_sha": "deadbeef"}
+
+            def get_deployment_urls(self, owner: str, repo_name: str):
+                return {
+                    "render_dashboard": "https://dashboard.render.com/blueprints",
+                }
+
+            def generate_readme_content(self, name, deploy_instructions=False,
+                                        owner="", repo_name="", deployment_type="webapp"):
+                captured["deployment_type_in_readme"] = deployment_type
+                return f"# {name}\n"
+
+        fake_service = _FakeGithubService()
+        monkeypatch.setattr(
+            deploy_mod, "create_github_service", lambda _token: fake_service,
+        )
+
+        # Replace the BAFGenerator with a no-op stub so we don't need to set
+        # up a fully-resolvable agent runtime — that's tested elsewhere. The
+        # contract under test is the chatbot deploy *plumbing*, not the BAF
+        # output. The stub just needs to populate temp_dir so the render.yaml
+        # writer has somewhere to live.
+        class _FakeBAFGenerator:
+            def __init__(self, agent_model, output_dir, config=None,
+                         openai_api_key=None, generation_mode=None):
+                self.output_dir = output_dir
+
+            def generate(self):
+                os.makedirs(self.output_dir, exist_ok=True)
+                # Emit a placeholder file so push_directory_to_repo has at
+                # least one file to walk.
+                with open(os.path.join(self.output_dir, "agent.py"), "w",
+                          encoding="utf-8") as f:
+                    f.write("# generated agent stub\n")
+
+        from types import SimpleNamespace as _NS
+        monkeypatch.setattr(
+            deploy_mod, "get_generator_info",
+            lambda _name: _NS(generator_class=_FakeBAFGenerator),
+        )
+
+        # Required by the chatbot path's render.yaml writer to derive a slug.
+        # Use the project-shaped Body that the deploy_webapp_to_github reads.
+        body = {
+            "id": "proj-1",
+            "name": "ChatProj",
+            "type": "Project",
+            "diagrams": {
+                "AgentDiagram": [
+                    {
+                        "title": "MyChatbot",
+                        "model": self._minimal_agent_diagram(),
+                    }
+                ],
+            },
+            "currentDiagramIndices": {"AgentDiagram": 0},
+            "deploy_config": {
+                "target": "agent",
+                "repo_name": "my-chatbot",
+                "is_private": False,
+                "use_existing": False,
+            },
+        }
+
+        response = client.post(
+            "/besser_api/github/deploy-webapp",
+            json=body,
+            headers={"X-GitHub-Session": "fake-session"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()
+
+        # Endpoint reports the chatbot flavor.
+        assert data["deployment_type"] == "chatbot"
+        assert data["success"] is True
+        # The README was rendered with deployment_type='chatbot'.
+        assert captured["deployment_type_in_readme"] == "chatbot"
+
+        # PyGithub helper saw exactly one create + one push call.
+        assert captured["create_calls"] == 1
+        assert len(captured["push_calls"]) == 1
+        push_call = captured["push_calls"][0]
+        assert push_call["owner"] == "octocat"
+        assert push_call["repo_name"] == "my-chatbot"
+
+        # The chatbot render.yaml startCommand contains `python -u "<slug>.py"`.
+        render_yaml = captured["render_yaml_content"] or ""
+        assert "python -u" in render_yaml, render_yaml
+        assert ".py" in render_yaml
+        # Sanity: it's a chatbot service, not a webapp blueprint.
+        assert "chatbot" in render_yaml
 
 
 # ---------------------------------------------------------------------------

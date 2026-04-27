@@ -1,5 +1,6 @@
 """Utilities for LLM-based agent configuration recommendation."""
 
+import functools
 import json
 import logging
 from copy import deepcopy
@@ -46,8 +47,14 @@ def merge_dicts(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any
     return result
 
 
+@functools.lru_cache(maxsize=1)
 def load_default_agent_recommendation_config() -> Dict[str, Any]:
-    """Load default structured agent configuration and complete missing sections."""
+    """Load default structured agent configuration and complete missing sections.
+
+    Note: result is cached via ``functools.lru_cache``. Tests that mutate
+    ``default_config.json`` between calls must invoke
+    ``load_default_agent_recommendation_config.cache_clear()`` to force a reload.
+    """
     fallback = {
         "presentation": {
             "agentLanguage": "original",
@@ -147,7 +154,10 @@ def _normalize_modality(value: Any, default_value: List[str]) -> List[str]:
     return ["text", "speech"] if "speech" in value else ["text"]
 
 
-def normalize_recommended_agent_config(raw_config: Dict[str, Any], selected_profile_name: Optional[str]) -> Dict[str, Any]:
+def normalize_recommended_agent_config(
+    raw_config: Dict[str, Any],
+    selected_profile_name: Optional[str],
+) -> Dict[str, Any]:
     """Normalize recommendation to a safe structured config with allowed frontend values."""
     defaults = load_default_agent_recommendation_config()
     merged = merge_dicts(defaults, raw_config if isinstance(raw_config, dict) else {})
@@ -202,7 +212,14 @@ def normalize_recommended_agent_config(raw_config: Dict[str, Any], selected_prof
                 default_presentation["sentenceLength"],
             ),
             "interfaceStyle": {
-                "size": int(_clamp_number(interface_style.get("size"), 10, 32, default_presentation["interfaceStyle"]["size"])),
+                "size": int(
+                    _clamp_number(
+                        interface_style.get("size"),
+                        10,
+                        32,
+                        default_presentation["interfaceStyle"]["size"],
+                    )
+                ),
                 "font": _pick_allowed(
                     interface_style.get("font"),
                     RECOMMENDATION_ALLOWED_VALUES["font"],
@@ -237,14 +254,31 @@ def normalize_recommended_agent_config(raw_config: Dict[str, Any], selected_prof
                     RECOMMENDATION_ALLOWED_VALUES["voiceGender"],
                     default_presentation["voiceStyle"]["gender"],
                 ),
-                "speed": _clamp_number(voice_style.get("speed"), 0.5, 2.0, default_presentation["voiceStyle"]["speed"], digits=2),
+                "speed": _clamp_number(
+                    voice_style.get("speed"),
+                    0.5,
+                    2.0,
+                    default_presentation["voiceStyle"]["speed"],
+                    digits=2,
+                ),
             },
             "avatar": None,
-            "useAbbreviations": bool(presentation.get("useAbbreviations", default_presentation["useAbbreviations"])),
+            "useAbbreviations": bool(
+                presentation.get(
+                    "useAbbreviations",
+                    default_presentation["useAbbreviations"],
+                )
+            ),
         },
         "modality": {
-            "inputModalities": _normalize_modality(modality.get("inputModalities"), default_modality["inputModalities"]),
-            "outputModalities": _normalize_modality(modality.get("outputModalities"), default_modality["outputModalities"]),
+            "inputModalities": _normalize_modality(
+                modality.get("inputModalities"),
+                default_modality["inputModalities"],
+            ),
+            "outputModalities": _normalize_modality(
+                modality.get("outputModalities"),
+                default_modality["outputModalities"],
+            ),
         },
         "behavior": {
             "responseTiming": _pick_allowed(

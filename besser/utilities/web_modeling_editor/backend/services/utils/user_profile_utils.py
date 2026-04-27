@@ -38,7 +38,13 @@ def safe_path(base_dir: str, user_filename: str) -> str:
     """Resolve a user-provided filename safely within base_dir."""
     safe_name = os.path.basename(user_filename)
     full_path = os.path.realpath(os.path.join(base_dir, safe_name))
-    if not full_path.startswith(os.path.realpath(base_dir)):
+    real_base = os.path.realpath(base_dir)
+    try:
+        if os.path.commonpath([full_path, real_base]) != real_base:
+            raise ValueError("Invalid path")
+    except ValueError:
+        # commonpath raises ValueError when paths are on different drives
+        # (Windows) or otherwise incomparable — treat as not contained.
         raise ValueError("Invalid path")
     return full_path
 

@@ -843,8 +843,12 @@ def _add_chatbot_deployment_configs(
     )
 
     render_path = os.path.join(directory, "render.yaml")
+    # CodeQL py/clear-text-storage-sensitive-data flags this f.write because the
+    # render_config string contains env-var KEY names like STREAMLIT_DB_PASSWORD
+    # and OPENAI_API_KEY. These are NAMES that Render needs to wire secrets at
+    # deploy time — no values are written here. Suppression is intentional.
     with open(render_path, "w", encoding="utf-8") as f:
-        f.write(render_config)
+        f.write(render_config)  # lgtm[py/clear-text-storage-sensitive-data]
 
 
 async def _export_buml_files_to_repo(
@@ -1210,8 +1214,12 @@ def _add_deployment_configs(
 """
 
     render_path = os.path.join(directory, "render.yaml")
+    # CodeQL py/clear-text-storage-sensitive-data flags this f.write because the
+    # render_config string contains env-var KEY names like OPENAI_API_KEY. These
+    # are NAMES that Render needs to wire secrets at deploy time — no values are
+    # written here. Suppression is intentional.
     with open(render_path, "w") as f:
-        f.write(render_config)
+        f.write(render_config)  # lgtm[py/clear-text-storage-sensitive-data]
 
     # Build a per-agent URL map keyed by the BUML ``agent.name`` (Python-safe
     # identifier, e.g. "Library_Agent"). The generated React AgentComponent

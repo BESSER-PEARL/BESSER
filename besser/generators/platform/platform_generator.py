@@ -14,7 +14,15 @@ from jinja2 import Environment, FileSystemLoader
 from besser.BUML.metamodel.structural import DomainModel
 from besser.BUML.metamodel.platform_customization import PlatformCustomizationModel
 from besser.generators import GeneratorInterface
-from besser.generators.platform.template_helpers import dash_for, enum_value, marker_for
+from besser.generators.platform.template_helpers import (
+    build_representation_registries,
+    dash_for,
+    enum_value,
+    marker_for,
+    resolve_class_representation,
+    resolve_connection_edge_style,
+    validate_representation,
+)
 
 
 class PlatformGenerator(GeneratorInterface):
@@ -88,7 +96,38 @@ class PlatformGenerator(GeneratorInterface):
         self.env.filters['dash_for'] = dash_for
         self.env.filters['marker_for'] = marker_for
         self.env.filters['enum_value'] = enum_value
-    
+
+    def _representation_context(self):
+        """Compute customization-derived metadata shared by several templates.
+
+        Returns a dict with three keys:
+          - ``class_representations``: name -> {'mode', 'port_side'}
+          - ``port_classes_registry``: name -> {'portSide'}
+          - ``connection_classes_registry``: name -> endpoint info
+        """
+        classes = list(self.domain_model.get_classes())
+        registries = build_representation_registries(classes, self.customization)
+        class_representations = {
+            cls.name: resolve_class_representation(cls, self.customization)
+            for cls in classes
+        }
+        # Resolve edge styling up the inheritance chain for any class that
+        # ends up rendered as a connection — subclasses inherit the base
+        # class's line/arrow/label settings unless they override them.
+        connection_edge_styles = {}
+        for cls in classes:
+            rep = class_representations.get(cls.name)
+            if rep and rep.get("mode") == "connection":
+                merged = resolve_connection_edge_style(cls, self.customization)
+                if merged is not None:
+                    connection_edge_styles[cls.name] = merged
+        return {
+            "class_representations": class_representations,
+            "port_classes_registry": registries["port_classes"],
+            "connection_classes_registry": registries["connection_classes"],
+            "connection_edge_styles": connection_edge_styles,
+        }
+
     def generate(self):
         """
         Generates the complete platform code including:
@@ -98,7 +137,22 @@ class PlatformGenerator(GeneratorInterface):
         - Documentation
         """
         print(f"Generating instance editor platform for model: {self.domain_model.name}")
-        
+
+        # Validate platform customization (port / connection classes wiring)
+        # before producing anything — otherwise the user gets a broken editor
+        # with no clue what went wrong.
+        if self.customization is not None:
+            issues = validate_representation(
+                list(self.domain_model.get_classes()), self.customization
+            )
+            if issues:
+                bullet = "\n  - "
+                raise ValueError(
+                    "Platform customization has unresolved representation problems:"
+                    + bullet
+                    + bullet.join(issues)
+                )
+
         # Create directory structure
         self._create_directory_structure()
         
@@ -302,7 +356,11 @@ class PlatformGenerator(GeneratorInterface):
             f.write(template.render(
                 model=self.domain_model,
                 classes=self.domain_model.classes_sorted_by_inheritance(),
+                enumerations=sorted(
+                    self.domain_model.get_enumerations(), key=lambda e: e.name
+                ),
                 customization=self.customization,
+                **self._representation_context(),
             ))
     
     def _generate_frontend_api(self, frontend_dir):
@@ -330,6 +388,8 @@ class PlatformGenerator(GeneratorInterface):
         """Generates React components."""
         components_dir = os.path.join(frontend_dir, 'src', 'components')
         
+        rep_ctx = self._representation_context()
+
         # Generate InstanceCanvas component (main editor)
         template = self.env.get_template('frontend/src/components/InstanceCanvas.tsx.j2')
         output_path = os.path.join(components_dir, 'InstanceCanvas.tsx')
@@ -339,6 +399,7 @@ class PlatformGenerator(GeneratorInterface):
                 model=self.domain_model,
                 classes=self.domain_model.get_classes(),
                 customization=self.customization,
+                **rep_ctx,
             ))
 
         # Generate InstanceNode component (visual representation of instances)
@@ -346,7 +407,10 @@ class PlatformGenerator(GeneratorInterface):
         output_path = os.path.join(components_dir, 'InstanceNode.tsx')
 
         with open(output_path, 'w', encoding='utf-8') as f:
-            f.write(template.render(customization=self.customization))
+            f.write(template.render(
+                customization=self.customization,
+                **rep_ctx,
+            ))
         
         # Generate PropertyEditor component
         template = self.env.get_template('frontend/src/components/PropertyEditor.tsx.j2')

@@ -43,6 +43,7 @@ from besser.BUML.metamodel.platform_customization import (
     LineStyle,
     NodeShape,
     PlatformCustomizationModel,
+    PortSide,
     Theme,
 )
 
@@ -105,9 +106,38 @@ def _positive_int_or_none(value: Any) -> Optional[int]:
 
 
 def _parse_class_customization(data: Dict[str, Any]) -> ClassCustomization:
+    is_port = bool(data.get("isPort", False))
+    is_connection_class = bool(data.get("isConnectionClass", False))
+    is_container = bool(data.get("isContainer", False))
+
+    # Resolve mutex conflicts gracefully on input: precedence is
+    # isPort > isConnectionClass > isContainer. Lower-priority flags get
+    # silently dropped so a malformed payload still yields a valid model.
+    if is_port:
+        is_connection_class = False
+        is_container = False
+    elif is_connection_class:
+        is_container = False
+
+    port_side = _enum_or_none(PortSide, data.get("portSide")) if is_port else None
+
+    raw_points = data.get("connectionPoints")
+    connection_points = None
+    if isinstance(raw_points, list):
+        valid_sides = {"top", "right", "bottom", "left"}
+        cleaned = []
+        for side in raw_points:
+            if isinstance(side, str) and side in valid_sides and side not in cleaned:
+                cleaned.append(side)
+        connection_points = cleaned  # may be []
+
     return ClassCustomization(
-        is_container=bool(data.get("isContainer", False)),
+        is_container=is_container,
         is_resizable=bool(data.get("isResizable", False)),
+        is_port=is_port,
+        is_connection_class=is_connection_class,
+        port_side=port_side,
+        connection_points=connection_points,
         default_width=_positive_int_or_none(data.get("defaultWidth")),
         default_height=_positive_int_or_none(data.get("defaultHeight")),
         node_shape=_enum_or_none(NodeShape, data.get("nodeShape")),
@@ -120,10 +150,24 @@ def _parse_class_customization(data: Dict[str, Any]) -> ClassCustomization:
         font_weight=_enum_or_none(FontWeight, data.get("fontWeight")),
         font_color=_str_or_none(data.get("fontColor")),
         label_position=_enum_or_none(LabelPosition, data.get("labelPosition")),
+        edge_color=_str_or_none(data.get("edgeColor")),
+        line_width=_int_in_range_or_none(data.get("lineWidth"), 1, 6),
+        line_style=_enum_or_none(LineStyle, data.get("lineStyle")),
+        source_arrow_style=_enum_or_none(ArrowStyle, data.get("sourceArrowStyle")),
+        target_arrow_style=_enum_or_none(ArrowStyle, data.get("targetArrowStyle")),
+        label_visible=_bool_or_none(data.get("labelVisible")),
+        label_font_size=_int_in_range_or_none(data.get("labelFontSize"), 8, 18),
+        label_font_color=_str_or_none(data.get("labelFontColor")),
     )
 
 
 def _parse_association_customization(data: Dict[str, Any]) -> AssociationCustomization:
+    is_source = bool(data.get("isSourceEndpoint", False))
+    is_target = bool(data.get("isTargetEndpoint", False))
+    # Mutex resolution on input: source wins if both somehow appear truthy.
+    if is_source and is_target:
+        is_target = False
+
     return AssociationCustomization(
         edge_color=_str_or_none(data.get("edgeColor")),
         line_width=_int_in_range_or_none(data.get("lineWidth"), 1, 6),
@@ -134,6 +178,8 @@ def _parse_association_customization(data: Dict[str, Any]) -> AssociationCustomi
         label_font_size=_int_in_range_or_none(data.get("labelFontSize"), 8, 18),
         label_font_color=_str_or_none(data.get("labelFontColor")),
         is_container_association=bool(data.get("isContainerAssociation", False)),
+        is_source_endpoint=is_source,
+        is_target_endpoint=is_target,
     )
 
 

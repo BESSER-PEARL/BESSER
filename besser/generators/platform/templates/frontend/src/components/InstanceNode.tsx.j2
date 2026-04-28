@@ -9,13 +9,19 @@ import { Handle, NodeResizer, Position, type Node, type NodeProps } from '@xyflo
 import { Pencil, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import type { BaseInstance, ClassMetadata, NodeStyle } from '../types/models';
+import type { BaseInstance, ClassMetadata, NodeStyle, PortSideName } from '../types/models';
+import { PORT_CLASSES } from '../types/models';
 
 export type InstanceNodeData = {
   instance: BaseInstance;
   classMetadata: ClassMetadata;
+  /** Port-class child instances anchored on this node. Each becomes an xyflow
+   *  Handle whose id is the port instance's UUID — connection-class edges bind
+   *  to those handles. */
+  ports?: BaseInstance[];
   onEdit: () => void;
   onDelete: () => void;
+  onPortClick?: (port: BaseInstance) => void;
 };
 
 export type InstanceNodeType = Node<InstanceNodeData, 'instance'>;
@@ -98,9 +104,88 @@ const DASH_FOR_LINE: Record<string, string | undefined> = {
   dotted: '2 4',
 };
 
+const SIDE_TO_POSITION: Record<Exclude<PortSideName, 'auto'>, Position> = {
+  top: Position.Top,
+  right: Position.Right,
+  bottom: Position.Bottom,
+  left: Position.Left,
+};
+
+/** Decide which side a port handle anchors on. Order of precedence:
+ *   1. PORT_CLASSES[port.class_name].portSide (if not 'auto')
+ *   2. port.attributes.direction ('Inlet' → Left, 'Outlet' → Right)
+ *   3. fallback: Left
+ */
+function resolvePortSide(port: BaseInstance): Position {
+  const meta = PORT_CLASSES[port.class_name];
+  const configured = meta?.portSide;
+  if (configured && configured !== 'auto') {
+    return SIDE_TO_POSITION[configured];
+  }
+  const direction = String(port.attributes?.direction ?? '').toLowerCase();
+  if (direction === 'inlet' || direction === 'in') return Position.Left;
+  if (direction === 'outlet' || direction === 'out') return Position.Right;
+  return Position.Left;
+}
+
+/** Render a row of xyflow Handles for the equipment's port-class children.
+ *  Each handle's id equals the port instance UUID so connection-class edges
+ *  can target them via sourceHandle / targetHandle. */
+const PortHandles: React.FC<{
+  ports: BaseInstance[];
+  onPortClick?: (port: BaseInstance) => void;
+}> = ({ ports, onPortClick }) => {
+  // Group by side so we can space them evenly on each face.
+  const bySide: Record<Position, BaseInstance[]> = {
+    [Position.Top]: [],
+    [Position.Right]: [],
+    [Position.Bottom]: [],
+    [Position.Left]: [],
+  };
+  for (const port of ports) {
+    bySide[resolvePortSide(port)].push(port);
+  }
+  return (
+    <>
+      {(Object.entries(bySide) as Array<[Position, BaseInstance[]]>).flatMap(([side, list]) =>
+        list.map((port, i) => {
+          const ratio = (i + 1) / (list.length + 1);
+          const css: React.CSSProperties = {};
+          if (side === Position.Top || side === Position.Bottom) {
+            css.left = `${ratio * 100}%`;
+          } else {
+            css.top = `${ratio * 100}%`;
+          }
+          return (
+            <Handle
+              key={port.id}
+              id={port.id}
+              type="source"
+              position={side as Position}
+              style={css}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPortClick?.(port);
+              }}
+              title={`${port.class_name}: ${port.instance_name}`}
+              className="!h-3.5 !w-3.5 !rounded-[2px] !border !border-foreground/70 !bg-foreground/85 shadow-sm transition-transform hover:!scale-125 hover:!bg-primary"
+            />
+          );
+        }),
+      )}
+    </>
+  );
+};
+
 export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, selected }) => {
-  const { instance, classMetadata, onEdit, onDelete } = data;
+  const { instance, classMetadata, onEdit, onDelete, ports, onPortClick } = data;
   const [isHovered, setIsHovered] = React.useState(false);
+  const portList = ports ?? [];
+  // Default = all four sides; ``[]`` hides handles; explicit list restricts.
+  const allowedSides = classMetadata.connectionPoints;
+  const handlePositions = allowedSides === undefined
+    ? HANDLE_POSITIONS
+    : HANDLE_POSITIONS.filter((h) => allowedSides.includes(h.id as 'top' | 'right' | 'bottom' | 'left'));
   const hasIcon = Boolean(classMetadata.icon);
   const isContainer = Boolean(classMetadata.isContainer);
   const isResizable = Boolean(classMetadata.isResizable);
@@ -130,7 +215,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
             handleClassName="!h-2 !w-2 !rounded-sm !border !border-primary !bg-background"
           />
         )}
-        {HANDLE_POSITIONS.map(({ id, position, offset }) => (
+        {handlePositions.map(({ id, position, offset }) => (
           <Handle
             key={id}
             type="source"
@@ -140,6 +225,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
             className="!h-4 !w-4 !border-2 !border-background !bg-primary transition-all hover:!h-5 hover:!w-5 hover:!bg-primary/90"
           />
         ))}
+        <PortHandles ports={portList} onPortClick={onPortClick} />
         <div className="flex items-center justify-between gap-2 rounded-t-[10px] border-b border-primary/30 bg-primary/10 px-3 py-2">
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-semibold uppercase tracking-wider text-primary/80">
@@ -199,7 +285,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
         onMouseLeave={() => setIsHovered(false)}
         onClick={onEdit}
       >
-        {HANDLE_POSITIONS.map(({ id, position, offset }) => (
+        {handlePositions.map(({ id, position, offset }) => (
           <Handle
             key={id}
             type="source"
@@ -209,6 +295,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
             className="!h-4 !w-4 !border-2 !border-background !bg-primary transition-all hover:!h-5 hover:!w-5 hover:!bg-primary/90"
           />
         ))}
+        <PortHandles ports={portList} onPortClick={onPortClick} />
         <ShapeBackground
           shape={shape}
           fill={fill}
@@ -239,7 +326,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
       {/* One handle per side. ConnectionMode.Loose lets source handles accept
           incoming connections too, so we don't need overlapping target handles
           (which were causing "always connects from top" because they hijacked clicks). */}
-      {HANDLE_POSITIONS.map(({ id, position, offset }) => (
+      {handlePositions.map(({ id, position, offset }) => (
         <Handle
           key={id}
           type="source"
@@ -249,6 +336,7 @@ export const InstanceNode: React.FC<NodeProps<InstanceNodeType>> = ({ data, sele
           className="!h-4 !w-4 !border-2 !border-background !bg-primary transition-all hover:!h-5 hover:!w-5 hover:!bg-primary/90"
         />
       ))}
+      <PortHandles ports={portList} onPortClick={onPortClick} />
 
       {/* Label-on-top is opt-in via labelPosition: 'top'. The icon variant
           defaults to "bottom"; the box variant defaults to "inside". */}

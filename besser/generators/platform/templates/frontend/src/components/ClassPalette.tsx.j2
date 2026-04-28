@@ -13,6 +13,10 @@ interface ClassPaletteProps {
 }
 
 export const ClassPalette: React.FC<ClassPaletteProps> = ({ classes }) => {
+  // Abstract classes can't be instantiated directly — hide them from the
+  // palette so the user only sees concrete, draggable classes.
+  const concreteClasses = classes.filter((c) => !c.isAbstract);
+
   const handleDragStart = (e: React.DragEvent, classMetadata: ClassMetadata) => {
     e.dataTransfer.setData('className', classMetadata.name);
     e.dataTransfer.effectAllowed = 'copy';
@@ -26,12 +30,12 @@ export const ClassPalette: React.FC<ClassPaletteProps> = ({ classes }) => {
           Palette
         </h3>
         <span className="ml-auto inline-flex h-5 min-w-[1.5rem] items-center justify-center rounded-full bg-muted px-2 text-[10px] font-semibold tabular-nums text-muted-foreground">
-          {classes.length}
+          {concreteClasses.length}
         </span>
       </div>
 
       <div className="scrollbar-thin flex flex-1 flex-col gap-1.5 overflow-y-auto p-3">
-        {classes.map((classMetadata) => (
+        {concreteClasses.map((classMetadata) => (
           <div
             key={classMetadata.name}
             draggable

@@ -27,7 +27,13 @@ import { InstanceNode } from './InstanceNode';
 import { PropertyEditor } from './PropertyEditor';
 import { AssociationSelector } from './AssociationSelector';
 import { InstanceCreationModal } from './InstanceCreationModal';
-import { DIAGRAM_STYLE } from '../types/models';
+import {
+  DIAGRAM_STYLE,
+  PORT_CLASSES,
+  CONNECTION_CLASSES,
+  isPortClass,
+  isConnectionClass as isConnectionClassMeta,
+} from '../types/models';
 import type { BaseInstance, ClassMetadata, AssociationMetadata, EdgeStyle, ArrowStyleName } from '../types/models';
 import * as api from '../api/instances';
 
@@ -147,6 +153,48 @@ function findContainerAt(
   return hits[0] ?? null;
 }
 
+/** Find the innermost non-port, non-connection node that can host a dropped
+ *  port-class instance. A node is considered a host if its class has at least
+ *  one association whose target is the port class — that's the link we'll
+ *  auto-create after the instance is created. Inheritance is already
+ *  flattened into ``ClassMetadata.associations`` at generation time. */
+function findPortHostAt(
+  canvasPoint: { x: number; y: number },
+  nodes: Node[],
+  portClassName: string,
+  availableClasses: ClassMetadata[],
+): Node | null {
+  const candidates = nodes.filter((n) => {
+    const meta = (n.data as { classMetadata?: ClassMetadata } | undefined)?.classMetadata;
+    if (!meta || meta.isPort || meta.isConnectionClass) return false;
+    return meta.associations.some((a) => a.targetClass === portClassName);
+  });
+  const hits = candidates.filter((n) => {
+    const meta = (n.data as { classMetadata: ClassMetadata }).classMetadata;
+    const fallback = meta.defaultSize ?? { width: 200, height: 120 };
+    const width = n.measured?.width ?? n.width ?? fallback.width;
+    const height = n.measured?.height ?? n.height ?? fallback.height;
+    return (
+      canvasPoint.x >= n.position.x &&
+      canvasPoint.x <= n.position.x + width &&
+      canvasPoint.y >= n.position.y &&
+      canvasPoint.y <= n.position.y + height
+    );
+  });
+  // Innermost (smallest area) wins, mirroring the container heuristic.
+  hits.sort((a, b) => {
+    const am = (a.data as { classMetadata: ClassMetadata }).classMetadata;
+    const bm = (b.data as { classMetadata: ClassMetadata }).classMetadata;
+    const as = (a.measured?.width ?? a.width ?? am.defaultSize?.width ?? 200) *
+      (a.measured?.height ?? a.height ?? am.defaultSize?.height ?? 120);
+    const bs = (b.measured?.width ?? b.width ?? bm.defaultSize?.width ?? 200) *
+      (b.measured?.height ?? b.height ?? bm.defaultSize?.height ?? 120);
+    return as - bs;
+  });
+  void availableClasses;
+  return hits[0] ?? null;
+}
+
 interface InstanceCanvasProps {
   instances: BaseInstance[];
   availableClasses: ClassMetadata[];
@@ -200,6 +248,11 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     position: { x: number; y: number };
     parentContainerId?: string;
     parentContainerClass?: string;
+    /** Set when a port-class instance is dropped on a non-container "host"
+     *  equipment node. We use it to auto-create the equipment→port link after
+     *  the instance is created. */
+    parentHostId?: string;
+    parentHostClass?: string;
   } | null>(null);
 
   const onDrop = useCallback(
@@ -226,7 +279,27 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       const parentContainerClass = (container?.data as { instance?: BaseInstance } | undefined)
         ?.instance?.class_name;
 
-      setCreateInstanceModal({ className, position, parentContainerId, parentContainerClass });
+      // If a port-class instance lands on a non-container equipment node that
+      // has an association to this port class, remember the host so we can
+      // auto-create the owning link. This is the path that turns a freshly-
+      // dropped Port into a handle on its owner equipment.
+      let parentHostId: string | undefined;
+      let parentHostClass: string | undefined;
+      if (PORT_CLASSES[className]) {
+        const host = findPortHostAt(flowPoint, nodes, className, availableClasses);
+        parentHostId = host?.id;
+        parentHostClass = (host?.data as { instance?: BaseInstance } | undefined)
+          ?.instance?.class_name;
+      }
+
+      setCreateInstanceModal({
+        className,
+        position,
+        parentContainerId,
+        parentContainerClass,
+        parentHostId,
+        parentHostClass,
+      });
     },
     [nodes, availableClasses, reactFlow]
   );
@@ -237,6 +310,97 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   }, []);
 
   React.useEffect(() => {
+    // === Port & Connection partitioning =====================================
+    // Port-class instances render as Handles on their owner equipment node
+    // when they have an owner. Orphan ports (no owner equipment yet) keep
+    // rendering as ordinary nodes so the user can see what they created and
+    // recover by linking them later.
+    // Connection-class instances similarly become edges only when both
+    // endpoints are resolved to a port with an owner; otherwise they render
+    // as plain nodes.
+    const portInstanceIds = new Set(
+      instances.filter((i) => isPortClass(i.class_name)).map((i) => i.id),
+    );
+    const connectionInstanceIds = new Set(
+      instances.filter((i) => isConnectionClassMeta(i.class_name)).map((i) => i.id),
+    );
+
+    // Map each port instance to its owner equipment instance. The link can be
+    // stored on EITHER side depending on which handle the user dragged from
+    // (or which side the auto-link path used), so we walk both directions:
+    //   A) non-port → port  : source is the owner
+    //   B) port → non-port  : target is the owner
+    // First match wins, mirroring how the container-association detection
+    // is bidirectional too.
+    const portToOwner = new Map<string, string>();
+    for (const inst of instances) {
+      const isPortInstance = portInstanceIds.has(inst.id);
+      if (connectionInstanceIds.has(inst.id)) continue;
+      for (const link of inst.links) {
+        const targetIsPort = portInstanceIds.has(link.target_id);
+        const targetIsConnection = connectionInstanceIds.has(link.target_id);
+        // Direction A: non-port instance has a link to a port.
+        if (!isPortInstance && targetIsPort && !portToOwner.has(link.target_id)) {
+          portToOwner.set(link.target_id, inst.id);
+        }
+        // Direction B: port instance has a link to a non-port, non-connection
+        // instance — that target is the owner equipment.
+        if (isPortInstance && !targetIsPort && !targetIsConnection && !portToOwner.has(inst.id)) {
+          portToOwner.set(inst.id, link.target_id);
+        }
+      }
+    }
+
+    // Group port instances by owner so we can pass them down to the
+    // InstanceNode component as `ports`. Only owned ports are grouped here —
+    // orphan ports stay in the regular node loop.
+    const portsByOwner = new Map<string, BaseInstance[]>();
+    const ownedPortInstanceIds = new Set<string>();
+    for (const port of instances) {
+      if (!portInstanceIds.has(port.id)) continue;
+      const ownerId = portToOwner.get(port.id);
+      if (!ownerId) continue;
+      ownedPortInstanceIds.add(port.id);
+      const list = portsByOwner.get(ownerId) ?? [];
+      list.push(port);
+      portsByOwner.set(ownerId, list);
+    }
+
+    // Resolve each connection instance's source/target ports from its links.
+    // A connection only renders as a synthetic edge if BOTH endpoint ports
+    // are resolved AND each endpoint port has an owner equipment — otherwise
+    // it stays in the regular node loop until the user finishes wiring it.
+    type ConnectionInfo = {
+      conn: BaseInstance;
+      sourcePortId: string | null;
+      targetPortId: string | null;
+    };
+    const connectionInfos: ConnectionInfo[] = [];
+    const renderedConnectionIds = new Set<string>();
+    for (const conn of instances) {
+      if (!connectionInstanceIds.has(conn.id)) continue;
+      const meta = CONNECTION_CLASSES[conn.class_name];
+      if (!meta) continue;
+      let sourcePortId: string | null = null;
+      let targetPortId: string | null = null;
+      for (const link of conn.links) {
+        if (link.association_name === meta.sourceAssociation && portInstanceIds.has(link.target_id)) {
+          sourcePortId = link.target_id;
+        }
+        if (link.association_name === meta.targetAssociation && portInstanceIds.has(link.target_id)) {
+          targetPortId = link.target_id;
+        }
+      }
+      connectionInfos.push({ conn, sourcePortId, targetPortId });
+      if (
+        sourcePortId && targetPortId &&
+        portToOwner.has(sourcePortId) && portToOwner.has(targetPortId)
+      ) {
+        renderedConnectionIds.add(conn.id);
+      }
+    }
+
+    // === Containment partitioning (existing logic) =========================
     // Identify containment relationships so children get parentId. A link is
     // treated as containment ONLY when its association is flagged
     // isContainerAssociation. The detection is bidirectional because the
@@ -300,7 +464,11 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
     // siblings don't overlap each other or the container's title bar.
     const childOrderByParent = new Map<string, number>();
 
-    const flowNodes: Node[] = instances.map((instance, index) => {
+    const renderableInstances = instances.filter(
+      (i) => !ownedPortInstanceIds.has(i.id) && !renderedConnectionIds.has(i.id),
+    );
+
+    const flowNodes: Node[] = renderableInstances.map((instance, index) => {
       const classMetadata = availableClasses.find((c) => c.name === instance.class_name);
       const storedPosition = nodePositionsRef.current.get(instance.id);
       const isContainer = Boolean(classMetadata?.isContainer);
@@ -332,8 +500,10 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         data: {
           instance,
           classMetadata: classMetadata!,
+          ports: portsByOwner.get(instance.id) ?? [],
           onEdit: () => setSelectedInstance(instance),
           onDelete: () => onInstanceDelete(instance.class_name, instance.id),
+          onPortClick: (port: BaseInstance) => setSelectedInstance(port),
         },
       };
       if (isContainer) {
@@ -368,8 +538,22 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
 
     setNodes(flowNodes);
 
-    const flowEdges: Edge[] = instances.flatMap((instance) =>
-      instance.links.map((link) => {
+    const flowEdges: Edge[] = instances.flatMap((instance) => {
+      // Owned port-class and rendered connection-class instances express their
+      // edges via the synthetic block below — skip their raw links here so we
+      // don't double-emit (or render dead edges that point to filtered-out
+      // nodes). Orphan ports / unresolved connections fall through to the
+      // regular edge loop because they're rendered as plain nodes.
+      if (ownedPortInstanceIds.has(instance.id) || renderedConnectionIds.has(instance.id)) {
+        return [] as Edge[];
+      }
+      return instance.links.flatMap((link) => {
+        // Skip links targeting an owned port (the equipment→port composition
+        // is conveyed by the handle on the equipment border) or a rendered
+        // connection (its endpoints are already shown).
+        if (ownedPortInstanceIds.has(link.target_id) || renderedConnectionIds.has(link.target_id)) {
+          return [] as Edge[];
+        }
         const targetInstance = instances.find((i) => i.id === link.target_id);
         const sourceMeta = availableClasses.find((c) => c.name === instance.class_name);
         const assocMeta: AssociationMetadata | undefined = sourceMeta?.associations.find(
@@ -407,7 +591,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
 
         const labelVisible = edgeStyle?.labelVisible !== false;
 
-        return {
+        return [{
           id: edgeId,
           source: instance.id,
           target: link.target_id,
@@ -433,9 +617,62 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
             targetClass: targetInstance?.class_name ?? '',
             associationName: link.association_name,
           },
-        } as Edge;
-      })
-    );
+        } as Edge];
+      });
+    });
+
+    // Synthetic edges from connection-class instances. Source / target nodes
+    // are the equipment that own the source / target ports; the edge binds to
+    // the specific port handle via sourceHandle / targetHandle. We only emit
+    // edges for connections whose two ports are both resolved AND owned —
+    // those are the same connections that were filtered from the node loop.
+    for (const info of connectionInfos) {
+      const { conn, sourcePortId, targetPortId } = info;
+      if (!renderedConnectionIds.has(conn.id)) continue;
+      if (!sourcePortId || !targetPortId) continue;
+      const sourceOwner = portToOwner.get(sourcePortId);
+      const targetOwner = portToOwner.get(targetPortId);
+      if (!sourceOwner || !targetOwner) continue;
+
+      // Pull edge styling from the connection class's ClassMetadata. Walk
+      // the inheritance chain by checking ancestors via the customization-
+      // resolved metadata (subclasses may inherit a base class's style).
+      const connMeta = availableClasses.find((c) => c.name === conn.class_name);
+      const edgeStyle = connMeta?.edgeStyle;
+      const lineWidth = edgeStyle?.lineWidth ?? 2;
+      const dash = edgeStyle?.lineStyle ? DASH_FOR_LINE[edgeStyle.lineStyle] : undefined;
+      const lineCss: React.CSSProperties = { strokeWidth: lineWidth };
+      if (edgeStyle?.color) lineCss.stroke = edgeStyle.color;
+      if (dash) lineCss.strokeDasharray = dash;
+      const labelVisible = edgeStyle?.labelVisible !== false;
+
+      flowEdges.push({
+        id: `connection::${conn.id}`,
+        source: sourceOwner,
+        target: targetOwner,
+        sourceHandle: sourcePortId,
+        targetHandle: targetPortId,
+        label: labelVisible ? conn.instance_name : undefined,
+        type: 'default',
+        animated: false,
+        style: lineCss,
+        labelBgStyle: { fill: 'hsl(var(--card))' },
+        labelBgPadding: [6, 3] as [number, number],
+        labelBgBorderRadius: 4,
+        labelStyle: {
+          fontSize: edgeStyle?.labelFontSize ?? 11,
+          fontWeight: 600,
+          fill: edgeStyle?.labelFontColor,
+        },
+        markerStart: arrowMarker(edgeStyle?.sourceArrow),
+        markerEnd: arrowMarker(edgeStyle?.targetArrow ?? 'filled_triangle'),
+        data: {
+          connectionInstanceId: conn.id,
+          connectionClass: conn.class_name,
+          isConnectionInstanceEdge: true,
+        },
+      } as Edge);
+    }
 
     setEdges(flowEdges);
   }, [instances, availableClasses, onInstanceDelete, setNodes, setEdges]);
@@ -485,11 +722,64 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
   );
 
   const onConnect = useCallback(
-    (connection: Connection) => {
+    async (connection: Connection) => {
       if (!connection.source || !connection.target) return;
       const sourceInstance = instances.find((i) => i.id === connection.source);
       const targetInstance = instances.find((i) => i.id === connection.target);
       if (!sourceInstance || !targetInstance) return;
+
+      // Port-handle path: when both endpoints are port instances (the handle
+      // ids are the port instance UUIDs), we create a connection-class
+      // instance and bind its source/target endpoint links — instead of the
+      // ordinary association-based link that would otherwise be created.
+      const sourcePortInstance = connection.sourceHandle
+        ? instances.find((i) => i.id === connection.sourceHandle)
+        : undefined;
+      const targetPortInstance = connection.targetHandle
+        ? instances.find((i) => i.id === connection.targetHandle)
+        : undefined;
+      if (sourcePortInstance && targetPortInstance &&
+          isPortClass(sourcePortInstance.class_name) &&
+          isPortClass(targetPortInstance.class_name)) {
+        // Pick a connection class whose endpoint ports match. If multiple match
+        // we pick the first one for now — the property editor lets the user
+        // change the class afterwards. (A modal selector is a follow-up.)
+        const candidates = Object.entries(CONNECTION_CLASSES).filter(([_, meta]) =>
+          meta.portClass === sourcePortInstance.class_name ||
+          meta.portClass === targetPortInstance.class_name,
+        );
+        if (candidates.length === 0) return;
+        const [connClassName, connMeta] = candidates[0];
+        try {
+          const created = await api.createInstance({
+            class_name: connClassName,
+            instance_name: `${connClassName.toLowerCase()}_${Date.now().toString(36)}`,
+            attributes: {},
+          });
+          if (created?.id && connMeta.sourceAssociation && connMeta.targetAssociation) {
+            await api.createLink({
+              source_class: connClassName,
+              source_id: created.id,
+              target_class: sourcePortInstance.class_name,
+              target_id: sourcePortInstance.id,
+              association_name: connMeta.sourceAssociation,
+            });
+            await api.createLink({
+              source_class: connClassName,
+              source_id: created.id,
+              target_class: targetPortInstance.class_name,
+              target_id: targetPortInstance.id,
+              association_name: connMeta.targetAssociation,
+            });
+            // Trigger upstream refetch via the existing onInstanceCreate signal
+            // — the parent re-fetches instances and the synthetic edge appears.
+            onInstanceCreate(connClassName, { x: 0, y: 0 });
+          }
+        } catch (error) {
+          console.error('Failed to create connection-class instance:', error);
+        }
+        return;
+      }
 
       const sourceClass = availableClasses.find((c) => c.name === sourceInstance.class_name);
       const validAssociations =
@@ -527,7 +817,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         }
       }
     },
-    [instances, availableClasses, onLinkCreate, rememberEdgeHandles]
+    [instances, availableClasses, onLinkCreate, onInstanceCreate, rememberEdgeHandles]
   );
 
   const handleAssociationSelect = (associationName: string) => {
@@ -700,6 +990,45 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
             console.error('Failed to create link from modal selection:', error);
           }
         }
+      }
+
+      // If a port-class instance was dropped on a host equipment node, find
+      // the equipment→port association and auto-create the link. Without
+      // this, the freshly-created port would have no owner and stay as an
+      // orphan node on the canvas instead of becoming a handle on the
+      // equipment border.
+      const { parentHostId, parentHostClass } = createInstanceModal;
+      if (parentHostId && parentHostClass && created?.id) {
+        const hostMeta = availableClasses.find((c) => c.name === parentHostClass);
+        const hostAssocs = hostMeta?.associations.filter(
+          (a) => a.targetClass === createInstanceModal.className,
+        ) ?? [];
+        if (hostAssocs.length === 1) {
+          try {
+            await api.createLink({
+              source_class: parentHostClass,
+              source_id: parentHostId,
+              target_class: createInstanceModal.className,
+              target_id: created.id,
+              association_name: hostAssocs[0].name,
+            });
+          } catch (error) {
+            console.error('Failed to auto-create equipment→port link:', error);
+          }
+        } else if (hostAssocs.length > 1) {
+          // Multiple associations match — surface the picker so the user
+          // chooses (e.g., "inputPorts" vs "outputPorts"). The pending link
+          // gets fulfilled by handleAssociationSelect.
+          setPendingConnection({
+            sourceId: parentHostId,
+            targetId: created.id,
+            sourceClass: parentHostClass,
+            targetClass: createInstanceModal.className,
+          });
+        }
+        // hostAssocs.length === 0: nothing to do — host has no association
+        // to this port class. The port will render as an orphan node and the
+        // user can wire it manually via the property panel.
       }
 
       // If dropped inside a container, auto-create the containment association.

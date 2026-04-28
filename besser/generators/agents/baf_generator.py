@@ -35,6 +35,7 @@ _PERSONALIZATION_CONFIG_KEYS = frozenset({
     # original dict by ``flatten_agent_config_structure``).
     "presentation",
     "modality",
+    "content",
     # Flattened presentation fields.
     "agentLanguage",
     "agentStyle",
@@ -47,6 +48,10 @@ _PERSONALIZATION_CONFIG_KEYS = frozenset({
     # Flattened modality fields.
     "inputModalities",
     "outputModalities",
+    # Flattened content fields (user-profile-driven reply rewriting).
+    "adaptContentToUserProfile",
+    "userProfileName",
+    "userProfileModel",
 })
 
 

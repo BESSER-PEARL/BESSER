@@ -29,6 +29,12 @@ from besser.utilities.image_to_buml import image_to_buml
 from besser.utilities.kg_to_buml import kg_to_buml
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
 
+# BESSER KG → B-UML (deterministic, offline)
+from besser.BUML.notations.kg_to_buml import (
+    kg_to_class_diagram as kg_to_class_diagram_buml,
+    kg_to_object_diagram as kg_to_object_diagram_buml,
+)
+
 # BESSER utilities
 from besser.utilities.buml_code_builder.domain_model_builder import domain_model_to_code
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
@@ -48,6 +54,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     process_state_machine,
     process_agent_diagram,
     process_object_diagram,
+    process_kg_diagram,
     json_to_buml_project,
     # BUML to JSON converters
     class_buml_to_json,
@@ -55,6 +62,7 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
     state_machine_to_json,
     agent_buml_to_json,
     gui_buml_to_json,
+    object_model_to_json,
     project_to_json,
     kg_to_json,
 )
@@ -724,6 +732,74 @@ async def import_owl(owl_file: UploadFile = File(...)):
             "exportedAt": datetime.now(timezone.utc).isoformat(),
             "version": API_VERSION,
         }
+
+
+def _kg_payload_to_kg(input_data: DiagramInput):
+    """Validate that ``input_data`` carries a KG diagram and parse it.
+
+    Raises:
+        HTTPException(400): when the payload isn't a ``KnowledgeGraphDiagram``.
+    """
+    json_data = input_data.model_dump()
+    model = json_data.get("model") or {}
+    if model.get("type") != "KnowledgeGraphDiagram":
+        raise HTTPException(
+            status_code=400,
+            detail="Expected a KnowledgeGraphDiagram payload (model.type must be 'KnowledgeGraphDiagram').",
+        )
+    return process_kg_diagram(json_data), json_data
+
+
+@router.post("/kg-to-class-diagram", response_model=DiagramExportResponse)
+@handle_endpoint_errors("kg_to_class_diagram")
+async def kg_to_class_diagram_endpoint(input_data: DiagramInput):
+    """Transform a Knowledge Graph diagram into a BUML Class Diagram (TBox).
+
+    Deterministic, offline (no LLM) conversion: KGClass → Class,
+    KGProperty (rdfs:domain/range driven) → attribute or BinaryAssociation,
+    rdfs:subClassOf → Generalization. Multi-valued literal usage in the
+    ABox bumps the corresponding attribute multiplicity to 0..*.
+    """
+    kg, _json_data = _kg_payload_to_kg(input_data)
+    base_title = (input_data.title or kg.name or "Knowledge Graph")
+    result = kg_to_class_diagram_buml(kg, model_name=base_title)
+    diagram_json = class_buml_to_json(result.domain_model)
+    return {
+        "title": f"{base_title} (Class Diagram)",
+        "model": {**diagram_json, "type": "ClassDiagram"},
+        "diagramType": "ClassDiagram",
+        "warnings": [w.__dict__ for w in result.warnings],
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "version": API_VERSION,
+    }
+
+
+@router.post("/kg-to-object-diagram", response_model=DiagramExportResponse)
+@handle_endpoint_errors("kg_to_object_diagram")
+async def kg_to_object_diagram_endpoint(input_data: DiagramInput):
+    """Transform a Knowledge Graph diagram into a BUML Object Diagram (ABox).
+
+    KGIndividual → Object (typed via rdf:type), literal-target edges → slots,
+    individual-target edges → links. Blank nodes are skipped. The freshly
+    derived class diagram is embedded as ``referenceDiagramData`` so the
+    frontend can resolve ``classId`` references.
+    """
+    kg, _json_data = _kg_payload_to_kg(input_data)
+    base_title = (input_data.title or kg.name or "Knowledge Graph")
+
+    class_result = kg_to_class_diagram_buml(kg, model_name=base_title)
+    object_result = kg_to_object_diagram_buml(kg, class_result=class_result, model_name=base_title)
+    domain_json = class_buml_to_json(class_result.domain_model)
+    domain_json = {**domain_json, "type": "ClassDiagram"}
+    diagram_json = object_model_to_json(object_result.object_model, domain_json)
+    return {
+        "title": f"{base_title} (Object Diagram)",
+        "model": diagram_json,
+        "diagramType": "ObjectDiagram",
+        "warnings": [w.__dict__ for w in object_result.warnings],
+        "exportedAt": datetime.now(timezone.utc).isoformat(),
+        "version": API_VERSION,
+    }
 
 
 @router.post("/transform-agent-model-json")

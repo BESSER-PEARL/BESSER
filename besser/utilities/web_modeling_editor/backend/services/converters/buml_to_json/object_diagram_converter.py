@@ -10,6 +10,7 @@ from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
+from besser.BUML.metamodel.object import AttributeLink, Link, Object, ObjectModel
 from besser.utilities.web_modeling_editor.backend.services.utils import (
     determine_connection_direction, calculate_connection_points,
     calculate_path_points, calculate_relationship_bounds
@@ -453,3 +454,153 @@ def object_buml_to_json(content: str, domain_json: Dict[str, Any]) -> Dict[str, 
     except Exception as e:
         logger.error("Error parsing object BUML content: %s", e, exc_info=True)
         raise ValueError(f"Failed to convert object BUML to JSON: {str(e)}") from e
+
+
+def object_model_to_json(object_model: ObjectModel, domain_json: Dict[str, Any]) -> Dict[str, Any]:
+    """Convert an in-memory :class:`ObjectModel` directly to frontend JSON.
+
+    Companion to :func:`object_buml_to_json` (which expects Python source).
+    Used by transformations that produce an ``ObjectModel`` programmatically
+    (e.g. KG → Object Diagram) and don't want the source-code detour.
+
+    Args:
+        object_model: The in-memory :class:`ObjectModel` to serialise.
+        domain_json: Reference class-diagram JSON (frontend shape) that
+            supplies the ``classId`` mapping for object types and the
+            ``attributeId`` mapping for slots. Embedded as
+            ``referenceDiagramData`` in the returned diagram.
+
+    Returns:
+        A dictionary in the same shape as :func:`object_buml_to_json`.
+    """
+    elements: Dict[str, Dict[str, Any]] = {}
+    relationships: Dict[str, Dict[str, Any]] = {}
+
+    default_size = {"width": 960, "height": 670}
+    grid = {"x_spacing": 250, "y_spacing": 180, "max_columns": 4}
+
+    column = 0
+    row = 0
+
+    def next_position() -> tuple[int, int]:
+        nonlocal column, row
+        x = -460 + (column * grid["x_spacing"])
+        y = -300 + (row * grid["y_spacing"])
+        column += 1
+        if column >= grid["max_columns"]:
+            column = 0
+            row += 1
+        return x, y
+
+    # Build mappings from the reference class diagram.
+    class_name_to_id: Dict[str, str] = {}
+    class_attr_lookup: Dict[str, Dict[str, Dict[str, Any]]] = {}
+    association_id_map: Dict[str, str] = {}
+
+    if isinstance(domain_json, dict):
+        for elem_id, elem in (domain_json.get("elements") or {}).items():
+            if elem.get("type") in ("Class", "AbstractClass"):
+                class_name_to_id[elem.get("name", "")] = elem_id
+                attr_map: Dict[str, Dict[str, Any]] = {}
+                for attr_id in elem.get("attributes", []):
+                    attr_elem = (domain_json.get("elements") or {}).get(attr_id)
+                    if not attr_elem:
+                        continue
+                    attr_name = attr_elem.get("name", "").split(":")[0].strip().lstrip("+-#~")
+                    attr_type = attr_elem.get("attributeType")
+                    if not attr_type:
+                        parts = attr_elem.get("name", "").split(":")
+                        attr_type = parts[1].strip() if len(parts) > 1 else "str"
+                    attr_map[attr_name] = {
+                        "id": attr_id,
+                        "type": attr_type,
+                        "defaultValue": attr_elem.get("defaultValue"),
+                        "visibility": attr_elem.get("visibility", "public"),
+                    }
+                class_attr_lookup[elem_id] = attr_map
+
+        for rel_id, rel in (domain_json.get("relationships") or {}).items():
+            if rel.get("type") in ("ClassBidirectional", "ClassUnidirectional", "ClassComposition"):
+                if rel.get("name"):
+                    association_id_map.setdefault(rel["name"], rel_id)
+
+    # Pass 1: Object elements with their attribute children.
+    obj_to_element_id: Dict[int, str] = {}
+    for obj in sorted(object_model.objects, key=lambda o: o.name_):
+        x, y = next_position()
+        object_id = str(uuid.uuid4())
+        class_id = class_name_to_id.get(obj.classifier.name)
+        attr_lookup = class_attr_lookup.get(class_id, {}) if class_id else {}
+
+        attr_ids: list[str] = []
+        attr_y_offset = 30
+        for slot in obj.slots:
+            attr_id = str(uuid.uuid4())
+            attr_ids.append(attr_id)
+            slot_value = slot.value.value if slot.value is not None else ""
+            ref = attr_lookup.get(slot.attribute.name, {})
+            elements[attr_id] = {
+                "id": attr_id,
+                "name": f"{slot.attribute.name} = {slot_value}",
+                "type": "ObjectAttribute",
+                "owner": object_id,
+                "bounds": {"x": x + 0.5, "y": y + attr_y_offset - 0.5, "width": 199, "height": 30},
+                "attributeId": ref.get("id"),
+                "attributeType": ref.get("type", slot.attribute.type.name if hasattr(slot.attribute.type, "name") else "str"),
+            }
+            if ref.get("defaultValue") is not None:
+                elements[attr_id]["defaultValue"] = ref["defaultValue"]
+            attr_y_offset += 30
+
+        elements[object_id] = {
+            "id": object_id,
+            "name": obj.name_,
+            "type": "ObjectName",
+            "owner": None,
+            "bounds": {"x": x, "y": y, "width": 200, "height": max(70, 40 + len(attr_ids) * 30)},
+            "attributes": attr_ids,
+            "methods": [],
+            "classId": class_id,
+        }
+        obj_to_element_id[id(obj)] = object_id
+
+    # Pass 2: Links. ``ObjectModel.links`` aggregates from each Object.
+    for link in sorted(object_model.links, key=lambda l: l.name):
+        if not isinstance(link, Link) or len(link.connections) != 2:
+            continue
+        end_a, end_b = link.connections[0], link.connections[1]
+        src_id = obj_to_element_id.get(id(end_a.object))
+        tgt_id = obj_to_element_id.get(id(end_b.object))
+        if not src_id or not tgt_id:
+            continue
+        rel_id = str(uuid.uuid4())
+        assoc_id = association_id_map.get(link.association.name) if link.association else None
+        relationships[rel_id] = {
+            "id": rel_id,
+            "name": link.association.name if link.association else link.name,
+            "type": "ObjectLink",
+            "owner": None,
+            "bounds": {"x": -260, "y": -315, "width": 300, "height": 80},
+            "path": [
+                {"x": 0, "y": 80},
+                {"x": 40, "y": 80},
+                {"x": 40, "y": 0},
+                {"x": 300, "y": 0},
+                {"x": 300, "y": 65},
+            ],
+            "source": {"direction": "Right", "element": src_id},
+            "target": {"direction": "Topleft", "element": tgt_id},
+            "isManuallyLayouted": False,
+            "associationId": assoc_id,
+        }
+
+    return {
+        "version": "3.0.0",
+        "type": "ObjectDiagram",
+        "size": default_size,
+        "interactive": {"elements": {}, "relationships": {}},
+        "elements": elements,
+        "relationships": relationships,
+        "assessments": {},
+        "referenceDiagramData": domain_json or {},
+    }

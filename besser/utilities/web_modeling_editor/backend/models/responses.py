@@ -1,6 +1,6 @@
 """Standardized API response models."""
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
 
@@ -11,6 +11,7 @@ class DiagramExportResponse(BaseModel):
     diagramType: str
     exportedAt: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     version: str = "1.0.0"
+    warnings: Optional[List[Dict[str, Any]]] = None
 
 
 class ProjectExportResponse(BaseModel):

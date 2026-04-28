@@ -358,3 +358,26 @@ export function isPortClass(className: string): boolean {
 export function isConnectionClass(className: string): boolean {
   return Object.prototype.hasOwnProperty.call(CONNECTION_CLASSES, className);
 }
+
+// ---------------------------------------------------------------------------
+// Subclass registry (polymorphic instance matching)
+// ---------------------------------------------------------------------------
+// Maps each class name to itself + all transitive subclasses, so the editor
+// can treat a ``Compressor`` instance as an ``Equipment`` wherever the latter
+// is expected (link target picker, connection-class port matching, etc.).
+
+export const SUBCLASSES_OF: Record<string, string[]> = {
+  {%- for parent_name, descendants in subclass_registry.items() %}
+  '{{ parent_name }}': [{% for d in descendants %}'{{ d }}'{% if not loop.last %}, {% endif %}{% endfor %}]{% if not loop.last %},{% endif %}
+  {%- endfor %}
+};
+
+/** Returns true when an instance of ``actualClass`` can stand in for an
+ *  expected target typed as ``expectedClass``. Matches strict equality plus
+ *  any transitive subclass. Falls back to strict equality for unknown
+ *  classes (e.g. primitive types). */
+export function isAssignableTo(actualClass: string, expectedClass: string): boolean {
+  const list = SUBCLASSES_OF[expectedClass];
+  if (list) return list.includes(actualClass);
+  return actualClass === expectedClass;
+}

@@ -33,6 +33,7 @@ import {
   CONNECTION_CLASSES,
   isPortClass,
   isConnectionClass as isConnectionClassMeta,
+  isAssignableTo,
 } from '../types/models';
 import type { BaseInstance, ClassMetadata, AssociationMetadata, EdgeStyle, ArrowStyleName } from '../types/models';
 import * as api from '../api/instances';
@@ -167,7 +168,9 @@ function findPortHostAt(
   const candidates = nodes.filter((n) => {
     const meta = (n.data as { classMetadata?: ClassMetadata } | undefined)?.classMetadata;
     if (!meta || meta.isPort || meta.isConnectionClass) return false;
-    return meta.associations.some((a) => a.targetClass === portClassName);
+    // Polymorphic: an association declared with target ``Port`` accepts any
+    // subclass too (e.g. ``WaterPort`` → ``Port``).
+    return meta.associations.some((a) => isAssignableTo(portClassName, a.targetClass));
   });
   const hits = candidates.filter((n) => {
     const meta = (n.data as { classMetadata: ClassMetadata }).classMetadata;
@@ -422,7 +425,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         // Direction A: source is the container, target is the child.
         if (srcMeta?.isContainer) {
           const assocMeta = srcMeta.associations.find(
-            (a) => a.name === link.association_name && a.targetClass === link.target_class,
+            (a) => a.name === link.association_name && isAssignableTo(link.target_class, a.targetClass),
           );
           if (assocMeta?.isContainerAssociation) {
             remember(link.target_id, instance.id);
@@ -435,7 +438,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         const tgtMeta = availableClasses.find((c) => c.name === tgtInstance.class_name);
         if (!tgtMeta?.isContainer) continue;
         const reverseAssoc = tgtMeta.associations.find(
-          (a) => a.name === link.association_name && a.targetClass === instance.class_name,
+          (a) => a.name === link.association_name && isAssignableTo(instance.class_name, a.targetClass),
         );
         if (reverseAssoc?.isContainerAssociation) {
           remember(instance.id, tgtInstance.id);
@@ -744,10 +747,15 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
         // Pick a connection class whose endpoint ports match. If multiple match
         // we pick the first one for now — the property editor lets the user
         // change the class afterwards. (A modal selector is a follow-up.)
-        const candidates = Object.entries(CONNECTION_CLASSES).filter(([_, meta]) =>
-          meta.portClass === sourcePortInstance.class_name ||
-          meta.portClass === targetPortInstance.class_name,
-        );
+        // Polymorphic match: a port class matches any connection-class whose
+        // declared portClass is the port's class OR an ancestor.
+        const candidates = Object.entries(CONNECTION_CLASSES).filter(([_, meta]) => {
+          if (!meta.portClass) return false;
+          return (
+            isAssignableTo(sourcePortInstance.class_name, meta.portClass) ||
+            isAssignableTo(targetPortInstance.class_name, meta.portClass)
+          );
+        });
         if (candidates.length === 0) return;
         const [connClassName, connMeta] = candidates[0];
         try {
@@ -784,7 +792,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       const sourceClass = availableClasses.find((c) => c.name === sourceInstance.class_name);
       const validAssociations =
         sourceClass?.associations.filter(
-          (assoc) => assoc.targetClass === targetInstance.class_name
+          (assoc) => isAssignableTo(targetInstance.class_name, assoc.targetClass)
         ) || [];
 
       if (validAssociations.length === 1) {
@@ -859,7 +867,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       const sourceClass = availableClasses.find((c) => c.name === sourceInstance.class_name);
       if (!sourceClass) return false;
       return sourceClass.associations.some(
-        (a) => a.targetClass === targetInstance.class_name
+        (a) => isAssignableTo(targetInstance.class_name, a.targetClass)
       );
     },
     [instances, availableClasses]
@@ -1000,8 +1008,9 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       const { parentHostId, parentHostClass } = createInstanceModal;
       if (parentHostId && parentHostClass && created?.id) {
         const hostMeta = availableClasses.find((c) => c.name === parentHostClass);
+        // Polymorphic: pick any association whose target is this class or an ancestor.
         const hostAssocs = hostMeta?.associations.filter(
-          (a) => a.targetClass === createInstanceModal.className,
+          (a) => isAssignableTo(createInstanceModal.className, a.targetClass),
         ) ?? [];
         if (hostAssocs.length === 1) {
           try {
@@ -1038,7 +1047,7 @@ const InstanceCanvasInner: React.FC<InstanceCanvasProps> = ({
       if (parentContainerId && parentContainerClass && created?.id) {
         const parentMeta = availableClasses.find((c) => c.name === parentContainerClass);
         const containerAssocs = parentMeta?.associations.filter(
-          (a) => a.targetClass === className && a.isContainerAssociation,
+          (a) => isAssignableTo(className, a.targetClass) && a.isContainerAssociation,
         ) ?? [];
         if (containerAssocs.length === 1) {
           try {

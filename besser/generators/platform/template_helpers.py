@@ -84,6 +84,38 @@ def _walk_class_chain(cls):
             yield parent
 
 
+def build_subclass_registry(classes):
+    """Map each class name to itself + all transitive subclasses.
+
+    Used by the generated runtime to do polymorphic instance matching: an
+    instance of ``Compressor`` should also be acceptable wherever a class
+    typed as ``Equipment`` is expected.
+    """
+    classes = list(classes)
+    name_to_cls = {c.name: c for c in classes}
+    children_by_parent = {}
+    for cls in classes:
+        parents = getattr(cls, "parents", None)
+        if not callable(parents):
+            continue
+        for parent in parents():
+            if parent.name in name_to_cls:
+                children_by_parent.setdefault(parent.name, []).append(cls.name)
+
+    registry = {}
+    for cls in classes:
+        seen = {cls.name}
+        queue = list(children_by_parent.get(cls.name, []))
+        while queue:
+            n = queue.pop(0)
+            if n in seen:
+                continue
+            seen.add(n)
+            queue.extend(children_by_parent.get(n, []))
+        registry[cls.name] = sorted(seen)
+    return registry
+
+
 def resolve_class_representation(cls, customization):
     """Return a dict describing the effective representation of a class.
 

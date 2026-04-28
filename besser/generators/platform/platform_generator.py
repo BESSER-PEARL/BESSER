@@ -16,6 +16,7 @@ from besser.BUML.metamodel.platform_customization import PlatformCustomizationMo
 from besser.generators import GeneratorInterface
 from besser.generators.platform.template_helpers import (
     build_representation_registries,
+    build_subclass_registry,
     dash_for,
     enum_value,
     marker_for,
@@ -126,6 +127,7 @@ class PlatformGenerator(GeneratorInterface):
             "port_classes_registry": registries["port_classes"],
             "connection_classes_registry": registries["connection_classes"],
             "connection_edge_styles": connection_edge_styles,
+            "subclass_registry": build_subclass_registry(classes),
         }
 
     def generate(self):

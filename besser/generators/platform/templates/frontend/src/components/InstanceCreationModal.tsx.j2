@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { AssociationMetadata, BaseInstance, ClassMetadata } from '../types/models';
-import { getEnumerationValues } from '../types/models';
+import { getEnumerationValues, isAssignableTo } from '../types/models';
 
 export interface SelectedLink {
   associationName: string;
@@ -214,7 +214,10 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
   const candidatesByAssociation = useMemo(() => {
     const map: Record<string, BaseInstance[]> = {};
     for (const assoc of associations) {
-      map[assoc.name] = existingInstances.filter((i) => i.class_name === assoc.targetClass);
+      // Polymorphic: a Compressor counts as an Equipment, etc.
+      map[assoc.name] = existingInstances.filter((i) =>
+        isAssignableTo(i.class_name, assoc.targetClass),
+      );
     }
     return map;
   }, [associations, existingInstances]);

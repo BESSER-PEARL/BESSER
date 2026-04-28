@@ -117,8 +117,8 @@ def _render_operation(node: OperationCallExpression, parent_prec: int) -> str:
         return _paren(f"not {operand}", _PREC_UNARY, parent_prec)
 
     if op == "ALLInstances":
-        # source is a TypeExp; ALLInstances is a type-method call.
-        return f"{_render(node.source, _PREC_POSTFIX)}.allInstances()"
+        # OCL spec uses ``::`` for class-scoped operations.
+        return f"{_render(node.source, _PREC_POSTFIX)}::allInstances()"
 
     if op == "Size":
         return f"{_render(node.source, _PREC_POSTFIX)}->size()"

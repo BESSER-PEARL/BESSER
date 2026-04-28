@@ -17,6 +17,7 @@ from besser.BUML.notations.ocl.api import parse_ocl
 from besser.BUML.notations.ocl.pretty_printer import pretty_print
 from besser.BUML.notations.ocl.wrapping_visitor import WrappingVisitor
 from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
+from besser.BUML.notations.ocl.normalization import normalize
 
 # Re-exports from the metamodel for one-stop import.
 from besser.BUML.metamodel.ocl import (
@@ -32,6 +33,7 @@ from besser.BUML.metamodel.ocl import (
 
 __all__ = [
     "parse_ocl", "pretty_print", "WrappingVisitor", "BOCLSyntaxError",
+    "normalize",
     "walk", "clone", "substitute", "ScopeStack",
     "is_op", "is_and", "is_or", "is_xor", "is_implies", "is_not",
     "is_size", "is_isempty", "is_allinstances",

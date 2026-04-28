@@ -245,8 +245,8 @@ def test_tutorial_returns_nn():
 
 
 def test_tutorial_name():
-    """Main NN is named NeuralNetwork."""
-    assert _tutorial().name == "NeuralNetwork"
+    """Main NN is named Neural_Network."""
+    assert _tutorial().name == "Neural_Network"
 
 
 def test_tutorial_no_sub_nns():

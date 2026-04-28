@@ -12,7 +12,7 @@
   "elements": {
     "6feb868b-45bf-4c44-88ab-6af624191fa9": {
       "id": "6feb868b-45bf-4c44-88ab-6af624191fa9",
-      "name": "NeuralNetwork",
+      "name": "Neural_Network",
       "type": "NNContainer",
       "owner": null,
       "bounds": {

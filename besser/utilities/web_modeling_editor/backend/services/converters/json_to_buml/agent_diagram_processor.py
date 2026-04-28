@@ -340,8 +340,18 @@ def process_agent_diagram(json_data):
             if fallback_body:
                 agent_state.set_fallback_body(fallback_body)
 
-    # Build intent lookup dict for O(1) resolution during transition processing
+    # Build intent lookup dict for O(1) resolution during transition processing.
+    # Intent names are unique case-insensitively in BUML (see Agent._validate_state_intent_name_collisions),
+    # so we accept both exact and casefold matches. This protects against frontend personalization
+    # variants that emit intentName references with different casing than the intent definitions
+    # they were derived from — without this, the lookup misses and a duplicate Intent is created
+    # that never appears in agent.intents, leaving the template referencing an undefined variable.
     intent_lookup = {intent.name: intent for intent in agent.intents}
+    intent_lookup_casefold = {
+        intent.name.casefold(): intent
+        for intent in agent.intents
+        if isinstance(intent.name, str)
+    }
 
     # Third pass: Process transitions and comment links
     transition_count = 0
@@ -443,8 +453,13 @@ def process_agent_diagram(json_data):
 
                 # Create appropriate transition based on condition
                 if condition_name == "when_intent_matched":
-                    # Find the intent by name via O(1) lookup
+                    # Find the intent by name via O(1) lookup, falling back to a
+                    # case-insensitive match so personalization variants whose JSON
+                    # uses a different casing than the intent definition still resolve
+                    # to the same intent object.
                     intent_to_match = intent_lookup.get(transition_payload)
+                    if intent_to_match is None and isinstance(transition_payload, str):
+                        intent_to_match = intent_lookup_casefold.get(transition_payload.casefold())
 
                     if intent_to_match:
                         source_state.when_intent_matched(intent_to_match).go_to(target_state)
@@ -623,5 +638,8 @@ def process_agent_diagram(json_data):
                 # Append to existing description
                 existing_desc = agent.metadata.description or ""
                 agent.metadata.description = f"{existing_desc}\n{comment_text}" if existing_desc else comment_text
+
+    # Validate the agent model at build time so all callers get validation for free
+    agent.validate(raise_exception=True)
 
     return agent

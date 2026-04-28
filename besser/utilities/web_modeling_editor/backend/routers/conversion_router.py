@@ -61,6 +61,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     extract_openai_api_key,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
+    generate_user_profile_document,
+)
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
 )
@@ -84,6 +87,9 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
 )
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +103,7 @@ MAX_BUML_SIZE = 2 * 1024 * 1024       # 2 MB
 # ---------------------------------------------------------------------------
 # Allowed MIME / extension sets per upload type
 # ---------------------------------------------------------------------------
-ALLOWED_CSV_EXTENSIONS = {".csv"}
+ALLOWED_SPREADSHEET_EXTENSIONS = {".csv", ".xlsx"}
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg"}
 ALLOWED_BUML_EXTENSIONS = {".py"}
 ALLOWED_KG_EXTENSIONS = {".ttl", ".rdf", ".json"}
@@ -155,6 +161,14 @@ def _validate_file_content(content: bytes, filename: str) -> None:
                 detail="CSV file does not contain comma or semicolon separators.",
             )
 
+    elif ext == ".xlsx":
+        # XLSX files are ZIP archives — check the ZIP magic bytes.
+        if not content.startswith(b"PK\x03\x04"):
+            raise HTTPException(
+                status_code=400,
+                detail="XLSX file appears to be corrupted or is not a valid Excel workbook.",
+            )
+
     elif ext == ".py":
         # Must be valid Python syntax
         try:
@@ -199,6 +213,49 @@ async def _write_file(path: str, data: bytes | str, mode: str = "wb") -> None:
         with open(path, mode) as fh:
             fh.write(data)
     await asyncio.to_thread(_do_write)
+
+
+def _xlsx_bytes_to_csv_file(xlsx_bytes: bytes, csv_path: str) -> None:
+    """Convert the first worksheet of an XLSX workbook to a UTF-8 CSV file.
+
+    Lazy-imports openpyxl so the rest of the backend stays importable if the
+    optional dependency is missing.
+    """
+    import csv as _csv
+    import io
+
+    try:
+        from openpyxl import load_workbook
+    except ImportError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="XLSX support requires the 'openpyxl' package. Install it with `pip install openpyxl`.",
+        ) from exc
+
+    try:
+        workbook = load_workbook(io.BytesIO(xlsx_bytes), read_only=True, data_only=True)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Could not read XLSX file: {exc}",
+        ) from exc
+
+    try:
+        worksheet = workbook.active
+        if worksheet is None:
+            raise HTTPException(status_code=400, detail="XLSX file contains no worksheets.")
+
+        with open(csv_path, "w", encoding="utf-8", newline="") as fh:
+            writer = _csv.writer(fh)
+            rows_written = 0
+            for row in worksheet.iter_rows(values_only=True):
+                writer.writerow(["" if cell is None else cell for cell in row])
+                rows_written += 1
+    finally:
+        workbook.close()
+
+    if rows_written == 0:
+        raise HTTPException(status_code=400, detail="XLSX worksheet is empty.")
 
 
 async def _read_json_file(path: str) -> dict:
@@ -459,18 +516,32 @@ async def get_single_json_model(buml_file: UploadFile = File(...)):
 @handle_endpoint_errors("csv_to_domain_model_endpoint")
 async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
     """
-    Accepts one or more CSV files and returns a B-UML domain model as JSON.
+    Accepts one or more CSV or XLSX files and returns a B-UML domain model as JSON.
+    XLSX files are converted to CSV (first worksheet) before reverse engineering.
     """
     file_paths = []
     with tempfile.TemporaryDirectory(prefix=CSV_TEMP_DIR_PREFIX) as temp_dir:
         # Save uploaded files to temp dir
         for file in files:
             file_content = await file.read()
-            _validate_upload(file, max_size=MAX_CSV_SIZE, allowed_extensions=ALLOWED_CSV_EXTENSIONS, content=file_content)
+            _validate_upload(
+                file,
+                max_size=MAX_CSV_SIZE,
+                allowed_extensions=ALLOWED_SPREADSHEET_EXTENSIONS,
+                content=file_content,
+            )
             _validate_file_content(file_content, file.filename or "")
             safe_filename = os.path.basename(file.filename)
-            file_path = os.path.join(temp_dir, safe_filename)
-            await _write_file(file_path, file_content)
+            _, ext = os.path.splitext(safe_filename)
+            ext = ext.lower()
+
+            if ext == ".xlsx":
+                csv_name = os.path.splitext(safe_filename)[0] + ".csv"
+                file_path = os.path.join(temp_dir, csv_name)
+                _xlsx_bytes_to_csv_file(file_content, file_path)
+            else:
+                file_path = os.path.join(temp_dir, safe_filename)
+                await _write_file(file_path, file_content)
             file_paths.append(file_path)
 
         # Generate DomainModel from CSVs
@@ -511,15 +582,30 @@ async def csv_to_domain_model_endpoint(files: list[UploadFile] = File(...)):
 @handle_endpoint_errors("get_json_model_from_image")
 async def get_json_model_from_image(
     image_file: UploadFile = File(...),
-    api_key: str = Form(...)
+    api_key: str = Form(...),
+    existing_model: str = Form(None),
 ):
     """
     Accepts a PNG or JPEG image and an OpenAI API key, uses BESSER's imagetouml feature to transform the image into a BUML class diagram, then converts the BUML to JSON and returns the JSON object.
+
+    When `existing_model` is provided (as a stringified diagram JSON of an existing
+    ClassDiagram), the image is merged into that model — same-name classes are
+    preserved, new ones are added — and the merged diagram is returned.
     """
     # Save uploaded image to a temp folder
     image_content = await image_file.read()
     _validate_upload(image_file, max_size=MAX_IMAGE_SIZE, allowed_extensions=ALLOWED_IMAGE_EXTENSIONS, content=image_content)
     _validate_file_content(image_content, image_file.filename or "")
+
+    existing_domain_model = None
+    if existing_model:
+        try:
+            existing_json = json.loads(existing_model)
+            if existing_json.get("model", {}).get("elements") or existing_json.get("elements"):
+                payload = existing_json if "model" in existing_json else {"title": "Existing", "model": existing_json}
+                existing_domain_model = process_class_diagram(payload)
+        except (json.JSONDecodeError, ValueError):
+            existing_domain_model = None
 
     with tempfile.TemporaryDirectory() as temp_dir:
         safe_filename = os.path.basename(image_file.filename)
@@ -538,7 +624,11 @@ async def get_json_model_from_image(
             raise HTTPException(status_code=400, detail="No valid image file found.")
         image_path = os.path.join(image_folder, image_files[0])
 
-        domain_model = image_to_buml(image_path=image_path, openai_token=api_key)
+        domain_model = image_to_buml(
+            image_path=image_path,
+            openai_token=api_key,
+            existing_model=existing_domain_model,
+        )
         diagram_json = class_buml_to_json(domain_model)
 
         diagram_title = diagram_json.get("title", "Imported Class Diagram")
@@ -608,7 +698,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         config = deepcopy(base_config)
         user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
         if isinstance(user_profile_payload, dict):
-            config["userProfileModel"] = _generate_user_profile_document(user_profile_payload)
+            config["userProfileModel"] = generate_user_profile_document(user_profile_payload)
         elif isinstance(config, dict) and "userProfileModel" in config:
             config.pop("userProfileModel", None)
 
@@ -627,19 +717,38 @@ async def transform_agent_model_json(input_data: DiagramInput):
 
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
+        generation_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
         generator_instance = generator_class(
             getattr(agent_module, "agent", agent_model),
             config=config,
             openai_api_key=extract_openai_api_key(config),
-            output_dir=temp_dir,
+            output_dir=generation_output_dir,
         )
         generator_instance.generate()
 
-        personalized_json_path = os.path.join(temp_dir, OUTPUT_DIR_NAME, "personalized_agent_model.json")
-        if not os.path.isfile(personalized_json_path):
-            raise HTTPException(status_code=500, detail="personalized_agent_model.json not found after generation")
+        # Some generator implementations still emit files in temp_dir directly.
+        candidate_paths = [
+            os.path.join(generation_output_dir, "personalized_agent_model.json"),
+            os.path.join(temp_dir, "personalized_agent_model.json"),
+        ]
+        personalized_json_path = next((path for path in candidate_paths if os.path.isfile(path)), None)
 
-        personalized_json = await _read_json_file(personalized_json_path)
+        if personalized_json_path:
+            personalized_json = await _read_json_file(personalized_json_path)
+        else:
+            # Fallback: serialize the personalized in-memory model and convert it to JSON.
+            try:
+                personalized_agent_file = os.path.join(temp_dir, "personalized_agent_model.py")
+                agent_model_to_code(generator_instance.model, personalized_agent_file)
+
+                personalized_buml = await _read_file(personalized_agent_file, "r", encoding="utf-8")
+                personalized_json = agent_buml_to_json(personalized_buml)
+            except Exception as conversion_error:
+                logger.exception("Failed to build fallback personalized agent JSON")
+                raise ConversionError(
+                    "personalized_agent_model.json not found after generation "
+                    f"and fallback conversion failed: {conversion_error}"
+                ) from conversion_error
 
         return {
             "model": personalized_json,
@@ -649,14 +758,3 @@ async def transform_agent_model_json(input_data: DiagramInput):
         }
 
 
-def _generate_user_profile_document(user_profile_model: dict) -> dict:
-    """Generate the normalized JSON document for a stored user profile diagram.
-
-    This is a local helper used by transform_agent_model_json. It delegates to
-    the generation router's implementation for the actual user profile generation.
-    """
-    # Import here to avoid circular imports at module level
-    from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
-        _generate_user_profile_document as _gen_user_profile_doc,
-    )
-    return _gen_user_profile_doc(user_profile_model)

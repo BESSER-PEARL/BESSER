@@ -51,7 +51,54 @@ reference each other by ID through the ``references`` field. This allows stable 
 resolution even when diagrams are reordered or deleted.
 
 When generating from the web editor, the backend resolves the active ``ClassDiagram`` and
-``GUINoCodeDiagram`` (and optionally an ``AgentDiagram``) from the project payload.
+``GUINoCodeDiagram`` from the project payload and collects **every** ``AgentDiagram`` in the
+project — not just the one referenced by the active GUI. This lets a single web app bind
+individual ``AgentComponent``\ s to different agents (see *Multi-agent projects* below).
+
+
+Multi-agent projects
+--------------------
+
+A project may contain several ``AgentDiagram``\ s. Each becomes one generated agent under
+``agents/<slug>/`` in the output zip, and the web-app deploys all of them as independent
+WebSocket services.
+
+* **GUI binding** — each ``AgentComponent`` in a GUI diagram has an ``agent-name`` attribute
+  that is matched against the BUML ``Agent.name``. The editor's component-property panel lists
+  every agent in the project so different components can talk to different agents.
+* **Uniqueness** — agent names must be unique within a project. The editor blocks duplicate
+  renames in the UI, and the generation endpoint returns HTTP 400 on duplicates as a
+  safety net.
+* **Runtime routing** — the generated React ``AgentComponent`` reads a ``VITE_AGENT_URLS``
+  JSON map (``{"Alpha": "ws://localhost:8765", ...}``) and opens the WebSocket matching its
+  own ``agent-name`` prop. A legacy ``VITE_AGENT_URL`` variable is still emitted and used as a
+  fallback for single-agent back-compat.
+* **Local docker-compose** — one service block per agent with port offsets
+  (``8765``, ``8766``, ...) and a build-time ``VITE_AGENT_URLS`` argument injected into the
+  frontend image.
+* **Render deployment** — the GitHub-deployment pipeline emits one ``type: web`` block per
+  agent in ``render.yaml`` and a ``frontend/.env.production`` with the same ``VITE_AGENT_URLS``
+  JSON map pointing at each service's ``*.onrender.com`` URL.
+
+On the Python API side:
+
+.. code-block:: python
+
+    from besser.generators.web_app import WebAppGenerator
+
+    WebAppGenerator(
+        model=domain_model,
+        gui_model=gui_model,
+        output_dir="out/",
+        agent_models=[alpha_agent, beta_agent],
+        agent_configs={
+            "Alpha": {"intentRecognitionTechnology": "classical"},
+            "Beta":  {"intentRecognitionTechnology": "llm"},
+        },
+    ).generate()
+
+The legacy scalar parameters ``agent_model=`` and ``agent_config=`` are still accepted as
+deprecated back-compat shims but map to a one-element list under the hood.
 
 
 How It Works
@@ -92,6 +139,17 @@ Generated Output Structure
    │   ├── package.json
    │   ├── Dockerfile           # Frontend container
    │   └── README.md
+   ├── agents/                  # One subfolder per BUML Agent (if any)
+   │   ├── alpha/
+   │   │   ├── Alpha.py
+   │   │   ├── config.yaml
+   │   │   ├── Dockerfile
+   │   │   └── requirements.txt
+   │   └── beta/
+   │       ├── Beta.py
+   │       ├── config.yaml
+   │       ├── Dockerfile
+   │       └── requirements.txt
    ├── docker-compose.yml       # Container orchestration
 
 

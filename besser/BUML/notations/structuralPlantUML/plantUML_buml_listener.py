@@ -77,8 +77,10 @@ class BUMLGenerationListener(PlantUMLListener):
             else "public"
 
         if ctx.dType().primitiveData():
-            primitive_type = "str" if ctx.dType().primitiveData().getText() == "string" \
-                else ctx.dType().primitiveData().getText()
+            primitive_type = {"string": "str", "integer": "int", "boolean": "bool"}.get(
+                ctx.dType().primitiveData().getText(),
+                ctx.dType().primitiveData().getText(),
+            )
             attr_type = self.__buml_model.get_type_by_name(primitive_type)
         else:
             attr_type = self.__buml_model.get_type_by_name(ctx.dType().ID().getText())
@@ -125,8 +127,10 @@ class BUMLGenerationListener(PlantUMLListener):
         param_name = ctx.ID().getText()
 
         if ctx.dType().primitiveData():
-            primitive_type = "str" if ctx.dType().primitiveData().getText() == "string" \
-                else ctx.dType().primitiveData().getText()
+            primitive_type = {"string": "str", "integer": "int", "boolean": "bool"}.get(
+                ctx.dType().primitiveData().getText(),
+                ctx.dType().primitiveData().getText(),
+            )
             param_type = self.__buml_model.get_type_by_name(primitive_type)
         else:
             param_type = self.__buml_model.get_type_by_name(ctx.dType().ID().getText())

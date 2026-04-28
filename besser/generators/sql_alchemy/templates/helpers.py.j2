@@ -13,8 +13,10 @@
     {%- for attribute in sort(class.attributes) %}
     {%- set is_pk = attribute.is_id or (attribute.name == ids.get(class.name)) %}
     {%- set nullable = attribute.is_optional and not is_pk %}
-    {{ attribute.name }}: Mapped[{% if nullable %}Optional[{{ mapped_type(attribute.type.name) }}]{% else %}{{ mapped_type(attribute.type.name) }}{% endif %}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {%- set unique_needed = attribute.is_external_id and not is_pk %}
+    {{ attribute.name }}: Mapped_[{% if nullable %}Optional_[{{ mapped_type(attribute.type.name) }}]{% else %}{{ mapped_type(attribute.type.name) }}{% endif %}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
     {%- if is_pk %}, primary_key=True{% endif %}
+    {%- if unique_needed %}, unique=True{% endif %}
     {%- if nullable %}, nullable=True{% endif %}
     {%- if attribute.default_value is not none %}, default={% if attribute.type.name == 'str' or attribute.type.name == 'string' %}"{{ attribute.default_value }}"{% elif attribute.type.name == 'bool' %}{{ attribute.default_value | capitalize }}{% elif attribute.type.__class__.__name__ == 'Enumeration' %}{{ attribute.type.name }}.{{ attribute.default_value }}{% else %}{{ attribute.default_value }}{% endif %}{% endif %})
     {%- endfor %}
@@ -33,10 +35,10 @@
         {%- set fk_expr = None %}
     {%- endif %}
     {%- if is_many -%}
-{{class.name}}.{{end.name}}: Mapped[List["{{end.type.name}}"]] = relationship("{{end.type.name}}"
+{{class.name}}.{{end.name}}: Mapped_[List_["{{end.type.name}}"]] = relationship("{{end.type.name}}"
         {%- if secondary %}, secondary={{ secondary }}{% endif %}, back_populates="{{other_end.name}}"
         {%- if fk_needed %}{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %}{% endif %})
     {%- else -%}
-{{class.name}}.{{end.name}}: Mapped["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}"{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %})
+{{class.name}}.{{end.name}}: Mapped_["{{end.type.name}}"] = relationship("{{end.type.name}}", back_populates="{{other_end.name}}"{% if fk_needed %}, foreign_keys=[{{ fk_expr }}]{% endif %})
     {%- endif -%}
 {%- endmacro %}

@@ -1,198 +1,249 @@
 grammar BOCL;
 
-//oclFile: contextDeclaration;
+// =============================================================
+// Top-level rules
+// =============================================================
+oclFile
+    : contextDeclaration EOF
+    | initConstraints EOF
+    | preCondition EOF
+    | postCondition EOF
+    ;
 
-//contextDeclaration: CONTEXT ID;
+preCondition
+    : CONTEXT ID DOUBLECOLON ID LPAREN paramList? RPAREN PRE COLON expression
+    ;
 
+postCondition
+    : CONTEXT ID DOUBLECOLON ID LPAREN paramList? RPAREN POST COLON expression
+    ;
 
+initConstraints
+    : CONTEXT ID DOUBLECOLON ID COLON typeRef INIT COLON expression
+    ;
 
-// Top-level constructs
-oclFile: initConstraints| preCondition|postCondition|contextDeclaration (expression  )* ;
-//context Library:: findBook(title:str) pre: self.has->size()>0
-preCondition:CONTEXT ID DoubleCOLON ID LPAREN? (ID? COLON (BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE |  collectionType|SET)?)* RPAREN? PRE COLON expression;
-postCondition:CONTEXT ID DoubleCOLON ID LPAREN? (ID? COLON (BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE |  collectionType|SET)?)* RPAREN? POST COLON expression;
+contextDeclaration
+    : CONTEXT ID constraint+
+    ;
 
-initConstraints: CONTEXT ID DoubleCOLON ID COLON (BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE |  collectionType|SET) INIT COLON expression;
+constraint
+    : INV ID? COLON expression SEMI?
+    ;
 
-// Context Declarations
-contextDeclaration:
-     CONTEXT ID (COLON type)? LBRACE? constraint* RBRACE? DoubleCOLON? functionCall? COLON? type?  LPAREN? ID? RPAREN? COLON? (DERIVE |BODY| INIT | PRE | POST| Def)? COLON? expression? #ContextExp
- ;
+paramList
+    : param (COMMA param)*
+    ;
 
-constraint: (INV | PRE | POST) ID? COLON expression SEMI? ;
-functionCall: ID LPAREN (SingleQuote? expression SingleQuote? COMMA?)* RPAREN | ID LPAREN (ID COLON ID)* RPAREN
- | LPAREN(NUMBER COMMA?)* RPAREN;
+param
+    : ID? COLON typeRef
+    ;
 
-type: BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE | OCLANY | OCLVOID | collectionType | userDefinedType|SET ;
-collectionType: SET LT type GT | BAG LT type  GT| SEQUENCE LT type GT | ORDEREDSET LT type GT;
-userDefinedType: ID ;
+// =============================================================
+// Type system
+// =============================================================
+typeRef
+    : primitiveType
+    | collectionType
+    | ID
+    ;
 
-expression:
-          (AND | OR )? binaryExpression expression? #binary
-          | unaryExpression expression? #unary
-          | IF expression  #ifExp
-          | THEN expression #thenExp
-          | ELSE expression #elseExp
-          | ENDIF  expression? #endIfExp
-          | primaryExpression  (DOT ID)* DOT OCLISTYPEOF LPAREN type RPAREN expression? #OCLISTYPEOF
-          | primaryExpression  (DOT ID)* DOT OCLASTYPE LPAREN type RPAREN expression? #OCLASTYPE
-          | primaryExpression  (DOT ID)* DOT OCLISKINDOF LPAREN type RPAREN expression? #OCLISKINDOF
+primitiveType
+    : BOOLEAN_TYPE | INTEGER_TYPE | REAL_TYPE | STRING_TYPE
+    ;
 
-          | primaryExpression?  (DOT ID)* Arrow ISEMPTY LPAREN RPAREN expression? RPAREN* #ISEMPTY
-          | primaryExpression?  (DOT ID)* Arrow SUM LPAREN RPAREN  binaryFunctionCall? expression? RPAREN* #SUM
-          | primaryExpression?  (DOT ID)* (DOT | Arrow) SIZE   LPAREN RPAREN binaryFunctionCall? expression? RPAREN* #SIZE
+collectionType
+    : (SET | BAG | SEQUENCE | ORDEREDSET) LT typeRef GT
+    ;
 
-          |  Arrow? INCLUDES LPAREN expression RPAREN expression? RPAREN* #INCLUDES
-          |  Arrow? EXCLUDES LPAREN expression RPAREN  expression? RPAREN* #EXCLUDES
-          |  Arrow? LPAREN* SEQUENCE LBRACE* LPAREN* (SingleQuote? expression SingleQuote? COMMA?)* RBRACE* RPAREN* expression? #SEQUENCE
-          |  Arrow? LPAREN* SUBSEQUENCE LBRACE* LPAREN* (SingleQuote? expression SingleQuote? COMMA?)* RPAREN* RBRACE*  expression? #SUBSEQUENCE
-          |  Arrow? ALLINSTANCES LPAREN+ expression? RPAREN+ expression?  #ALLINSTANCES
+// =============================================================
+// Helper rules
+// =============================================================
+iteratorVarDecl
+    : ID (COLON ID)? (COMMA ID (COLON ID)?)*
+    ;
 
-          | Arrow? LPAREN* ORDEREDSET LBRACE (SingleQuote? expression SingleQuote? COMMA?)* RBRACE RPAREN* expression?  #ORDEREDSET
-          | Arrow? LPAREN* SUBORDEREDSET LBRACE* LPAREN* (SingleQuote? expression SingleQuote? COMMA?)* RBRACE* RPAREN* expression? RPAREN  #SUBORDEREDSET
+iteratorOp
+    : FORALL | EXISTS | SELECT | REJECT | COLLECT
+    ;
 
-          | Arrow? LPAREN* SET LPAREN* LBRACE* (SingleQuote? expression SingleQuote? COMMA?)* RBRACE*  RPAREN* expression?  #SET
-          | Arrow? LPAREN* BAG LPAREN* LBRACE* (SingleQuote? expression SingleQuote? COMMA?)*  RBRACE* RPAREN* expression?  #BAG
+compOp
+    : EQUAL | NOTEQUAL | LT | LE | GT | GE
+    ;
 
-          | Arrow PREPEND LPAREN+ (SingleQuote? expression SingleQuote? COMMA?)* RPAREN+ expression? #PREPEND
-          | Arrow LAST LPAREN RPAREN+ expression? #LAST
-          | Arrow APPEND LPAREN (SingleQuote? expression SingleQuote? COMMA?)*  RPAREN+ expression?   #APPEND
+argList
+    : expression (COMMA expression)*
+    ;
 
-          | Arrow? (FORALL | EXISTS | SELECT|REJECT | COLLECT) LPAREN (ID (COLON ID)? COMMA?)+ PIPE expression RPAREN endExpression? #COLLECTION
+// =============================================================
+// Expression rule with ANTLR4 precedence climbing
+// Alternatives listed FIRST have HIGHEST precedence.
+// =============================================================
+expression
+    // --- Postfix: dot navigation and method calls (highest precedence) ---
+    : expression DOT SIZE LPAREN RPAREN                                             #dotSize
+    | expression DOT OCLISTYPEOF LPAREN typeRef RPAREN                              #dotOclIsTypeOf
+    | expression DOT OCLASTYPE LPAREN typeRef RPAREN                                #dotOclAsType
+    | expression DOT OCLISKINDOF LPAREN typeRef RPAREN                              #dotOclIsKindOf
+    | expression DOT ID LPAREN argList? RPAREN                                      #dotMethodCall
+    | expression DOT ID                                                             #dotNavigation
+    // Fallback: `size` is also a valid attribute name when no parens follow.
+    // ANTLR's longest-match keeps `dotSize` (`.size()`) winning when parens are
+    // present, so `collection->size()` and `string.size()` still parse.
+    // See BESSER-PEARL/BESSER#198.
+    | expression DOT SIZE                                                           #dotSizeNavigation
 
-          | Arrow? (FORALL | EXISTS | SELECT|REJECT | COLLECT) LPAREN expression RPAREN endExpression? #CollectionExpressionVariable
-//
-//
-          | Arrow SYMMETRICDIFFERENCE LPAREN expression RPAREN+ expression? #SYMMETRICDIFFERENCE
-          | Arrow FIRST LPAREN RPAREN expression?  #FIRST
-          | Arrow DERIVE LPAREN RPAREN expression?  #DERIVE
-          | Arrow UNION LPAREN expression RPAREN  expression?#UNION
-          | Def COLON expression #defExp
-          | ID COLON ID EQUAL expression #defIDAssignmentexpression
-          | LPAREN*  primaryExpression?  (DOT ID)* operator? primaryExpression?  (DOT ID)+ expression? #PrimaryExp
-          | primaryExpression  (DOT)* ID* functionCall operator? expression?  #funcCall
-//          | operator expression #operatorExp
-          | Arrow expression #arrowexp
-          | NUMBER expression?  #number
-          | Arrow? functionCall expression? #PredefinedfunctionCall
+    // --- Postfix: arrow operations ---
+    | expression ARROW iteratorOp LPAREN iteratorVarDecl PIPE expression RPAREN     #arrowIterator
+    | expression ARROW iteratorOp LPAREN expression RPAREN                          #arrowIteratorShort
+    | expression ARROW SIZE LPAREN RPAREN                                           #arrowSize
+    | expression ARROW ISEMPTY LPAREN RPAREN                                        #arrowIsEmpty
+    | expression ARROW SUM LPAREN RPAREN                                            #arrowSum
+    | expression ARROW INCLUDES LPAREN expression RPAREN                            #arrowIncludes
+    | expression ARROW EXCLUDES LPAREN expression RPAREN                            #arrowExcludes
+    | expression ARROW UNION LPAREN expression RPAREN                               #arrowUnion
+    | expression ARROW FIRST LPAREN RPAREN                                          #arrowFirst
+    | expression ARROW LAST LPAREN RPAREN                                           #arrowLast
+    | expression ARROW PREPEND LPAREN expression RPAREN                             #arrowPrepend
+    | expression ARROW APPEND LPAREN expression RPAREN                              #arrowAppend
+    | expression ARROW SYMMETRICDIFFERENCE LPAREN expression RPAREN                 #arrowSymDiff
+    | expression ARROW SUBSEQUENCE LPAREN expression COMMA expression RPAREN        #arrowSubSequence
+    | expression ARROW SUBORDEREDSET LPAREN expression COMMA expression RPAREN      #arrowSubOrderedSet
 
-          | SingleQuote expression DOT? SingleQuote DOT? expression? #SingleQuoteExp
-          | DoubleDots expression #doubleDots
-          | AND? OR? ID? DoubleCOLON expression #doubleCOLONs
-          | operator numberORUserDefined?  #op
+    // --- Unary ---
+    | (NOT | MINUS) expression                                                      #unaryExpr
 
-          | primaryExpression expression? #ID
+    // --- Binary: multiplicative ---
+    | expression (STAR | DIVIDE) expression                                         #mulDivExpr
 
+    // --- Binary: additive ---
+    | expression (PLUS | MINUS) expression                                          #addSubExpr
 
-;
-endExpression:  (AND | OR)? expression;
-binaryFunctionCall: operator ((primaryExpression (DOT ID)*) | NUMBER)  ;
+    // --- Binary: comparison ---
+    | expression compOp expression                                                  #comparisonExpr
 
-binaryExpression:  ((primaryExpression (DOT ID)*) | NUMBER| dateLiteral)   (DOT ID)* operator (primaryExpression DoubleCOLON ID|(primaryExpression (DOT ID)*) | NUMBER| dateLiteral) ;
-unaryExpression: (NOT | MINUS|PLUS|Divide|'*') expression ;
-//
-operator: EQUAL | NOTEQUAL| LT | LE | GT | GE | PLUS|'*' | MINUS | EMPTYSTRING | Divide | AND | OR | XOR | IMPLIES ; // Added 'xor' and 'implies'
-//
-numberORUserDefined: NUMBER |SingleQuote? ID LPAREN? RPAREN? SingleQuote?  ;
+    // --- Binary: logical (lowest precedence) ---
+    | expression AND expression                                                     #andExpr
+    | expression XOR expression                                                     #xorExpr
+    | expression OR expression                                                      #orExpr
+    | expression IMPLIES expression                                                 #impliesExpr
 
-primaryExpression: literal | SELF | functionCall | LPAREN expression RPAREN | ID  ;
+    // --- Non-recursive: if-then-else and primary ---
+    | IF expression THEN expression ELSE expression ENDIF                           #ifThenElseExpr
+    | primaryExpression                                                             #primaryExpr
+    ;
 
-literal: NUMBER | STRING_LITERAL | BOOLEAN_LITERAL | NULL ;
-dateLiteral : DATE DoubleCOLON? ('now'|'today')? LPAREN? RPAREN? DOT? 'addDays'? LPAREN? NUMBER? RPAREN?;
-// Function and Property Calls
+// =============================================================
+// Primary expressions (atoms)
+// =============================================================
+primaryExpression
+    : SELF                                                      #selfExpr
+    | STRING_LITERAL                                            #stringLiteral
+    | NUMBER                                                    #numberLiteral
+    | BOOLEAN_LITERAL                                           #booleanLiteral
+    | NULL                                                      #nullLiteral
+    | ID DOUBLECOLON ALLINSTANCES LPAREN RPAREN                 #allInstancesExpr
+    | DATE DOUBLECOLON ID LPAREN RPAREN                         #dateFuncExpr
+    | ID LPAREN argList? RPAREN                                 #functionCallExpr
+    | LPAREN expression RPAREN                                  #parenExpr
+    | ID                                                        #idExpr
+    ;
 
+// =============================================================
+// Lexer rules
+// =============================================================
 
-CONTEXT: 'context';
 // Keywords
-INIT: 'init';
-INV: 'inv' ;
-PRE: 'pre' ;
-POST: 'post' ;
-SELF: 'self' ;
-FORALL: 'forAll' ;
-EXISTS: 'exists' ;
-SELECT: 'select' ;
-REJECT: 'reject' ;
-COLLECT: 'collect' ;
-OCLANY: 'OclAny' ;
-OCLVOID: 'OclVoid' ;
-DATE: 'date' | 'Date';
-WS: [ \t\r\n]+ -> skip ;
+CONTEXT    : 'context' ;
+INIT       : 'init' ;
+INV        : 'inv' ;
+PRE        : 'pre' ;
+POST       : 'post' ;
+SELF       : 'self' ;
+IF         : 'if' ;
+THEN       : 'then' ;
+ELSE       : 'else' ;
+ENDIF      : 'endif' ;
+LET        : 'let' ;
+IN         : 'in' ;
+DEF        : 'def' ;
 
+// Boolean operators
+AND        : 'and' ;
+OR         : 'or' ;
+NOT        : 'not' ;
+XOR        : 'xor' ;
+IMPLIES    : 'implies' ;
 
+// Collection iterators
+FORALL     : 'forAll' ;
+EXISTS     : 'exists' ;
+SELECT     : 'select' ;
+REJECT     : 'reject' ;
+COLLECT    : 'collect' ;
 
-// Symbols
-DoubleDots: '..';
-DoubleCOLON: '::';
-LPAREN: '(' ;
-RPAREN: ')' ;
-LBRACE: '{' ;
-RBRACE: '}' ;
-SEMI: ';' ;
-COLON: ':' ;
-COMMA: ',' ;
-DOT: '.' ;
-EQUAL: '=' ;
-SingleQuote: '\'';
-BOOLEAN_TYPE: 'Boolean' ;
-INTEGER_TYPE: 'Integer' ;
-REAL_TYPE: 'Real' ;
-STRING_TYPE: 'String' |'str'|'Str'|'string';
-IF: 'if' ;
-THEN: 'then' ;
-ELSE: 'else' ;
-ENDIF: 'endif' ;
-AND: 'and' ;
-OR: 'or' ;
-NOT: 'not' ;
-NOTEQUAL: '<>' ;
-LT: '<' ;
-LE: '<=' ;
-GT: '>' ;
-GE: '>=' ;
-PIPE: '|' ;
-SET: 'Set' | 'set';
-BAG: 'Bag';
-SEQUENCE: 'Sequence';
-ORDEREDSET: 'OrderedSet';
-MINUS: '-';
-PLUS: '+';
-Divide: '/';
-EMPTYSTRING: ' ';
-XOR: 'xor';
-IMPLIES: 'implies';
-OCLASTYPE: 'oclAsType';
-OCLISTYPEOF: 'oclIsTypeOf';
-OCLISKINDOF: 'oclIsKindOf';
-ALLINSTANCES: 'allInstances';
-ISEMPTY: 'isEmpty';
-SUM: 'sum';
-SIZE: 'size';
-INCLUDES: 'includes';
-EXCLUDES: 'excludes';
-SUBSEQUENCE: 'subSequence';
-SUBORDEREDSET: 'subOrderedSet';
-PREPEND: 'prepend';
-LAST: 'last';
-APPEND: 'append';
-SYMMETRICDIFFERENCE: 'symmetricDifference';
-FIRST: 'first';
-DERIVE: 'derive';
-BODY: 'body';
-//Init: 'init';
-UNION: 'union';
-NULL: 'null';
-LET: 'let';
-IN: 'in';
-Arrow: '->' | '→';
-Def: 'def';
+// Collection/type operations
+SIZE               : 'size' ;
+ISEMPTY            : 'isEmpty' ;
+SUM                : 'sum' ;
+INCLUDES           : 'includes' ;
+EXCLUDES           : 'excludes' ;
+UNION              : 'union' ;
+FIRST              : 'first' ;
+LAST               : 'last' ;
+PREPEND            : 'prepend' ;
+APPEND             : 'append' ;
+ALLINSTANCES       : 'allInstances' ;
+SUBSEQUENCE        : 'subSequence' ;
+SUBORDEREDSET      : 'subOrderedSet' ;
+SYMMETRICDIFFERENCE: 'symmetricDifference' ;
+OCLISTYPEOF        : 'oclIsTypeOf' ;
+OCLASTYPE          : 'oclAsType' ;
+OCLISKINDOF        : 'oclIsKindOf' ;
 
-// Basic tokens
-ID: [a-zA-Z_][a-zA-Z0-9@_]* '@pre'?;
+// Types
+BOOLEAN_TYPE : 'Boolean' ;
+INTEGER_TYPE : 'Integer' ;
+REAL_TYPE    : 'Real' ;
+STRING_TYPE  : 'String' | 'str' | 'Str' | 'string' ;
+SET          : 'Set' | 'set' ;
+BAG          : 'Bag' ;
+SEQUENCE     : 'Sequence' ;
+ORDEREDSET   : 'OrderedSet' ;
+DATE         : 'Date' | 'date' ;
+NULL         : 'null' ;
 
-NUMBER: [0-9]+ ('.' [0-9]+)? ;
-STRING_LITERAL: '"' ( ~["\\] | '\\' . )* ID? '"'
-| SingleQuote ID SingleQuote;
-BOOLEAN_LITERAL: 'true' | 'false';
-COMMENT: '/*' .*? '*/' -> skip ;
-LINE_COMMENT: '//' ~[\r\n]* -> skip ;
+// Symbols (multi-char before single-char to avoid partial matches)
+DOUBLECOLON : '::' ;
+ARROW       : '->' | '\u2192' ;
+NOTEQUAL    : '<>' ;
+LE          : '<=' ;
+GE          : '>=' ;
+DOT         : '.' ;
+LPAREN      : '(' ;
+RPAREN      : ')' ;
+LBRACE      : '{' ;
+RBRACE      : '}' ;
+SEMI        : ';' ;
+COLON       : ':' ;
+COMMA       : ',' ;
+PIPE        : '|' ;
+LT          : '<' ;
+GT          : '>' ;
+EQUAL       : '=' ;
+PLUS        : '+' ;
+MINUS       : '-' ;
+STAR        : '*' ;
+DIVIDE      : '/' ;
+
+// Literals (before ID so they match first)
+BOOLEAN_LITERAL : 'true' | 'false' ;
+NUMBER          : [0-9]+ ('.' [0-9]+)? ;
+STRING_LITERAL  : '\'' (~['\\\r\n] | '\\' .)* '\'' ;
+
+// Identifiers (last so keywords take priority)
+ID              : [a-zA-Z_][a-zA-Z0-9_]* ;
+
+// Skip whitespace and comments
+WS           : [ \t\r\n]+ -> skip ;
+COMMENT      : '/*' .*? '*/' -> skip ;
+LINE_COMMENT : '//' ~[\r\n]* -> skip ;

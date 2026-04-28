@@ -38,12 +38,20 @@ PRIMITIVE_TYPE_MAPPING = {
 RESERVED_NAMES = ['Class', 'Property', 'Method', 'Parameter', 'Enumeration']
 
 
-def safe_var_name(name: str) -> str:
+def safe_var_name(name: str, lowercase: bool = True) -> str:
     """
     Convert a name to a safe Python variable name.
 
+    By default the result is lowercased — this is the historical behavior
+    relied on by ``agent_model_builder`` and by ``WebAppGenerator``'s
+    ``agent_slug`` (filesystem paths, container names, and hostnames are
+    conventionally lowercase). Callers that need to preserve the user's
+    original casing — e.g. emitting Python identifiers that must round-trip
+    unchanged — can opt in via ``lowercase=False``.
+
     Args:
         name: Original name
+        lowercase: If True (default), lowercase the result.
 
     Returns:
         Safe variable name
@@ -58,7 +66,13 @@ def safe_var_name(name: str) -> str:
     # Remove consecutive underscores
     while '__' in safe_name:
         safe_name = safe_name.replace('__', '_')
-    safe_name = safe_name.strip('_').lower() or "unnamed"
+    safe_name = safe_name.strip('_') or "unnamed"
+    if lowercase:
+        safe_name = safe_name.lower()
+    # Only escape names that are *actually* reserved Python keywords. Python
+    # keywords are all lowercase (``class``, ``from``, ``return``, ...), so a
+    # PascalCase identifier like ``Class`` is a perfectly valid attribute or
+    # variable name and should round-trip unchanged when ``lowercase=False``.
     if keyword.iskeyword(safe_name):
         safe_name = f"{safe_name}_"
     return safe_name

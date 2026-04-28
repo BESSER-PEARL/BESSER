@@ -1,15 +1,16 @@
 {% import "helpers.py.j2" as helper -%}
 import enum
-from typing import List, Optional
+from typing import List as List_, Optional as Optional_
 from sqlalchemy import (
-    create_engine, Column, ForeignKey, Table, Text, Boolean, String, Date, 
-    Time, DateTime, Float, Integer, Enum
+    create_engine, Column as Column_, ForeignKey as ForeignKey_, Table as Table_, 
+    Text as Text_, Boolean as Boolean_, String as String_, Date as Date_, 
+    Time as Time_, DateTime as DateTime_, Float as Float_, Integer as Integer_, Enum
 )
 {%- if classes | selectattr("is_abstract") | list | length > 0 %}
 from sqlalchemy.ext.declarative import AbstractConcreteBase
 {%- endif %}
 from sqlalchemy.orm import (
-    column_property, DeclarativeBase, Mapped, mapped_column, relationship
+    column_property, DeclarativeBase, Mapped as Mapped_, mapped_column, relationship
 )
 from datetime import datetime as dt_datetime, time as dt_time, date as dt_date
 
@@ -39,11 +40,11 @@ class {{ enum.name }}(enum.Enum):
 {%- endif %}
 {%- endfor %}
 {%- if ns.many_to_many == True and not ns.has_association_class %}
-{{ association.name.lower() }} = Table(
+{{ association.name.lower() }} = Table_(
     "{{ association.name.lower() }}",
     Base.metadata,
     {%- for end in association.ends %}
-    Column("{{ end.name }}", ForeignKey("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True),
+    Column_("{{ end.name }}", ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True),
     {%- endfor %}
 )
 {%- endif %}
@@ -71,12 +72,12 @@ class {{ class.name }}(
     {%- endif -%}
     {%- for parent in sort(class.parents()) %}
     {%- if parent.name not in concrete_parents %}
-    id: Mapped[int] = mapped_column(ForeignKey("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
+    id: Mapped_[int] = mapped_column(ForeignKey_("{{ parent.name.lower() }}.{{ids.get(parent.name, 'id')}}"), primary_key=True)
     {%- endif %}
     {%- endfor %}
     {%- if (class.parents() | rejectattr("name", "in", concrete_parents) | list | length == 0) 
         and ((not ids.get(class.name))) %}
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped_[int] = mapped_column(primary_key=True)
     {%- endif %}
     {#- Class attributes #}
         {{- helper.render_attributes(class, enumerations, types, ids, sort)}}
@@ -107,7 +108,7 @@ class {{ class.name }}(
             {%- endfor %}
             {#- Foreign Key #}
             {%- if [class.name, end.name] == fkeys.get(end.owner.name) %}
-    {{end.name}}_id: Mapped[int] = mapped_column(ForeignKey("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
+    {{end.name}}_id: Mapped_[int] = mapped_column(ForeignKey_("{{end.type.name.lower()}}.{{ids.get(end.type.name, 'id')}}")
             {%- if end.multiplicity.min == 0 %}, nullable=True{%- endif %}
             {%- if ns.end_own.multiplicity.max == 1 %}, unique=True{% endif %}){% endif %}
         {%- endif %}
@@ -116,7 +117,7 @@ class {{ class.name }}(
     {#- Polymorphic configuration #}
     {%- if (class.specializations()|length > 0
        and class.name not in concrete_parents) %}
-    type_spec: Mapped[str] = mapped_column(String(50))
+    type_spec: Mapped_[str] = mapped_column(String_(50))
     __mapper_args__ = {
         "polymorphic_identity": "{{ class.name.lower() }}",
         "polymorphic_on": "type_spec",
@@ -142,14 +143,16 @@ class {{ asso_class.name }}(Base):
     {%- for other_end in asso_class.association.ends if other_end != end %}
         {%- set ns.other_end_max = other_end.multiplicity.max %}
     {%- endfor %}
-    {{ end.name }}_id: Mapped[str] = mapped_column(ForeignKey("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True
+    {{ end.name }}_id: Mapped_[str] = mapped_column(ForeignKey_("{{ end.type.name.lower() }}.{{ids.get(end.type.name, 'id')}}"), primary_key=True
     {%- if end.multiplicity.max == 1 and ns.other_end_max == 1 %}, unique=True{% endif %})
     {%- endfor %}
     {%- for attribute in sort(asso_class.attributes) %}
     {%- set is_pk = attribute.is_id or (attribute.name == ids.get(asso_class.name)) %}
     {%- set nullable = attribute.is_optional and not is_pk %}
-    {{ attribute.name }}: Mapped[{% if nullable %}Optional[{{ helper.mapped_type(attribute.type.name) }}]{% else %}{{ helper.mapped_type(attribute.type.name) }}{% endif %}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
+    {%- set unique_needed = attribute.is_external_id and not is_pk %}
+    {{ attribute.name }}: Mapped_[{% if nullable %}Optional_[{{ helper.mapped_type(attribute.type.name) }}]{% else %}{{ helper.mapped_type(attribute.type.name) }}{% endif %}] = mapped_column({% if attribute.type.name in enumerations|map(attribute='name') %}Enum({{ attribute.type.name }}){% else %}{{types[attribute.type.name]}}{% endif %}
     {%- if is_pk %}, primary_key=True{% endif %}
+    {%- if unique_needed %}, unique=True{% endif %}
     {%- if nullable %}, nullable=True{% endif %}
     {%- if attribute.default_value is not none %}, default={% if attribute.type.name == 'str' or attribute.type.name == 'string' %}"{{ attribute.default_value }}"{% elif attribute.type.name == 'bool' %}{{ attribute.default_value | capitalize }}{% elif attribute.type.__class__.__name__ == 'Enumeration' %}{{ attribute.type.name }}.{{ attribute.default_value }}{% else %}{{ attribute.default_value }}{% endif %}{% endif %})
     {%- endfor %}
@@ -189,8 +192,8 @@ class {{ asso_class.name }}(Base):
 {%- for asso_class in asso_classes %}
 #--- Relationships for association class {{ asso_class.name }}
     {%- for end in asso_class.association.ends %}
-{{ asso_class.name }}.{{ end.name }}: Mapped["{{ end.type.name }}"] = relationship("{{ end.type.name }}", back_populates="{{ asso_class.name.lower() }}s")
-{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped[List["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}")
+{{ asso_class.name }}.{{ end.name }}: Mapped_["{{ end.type.name }}"] = relationship("{{ end.type.name }}", back_populates="{{ asso_class.name.lower() }}s")
+{{ end.type.name }}.{{ asso_class.name.lower() }}s: Mapped_[List_["{{ asso_class.name }}"]] = relationship("{{ asso_class.name }}", back_populates="{{ end.name }}")
     {%- endfor %}
 {%- endfor %}
 

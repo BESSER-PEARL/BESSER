@@ -337,3 +337,67 @@ def handle_personalized_agent(
         generation_mode=GenerationMode.CODE_ONLY,
     )
     return zip_buffer, file_name
+
+
+def collect_agents_from_diagrams(
+    agent_diagrams: List[Any],
+    default_config: Any = None,
+) -> Tuple[List[Any], Dict[str, Any]]:
+    """Process every AgentDiagram in a project into BUML Agent models.
+
+    Used by both the ``/generate-output-from-project`` route and the
+    ``/github/deploy-webapp`` deploy pipeline so they stay in lock-step.
+
+    Args:
+        agent_diagrams: List of diagram entries. Each may be a dict (raw request
+            payload) or a Pydantic ``DiagramInput`` — anything exposing
+            ``.model_dump()`` or already behaving like a dict works.
+        default_config: Fallback config applied when a diagram has no per-diagram
+            ``config`` entry.
+
+    Returns:
+        ``(agent_models, agent_configs)`` where ``agent_configs`` is keyed by
+        ``agent.name``.
+
+    Raises:
+        HTTPException(400): if two agents share the same ``.name`` — the
+        downstream generator would silently overwrite one with the other.
+    """
+    agent_models: List[Any] = []
+    agent_configs: Dict[str, Any] = {}
+    seen: Set[str] = set()
+    duplicates: Set[str] = set()
+
+    for entry in agent_diagrams or []:
+        entry_dict = entry.model_dump() if hasattr(entry, "model_dump") else entry
+        if not isinstance(entry_dict, dict):
+            continue
+        model = entry_dict.get("model")
+        if not model:
+            continue
+        # The deploy endpoint additionally required a non-empty ``elements`` map;
+        # treat that as the unified contract so both paths reject blank diagrams.
+        if isinstance(model, dict) and not model.get("elements"):
+            continue
+        agent_model = process_agent_diagram(entry_dict)
+        if agent_model is None:
+            continue
+
+        name = agent_model.name
+        if name in seen:
+            duplicates.add(name)
+            continue
+        seen.add(name)
+        agent_models.append(agent_model)
+        agent_configs[name] = entry_dict.get("config") or default_config
+
+    if duplicates:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Agent names must be unique within a project. "
+                f"Duplicates: {sorted(duplicates)}"
+            ),
+        )
+
+    return agent_models, agent_configs

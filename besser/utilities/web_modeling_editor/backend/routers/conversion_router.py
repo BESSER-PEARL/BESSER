@@ -28,6 +28,7 @@ from besser.utilities.web_modeling_editor.backend.models.responses import (
 from besser.utilities.image_to_buml import image_to_buml
 from besser.utilities.kg_to_buml import kg_to_buml
 from besser.utilities.owl_to_buml import owl_file_to_knowledge_graph
+from besser.utilities.kg_to_owl import serialize_knowledge_graph
 
 # BESSER KG → B-UML (deterministic, offline)
 from besser.BUML.notations.kg_to_buml import (
@@ -800,6 +801,42 @@ async def kg_to_object_diagram_endpoint(input_data: DiagramInput):
         "exportedAt": datetime.now(timezone.utc).isoformat(),
         "version": API_VERSION,
     }
+
+
+_RDF_FORMATS = {
+    "owl": ("xml", "application/rdf+xml", ".owl"),
+    "ttl": ("turtle", "text/turtle", ".ttl"),
+}
+
+
+@router.post("/export-kg-rdf/{fmt}")
+@handle_endpoint_errors("export_kg_rdf")
+async def export_kg_rdf(fmt: str, input_data: DiagramInput = Body(...)):
+    """Serialize a Knowledge Graph diagram as OWL (RDF/XML) or Turtle.
+
+    The path parameter ``fmt`` selects the serialization: ``owl`` for RDF/XML,
+    ``ttl`` for Turtle. The response is a downloadable file with the diagram
+    title (sanitized) as the filename stem.
+    """
+    if fmt not in _RDF_FORMATS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported format '{fmt}'. Use 'owl' or 'ttl'.",
+        )
+    rdflib_fmt, media_type, ext = _RDF_FORMATS[fmt]
+
+    kg, _json_data = _kg_payload_to_kg(input_data)
+    serialized = serialize_knowledge_graph(kg, fmt=rdflib_fmt)
+
+    base = input_data.title or kg.name or "knowledge_graph"
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in base).strip("_") or "knowledge_graph"
+    filename = f"{safe}{ext}"
+
+    return Response(
+        content=serialized,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.post("/transform-agent-model-json")

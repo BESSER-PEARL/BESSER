@@ -58,7 +58,7 @@ def normalize(constraint: OCLConstraint, model: DomainModel,
     from besser.BUML.notations.ocl.normalization.rules import build_default_rules
 
     rules = build_default_rules()
-    expr = clone(constraint.expression)
+    expr = clone(constraint.ast)
     ctx = Context(model=model, constraint=constraint)
 
     for _ in range(max_iterations):
@@ -137,6 +137,12 @@ def _rewrite_pass(node, rules, ctx):
     for rule in rules:
         if rule.applies(node, ctx):
             new_node = rule.rewrite(node, ctx)
+            # Preserve source location from the original node for diagnostics.
+            # copy_location_from only fills fields that are None on the new node,
+            # so synthesized children that already carry their own positions are
+            # left intact.
+            if hasattr(new_node, "copy_location_from"):
+                new_node.copy_location_from(node)
             ctx.log.append((rule.name, _short(node), _short(new_node)))
             return new_node, True
 

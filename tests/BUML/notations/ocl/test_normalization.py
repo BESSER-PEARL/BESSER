@@ -129,7 +129,7 @@ def test_operator_surface_invariant(ocl_input, model):
     """Normal form contains no implies / xor / exists / reject / isEmpty / IfExp."""
     parsed = parse_ocl(ocl_input, model)
     normalized = normalize(parsed, model)
-    for node in walk(normalized.expression):
+    for node in walk(normalized.ast):
         assert not is_implies(node), pretty_print(normalized)
         assert not is_xor(node), pretty_print(normalized)
         assert not is_isempty(node), pretty_print(normalized)
@@ -163,11 +163,26 @@ def test_if_with_non_boolean_branches_is_left_alone(model):
     )
     normalized = normalize(parsed, model)
 
-    if_nodes = [n for n in walk(normalized.expression) if isinstance(n, IfExp)]
+    if_nodes = [n for n in walk(normalized.ast) if isinstance(n, IfExp)]
     assert len(if_nodes) == 1, (
         f"IfExp with non-boolean branches should survive; got: "
         f"{pretty_print(normalized)}"
     )
+
+
+def test_normalization_preserves_source_location(model):
+    """Rewritten root nodes inherit line/col from the original (Pre-work C)."""
+    parsed = parse_ocl(
+        "context Employee inv: self.age < 25 implies self.salary <= 50000.0",
+        model,
+    )
+    assert parsed.ast.line is not None
+    original_line = parsed.ast.line
+
+    normalized = normalize(parsed, model)
+    # ``implies`` is rewritten to ``not e1 or e2``; the new top-level OR
+    # node should carry the original line.
+    assert normalized.ast.line == original_line
 
 
 def test_if_with_boolean_branches_is_eliminated(model):
@@ -178,7 +193,7 @@ def test_if_with_boolean_branches_is_eliminated(model):
         model,
     )
     normalized = normalize(parsed, model)
-    for node in walk(normalized.expression):
+    for node in walk(normalized.ast):
         assert not isinstance(node, IfExp), (
             f"boolean-branched IfExp must be eliminated; got: "
             f"{pretty_print(normalized)}"

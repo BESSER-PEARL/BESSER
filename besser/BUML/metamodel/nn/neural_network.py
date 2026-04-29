@@ -2550,3 +2550,137 @@ class NN(BehaviorImplementation):
             f'NN({self.name}, {self.configuration}, {self.modules}, '
             f'{self.train_data}, {self.test_data})'
             )
+
+    def validate(self, raise_exception: bool = True, _visited: set = None) -> dict:
+        """
+        Validate the neural network model.
+
+        Checks performed:
+            * Module names are unique within this NN scope.
+            * Layer ``name_module_input`` references resolve to a module
+              defined in the same NN.
+            * TensorOp ``layers_of_tensors`` string entries resolve to a
+              module defined in the same NN.
+            * The first module in the sequence does not declare an input
+              dependency (it is the entry point).
+            * Sub-NNs are acyclic (no NN directly or transitively
+              contains itself).
+            * Each sub-NN is itself valid (recursive validation).
+            * Warnings are emitted for empty NNs and for missing
+              configuration on a top-level NN that has training data.
+
+        Args:
+            raise_exception: If True, raises ``ValueError`` when errors
+                are found. Warnings never raise.
+            _visited: Internal — tracks NN instances already validated to
+                stop infinite recursion on cyclic sub-NN graphs.
+
+        Returns:
+            dict: ``{"success": bool, "errors": list[str], "warnings": list[str]}``
+        """
+        errors: list[str] = []
+        warnings: list[str] = []
+
+        is_root = _visited is None
+        if _visited is None:
+            _visited = set()
+        if id(self) in _visited:
+            return {"success": True, "errors": errors, "warnings": warnings}
+        _visited.add(id(self))
+
+        self._validate_module_uniqueness(errors)
+        self._validate_module_input_references(errors)
+        self._validate_tensor_op_references(errors)
+        self._validate_first_module_entry_point(errors)
+        cycle_detected = self._validate_sub_nn_acyclic(errors)
+        if not cycle_detected:
+            self._validate_sub_nns_recursive(errors, warnings, _visited)
+        self._collect_nn_warnings(warnings)
+
+        result = {"success": len(errors) == 0, "errors": errors, "warnings": warnings}
+        if errors and raise_exception and is_root:
+            raise ValueError("\n".join(errors))
+        return result
+
+    def _module_names(self) -> set:
+        """Names of every module declared in this NN (layers, tensor_ops, sub_nns)."""
+        return {m.name for m in self.modules if getattr(m, "name", None)}
+
+    def _validate_module_uniqueness(self, errors: list):
+        seen: dict = {}
+        for module in self.modules:
+            name = getattr(module, "name", None)
+            if not name:
+                continue
+            if name in seen:
+                errors.append(
+                    f"NN '{self.name}' has duplicate module name '{name}' "
+                    f"(declared twice)."
+                )
+            seen[name] = module
+
+    def _validate_module_input_references(self, errors: list):
+        names = self._module_names()
+        for layer in self.layers:
+            ref = getattr(layer, "name_module_input", None)
+            if ref and ref not in names:
+                errors.append(
+                    f"NN '{self.name}': layer '{layer.name}' references input "
+                    f"module '{ref}' which is not defined in this NN."
+                )
+
+    def _validate_tensor_op_references(self, errors: list):
+        names = self._module_names()
+        for tensor_op in self.tensor_ops:
+            entries = getattr(tensor_op, "layers_of_tensors", None) or []
+            for entry in entries:
+                if isinstance(entry, str) and entry not in names:
+                    errors.append(
+                        f"NN '{self.name}': tensorOp '{tensor_op.name}' references "
+                        f"input module '{entry}' which is not defined in this NN."
+                    )
+
+    def _validate_first_module_entry_point(self, errors: list):
+        if not self.modules:
+            return
+        first = self.modules[0]
+        ref = getattr(first, "name_module_input", None)
+        if ref:
+            errors.append(
+                f"NN '{self.name}': first module '{first.name}' must not declare "
+                f"a 'name_module_input' (it is the entry point)."
+            )
+
+    def _validate_sub_nn_acyclic(self, errors: list) -> bool:
+        """Detect cycles in the sub-NN graph rooted at this NN. Returns True if a cycle was found."""
+        def visit(nn: NN, stack: set) -> bool:
+            if id(nn) in stack:
+                return True
+            stack.add(id(nn))
+            for child in nn.sub_nns:
+                if visit(child, stack):
+                    return True
+            stack.remove(id(nn))
+            return False
+
+        if visit(self, set()):
+            errors.append(
+                f"NN '{self.name}': sub-NN graph contains a cycle (an NN "
+                f"directly or transitively contains itself)."
+            )
+            return True
+        return False
+
+    def _validate_sub_nns_recursive(self, errors: list, warnings: list, _visited: set):
+        for sub in self.sub_nns:
+            sub_result = sub.validate(raise_exception=False, _visited=_visited)
+            errors.extend(sub_result["errors"])
+            warnings.extend(sub_result["warnings"])
+
+    def _collect_nn_warnings(self, warnings: list):
+        if not self.modules:
+            warnings.append(f"NN '{self.name}' has no modules.")
+        if self.train_data is not None and self.configuration is None:
+            warnings.append(
+                f"NN '{self.name}' has training data but no configuration."
+            )

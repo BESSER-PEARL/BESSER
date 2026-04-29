@@ -164,9 +164,14 @@ async def validate_diagram(input_data: DiagramInput):
             # non-dict elements) are collected into validation_errors as well
             # so the frontend sees a structured response instead of a 500.
             try:
-                process_nn_diagram(input_data.model_dump())
+                nn_model = process_nn_diagram(input_data.model_dump())
             except (ValueError, KeyError, TypeError, AttributeError) as e:
                 validation_errors.extend(str(e).splitlines() or [repr(e)])
+            else:
+                if nn_model is not None:
+                    nn_validation = nn_model.validate(raise_exception=False)
+                    validation_errors.extend(nn_validation["errors"])
+                    validation_warnings.extend(nn_validation["warnings"])
 
         elif diagram_type == "QuantumCircuitDiagram":
             return {

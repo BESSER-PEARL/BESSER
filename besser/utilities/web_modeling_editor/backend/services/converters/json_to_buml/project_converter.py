@@ -197,9 +197,16 @@ def json_to_buml_project(project):
     # ── Process ALL NNDiagrams ────────────────────────────────────────
     from .nn_diagram_processor import process_nn_diagram
 
+    nn_titles: dict = {}
     for nn_diag in diagrams.get("NNDiagram", []):
         nn_model = process_nn_diagram(nn_diag.model_dump())
         model_list.append(nn_model)
+        # Preserve the diagram's user-facing title so project_to_code can
+        # emit it in the section header — the NN metamodel only stores a
+        # sanitized name, so without this the title is lost on round-trip.
+        nn_title = getattr(nn_diag, "title", None)
+        if nn_title:
+            nn_titles[id(nn_model)] = nn_title
 
     # Ensure ALL processed ClassDiagrams are in model_list.
     # Object/GUI diagrams may reference ClassDiagrams that were not in the
@@ -216,5 +223,10 @@ def json_to_buml_project(project):
         owner=project.owner or "",
         metadata=metadata
     )
+
+    # Attach NN titles as an attribute on the project so project_to_code
+    # can read them without changing this function's return type (the
+    # public API stays a single Project instance).
+    project_instance._nn_diagram_titles = nn_titles
 
     return project_instance

@@ -85,7 +85,7 @@ def _collect_used_types(model: NN, used_types: set = None) -> set:
     return used_types
 
 
-def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None):
+def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None, title: str = None):
     """
     Generates Python code for an NN model, including any sub_nns.
 
@@ -100,6 +100,10 @@ def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None):
             name (used by ``project_to_code`` so multiple NNs in one project
             get unique suffixes — ``my_nn_1`` / ``my_nn_2`` — instead of
             colliding on the same ``my_nn`` binding).
+        title (str, optional): Diagram title to embed in the section header
+            so ``project_to_json`` can recover it on round-trip. The NN
+            metamodel only stores a sanitized identifier-safe ``name``,
+            so without this the user-facing title is lost.
     """
     # Collect only the types actually used in the model
     used_types = _collect_used_types(model)
@@ -108,10 +112,20 @@ def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None):
         # Section header — required by project_to_json's _extract_all_sections
         # so that single-NN project exports round-trip through import.
         # Without this header the importer can't locate the NN section and
-        # silently drops the diagram.
-        f.write("############\n")
-        f.write("# NN MODEL #\n")
-        f.write("############\n")
+        # silently drops the diagram. Embedding the title (when provided)
+        # lets the importer recover it; the NN metamodel only stores a
+        # sanitized name, so this is the only carrier for the original title.
+        if title:
+            # The importer's regex captures `"([^"]*)"` so an embedded `"`
+            # would truncate the title — safer to convert to a similar glyph.
+            safe_title = str(title).replace('"', "'")
+            header_line = f'# NN MODEL: "{safe_title}" #'
+        else:
+            header_line = "# NN MODEL #"
+        border = "#" * len(header_line)
+        f.write(f"{border}\n")
+        f.write(f"{header_line}\n")
+        f.write(f"{border}\n")
         # Generate imports for only the used types
         f.write("from besser.BUML.metamodel.nn import (\n")
         f.write(f"    {', '.join(sorted(used_types))},\n")

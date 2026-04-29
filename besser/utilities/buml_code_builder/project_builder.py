@@ -349,6 +349,11 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             # ---------------------------------------------------------- #
             # NN MODELS                                                  #
             # ---------------------------------------------------------- #
+            # Source of titles: json_to_buml_project attaches them to the
+            # Project as ``_nn_diagram_titles`` (id(nn) -> title) so we can
+            # round-trip the user-facing diagram title — the NN metamodel
+            # only stores a sanitized name.
+            nn_titles_by_id = getattr(project, "_nn_diagram_titles", {}) or {}
             for idx, nm in enumerate(nn_models, start=1):
                 # Use the static "nn_model" prefix (suffixed when multiple)
                 # so the resulting Python identifier in `models=[...]` matches
@@ -358,10 +363,14 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 # silently dropping the diagram on round-trip.
                 var_name = _suffixed_name("nn_model", idx, n_nn)
 
-                section = ""
-                if n_nn > 1:
-                    label = getattr(nm, "name", f"NN {idx}")
-                    section = f"# NN MODEL {idx}: \"{label}\" #\n\n"
+                # Header is written exclusively by nn_model_to_code to avoid
+                # double-headers (one from project_builder, one from the NN
+                # builder) that confused `_extract_all_sections` and erased
+                # titles even in the multi-NN case.
+                title = nn_titles_by_id.get(id(nm)) or getattr(nm, "name", None)
+                if n_nn > 1 and title and not str(title).strip().startswith(f"NN {idx}"):
+                    # Disambiguate within the file when there are siblings.
+                    title = f"{title} ({idx})"
 
                 tmp_path = os.path.join(temp_dir, f"nn_model_{idx}.py")
                 # Thread the suffixed var_name through so the NN builder
@@ -369,8 +378,8 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
                 # Previously the Project(...) line referenced ``my_nn_1`` but
                 # the actual binding was ``my_nn`` → NameError on exec() when
                 # a project held more than one NN.
-                nn_model_to_code(model=nm, file_path=tmp_path, model_var_name=var_name)
-                _write_temp_to_output(tmp_path, f, section_header=section)
+                nn_model_to_code(model=nm, file_path=tmp_path, model_var_name=var_name, title=title)
+                _write_temp_to_output(tmp_path, f)
                 model_vars.append(var_name)
 
             # Legacy: if a raw code string was passed, include it as-is

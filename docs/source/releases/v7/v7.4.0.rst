@@ -1,0 +1,49 @@
+Version 7.4.0
+=============
+
+This release introduces a new **OCL utility package** under
+``besser.BUML.metamodel.ocl`` (chain, clone, predicates, substitute, walk) and a
+new **OCL normalization subsystem** under ``besser.BUML.notations.ocl.normalization``
+that rewrites parsed constraints into a canonical CNF/iterator-fused form. It also
+ships modeling-perspective toggles in the Web Modeling Editor (filter the workspace
+to the diagram families a project actually uses) and a fix that clears the
+stereotype label when an Abstract or Enumeration class is toggled back to a plain
+class. ``bocl`` is bumped to ``1.0.1`` to pick up the matching parser-side fixes.
+
+New Features and Improvements
+-----------------------------
+
+**OCL Utility Package** (``besser.BUML.metamodel.ocl``)
+
+* Added ``walk`` — post-order traversal helper that skips structural ``InfixOperator`` markers and surfaces only AST nodes.
+* Added ``clone`` — typed AST cloner that preserves shared metamodel references (Property, InfixOperator) while deep-copying the expression tree, so rewrite rules can mutate without touching the source.
+* Added ``substitute`` — capture-avoiding substitution with an explicit ``ScopeStack`` (push/pop in try/finally), correct under nested iterators and shadowed iterator variables.
+* Added ``chain`` — extracts the property-call chain rooted at a navigation expression, surfacing the navigation path consumers need for downstream analysis.
+* Added ``predicates`` — composable predicate set (``is_op``, ``is_and``, ``is_implies``, ``is_xor``, ``is_isempty``, ``is_loop``, …) for matching nodes in rewrite rules and external analyzers.
+
+**OCL Normalization Subsystem** (``besser.BUML.notations.ocl.normalization``)
+
+* Added a fixed-iteration rewrite engine (``normalize.normalize``) that drives a deterministic, ordered rule pipeline to a fixpoint, with a developer-bug ``max_iterations`` guard against non-terminating rules.
+* Added six rule modules covering the normalization tactics: ``boolean`` (NNF / De Morgan / double-negation elimination), ``cnf`` (implies-elimination, if-bool-elim, distribute-or-over-and), ``collection`` (size/isEmpty / notEmpty rewrites), ``iterator`` (select/forall/exists fusion), ``multiplicity`` (multiplicity-aware optimizations), ``all_instances`` (allInstances rewrites).
+* Added ``pretty_printer`` for human-readable round-tripping of OCL ASTs back to source form.
+* Added ``api.parse_ocl`` as the single new public entry point that wraps the existing ANTLR parser and surfaces aggregated ``BOCLSyntaxError`` instead of raising on the first error.
+* Added ``wrapping_visitor`` so external callers can catch parse-shaped errors uniformly across the visitor stack.
+* Narrowed the ``IfBoolElim`` rewrite to only fire on if-expressions whose branches are boolean-typed, and surfaced unresolved-property errors as ``BOCLSyntaxError`` instead of bare ``Exception``.
+
+**Web Modeling Editor — Frontend**
+
+* Added **Modeling Perspectives**: settings panel toggles per diagram family (Class, Object, State Machine, Agent, GUI, Quantum, …) that filter the workspace sidebar, mobile navigation, and command palette in lockstep. Disabled perspectives are hidden everywhere they would otherwise create switch targets.
+* Fixed a class-diagram bug where toggling Abstract or Enumeration **off** left the stereotype label and italic styling on the element; the toggle now clears ``stereotype``, ``italic``, and ``underline`` on the underlying ``UMLClass`` instance.
+* Fixed assistant ``modify_model`` routing: the hook now dispatches model modifications through ``modelingService.injectToEditor`` (with an ``updateDiagramModelThunk`` fallback when the service ref is null) and rejects unknown action names instead of silently skipping them.
+
+Dependencies
+------------
+
+* Bumped ``bocl`` to ``1.0.1`` in both ``requirements.txt`` and ``besser/utilities/web_modeling_editor/backend/requirements.txt`` to pick up the matching OCL parser-side fixes that this release's normalization layer depends on.
+
+Testing
+-------
+
+* Backend: new ``tests/BUML/metamodel/ocl/`` test package covers ``walk``, ``clone``, ``substitute``, ``chain``, and ``predicates`` with capture-avoidance and idempotence cases.
+* Backend: new ``tests/BUML/notations/ocl/`` test package covers the parser, normalization rules (T1–T8 from the design PRD), pretty-printer round-trip, and wrapping-visitor error reporting.
+* Frontend: ``ProjectSettingsPanel.test.tsx`` extended with perspective-toggle assertions covering enabled/disabled state across the seven perspective checkboxes.

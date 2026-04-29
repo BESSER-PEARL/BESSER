@@ -423,6 +423,28 @@ def _emit_nnnext(source_id: str, target_id: str,
     }
 
 
+def _emit_container_link(rel_type: str, source_id: str, target_id: str,
+                         relationships: Dict[str, Dict[str, Any]]) -> None:
+    """Emit an NNComposition or NNAssociation edge from an unowned element to the main NN container.
+
+    Used to wire Configuration → container (composition) and Dataset →
+    container (association); without these the round-trip drops the
+    visual edges between the NN and its training/test data and config.
+    """
+    rel_id = _new_id()
+    relationships[rel_id] = {
+        'id': rel_id,
+        'name': '',
+        'type': rel_type,
+        'owner': None,
+        'bounds': {'x': 0, 'y': 0, 'width': 10, 'height': 100},
+        'path': [{'x': 5, 'y': 100}, {'x': 5, 'y': 0}],
+        'source': {'direction': 'Up', 'element': source_id, 'multiplicity': '', 'role': ''},
+        'target': {'direction': 'Down', 'element': target_id, 'multiplicity': '', 'role': ''},
+        'isManuallyLayouted': False,
+    }
+
+
 def _emit_configuration(config: Configuration, x: int, y: int,
                         elements: Dict[str, Dict[str, Any]]) -> str:
     element_id = _new_id()
@@ -555,20 +577,23 @@ def nn_model_to_json(nn_model: NN) -> Dict[str, Any]:
         y_cursor += 300
 
     # Main container
-    _emit_nn_container(nn_model, y_cursor, elements, relationships, sub_nn_ids=sub_nn_ids)
+    main_container_id = _emit_nn_container(nn_model, y_cursor, elements, relationships, sub_nn_ids=sub_nn_ids)
 
-    # Configuration (unowned, placed to the right)
+    # Configuration (unowned, placed to the right) — composed into the main NN
     if nn_model.configuration is not None:
-        _emit_configuration(nn_model.configuration, x=700, y=y_cursor, elements=elements)
+        config_id = _emit_configuration(nn_model.configuration, x=700, y=y_cursor, elements=elements)
+        _emit_container_link('NNComposition', config_id, main_container_id, relationships)
 
-    # Datasets (unowned, placed below)
+    # Datasets (unowned, placed below) — associated with the main NN
     ds_x = -400
     ds_y = y_cursor + 350
     if getattr(nn_model, 'train_data', None) is not None:
-        _emit_dataset(nn_model.train_data, 'TrainingDataset', ds_x, ds_y, elements)
+        train_id = _emit_dataset(nn_model.train_data, 'TrainingDataset', ds_x, ds_y, elements)
+        _emit_container_link('NNAssociation', train_id, main_container_id, relationships)
         ds_x += 300
     if getattr(nn_model, 'test_data', None) is not None:
-        _emit_dataset(nn_model.test_data, 'TestDataset', ds_x, ds_y, elements)
+        test_id = _emit_dataset(nn_model.test_data, 'TestDataset', ds_x, ds_y, elements)
+        _emit_container_link('NNAssociation', test_id, main_container_id, relationships)
 
     return {
         'version': '3.0.0',

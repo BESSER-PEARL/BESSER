@@ -8,7 +8,6 @@ normalizer: every other rule produces output that these rules then clean up.
 from besser.BUML.metamodel.ocl import (
     clone, is_and, is_or, is_not, is_comparison, is_bool_const,
 )
-from besser.BUML.metamodel.ocl.ocl import OperationCallExpression
 from besser.BUML.notations.ocl.normalization.rules._helpers import (
     make_bool, make_or, make_and, make_comparison, make_not,
 )

@@ -11,7 +11,7 @@ The driver returns a fresh :class:`OCLConstraint`. Inputs are not mutated.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, List, Tuple
+from typing import List, Tuple
 
 from besser.BUML.metamodel.ocl import clone
 from besser.BUML.metamodel.ocl.ocl import (

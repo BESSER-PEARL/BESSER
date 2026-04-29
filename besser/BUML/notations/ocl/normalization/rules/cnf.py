@@ -7,10 +7,39 @@ needed by downstream consumers.
 """
 
 from besser.BUML.metamodel.ocl import clone, is_implies, is_xor
-from besser.BUML.metamodel.ocl.ocl import IfExp
+from besser.BUML.metamodel.ocl.ocl import (
+    BooleanLiteralExpression, IfExp, LoopExp, OperationCallExpression,
+)
 from besser.BUML.notations.ocl.normalization.rules._helpers import (
     make_and, make_not, make_or,
 )
+
+
+_BOOLEAN_OPS = {
+    "and", "or", "not", "xor", "implies",
+    "=", "<>", "<", ">", "<=", ">=",
+    "IsEmpty", "OCLISTYPEOF", "OCLISKINDOF",
+}
+_BOOLEAN_LOOPS = {"forAll", "exists"}
+
+
+def _is_boolean_expr(node) -> bool:
+    """True when `node` is statically known to evaluate to a boolean.
+
+    Used by :class:`IfBoolElim` to skip ``IfExp`` whose branches return
+    something other than a boolean — rewriting those would produce
+    ``and``/``or`` over non-boolean operands, which is not OCL-valid.
+    """
+    if isinstance(node, BooleanLiteralExpression):
+        return True
+    if isinstance(node, OperationCallExpression):
+        return node.operation in _BOOLEAN_OPS
+    if isinstance(node, LoopExp):
+        return node.name in _BOOLEAN_LOOPS
+    if isinstance(node, IfExp):
+        return (_is_boolean_expr(node.thenExpression)
+                and _is_boolean_expr(node.elseCondition))
+    return False
 
 
 class ImpliesElim:
@@ -44,13 +73,14 @@ class IfBoolElim:
     name = "IfBoolElim"
 
     def applies(self, node, ctx):
-        # Convert any IfExp; even non-boolean branches are folded since the
-        # result is structurally well-defined and downstream consumers need
-        # zero ``IfExp`` nodes in normal form. Branches that aren't boolean
-        # are uncommon in invariants and the resulting expression remains
-        # semantically faithful for any branch type that supports ``and`` /
-        # ``or`` (i.e. all OCL boolean expressions).
-        return isinstance(node, IfExp)
+        # Only fold IfExp whose branches are themselves boolean — rewriting
+        # ``if C then 5 else 10 endif`` to ``(C and 5) or ((not C) and 10)``
+        # would produce ``and``/``or`` over integers, which isn't OCL-valid.
+        # Non-boolean IfExp are left in place for downstream consumers.
+        if not isinstance(node, IfExp):
+            return False
+        return (_is_boolean_expr(node.thenExpression)
+                and _is_boolean_expr(node.elseCondition))
 
     def rewrite(self, node, ctx):
         # if C then T else E endif  →  (C and T) or ((not C) and E)

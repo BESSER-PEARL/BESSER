@@ -46,6 +46,13 @@ def test_parse_raises_bocl_syntax_error_on_lex_or_parse_failure(model):
         parse_ocl("context Employee inv: (self.age > 16", model)
 
 
+def test_parse_raises_bocl_syntax_error_on_unresolved_property(model):
+    # Property doesn't exist on the context class — must surface as
+    # BOCLSyntaxError, not a bare Exception.
+    with pytest.raises(BOCLSyntaxError, match="not found"):
+        parse_ocl("context Employee inv: self.nonexistent > 16", model)
+
+
 def test_parse_iterator_constraint(model):
     result = parse_ocl(
         "context Department inv: self.employee->forAll(e | e.age > 16)",

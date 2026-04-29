@@ -148,3 +148,38 @@ def test_idempotence(ocl_input, model):
     once = normalize(parsed, model)
     twice = normalize(once, model)
     assert pretty_print(once) == pretty_print(twice)
+
+
+def test_if_with_non_boolean_branches_is_left_alone(model):
+    """``if C then <int> else <int> endif`` must not be flattened.
+
+    Rewriting it would emit ``and`` / ``or`` over integers, which is not
+    OCL-valid. The IfExp must survive normalization unchanged.
+    """
+    parsed = parse_ocl(
+        "context Employee inv: "
+        "if self.age > 16 then 5 else 10 endif = 5",
+        model,
+    )
+    normalized = normalize(parsed, model)
+
+    if_nodes = [n for n in walk(normalized.expression) if isinstance(n, IfExp)]
+    assert len(if_nodes) == 1, (
+        f"IfExp with non-boolean branches should survive; got: "
+        f"{pretty_print(normalized)}"
+    )
+
+
+def test_if_with_boolean_branches_is_eliminated(model):
+    """``if C then <bool-expr> else <bool-expr> endif`` is still folded."""
+    parsed = parse_ocl(
+        "context Employee inv: "
+        "if self.age > 16 then self.salary > 0.0 else self.salary < 0.0 endif",
+        model,
+    )
+    normalized = normalize(parsed, model)
+    for node in walk(normalized.expression):
+        assert not isinstance(node, IfExp), (
+            f"boolean-branched IfExp must be eliminated; got: "
+            f"{pretty_print(normalized)}"
+        )

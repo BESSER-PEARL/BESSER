@@ -32,6 +32,7 @@ from besser.BUML.metamodel.ocl.ocl import (
     PropertyCallExpression, TypeExp, VariableExp,
 )
 from besser.BUML.notations.ocl.BOCLParser import BOCLParser
+from besser.BUML.notations.ocl.error_handling import BOCLSyntaxError
 from besser.BUML.notations.ocl.visitor import BOCLVisitorImpl
 
 
@@ -85,9 +86,9 @@ class WrappingVisitor(BOCLVisitorImpl):
             prop = self._resolve_property_in_iterators(name)
         if prop is None:
             ctx_name = self.context_class.name if self.context_class else "?"
-            raise Exception(
+            raise BOCLSyntaxError([
                 f"Property '{name}' not found in context '{ctx_name}'"
-            )
+            ])
         pce = PropertyCallExpression(prop.name, prop)
         pce.source = receiver
         return pce

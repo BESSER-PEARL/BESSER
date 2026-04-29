@@ -17,10 +17,10 @@ All new fields default to None / False so a model with no overrides produces
 output identical to v1.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Optional, Type, TypeVar
+from typing import Any, Dict, List, Optional, Type, TypeVar
 
 from besser.BUML.metamodel.structural import NamedElement
 
@@ -68,6 +68,20 @@ class Theme(str, Enum):
     LIGHT = "light"
     DARK = "dark"
     AUTO = "auto"
+
+
+class PortSide(str, Enum):
+    """Where a port-class instance anchors on its owning equipment node.
+
+    AUTO falls back to the port's own ``direction`` attribute (Inlet → LEFT,
+    Outlet → RIGHT) at editor runtime.
+    """
+
+    AUTO = "auto"
+    TOP = "top"
+    RIGHT = "right"
+    BOTTOM = "bottom"
+    LEFT = "left"
 
 
 _E = TypeVar("_E", bound=Enum)
@@ -124,6 +138,33 @@ class ClassCustomization:
     default_width: Optional[int] = None
     default_height: Optional[int] = None
 
+    # v3: representation flags. A class is rendered in the generated editor as
+    # ONE of: a regular node (default), a port (handle on its owner equipment),
+    # or a connection (edge between two port-class instances). The three are
+    # mutually exclusive; ``__post_init__`` enforces this.
+    is_port: bool = False
+    is_connection_class: bool = False
+    port_side: Optional[PortSide] = None
+
+    # v3: configurable connection points. ``None`` means "use the four default
+    # handles (top/right/bottom/left)"; an explicit list — possibly empty —
+    # shows handles only on the listed sides. Use ``[]`` to hide handles
+    # completely (useful for port classes or read-only nodes).
+    connection_points: Optional[List[str]] = None
+
+    # v3: edge-style overrides for connection classes. Mirrors the equivalent
+    # fields on ``AssociationCustomization`` — only meaningful when
+    # ``is_connection_class`` is true (or when an ancestor is). The runtime
+    # applies these to the synthetic edges drawn between two ports.
+    edge_color: Optional[str] = None
+    line_width: Optional[int] = None
+    line_style: Optional[LineStyle] = None
+    source_arrow_style: Optional[ArrowStyle] = None
+    target_arrow_style: Optional[ArrowStyle] = None
+    label_visible: Optional[bool] = None
+    label_font_size: Optional[int] = None
+    label_font_color: Optional[str] = None
+
     node_shape: Optional[NodeShape] = None
     fill_color: Optional[str] = None
     border_color: Optional[str] = None
@@ -141,6 +182,21 @@ class ClassCustomization:
             raise ValueError("is_container must be a bool")
         if not isinstance(self.is_resizable, bool):
             raise ValueError("is_resizable must be a bool")
+        if not isinstance(self.is_port, bool):
+            raise ValueError("is_port must be a bool")
+        if not isinstance(self.is_connection_class, bool):
+            raise ValueError("is_connection_class must be a bool")
+
+        # Mutual exclusion across the three representation modes
+        modes = sum(
+            int(flag) for flag in (self.is_container, self.is_port, self.is_connection_class)
+        )
+        if modes > 1:
+            raise ValueError(
+                "is_container, is_port and is_connection_class are mutually exclusive; "
+                "set at most one to True"
+            )
+
         if self.default_width is not None and self.default_width <= 0:
             raise ValueError("default_width must be a positive integer")
         if self.default_height is not None and self.default_height <= 0:
@@ -150,6 +206,40 @@ class ClassCustomization:
         self.border_style = _coerce_enum(LineStyle, self.border_style, "border_style")
         self.font_weight = _coerce_enum(FontWeight, self.font_weight, "font_weight")
         self.label_position = _coerce_enum(LabelPosition, self.label_position, "label_position")
+        self.port_side = _coerce_enum(PortSide, self.port_side, "port_side")
+
+        if self.port_side is not None and not self.is_port:
+            raise ValueError("port_side is only meaningful when is_port is True")
+
+        if self.connection_points is not None:
+            if not isinstance(self.connection_points, list):
+                raise ValueError("connection_points must be a list of side names or None")
+            valid_sides = {"top", "right", "bottom", "left"}
+            normalised: List[str] = []
+            for side in self.connection_points:
+                if not isinstance(side, str) or side not in valid_sides:
+                    raise ValueError(
+                        f"connection_points must contain only {sorted(valid_sides)}, "
+                        f"got {side!r}"
+                    )
+                if side not in normalised:
+                    normalised.append(side)
+            self.connection_points = normalised
+
+        # Edge-style overrides — same validation rules as AssociationCustomization.
+        _validate_color(self.edge_color, "edge_color")
+        _validate_color(self.label_font_color, "label_font_color")
+        _validate_int_range(self.line_width, 1, 6, "line_width")
+        _validate_int_range(self.label_font_size, 8, 18, "label_font_size")
+        self.line_style = _coerce_enum(LineStyle, self.line_style, "line_style")
+        self.source_arrow_style = _coerce_enum(
+            ArrowStyle, self.source_arrow_style, "source_arrow_style"
+        )
+        self.target_arrow_style = _coerce_enum(
+            ArrowStyle, self.target_arrow_style, "target_arrow_style"
+        )
+        if self.label_visible is not None and not isinstance(self.label_visible, bool):
+            raise ValueError("label_visible must be a bool or None")
 
         _validate_color(self.fill_color, "fill_color")
         _validate_color(self.border_color, "border_color")
@@ -186,6 +276,14 @@ class AssociationCustomization:
     label_font_color: Optional[str] = None
     is_container_association: bool = False
 
+    # v3: endpoint flags for connection-class wiring. When the *source* class
+    # of this association is flagged ``is_connection_class``, exactly one of
+    # the class's outgoing associations should be marked as the source endpoint
+    # and another as the target endpoint. The two flags are mutually exclusive
+    # on a single association.
+    is_source_endpoint: bool = False
+    is_target_endpoint: bool = False
+
     def __post_init__(self):
         _validate_color(self.edge_color, "edge_color")
         _validate_color(self.label_font_color, "label_font_color")
@@ -205,6 +303,14 @@ class AssociationCustomization:
             raise ValueError("label_visible must be a bool or None")
         if not isinstance(self.is_container_association, bool):
             raise ValueError("is_container_association must be a bool")
+        if not isinstance(self.is_source_endpoint, bool):
+            raise ValueError("is_source_endpoint must be a bool")
+        if not isinstance(self.is_target_endpoint, bool):
+            raise ValueError("is_target_endpoint must be a bool")
+        if self.is_source_endpoint and self.is_target_endpoint:
+            raise ValueError(
+                "is_source_endpoint and is_target_endpoint are mutually exclusive"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -337,5 +443,6 @@ __all__ = [
     "LineStyle",
     "NodeShape",
     "PlatformCustomizationModel",
+    "PortSide",
     "Theme",
 ]

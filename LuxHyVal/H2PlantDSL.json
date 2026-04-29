@@ -1,0 +1,4373 @@
+{
+  "project": {
+    "id": "project_1777411091477_sz163or3o",
+    "type": "Project",
+    "schemaVersion": 4,
+    "name": "H2PlantDSL",
+    "description": "Metamodel for a hydrogen-plant Digital-Twin DSL (Aspen HYSYS / Aspen Plus inspired)",
+    "owner": "Iván Alfonso",
+    "createdAt": "2026-04-28T21:18:11.477Z",
+    "currentDiagramType": "ClassDiagram",
+    "currentDiagramIndices": {
+      "ClassDiagram": 0,
+      "ObjectDiagram": 0,
+      "StateMachineDiagram": 0,
+      "AgentDiagram": 0,
+      "UserDiagram": 0,
+      "GUINoCodeDiagram": 0,
+      "QuantumCircuitDiagram": 0
+    },
+    "diagrams": {
+      "ClassDiagram": [
+        {
+          "id": "911fb2d6-8599-428b-a962-911aa072a2f1",
+          "title": "H2 Plant Metamodel",
+          "model": {
+            "version": "3.0.0",
+            "type": "ClassDiagram",
+            "size": {
+              "width": 4294,
+              "height": 3648
+            },
+            "interactive": {
+              "elements": {},
+              "relationships": {}
+            },
+            "elements": {
+              "class_0008": {
+                "id": "class_0008",
+                "name": "Equipment",
+                "type": "AbstractClass",
+                "owner": null,
+                "bounds": {
+                  "x": -1474.800048828125,
+                  "y": -1799.3999633789062,
+                  "width": 240,
+                  "height": 200
+                },
+                "attributes": [
+                  "attr_0010",
+                  "attr_0011",
+                  "attr_0012",
+                  "attr_0013",
+                  "attr_0014",
+                  "attr_0015"
+                ],
+                "methods": []
+              },
+              "attr_0010": {
+                "id": "attr_0010",
+                "name": "tag",
+                "type": "ClassAttribute",
+                "owner": "class_0008",
+                "bounds": {
+                  "x": -1474.300048828125,
+                  "y": -1748.8999633789062,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0011": {
+                "id": "attr_0011",
+                "name": "name",
+                "type": "ClassAttribute",
+                "owner": "class_0008",
+                "bounds": {
+                  "x": -1474.300048828125,
+                  "y": -1723.8999633789062,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0012": {
+                "id": "attr_0012",
+                "name": "manufacturer",
+                "type": "ClassAttribute",
+                "owner": "class_0008",
+                "bounds": {
+                  "x": -1474.300048828125,
+                  "y": -1698.8999633789062,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "attr_0013": {
+                "id": "attr_0013",
+                "name": "modelNumber",
+                "type": "ClassAttribute",
+                "owner": "class_0008",
+                "bounds": {
+                  "x": -1474.300048828125,
+                  "y": -1673.8999633789062,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "attr_0014": {
+                "id": "attr_0014",
+                "name": "status",
+                "type": "ClassAttribute",
+                "owner": "class_0008",
+                "bounds": {
+                  "x": -1474.300048828125,
+                  "y": -1648.8999633789062,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "EquipmentStatus",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0015": {
+                "id": "attr_0015",
+                "name": "installationDate",
+                "type": "ClassAttribute",
+                "owner": "class_0008",
+                "bounds": {
+                  "x": -1474.300048828125,
+                  "y": -1623.8999633789062,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "date",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0016": {
+                "id": "class_0016",
+                "name": "Stream",
+                "type": "AbstractClass",
+                "owner": null,
+                "bounds": {
+                  "x": -858,
+                  "y": -1366,
+                  "width": 240,
+                  "height": 100
+                },
+                "attributes": [
+                  "attr_0018",
+                  "attr_0019"
+                ],
+                "methods": []
+              },
+              "attr_0018": {
+                "id": "attr_0018",
+                "name": "name",
+                "type": "ClassAttribute",
+                "owner": "class_0016",
+                "bounds": {
+                  "x": -857.5,
+                  "y": -1315.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0019": {
+                "id": "attr_0019",
+                "name": "tag",
+                "type": "ClassAttribute",
+                "owner": "class_0016",
+                "bounds": {
+                  "x": -857.5,
+                  "y": -1290.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0020": {
+                "id": "class_0020",
+                "name": "ChemicalComponent",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -581.4000244140625,
+                  "y": -1653.1999816894531,
+                  "width": 240,
+                  "height": 140
+                },
+                "attributes": [
+                  "attr_0021",
+                  "attr_0022",
+                  "attr_0023",
+                  "attr_0024"
+                ],
+                "methods": []
+              },
+              "attr_0021": {
+                "id": "attr_0021",
+                "name": "name",
+                "type": "ClassAttribute",
+                "owner": "class_0020",
+                "bounds": {
+                  "x": -580.9000244140625,
+                  "y": -1612.6999816894531,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0022": {
+                "id": "attr_0022",
+                "name": "formula",
+                "type": "ClassAttribute",
+                "owner": "class_0020",
+                "bounds": {
+                  "x": -580.9000244140625,
+                  "y": -1587.6999816894531,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0023": {
+                "id": "attr_0023",
+                "name": "molecularWeight",
+                "type": "ClassAttribute",
+                "owner": "class_0020",
+                "bounds": {
+                  "x": -580.9000244140625,
+                  "y": -1562.6999816894531,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0024": {
+                "id": "attr_0024",
+                "name": "casNumber",
+                "type": "ClassAttribute",
+                "owner": "class_0020",
+                "bounds": {
+                  "x": -580.9000244140625,
+                  "y": -1537.6999816894531,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0056": {
+                "id": "class_0056",
+                "name": "OperatingMode",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -1787,
+                  "y": -1804,
+                  "width": 240,
+                  "height": 115
+                },
+                "attributes": [
+                  "attr_0057",
+                  "attr_0058",
+                  "attr_0059"
+                ],
+                "methods": []
+              },
+              "attr_0057": {
+                "id": "attr_0057",
+                "name": "name",
+                "type": "ClassAttribute",
+                "owner": "class_0056",
+                "bounds": {
+                  "x": -1786.5,
+                  "y": -1763.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0058": {
+                "id": "attr_0058",
+                "name": "modeType",
+                "type": "ClassAttribute",
+                "owner": "class_0056",
+                "bounds": {
+                  "x": -1786.5,
+                  "y": -1738.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "OperatingModeType",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0059": {
+                "id": "attr_0059",
+                "name": "description",
+                "type": "ClassAttribute",
+                "owner": "class_0056",
+                "bounds": {
+                  "x": -1786.5,
+                  "y": -1713.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0065": {
+                "id": "class_0065",
+                "name": "UnitOperation",
+                "type": "AbstractClass",
+                "owner": null,
+                "bounds": {
+                  "x": -1845,
+                  "y": -1386,
+                  "width": 240,
+                  "height": 50
+                },
+                "attributes": [],
+                "methods": []
+              },
+              "class_0066": {
+                "id": "class_0066",
+                "name": "PowerSource",
+                "type": "AbstractClass",
+                "owner": null,
+                "bounds": {
+                  "x": -1384,
+                  "y": -1455,
+                  "width": 240,
+                  "height": 100
+                },
+                "attributes": [
+                  "attr_0067",
+                  "attr_0068"
+                ],
+                "methods": []
+              },
+              "attr_0067": {
+                "id": "attr_0067",
+                "name": "ratedPower",
+                "type": "ClassAttribute",
+                "owner": "class_0066",
+                "bounds": {
+                  "x": -1383.5,
+                  "y": -1404.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0068": {
+                "id": "attr_0068",
+                "name": "availability",
+                "type": "ClassAttribute",
+                "owner": "class_0066",
+                "bounds": {
+                  "x": -1383.5,
+                  "y": -1379.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0069": {
+                "id": "class_0069",
+                "name": "MaterialStream",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": 29.7999267578125,
+                  "y": -1403.9998168945312,
+                  "width": 240,
+                  "height": 240
+                },
+                "attributes": [
+                  "attr_0070",
+                  "attr_0071",
+                  "attr_0072",
+                  "attr_0073",
+                  "attr_0074",
+                  "attr_0075",
+                  "attr_0076",
+                  "attr_0077"
+                ],
+                "methods": []
+              },
+              "attr_0070": {
+                "id": "attr_0070",
+                "name": "temperature",
+                "type": "ClassAttribute",
+                "owner": "class_0069",
+                "bounds": {
+                  "x": 30.2999267578125,
+                  "y": -1363.4998168945312,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0071": {
+                "id": "attr_0071",
+                "name": "pressure",
+                "type": "ClassAttribute",
+                "owner": "class_0069",
+                "bounds": {
+                  "x": 30.2999267578125,
+                  "y": -1338.4998168945312,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0072": {
+                "id": "attr_0072",
+                "name": "massFlow",
+                "type": "ClassAttribute",
+                "owner": "class_0069",
+                "bounds": {
+                  "x": 30.2999267578125,
+                  "y": -1313.4998168945312,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0073": {
+                "id": "attr_0073",
+                "name": "molarFlow",
+                "type": "ClassAttribute",
+                "owner": "class_0069",
+                "bounds": {
+                  "x": 30.2999267578125,
+                  "y": -1288.4998168945312,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0074": {
+                "id": "attr_0074",
+                "name": "vaporFraction",
+                "type": "ClassAttribute",
+                "owner": "class_0069",
+                "bounds": {
+                  "x": 30.2999267578125,
+                  "y": -1263.4998168945312,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0075": {
+                "id": "attr_0075",
+                "name": "enthalpy",
+                "type": "ClassAttribute",
+                "owner": "class_0069",
+                "bounds": {
+                  "x": 30.2999267578125,
+                  "y": -1238.4998168945312,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0076": {
+                "id": "attr_0076",
+                "name": "density",
+                "type": "ClassAttribute",
+                "owner": "class_0069",
+                "bounds": {
+                  "x": 30.2999267578125,
+                  "y": -1213.4998168945312,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0077": {
+                "id": "attr_0077",
+                "name": "phase",
+                "type": "ClassAttribute",
+                "owner": "class_0069",
+                "bounds": {
+                  "x": 30.2999267578125,
+                  "y": -1188.4998168945312,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "StreamPhase",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0078": {
+                "id": "class_0078",
+                "name": "EnergyStream",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -319,
+                  "y": -1364,
+                  "width": 240,
+                  "height": 140
+                },
+                "attributes": [
+                  "attr_0079",
+                  "attr_0080",
+                  "attr_0081",
+                  "attr_0082"
+                ],
+                "methods": []
+              },
+              "attr_0079": {
+                "id": "attr_0079",
+                "name": "power",
+                "type": "ClassAttribute",
+                "owner": "class_0078",
+                "bounds": {
+                  "x": -318.5,
+                  "y": -1323.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0080": {
+                "id": "attr_0080",
+                "name": "energyType",
+                "type": "ClassAttribute",
+                "owner": "class_0078",
+                "bounds": {
+                  "x": -318.5,
+                  "y": -1298.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0081": {
+                "id": "attr_0081",
+                "name": "voltage",
+                "type": "ClassAttribute",
+                "owner": "class_0078",
+                "bounds": {
+                  "x": -318.5,
+                  "y": -1273.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "attr_0082": {
+                "id": "attr_0082",
+                "name": "frequency",
+                "type": "ClassAttribute",
+                "owner": "class_0078",
+                "bounds": {
+                  "x": -318.5,
+                  "y": -1248.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0083": {
+                "id": "class_0083",
+                "name": "ComponentFraction",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": 20.60009765625,
+                  "y": -1628.2000122070312,
+                  "width": 240,
+                  "height": 90
+                },
+                "attributes": [
+                  "attr_0084",
+                  "attr_0085"
+                ],
+                "methods": []
+              },
+              "attr_0084": {
+                "id": "attr_0084",
+                "name": "molarFraction",
+                "type": "ClassAttribute",
+                "owner": "class_0083",
+                "bounds": {
+                  "x": 21.10009765625,
+                  "y": -1587.7000122070312,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0085": {
+                "id": "attr_0085",
+                "name": "massFraction",
+                "type": "ClassAttribute",
+                "owner": "class_0083",
+                "bounds": {
+                  "x": 21.10009765625,
+                  "y": -1562.7000122070312,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0086": {
+                "id": "class_0086",
+                "name": "Port",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -968,
+                  "y": -1693,
+                  "width": 240,
+                  "height": 140
+                },
+                "attributes": [
+                  "attr_0087",
+                  "attr_0088",
+                  "attr_0089",
+                  "attr_0090"
+                ],
+                "methods": []
+              },
+              "attr_0087": {
+                "id": "attr_0087",
+                "name": "name",
+                "type": "ClassAttribute",
+                "owner": "class_0086",
+                "bounds": {
+                  "x": -967.5,
+                  "y": -1652.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0088": {
+                "id": "attr_0088",
+                "name": "direction",
+                "type": "ClassAttribute",
+                "owner": "class_0086",
+                "bounds": {
+                  "x": -967.5,
+                  "y": -1627.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "PortDirection",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0089": {
+                "id": "attr_0089",
+                "name": "designPressure",
+                "type": "ClassAttribute",
+                "owner": "class_0086",
+                "bounds": {
+                  "x": -967.5,
+                  "y": -1602.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "attr_0090": {
+                "id": "attr_0090",
+                "name": "designTemperature",
+                "type": "ClassAttribute",
+                "owner": "class_0086",
+                "bounds": {
+                  "x": -967.5,
+                  "y": -1577.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0103": {
+                "id": "class_0103",
+                "name": "Electrolyzer",
+                "type": "AbstractClass",
+                "owner": null,
+                "bounds": {
+                  "x": -1843,
+                  "y": -721,
+                  "width": 240,
+                  "height": 275
+                },
+                "attributes": [
+                  "attr_0104",
+                  "attr_0105",
+                  "attr_0106",
+                  "attr_0107",
+                  "attr_0108",
+                  "attr_0109",
+                  "attr_0110",
+                  "attr_0111",
+                  "attr_0112"
+                ],
+                "methods": []
+              },
+              "attr_0104": {
+                "id": "attr_0104",
+                "name": "nominalPower",
+                "type": "ClassAttribute",
+                "owner": "class_0103",
+                "bounds": {
+                  "x": -1842.5,
+                  "y": -670.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0105": {
+                "id": "attr_0105",
+                "name": "nominalH2Production",
+                "type": "ClassAttribute",
+                "owner": "class_0103",
+                "bounds": {
+                  "x": -1842.5,
+                  "y": -645.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0106": {
+                "id": "attr_0106",
+                "name": "specificEnergyConsumption",
+                "type": "ClassAttribute",
+                "owner": "class_0103",
+                "bounds": {
+                  "x": -1842.5,
+                  "y": -620.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0107": {
+                "id": "attr_0107",
+                "name": "minLoad",
+                "type": "ClassAttribute",
+                "owner": "class_0103",
+                "bounds": {
+                  "x": -1842.5,
+                  "y": -595.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0108": {
+                "id": "attr_0108",
+                "name": "maxLoad",
+                "type": "ClassAttribute",
+                "owner": "class_0103",
+                "bounds": {
+                  "x": -1842.5,
+                  "y": -570.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0109": {
+                "id": "attr_0109",
+                "name": "operatingTemperature",
+                "type": "ClassAttribute",
+                "owner": "class_0103",
+                "bounds": {
+                  "x": -1842.5,
+                  "y": -545.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0110": {
+                "id": "attr_0110",
+                "name": "operatingPressure",
+                "type": "ClassAttribute",
+                "owner": "class_0103",
+                "bounds": {
+                  "x": -1842.5,
+                  "y": -520.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0111": {
+                "id": "attr_0111",
+                "name": "stackVoltage",
+                "type": "ClassAttribute",
+                "owner": "class_0103",
+                "bounds": {
+                  "x": -1842.5,
+                  "y": -495.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "attr_0112": {
+                "id": "attr_0112",
+                "name": "stackCurrent",
+                "type": "ClassAttribute",
+                "owner": "class_0103",
+                "bounds": {
+                  "x": -1842.5,
+                  "y": -470.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0113": {
+                "id": "class_0113",
+                "name": "Compressor",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -1523,
+                  "y": -721,
+                  "width": 240,
+                  "height": 190
+                },
+                "attributes": [
+                  "attr_0114",
+                  "attr_0115",
+                  "attr_0116",
+                  "attr_0117",
+                  "attr_0118",
+                  "attr_0119"
+                ],
+                "methods": []
+              },
+              "attr_0114": {
+                "id": "attr_0114",
+                "name": "compressionRatio",
+                "type": "ClassAttribute",
+                "owner": "class_0113",
+                "bounds": {
+                  "x": -1522.5,
+                  "y": -680.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0115": {
+                "id": "attr_0115",
+                "name": "inletPressure",
+                "type": "ClassAttribute",
+                "owner": "class_0113",
+                "bounds": {
+                  "x": -1522.5,
+                  "y": -655.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0116": {
+                "id": "attr_0116",
+                "name": "outletPressure",
+                "type": "ClassAttribute",
+                "owner": "class_0113",
+                "bounds": {
+                  "x": -1522.5,
+                  "y": -630.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0117": {
+                "id": "attr_0117",
+                "name": "isentropicEfficiency",
+                "type": "ClassAttribute",
+                "owner": "class_0113",
+                "bounds": {
+                  "x": -1522.5,
+                  "y": -605.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0118": {
+                "id": "attr_0118",
+                "name": "stages",
+                "type": "ClassAttribute",
+                "owner": "class_0113",
+                "bounds": {
+                  "x": -1522.5,
+                  "y": -580.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0119": {
+                "id": "attr_0119",
+                "name": "power",
+                "type": "ClassAttribute",
+                "owner": "class_0113",
+                "bounds": {
+                  "x": -1522.5,
+                  "y": -555.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0120": {
+                "id": "class_0120",
+                "name": "Pump",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -1203,
+                  "y": -721,
+                  "width": 240,
+                  "height": 140
+                },
+                "attributes": [
+                  "attr_0121",
+                  "attr_0122",
+                  "attr_0123",
+                  "attr_0124"
+                ],
+                "methods": []
+              },
+              "attr_0121": {
+                "id": "attr_0121",
+                "name": "head",
+                "type": "ClassAttribute",
+                "owner": "class_0120",
+                "bounds": {
+                  "x": -1202.5,
+                  "y": -680.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0122": {
+                "id": "attr_0122",
+                "name": "flowRate",
+                "type": "ClassAttribute",
+                "owner": "class_0120",
+                "bounds": {
+                  "x": -1202.5,
+                  "y": -655.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0123": {
+                "id": "attr_0123",
+                "name": "efficiency",
+                "type": "ClassAttribute",
+                "owner": "class_0120",
+                "bounds": {
+                  "x": -1202.5,
+                  "y": -630.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0124": {
+                "id": "attr_0124",
+                "name": "power",
+                "type": "ClassAttribute",
+                "owner": "class_0120",
+                "bounds": {
+                  "x": -1202.5,
+                  "y": -605.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0125": {
+                "id": "class_0125",
+                "name": "HeatExchanger",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -883,
+                  "y": -721,
+                  "width": 240,
+                  "height": 165
+                },
+                "attributes": [
+                  "attr_0126",
+                  "attr_0127",
+                  "attr_0128",
+                  "attr_0129",
+                  "attr_0130"
+                ],
+                "methods": []
+              },
+              "attr_0126": {
+                "id": "attr_0126",
+                "name": "heatTransferArea",
+                "type": "ClassAttribute",
+                "owner": "class_0125",
+                "bounds": {
+                  "x": -882.5,
+                  "y": -680.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0127": {
+                "id": "attr_0127",
+                "name": "heatDuty",
+                "type": "ClassAttribute",
+                "owner": "class_0125",
+                "bounds": {
+                  "x": -882.5,
+                  "y": -655.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0128": {
+                "id": "attr_0128",
+                "name": "overallU",
+                "type": "ClassAttribute",
+                "owner": "class_0125",
+                "bounds": {
+                  "x": -882.5,
+                  "y": -630.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0129": {
+                "id": "attr_0129",
+                "name": "hotInletTemp",
+                "type": "ClassAttribute",
+                "owner": "class_0125",
+                "bounds": {
+                  "x": -882.5,
+                  "y": -605.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "attr_0130": {
+                "id": "attr_0130",
+                "name": "coldInletTemp",
+                "type": "ClassAttribute",
+                "owner": "class_0125",
+                "bounds": {
+                  "x": -882.5,
+                  "y": -580.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0131": {
+                "id": "class_0131",
+                "name": "Separator",
+                "type": "AbstractClass",
+                "owner": null,
+                "bounds": {
+                  "x": -563,
+                  "y": -721,
+                  "width": 240,
+                  "height": 100
+                },
+                "attributes": [
+                  "attr_0132",
+                  "attr_0133"
+                ],
+                "methods": []
+              },
+              "attr_0132": {
+                "id": "attr_0132",
+                "name": "separationEfficiency",
+                "type": "ClassAttribute",
+                "owner": "class_0131",
+                "bounds": {
+                  "x": -562.5,
+                  "y": -670.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0133": {
+                "id": "attr_0133",
+                "name": "recoveryRate",
+                "type": "ClassAttribute",
+                "owner": "class_0131",
+                "bounds": {
+                  "x": -562.5,
+                  "y": -645.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0134": {
+                "id": "class_0134",
+                "name": "StorageTank",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -243,
+                  "y": -721,
+                  "width": 240,
+                  "height": 190
+                },
+                "attributes": [
+                  "attr_0135",
+                  "attr_0136",
+                  "attr_0137",
+                  "attr_0138",
+                  "attr_0139",
+                  "attr_0140"
+                ],
+                "methods": []
+              },
+              "attr_0135": {
+                "id": "attr_0135",
+                "name": "volume",
+                "type": "ClassAttribute",
+                "owner": "class_0134",
+                "bounds": {
+                  "x": -242.5,
+                  "y": -680.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0136": {
+                "id": "attr_0136",
+                "name": "maxPressure",
+                "type": "ClassAttribute",
+                "owner": "class_0134",
+                "bounds": {
+                  "x": -242.5,
+                  "y": -655.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0137": {
+                "id": "attr_0137",
+                "name": "currentPressure",
+                "type": "ClassAttribute",
+                "owner": "class_0134",
+                "bounds": {
+                  "x": -242.5,
+                  "y": -630.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0138": {
+                "id": "attr_0138",
+                "name": "currentLevel",
+                "type": "ClassAttribute",
+                "owner": "class_0134",
+                "bounds": {
+                  "x": -242.5,
+                  "y": -605.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0139": {
+                "id": "attr_0139",
+                "name": "storagePhase",
+                "type": "ClassAttribute",
+                "owner": "class_0134",
+                "bounds": {
+                  "x": -242.5,
+                  "y": -580.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "StreamPhase",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0140": {
+                "id": "attr_0140",
+                "name": "material",
+                "type": "ClassAttribute",
+                "owner": "class_0134",
+                "bounds": {
+                  "x": -242.5,
+                  "y": -555.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0141": {
+                "id": "class_0141",
+                "name": "Valve",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": 77,
+                  "y": -721,
+                  "width": 240,
+                  "height": 190
+                },
+                "attributes": [
+                  "attr_0142",
+                  "attr_0143",
+                  "attr_0144",
+                  "attr_0145"
+                ],
+                "methods": [
+                  "method_0146",
+                  "method_0147"
+                ]
+              },
+              "attr_0142": {
+                "id": "attr_0142",
+                "name": "valveType",
+                "type": "ClassAttribute",
+                "owner": "class_0141",
+                "bounds": {
+                  "x": 77.5,
+                  "y": -680.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0143": {
+                "id": "attr_0143",
+                "name": "opening",
+                "type": "ClassAttribute",
+                "owner": "class_0141",
+                "bounds": {
+                  "x": 77.5,
+                  "y": -655.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0144": {
+                "id": "attr_0144",
+                "name": "cv",
+                "type": "ClassAttribute",
+                "owner": "class_0141",
+                "bounds": {
+                  "x": 77.5,
+                  "y": -630.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "attr_0145": {
+                "id": "attr_0145",
+                "name": "maxPressure",
+                "type": "ClassAttribute",
+                "owner": "class_0141",
+                "bounds": {
+                  "x": 77.5,
+                  "y": -605.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "method_0146": {
+                "id": "method_0146",
+                "name": "open()",
+                "type": "ClassMethod",
+                "owner": "class_0141",
+                "bounds": {
+                  "x": 77.5,
+                  "y": -580.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "any",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "method_0147": {
+                "id": "method_0147",
+                "name": "close()",
+                "type": "ClassMethod",
+                "owner": "class_0141",
+                "bounds": {
+                  "x": 77.5,
+                  "y": -555.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "any",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0148": {
+                "id": "class_0148",
+                "name": "SolarFarm",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -1119,
+                  "y": -1198,
+                  "width": 240,
+                  "height": 115
+                },
+                "attributes": [
+                  "attr_0149",
+                  "attr_0150",
+                  "attr_0151"
+                ],
+                "methods": []
+              },
+              "attr_0149": {
+                "id": "attr_0149",
+                "name": "panelCount",
+                "type": "ClassAttribute",
+                "owner": "class_0148",
+                "bounds": {
+                  "x": -1118.5,
+                  "y": -1157.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0150": {
+                "id": "attr_0150",
+                "name": "peakPower",
+                "type": "ClassAttribute",
+                "owner": "class_0148",
+                "bounds": {
+                  "x": -1118.5,
+                  "y": -1132.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0151": {
+                "id": "attr_0151",
+                "name": "area",
+                "type": "ClassAttribute",
+                "owner": "class_0148",
+                "bounds": {
+                  "x": -1118.5,
+                  "y": -1107.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0152": {
+                "id": "class_0152",
+                "name": "WindFarm",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -1650,
+                  "y": -1198,
+                  "width": 240,
+                  "height": 115
+                },
+                "attributes": [
+                  "attr_0153",
+                  "attr_0154",
+                  "attr_0155"
+                ],
+                "methods": []
+              },
+              "attr_0153": {
+                "id": "attr_0153",
+                "name": "turbineCount",
+                "type": "ClassAttribute",
+                "owner": "class_0152",
+                "bounds": {
+                  "x": -1649.5,
+                  "y": -1157.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "int",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0154": {
+                "id": "attr_0154",
+                "name": "ratedWindSpeed",
+                "type": "ClassAttribute",
+                "owner": "class_0152",
+                "bounds": {
+                  "x": -1649.5,
+                  "y": -1132.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0155": {
+                "id": "attr_0155",
+                "name": "hubHeight",
+                "type": "ClassAttribute",
+                "owner": "class_0152",
+                "bounds": {
+                  "x": -1649.5,
+                  "y": -1107.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0156": {
+                "id": "class_0156",
+                "name": "GridConnection",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -1384,
+                  "y": -1202,
+                  "width": 240,
+                  "height": 115
+                },
+                "attributes": [
+                  "attr_0157",
+                  "attr_0158",
+                  "attr_0159"
+                ],
+                "methods": []
+              },
+              "attr_0157": {
+                "id": "attr_0157",
+                "name": "voltage",
+                "type": "ClassAttribute",
+                "owner": "class_0156",
+                "bounds": {
+                  "x": -1383.5,
+                  "y": -1161.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0158": {
+                "id": "attr_0158",
+                "name": "maxPower",
+                "type": "ClassAttribute",
+                "owner": "class_0156",
+                "bounds": {
+                  "x": -1383.5,
+                  "y": -1136.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0159": {
+                "id": "attr_0159",
+                "name": "frequency",
+                "type": "ClassAttribute",
+                "owner": "class_0156",
+                "bounds": {
+                  "x": -1383.5,
+                  "y": -1111.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0160": {
+                "id": "class_0160",
+                "name": "PEMElectrolyzer",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -2127,
+                  "y": -276,
+                  "width": 240,
+                  "height": 90
+                },
+                "attributes": [
+                  "attr_0161",
+                  "attr_0162"
+                ],
+                "methods": []
+              },
+              "attr_0161": {
+                "id": "attr_0161",
+                "name": "membraneArea",
+                "type": "ClassAttribute",
+                "owner": "class_0160",
+                "bounds": {
+                  "x": -2126.5,
+                  "y": -235.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0162": {
+                "id": "attr_0162",
+                "name": "membraneThickness",
+                "type": "ClassAttribute",
+                "owner": "class_0160",
+                "bounds": {
+                  "x": -2126.5,
+                  "y": -210.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0163": {
+                "id": "class_0163",
+                "name": "AlkalineElectrolyzer",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -1841,
+                  "y": -283,
+                  "width": 240,
+                  "height": 90
+                },
+                "attributes": [
+                  "attr_0164",
+                  "attr_0165"
+                ],
+                "methods": []
+              },
+              "attr_0164": {
+                "id": "attr_0164",
+                "name": "electrolyteConcentration",
+                "type": "ClassAttribute",
+                "owner": "class_0163",
+                "bounds": {
+                  "x": -1840.5,
+                  "y": -242.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0165": {
+                "id": "attr_0165",
+                "name": "bubblePoint",
+                "type": "ClassAttribute",
+                "owner": "class_0163",
+                "bounds": {
+                  "x": -1840.5,
+                  "y": -217.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0166": {
+                "id": "class_0166",
+                "name": "SOECElectrolyzer",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -1467,
+                  "y": -278,
+                  "width": 240,
+                  "height": 90
+                },
+                "attributes": [
+                  "attr_0167",
+                  "attr_0168"
+                ],
+                "methods": []
+              },
+              "attr_0167": {
+                "id": "attr_0167",
+                "name": "operatingTempSOEC",
+                "type": "ClassAttribute",
+                "owner": "class_0166",
+                "bounds": {
+                  "x": -1466.5,
+                  "y": -237.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0168": {
+                "id": "attr_0168",
+                "name": "ceramicMaterial",
+                "type": "ClassAttribute",
+                "owner": "class_0166",
+                "bounds": {
+                  "x": -1466.5,
+                  "y": -212.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0169": {
+                "id": "class_0169",
+                "name": "PSAUnit",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -723,
+                  "y": -319,
+                  "width": 240,
+                  "height": 140
+                },
+                "attributes": [
+                  "attr_0170",
+                  "attr_0171",
+                  "attr_0172",
+                  "attr_0173"
+                ],
+                "methods": []
+              },
+              "attr_0170": {
+                "id": "attr_0170",
+                "name": "adsorbentType",
+                "type": "ClassAttribute",
+                "owner": "class_0169",
+                "bounds": {
+                  "x": -722.5,
+                  "y": -278.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0171": {
+                "id": "attr_0171",
+                "name": "cycleTime",
+                "type": "ClassAttribute",
+                "owner": "class_0169",
+                "bounds": {
+                  "x": -722.5,
+                  "y": -253.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0172": {
+                "id": "attr_0172",
+                "name": "workingPressure",
+                "type": "ClassAttribute",
+                "owner": "class_0169",
+                "bounds": {
+                  "x": -722.5,
+                  "y": -228.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0173": {
+                "id": "attr_0173",
+                "name": "purgeRatio",
+                "type": "ClassAttribute",
+                "owner": "class_0169",
+                "bounds": {
+                  "x": -722.5,
+                  "y": -203.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": true,
+                "isDerived": false
+              },
+              "class_0174": {
+                "id": "class_0174",
+                "name": "Dryer",
+                "type": "Class",
+                "owner": null,
+                "bounds": {
+                  "x": -409,
+                  "y": -319,
+                  "width": 240,
+                  "height": 90
+                },
+                "attributes": [
+                  "attr_0175",
+                  "attr_0176"
+                ],
+                "methods": []
+              },
+              "attr_0175": {
+                "id": "attr_0175",
+                "name": "moistureRemovalRate",
+                "type": "ClassAttribute",
+                "owner": "class_0174",
+                "bounds": {
+                  "x": -408.5,
+                  "y": -278.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0176": {
+                "id": "attr_0176",
+                "name": "dewPoint",
+                "type": "ClassAttribute",
+                "owner": "class_0174",
+                "bounds": {
+                  "x": -408.5,
+                  "y": -253.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "float",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0177": {
+                "id": "class_0177",
+                "name": "EquipmentStatus",
+                "type": "Enumeration",
+                "owner": null,
+                "bounds": {
+                  "x": -2087,
+                  "y": -1793,
+                  "width": 240,
+                  "height": 175
+                },
+                "attributes": [
+                  "attr_0178",
+                  "attr_0179",
+                  "attr_0180",
+                  "attr_0181",
+                  "attr_0182"
+                ],
+                "methods": []
+              },
+              "attr_0178": {
+                "id": "attr_0178",
+                "name": "Operational",
+                "type": "ClassAttribute",
+                "owner": "class_0177",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1742.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0179": {
+                "id": "attr_0179",
+                "name": "Standby",
+                "type": "ClassAttribute",
+                "owner": "class_0177",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1717.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0180": {
+                "id": "attr_0180",
+                "name": "Maintenance",
+                "type": "ClassAttribute",
+                "owner": "class_0177",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1692.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0181": {
+                "id": "attr_0181",
+                "name": "Offline",
+                "type": "ClassAttribute",
+                "owner": "class_0177",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1667.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0182": {
+                "id": "attr_0182",
+                "name": "Fault",
+                "type": "ClassAttribute",
+                "owner": "class_0177",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1642.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0183": {
+                "id": "class_0183",
+                "name": "StreamPhase",
+                "type": "Enumeration",
+                "owner": null,
+                "bounds": {
+                  "x": -2087,
+                  "y": -1584,
+                  "width": 240,
+                  "height": 175
+                },
+                "attributes": [
+                  "attr_0184",
+                  "attr_0185",
+                  "attr_0186",
+                  "attr_0187",
+                  "attr_0188"
+                ],
+                "methods": []
+              },
+              "attr_0184": {
+                "id": "attr_0184",
+                "name": "Gas",
+                "type": "ClassAttribute",
+                "owner": "class_0183",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1533.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0185": {
+                "id": "attr_0185",
+                "name": "Liquid",
+                "type": "ClassAttribute",
+                "owner": "class_0183",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1508.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0186": {
+                "id": "attr_0186",
+                "name": "Mixed",
+                "type": "ClassAttribute",
+                "owner": "class_0183",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1483.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0187": {
+                "id": "attr_0187",
+                "name": "Solid",
+                "type": "ClassAttribute",
+                "owner": "class_0183",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1458.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0188": {
+                "id": "attr_0188",
+                "name": "SuperCritical",
+                "type": "ClassAttribute",
+                "owner": "class_0183",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1433.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0189": {
+                "id": "class_0189",
+                "name": "PortDirection",
+                "type": "Enumeration",
+                "owner": null,
+                "bounds": {
+                  "x": -2086,
+                  "y": -1012,
+                  "width": 240,
+                  "height": 100
+                },
+                "attributes": [
+                  "attr_0190",
+                  "attr_0191"
+                ],
+                "methods": []
+              },
+              "attr_0190": {
+                "id": "attr_0190",
+                "name": "Inlet",
+                "type": "ClassAttribute",
+                "owner": "class_0189",
+                "bounds": {
+                  "x": -2085.5,
+                  "y": -961.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0191": {
+                "id": "attr_0191",
+                "name": "Outlet",
+                "type": "ClassAttribute",
+                "owner": "class_0189",
+                "bounds": {
+                  "x": -2085.5,
+                  "y": -936.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0192": {
+                "id": "class_0192",
+                "name": "MeasurementType",
+                "type": "Enumeration",
+                "owner": null,
+                "bounds": {
+                  "x": -2087,
+                  "y": -1302,
+                  "width": 240,
+                  "height": 250
+                },
+                "attributes": [
+                  "attr_0193",
+                  "attr_0194",
+                  "attr_0195",
+                  "attr_0196",
+                  "attr_0197",
+                  "attr_0198",
+                  "attr_0199",
+                  "attr_0200"
+                ],
+                "methods": []
+              },
+              "attr_0193": {
+                "id": "attr_0193",
+                "name": "Temperature",
+                "type": "ClassAttribute",
+                "owner": "class_0192",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1251.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0194": {
+                "id": "attr_0194",
+                "name": "Pressure",
+                "type": "ClassAttribute",
+                "owner": "class_0192",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1226.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0195": {
+                "id": "attr_0195",
+                "name": "Flow",
+                "type": "ClassAttribute",
+                "owner": "class_0192",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1201.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0196": {
+                "id": "attr_0196",
+                "name": "Level",
+                "type": "ClassAttribute",
+                "owner": "class_0192",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1176.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0197": {
+                "id": "attr_0197",
+                "name": "Concentration",
+                "type": "ClassAttribute",
+                "owner": "class_0192",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1151.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0198": {
+                "id": "attr_0198",
+                "name": "Voltage",
+                "type": "ClassAttribute",
+                "owner": "class_0192",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1126.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0199": {
+                "id": "attr_0199",
+                "name": "Current",
+                "type": "ClassAttribute",
+                "owner": "class_0192",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1101.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0200": {
+                "id": "attr_0200",
+                "name": "Power",
+                "type": "ClassAttribute",
+                "owner": "class_0192",
+                "bounds": {
+                  "x": -2086.5,
+                  "y": -1076.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0201": {
+                "id": "class_0201",
+                "name": "AlarmSeverity",
+                "type": "Enumeration",
+                "owner": null,
+                "bounds": {
+                  "x": 320,
+                  "y": 800,
+                  "width": 240,
+                  "height": 150
+                },
+                "attributes": [
+                  "attr_0202",
+                  "attr_0203",
+                  "attr_0204",
+                  "attr_0205"
+                ],
+                "methods": []
+              },
+              "attr_0202": {
+                "id": "attr_0202",
+                "name": "Info",
+                "type": "ClassAttribute",
+                "owner": "class_0201",
+                "bounds": {
+                  "x": 320.5,
+                  "y": 850.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0203": {
+                "id": "attr_0203",
+                "name": "Warning",
+                "type": "ClassAttribute",
+                "owner": "class_0201",
+                "bounds": {
+                  "x": 320.5,
+                  "y": 875.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0204": {
+                "id": "attr_0204",
+                "name": "Critical",
+                "type": "ClassAttribute",
+                "owner": "class_0201",
+                "bounds": {
+                  "x": 320.5,
+                  "y": 900.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0205": {
+                "id": "attr_0205",
+                "name": "Emergency",
+                "type": "ClassAttribute",
+                "owner": "class_0201",
+                "bounds": {
+                  "x": 320.5,
+                  "y": 925.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "class_0206": {
+                "id": "class_0206",
+                "name": "OperatingModeType",
+                "type": "Enumeration",
+                "owner": null,
+                "bounds": {
+                  "x": 640,
+                  "y": 800,
+                  "width": 240,
+                  "height": 175
+                },
+                "attributes": [
+                  "attr_0207",
+                  "attr_0208",
+                  "attr_0209",
+                  "attr_0210",
+                  "attr_0211"
+                ],
+                "methods": []
+              },
+              "attr_0207": {
+                "id": "attr_0207",
+                "name": "Startup",
+                "type": "ClassAttribute",
+                "owner": "class_0206",
+                "bounds": {
+                  "x": 640.5,
+                  "y": 850.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0208": {
+                "id": "attr_0208",
+                "name": "Normal",
+                "type": "ClassAttribute",
+                "owner": "class_0206",
+                "bounds": {
+                  "x": 640.5,
+                  "y": 875.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0209": {
+                "id": "attr_0209",
+                "name": "Shutdown",
+                "type": "ClassAttribute",
+                "owner": "class_0206",
+                "bounds": {
+                  "x": 640.5,
+                  "y": 900.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0210": {
+                "id": "attr_0210",
+                "name": "Maintenance",
+                "type": "ClassAttribute",
+                "owner": "class_0206",
+                "bounds": {
+                  "x": 640.5,
+                  "y": 925.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              },
+              "attr_0211": {
+                "id": "attr_0211",
+                "name": "Emergency",
+                "type": "ClassAttribute",
+                "owner": "class_0206",
+                "bounds": {
+                  "x": 640.5,
+                  "y": 950.5,
+                  "width": 239,
+                  "height": 25
+                },
+                "code": "",
+                "visibility": "public",
+                "attributeType": "str",
+                "implementationType": "none",
+                "stateMachineId": "",
+                "quantumCircuitId": "",
+                "isOptional": false,
+                "isDerived": false
+              }
+            },
+            "relationships": {
+              "rel_0222": {
+                "id": "rel_0222",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1730,
+                  "y": -1599.3999633789062,
+                  "width": 389.0999517440796,
+                  "height": 222.99996376037598
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 213.39996337890625
+                  },
+                  {
+                    "x": 5,
+                    "y": 106.69998168945312
+                  },
+                  {
+                    "x": 375.199951171875,
+                    "y": 106.69998168945312
+                  },
+                  {
+                    "x": 375.199951171875,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0065",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0008",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0223": {
+                "id": "rel_0223",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1314.4000244140625,
+                  "y": -1599.3999633789062,
+                  "width": 18.90000057220459,
+                  "height": 153.99996376037598
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 144.39996337890625
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0066",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0008",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0224": {
+                "id": "rel_0224",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1729,
+                  "y": -1336,
+                  "width": 18.90000057220459,
+                  "height": 624.6000003814697
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 615
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0103",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0065",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0225": {
+                "id": "rel_0225",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1730,
+                  "y": -1336,
+                  "width": 340.9000005722046,
+                  "height": 624.6000003814697
+                },
+                "path": [
+                  {
+                    "x": 327,
+                    "y": 615
+                  },
+                  {
+                    "x": 327,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0113",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0065",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0226": {
+                "id": "rel_0226",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1730,
+                  "y": -1336,
+                  "width": 660.9000005722046,
+                  "height": 624.6000003814697
+                },
+                "path": [
+                  {
+                    "x": 647,
+                    "y": 615
+                  },
+                  {
+                    "x": 647,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0120",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0065",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0227": {
+                "id": "rel_0227",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1730,
+                  "y": -1336,
+                  "width": 980.9000005722046,
+                  "height": 624.6000003814697
+                },
+                "path": [
+                  {
+                    "x": 967,
+                    "y": 615
+                  },
+                  {
+                    "x": 967,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0125",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0065",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0228": {
+                "id": "rel_0228",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1730,
+                  "y": -1336,
+                  "width": 1300.9000005722046,
+                  "height": 624.6000003814697
+                },
+                "path": [
+                  {
+                    "x": 1287,
+                    "y": 615
+                  },
+                  {
+                    "x": 1287,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0131",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0065",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0229": {
+                "id": "rel_0229",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1730,
+                  "y": -1336,
+                  "width": 1620.9000005722046,
+                  "height": 624.6000003814697
+                },
+                "path": [
+                  {
+                    "x": 1607,
+                    "y": 615
+                  },
+                  {
+                    "x": 1607,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0134",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0065",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0230": {
+                "id": "rel_0230",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1730,
+                  "y": -1336,
+                  "width": 1940.9000005722046,
+                  "height": 624.6000003814697
+                },
+                "path": [
+                  {
+                    "x": 1927,
+                    "y": 615
+                  },
+                  {
+                    "x": 1927,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 307.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0141",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0065",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0231": {
+                "id": "rel_0231",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -2012,
+                  "y": -446,
+                  "width": 302.9000005722046,
+                  "height": 179.60000038146973
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 170
+                  },
+                  {
+                    "x": 5,
+                    "y": 85
+                  },
+                  {
+                    "x": 289,
+                    "y": 85
+                  },
+                  {
+                    "x": 289,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0160",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0103",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0232": {
+                "id": "rel_0232",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1727,
+                  "y": -446,
+                  "width": 18.90000057220459,
+                  "height": 172.60000038146973
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 163
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0163",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0103",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0233": {
+                "id": "rel_0233",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1728,
+                  "y": -446,
+                  "width": 394.9000005722046,
+                  "height": 177.60000038146973
+                },
+                "path": [
+                  {
+                    "x": 381,
+                    "y": 168
+                  },
+                  {
+                    "x": 381,
+                    "y": 84
+                  },
+                  {
+                    "x": 5,
+                    "y": 84
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0166",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0103",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0234": {
+                "id": "rel_0234",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -528,
+                  "y": -621,
+                  "width": 18.90000057220459,
+                  "height": 311.6000003814697
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 302
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0169",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0131",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0235": {
+                "id": "rel_0235",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -371,
+                  "y": -621,
+                  "width": 18.90000057220459,
+                  "height": 311.6000003814697
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 302
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0174",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0131",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0236": {
+                "id": "rel_0236",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1269,
+                  "y": -1355,
+                  "width": 283.9000005722046,
+                  "height": 166.60000038146973
+                },
+                "path": [
+                  {
+                    "x": 270,
+                    "y": 157
+                  },
+                  {
+                    "x": 270,
+                    "y": 78.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 78.5
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0148",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0066",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0237": {
+                "id": "rel_0237",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1535,
+                  "y": -1355,
+                  "width": 284.9000005722046,
+                  "height": 166.60000038146973
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 157
+                  },
+                  {
+                    "x": 5,
+                    "y": 78.5
+                  },
+                  {
+                    "x": 271,
+                    "y": 78.5
+                  },
+                  {
+                    "x": 271,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0152",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0066",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0238": {
+                "id": "rel_0238",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -1269,
+                  "y": -1355,
+                  "width": 18.90000057220459,
+                  "height": 162.60000038146973
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 153
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Up",
+                  "element": "class_0156",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0066",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0239": {
+                "id": "rel_0239",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -743,
+                  "y": -1266,
+                  "width": 906.6999273300171,
+                  "height": 142.00018310546875
+                },
+                "path": [
+                  {
+                    "x": 892.7999267578125,
+                    "y": 102.00018310546875
+                  },
+                  {
+                    "x": 892.7999267578125,
+                    "y": 142.00018310546875
+                  },
+                  {
+                    "x": 5,
+                    "y": 142.00018310546875
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Down",
+                  "element": "class_0069",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0016",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0240": {
+                "id": "rel_0240",
+                "name": "",
+                "type": "ClassInheritance",
+                "owner": null,
+                "bounds": {
+                  "x": -743,
+                  "y": -1266,
+                  "width": 557.9000005722046,
+                  "height": 82
+                },
+                "path": [
+                  {
+                    "x": 544,
+                    "y": 42
+                  },
+                  {
+                    "x": 544,
+                    "y": 82
+                  },
+                  {
+                    "x": 5,
+                    "y": 82
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Down",
+                  "element": "class_0078",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0016",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0242": {
+                "id": "rel_0242",
+                "name": "equi_ports",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": -1234.800048828125,
+                  "y": -1656.1999816894531,
+                  "width": 266.800048828125,
+                  "height": 48.60000038146973
+                },
+                "path": [
+                  {
+                    "x": 0,
+                    "y": 10
+                  },
+                  {
+                    "x": 266.800048828125,
+                    "y": 10
+                  }
+                ],
+                "source": {
+                  "direction": "Right",
+                  "element": "class_0008",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Left",
+                  "element": "class_0086",
+                  "multiplicity": "*",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0243": {
+                "id": "rel_0243",
+                "name": "source",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": -875.7218780517578,
+                  "y": -1553,
+                  "width": 111.91094017028809,
+                  "height": 196.60000038146973
+                },
+                "path": [
+                  {
+                    "x": 82.72187805175781,
+                    "y": 187
+                  },
+                  {
+                    "x": 82.72187805175781,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Topright",
+                  "element": "class_0016",
+                  "multiplicity": "0..*",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Bottomright",
+                  "element": "class_0086",
+                  "multiplicity": "1",
+                  "role": "sourcePort",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0244": {
+                "id": "rel_0244",
+                "name": "target",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": -983.6125030517578,
+                  "y": -1553,
+                  "width": 125.61250305175781,
+                  "height": 250.60000038146973
+                },
+                "path": [
+                  {
+                    "x": 125.61250305175781,
+                    "y": 212
+                  },
+                  {
+                    "x": 75.61250305175781,
+                    "y": 212
+                  },
+                  {
+                    "x": 75.61250305175781,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Upleft",
+                  "element": "class_0016",
+                  "multiplicity": "0..*",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Bottomleft",
+                  "element": "class_0086",
+                  "multiplicity": "1",
+                  "role": "targetPort",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0245": {
+                "id": "rel_0245",
+                "name": "material_fraction",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": 140.20001220703125,
+                  "y": -1538.2000122070312,
+                  "width": 36.6875,
+                  "height": 143.80019569396973
+                },
+                "path": [
+                  {
+                    "x": 5,
+                    "y": 134.2001953125
+                  },
+                  {
+                    "x": 5,
+                    "y": 0
+                  }
+                ],
+                "source": {
+                  "direction": "Topleft",
+                  "element": "class_0069",
+                  "multiplicity": "0..1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Down",
+                  "element": "class_0083",
+                  "multiplicity": "1..*",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              },
+              "rel_0246": {
+                "id": "rel_0246",
+                "name": "chemical_fraction",
+                "type": "ClassBidirectional",
+                "owner": null,
+                "bounds": {
+                  "x": -341.4000244140625,
+                  "y": -1593.2000122070312,
+                  "width": 362.0001220703125,
+                  "height": 48.60000038146973
+                },
+                "path": [
+                  {
+                    "x": 362.0001220703125,
+                    "y": 10
+                  },
+                  {
+                    "x": 0,
+                    "y": 10
+                  }
+                ],
+                "source": {
+                  "direction": "Left",
+                  "element": "class_0083",
+                  "multiplicity": "*",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "target": {
+                  "direction": "Right",
+                  "element": "class_0020",
+                  "multiplicity": "1",
+                  "role": "",
+                  "bounds": {
+                    "x": 0,
+                    "y": 0,
+                    "width": 0,
+                    "height": 0
+                  }
+                },
+                "isManuallyLayouted": false
+              }
+            },
+            "assessments": {}
+          },
+          "lastUpdate": "2026-04-28T23:30:11.238Z"
+        }
+      ],
+      "PlatformCustomizationDiagram": [
+        {
+          "id": "b2d074f7-85f7-4e8d-88c7-3cc2143fab21",
+          "title": "Platform Customization",
+          "model": {
+            "classOverrides": {
+              "Port": {
+                "isPort": true,
+                "portSide": "auto"
+              },
+              "Stream": {
+                "isConnectionClass": true
+              },
+              "MaterialStream": {
+                "isConnectionClass": true
+              },
+              "EnergyStream": {
+                "isConnectionClass": true,
+                "lineWidth": 3,
+                "targetArrowStyle": "filled_triangle"
+              }
+            },
+            "associationOverrides": {
+              "source": {
+                "isSourceEndpoint": true
+              },
+              "target": {
+                "isTargetEndpoint": true
+              }
+            },
+            "version": "2.0.0"
+          },
+          "lastUpdate": "2026-04-28T23:29:43.397Z"
+        }
+      ]
+    },
+    "settings": {
+      "defaultDiagramType": "ClassDiagram",
+      "autoSave": true,
+      "collaborationEnabled": false
+    }
+  },
+  "exportedAt": "2026-04-28T23:30:12.850Z",
+  "version": "2.0.0"
+}

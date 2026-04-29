@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { AssociationMetadata, BaseInstance, ClassMetadata } from '../types/models';
+import { getEnumerationValues, isAssignableTo } from '../types/models';
 
 export interface SelectedLink {
   associationName: string;
@@ -204,7 +205,7 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
         )
         .map((l) => l.target_id);
       const inverse = existingInstances
-        .filter((i) => i.class_name === assoc.targetClass && i.id !== instance.id)
+        .filter((i) => isAssignableTo(i.class_name, assoc.targetClass) && i.id !== instance.id)
         .filter((i) =>
           i.links.some(
             (l) => l.association_name === assoc.name && l.target_id === instance.id,
@@ -219,9 +220,9 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
   const candidatesByAssociation = useMemo(() => {
     const map: Record<string, BaseInstance[]> = {};
     for (const assoc of associations) {
-      // Exclude the instance itself from candidates for self-associations.
+      // Polymorphic + exclude the instance itself for self-associations.
       map[assoc.name] = existingInstances.filter(
-        (i) => i.class_name === assoc.targetClass && i.id !== instance.id,
+        (i) => isAssignableTo(i.class_name, assoc.targetClass) && i.id !== instance.id,
       );
     }
     return map;
@@ -290,6 +291,9 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                 const inputType = inputTypeFor(attrMeta.type);
                 const fieldId = `edit-${attrMeta.name}`;
                 const currentValue = attributes[attrMeta.name] ?? '';
+                // Enum-typed attributes render as a <select> populated from
+                // the ENUMERATIONS registry. Empty string represents "unset".
+                const enumValues = getEnumerationValues(attrMeta.type);
                 return (
                   <div key={attrMeta.name} className="space-y-2">
                     <Label htmlFor={fieldId}>
@@ -298,7 +302,19 @@ export const PropertyEditor: React.FC<PropertyEditorProps> = ({
                         ({attrMeta.type})
                       </span>
                     </Label>
-                    {inputType === 'checkbox' ? (
+                    {enumValues ? (
+                      <select
+                        id={fieldId}
+                        className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                        value={String(currentValue)}
+                        onChange={(e) => handleAttributeChange(attrMeta.name, e.target.value)}
+                      >
+                        <option value="">— Select {attrMeta.type} —</option>
+                        {enumValues.map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    ) : inputType === 'checkbox' ? (
                       <input
                         id={fieldId}
                         type="checkbox"

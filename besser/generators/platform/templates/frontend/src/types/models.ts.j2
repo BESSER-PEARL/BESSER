@@ -77,6 +77,7 @@ export type ArrowStyleName =
 export type FontWeightName = 'normal' | 'bold';
 export type LabelPositionName = 'top' | 'bottom' | 'inside';
 export type ThemeName = 'light' | 'dark' | 'auto';
+export type PortSideName = 'auto' | 'top' | 'right' | 'bottom' | 'left';
 
 export interface NodeStyle {
   shape?: NodeShape;
@@ -114,12 +115,26 @@ export interface DiagramStyle {
 export interface ClassMetadata {
   name: string;
   icon?: string; // SVG icon as plain text
+  /** True when the class is declared abstract — never instantiated directly. */
+  isAbstract?: boolean;
   isContainer?: boolean; // container classes render as drop-zone rectangles
   isResizable?: boolean; // shows xyflow NodeResizer handles when selected
+  /** Renders as a graphical Handle on its owning equipment node, not a node. */
+  isPort?: boolean;
+  /** Renders as an edge between two ports, not a node. */
+  isConnectionClass?: boolean;
+  /** Side on the owning node where a port-class instance anchors. */
+  portSide?: PortSideName;
+  /** Sides on which the default xyflow handles render. ``undefined`` keeps
+   *  the four-side default; an explicit list restricts; ``[]`` hides them. */
+  connectionPoints?: Array<'top' | 'right' | 'bottom' | 'left'>;
   defaultSize?: { width: number; height: number };
   attributes: AttributeMetadata[];
   associations: AssociationMetadata[];
   style?: NodeStyle; // Per-class appearance overrides
+  /** Edge style — only meaningful for connection classes; applied by the
+   *  runtime to the synthetic edge drawn between two ports. */
+  edgeStyle?: EdgeStyle;
 }
 
 export interface AttributeMetadata {
@@ -145,22 +160,60 @@ export interface AssociationMetadata {
    * instances auto-creates this link and visually nests the child node.
    */
   isContainerAssociation?: boolean;
+  /** Marks this association as the source-port endpoint of a connection-class. */
+  isSourceEndpoint?: boolean;
+  /** Marks this association as the target-port endpoint of a connection-class. */
+  isTargetEndpoint?: boolean;
+}
+
+// Port class metadata: instances of a port-class render as Handles on their
+// owning equipment node instead of as standalone nodes.
+export interface PortClassMeta {
+  /** Where the handle anchors on the owning equipment ('auto' falls back to
+   *  the port instance's `direction` attribute). */
+  portSide: PortSideName;
+}
+
+// Connection class metadata: instances of a connection-class render as edges
+// between two ports rather than as nodes. The two endpoint associations are
+// resolved at generation time from the platform customization.
+export interface ConnectionClassMeta {
+  /** Name of the association whose target end is the source port of the edge. */
+  sourceAssociation: string | null;
+  /** Name of the association whose target end is the target port of the edge. */
+  targetAssociation: string | null;
+  /** Class name of the port-class on either endpoint (both should match). */
+  portClass: string | null;
 }
 
 // Available classes in the domain model
 export const DOMAIN_CLASSES: ClassMetadata[] = [
   {%- for cls in classes %}
   {%- set cls_cust = customization.get_class_customization(cls.name) if customization else None %}
+  {%- set cls_rep = class_representations.get(cls.name, {'mode': 'node', 'port_side': none}) if class_representations else {'mode': 'node', 'port_side': none} %}
   {
     name: '{{ cls.name }}',
     {%- if cls.metadata and cls.metadata.icon %}
     icon: `{{ cls.metadata.icon | safe }}`,
     {%- endif %}
-    {%- if cls_cust and cls_cust.is_container %}
+    {%- if cls.is_abstract %}
+    isAbstract: true,
+    {%- endif %}
+    {%- if cls_rep.mode == 'container' %}
     isContainer: true,
+    {%- endif %}
+    {%- if cls_rep.mode == 'port' %}
+    isPort: true,
+    portSide: '{{ cls_rep.port_side or "auto" }}',
+    {%- endif %}
+    {%- if cls_rep.mode == 'connection' %}
+    isConnectionClass: true,
     {%- endif %}
     {%- if cls_cust and cls_cust.is_resizable %}
     isResizable: true,
+    {%- endif %}
+    {%- if cls_cust and cls_cust.connection_points is not none %}
+    connectionPoints: [{{ cls_cust.connection_points | map('tojson') | join(', ') }}],
     {%- endif %}
     {%- if cls_cust and cls_cust.default_width and cls_cust.default_height %}
     defaultSize: { width: {{ cls_cust.default_width }}, height: {{ cls_cust.default_height }} },
@@ -180,6 +233,21 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
     {%- endif %}
     {%- if node_style_parts %}
     style: { {{ node_style_parts | join(', ') }} },
+    {%- endif %}
+    {%- set edge_style_parts_cls = [] %}
+    {%- set cls_edge = connection_edge_styles.get(cls.name) if connection_edge_styles else None %}
+    {%- if cls_edge %}
+      {%- if cls_edge.edge_color is not none %}{% do edge_style_parts_cls.append("color: '" ~ cls_edge.edge_color ~ "'") %}{% endif %}
+      {%- if cls_edge.line_width is not none %}{% do edge_style_parts_cls.append("lineWidth: " ~ cls_edge.line_width) %}{% endif %}
+      {%- if cls_edge.line_style is not none %}{% do edge_style_parts_cls.append("lineStyle: '" ~ (cls_edge.line_style | enum_value) ~ "'") %}{% endif %}
+      {%- if cls_edge.source_arrow_style is not none %}{% do edge_style_parts_cls.append("sourceArrow: '" ~ (cls_edge.source_arrow_style | enum_value) ~ "'") %}{% endif %}
+      {%- if cls_edge.target_arrow_style is not none %}{% do edge_style_parts_cls.append("targetArrow: '" ~ (cls_edge.target_arrow_style | enum_value) ~ "'") %}{% endif %}
+      {%- if cls_edge.label_visible is not none %}{% do edge_style_parts_cls.append("labelVisible: " ~ ('true' if cls_edge.label_visible else 'false')) %}{% endif %}
+      {%- if cls_edge.label_font_size is not none %}{% do edge_style_parts_cls.append("labelFontSize: " ~ cls_edge.label_font_size) %}{% endif %}
+      {%- if cls_edge.label_font_color is not none %}{% do edge_style_parts_cls.append("labelFontColor: '" ~ cls_edge.label_font_color ~ "'") %}{% endif %}
+    {%- endif %}
+    {%- if edge_style_parts_cls %}
+    edgeStyle: { {{ edge_style_parts_cls | join(', ') }} },
     {%- endif %}
     attributes: [
       {%- for attr in cls.attributes | union(cls.inherited_attributes()) %}
@@ -205,7 +273,9 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
           max: {{ end.multiplicity.max }}
         }{% if assoc_cust and assoc_cust.edge_color %},
         edgeColor: '{{ assoc_cust.edge_color }}'{% endif %}{% if assoc_cust and assoc_cust.is_container_association %},
-        isContainerAssociation: true{% endif %}
+        isContainerAssociation: true{% endif %}{% if assoc_cust and assoc_cust.is_source_endpoint %},
+        isSourceEndpoint: true{% endif %}{% if assoc_cust and assoc_cust.is_target_endpoint %},
+        isTargetEndpoint: true{% endif %}
         {%- set edge_style_parts = [] %}
         {%- if assoc_cust %}
           {%- if assoc_cust.edge_color is not none %}{% do edge_style_parts.append("color: '" ~ assoc_cust.edge_color ~ "'") %}{% endif %}
@@ -237,3 +307,77 @@ export const DOMAIN_CLASSES: ClassMetadata[] = [
 {%- endif %}
 // Diagram-level style overrides (emitted only when set in the customization).
 export const DIAGRAM_STYLE: DiagramStyle = { {{ diagram_style_parts | join(', ') }} };
+
+// ---------------------------------------------------------------------------
+// Enumerations (enum-typed attributes render as dropdowns)
+// ---------------------------------------------------------------------------
+// Map each enumeration name to its allowed literal values. Keyed by the
+// attribute's ``type`` string (the enumeration class name in the diagram).
+
+export const ENUMERATIONS: Record<string, string[]> = {
+  {%- for enum in enumerations %}
+  '{{ enum.name }}': [{% for literal in enum.literals %}'{{ literal.name }}'{% if not loop.last %}, {% endif %}{% endfor %}]{% if not loop.last %},{% endif %}
+  {%- endfor %}
+};
+
+/** Returns the literal values for an enumeration type, or null if not an enum. */
+export function getEnumerationValues(typeName: string): string[] | null {
+  return Object.prototype.hasOwnProperty.call(ENUMERATIONS, typeName)
+    ? ENUMERATIONS[typeName]
+    : null;
+}
+
+// ---------------------------------------------------------------------------
+// Representation registries (port / connection classes resolved by name)
+// ---------------------------------------------------------------------------
+// Inheritance is resolved at generation time: a subclass of a flagged class
+// is automatically present in these registries.
+
+export const PORT_CLASSES: Record<string, PortClassMeta> = {
+  {%- for name, info in port_classes_registry.items() %}
+  '{{ name }}': { portSide: '{{ info.portSide or "auto" }}' }{% if not loop.last %},{% endif %}
+  {%- endfor %}
+};
+
+export const CONNECTION_CLASSES: Record<string, ConnectionClassMeta> = {
+  {%- for name, info in connection_classes_registry.items() %}
+  '{{ name }}': {
+    sourceAssociation: {% if info.sourceAssociation %}'{{ info.sourceAssociation }}'{% else %}null{% endif %},
+    targetAssociation: {% if info.targetAssociation %}'{{ info.targetAssociation }}'{% else %}null{% endif %},
+    portClass: {% if info.portClass %}'{{ info.portClass }}'{% else %}null{% endif %}
+  }{% if not loop.last %},{% endif %}
+  {%- endfor %}
+};
+
+/** Lookup helper: is this class (or one of its registered ancestors) a port class? */
+export function isPortClass(className: string): boolean {
+  return Object.prototype.hasOwnProperty.call(PORT_CLASSES, className);
+}
+
+/** Lookup helper: is this class a connection class? */
+export function isConnectionClass(className: string): boolean {
+  return Object.prototype.hasOwnProperty.call(CONNECTION_CLASSES, className);
+}
+
+// ---------------------------------------------------------------------------
+// Subclass registry (polymorphic instance matching)
+// ---------------------------------------------------------------------------
+// Maps each class name to itself + all transitive subclasses, so the editor
+// can treat a ``Compressor`` instance as an ``Equipment`` wherever the latter
+// is expected (link target picker, connection-class port matching, etc.).
+
+export const SUBCLASSES_OF: Record<string, string[]> = {
+  {%- for parent_name, descendants in subclass_registry.items() %}
+  '{{ parent_name }}': [{% for d in descendants %}'{{ d }}'{% if not loop.last %}, {% endif %}{% endfor %}]{% if not loop.last %},{% endif %}
+  {%- endfor %}
+};
+
+/** Returns true when an instance of ``actualClass`` can stand in for an
+ *  expected target typed as ``expectedClass``. Matches strict equality plus
+ *  any transitive subclass. Falls back to strict equality for unknown
+ *  classes (e.g. primitive types). */
+export function isAssignableTo(actualClass: string, expectedClass: string): boolean {
+  const list = SUBCLASSES_OF[expectedClass];
+  if (list) return list.includes(actualClass);
+  return actualClass === expectedClass;
+}

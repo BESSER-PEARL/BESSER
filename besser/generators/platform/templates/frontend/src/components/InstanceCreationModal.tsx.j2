@@ -20,6 +20,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { AssociationMetadata, BaseInstance, ClassMetadata } from '../types/models';
+import { getEnumerationValues, isAssignableTo } from '../types/models';
 
 export interface SelectedLink {
   associationName: string;
@@ -213,7 +214,10 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
   const candidatesByAssociation = useMemo(() => {
     const map: Record<string, BaseInstance[]> = {};
     for (const assoc of associations) {
-      map[assoc.name] = existingInstances.filter((i) => i.class_name === assoc.targetClass);
+      // Polymorphic: a Compressor counts as an Equipment, etc.
+      map[assoc.name] = existingInstances.filter((i) =>
+        isAssignableTo(i.class_name, assoc.targetClass),
+      );
     }
     return map;
   }, [associations, existingInstances]);
@@ -280,6 +284,7 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
                 {classMetadata.attributes.map((attr) => {
                   const inputType = inputTypeFor(attr.type);
                   const fieldId = `attr-${attr.name}`;
+                  const enumValues = getEnumerationValues(attr.type);
                   return (
                     <div key={attr.name} className="space-y-2">
                       <Label htmlFor={fieldId}>
@@ -288,7 +293,21 @@ export const InstanceCreationModal: React.FC<InstanceCreationModalProps> = ({
                           ({attr.type})
                         </span>
                       </Label>
-                      {inputType === 'checkbox' ? (
+                      {enumValues ? (
+                        <select
+                          id={fieldId}
+                          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                          value={String(attributes[attr.name] ?? '')}
+                          onChange={(e) =>
+                            setAttributes((prev) => ({ ...prev, [attr.name]: e.target.value }))
+                          }
+                        >
+                          <option value="">— Select {attr.type} —</option>
+                          {enumValues.map((v) => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      ) : inputType === 'checkbox' ? (
                         <input
                           id={fieldId}
                           type="checkbox"

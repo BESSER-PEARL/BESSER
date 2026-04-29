@@ -32,6 +32,13 @@ def _class_customization_to_json(cust: ClassCustomization) -> Dict[str, Any]:
         out["isContainer"] = True
     if cust.is_resizable:
         out["isResizable"] = True
+    if cust.is_port:
+        out["isPort"] = True
+    if cust.is_connection_class:
+        out["isConnectionClass"] = True
+    _set_if(out, "portSide", _enum_value(cust.port_side))
+    if cust.connection_points is not None:
+        out["connectionPoints"] = list(cust.connection_points)
     _set_if(out, "defaultWidth", cust.default_width)
     _set_if(out, "defaultHeight", cust.default_height)
     _set_if(out, "nodeShape", _enum_value(cust.node_shape))
@@ -44,6 +51,16 @@ def _class_customization_to_json(cust: ClassCustomization) -> Dict[str, Any]:
     _set_if(out, "fontWeight", _enum_value(cust.font_weight))
     _set_if(out, "fontColor", cust.font_color)
     _set_if(out, "labelPosition", _enum_value(cust.label_position))
+    # Edge-style overrides (only meaningful for connection-classes; emitted
+    # whenever set so the panel can show the same styles for inheritance).
+    _set_if(out, "edgeColor", cust.edge_color)
+    _set_if(out, "lineWidth", cust.line_width)
+    _set_if(out, "lineStyle", _enum_value(cust.line_style))
+    _set_if(out, "sourceArrowStyle", _enum_value(cust.source_arrow_style))
+    _set_if(out, "targetArrowStyle", _enum_value(cust.target_arrow_style))
+    _set_if(out, "labelVisible", cust.label_visible)
+    _set_if(out, "labelFontSize", cust.label_font_size)
+    _set_if(out, "labelFontColor", cust.label_font_color)
     return out
 
 
@@ -59,6 +76,10 @@ def _association_customization_to_json(cust: AssociationCustomization) -> Dict[s
     _set_if(out, "labelFontColor", cust.label_font_color)
     if cust.is_container_association:
         out["isContainerAssociation"] = True
+    if cust.is_source_endpoint:
+        out["isSourceEndpoint"] = True
+    if cust.is_target_endpoint:
+        out["isTargetEndpoint"] = True
     return out
 
 

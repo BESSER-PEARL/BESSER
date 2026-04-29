@@ -64,6 +64,9 @@ from besser.utilities.web_modeling_editor.backend.services.converters import (
 from besser.utilities.web_modeling_editor.backend.services.utils.agent_generation_utils import (
     extract_openai_api_key,
 )
+from besser.utilities.web_modeling_editor.backend.services.utils.user_profile_utils import (
+    generate_user_profile_document,
+)
 from besser.utilities.web_modeling_editor.backend.services.reverse_engineering import (
     csv_to_domain_model,
 )
@@ -86,6 +89,9 @@ from besser.utilities.web_modeling_editor.backend.constants.constants import (
 # Centralized error handling
 from besser.utilities.web_modeling_editor.backend.routers.error_handler import (
     handle_endpoint_errors,
+)
+from besser.utilities.web_modeling_editor.backend.services.exceptions import (
+    ConversionError,
 )
 
 logger = logging.getLogger(__name__)
@@ -734,7 +740,7 @@ async def transform_agent_model_json(input_data: DiagramInput):
         config = deepcopy(base_config)
         user_profile_payload = config.get("userProfileModel") if isinstance(config, dict) else None
         if isinstance(user_profile_payload, dict):
-            config["userProfileModel"] = _generate_user_profile_document(user_profile_payload)
+            config["userProfileModel"] = generate_user_profile_document(user_profile_payload)
         elif isinstance(config, dict) and "userProfileModel" in config:
             config.pop("userProfileModel", None)
 
@@ -753,19 +759,38 @@ async def transform_agent_model_json(input_data: DiagramInput):
 
         generator_info = get_generator_info("agent")
         generator_class = generator_info.generator_class
+        generation_output_dir = os.path.join(temp_dir, OUTPUT_DIR_NAME)
         generator_instance = generator_class(
             getattr(agent_module, "agent", agent_model),
             config=config,
             openai_api_key=extract_openai_api_key(config),
-            output_dir=temp_dir,
+            output_dir=generation_output_dir,
         )
         generator_instance.generate()
 
-        personalized_json_path = os.path.join(temp_dir, OUTPUT_DIR_NAME, "personalized_agent_model.json")
-        if not os.path.isfile(personalized_json_path):
-            raise HTTPException(status_code=500, detail="personalized_agent_model.json not found after generation")
+        # Some generator implementations still emit files in temp_dir directly.
+        candidate_paths = [
+            os.path.join(generation_output_dir, "personalized_agent_model.json"),
+            os.path.join(temp_dir, "personalized_agent_model.json"),
+        ]
+        personalized_json_path = next((path for path in candidate_paths if os.path.isfile(path)), None)
 
-        personalized_json = await _read_json_file(personalized_json_path)
+        if personalized_json_path:
+            personalized_json = await _read_json_file(personalized_json_path)
+        else:
+            # Fallback: serialize the personalized in-memory model and convert it to JSON.
+            try:
+                personalized_agent_file = os.path.join(temp_dir, "personalized_agent_model.py")
+                agent_model_to_code(generator_instance.model, personalized_agent_file)
+
+                personalized_buml = await _read_file(personalized_agent_file, "r", encoding="utf-8")
+                personalized_json = agent_buml_to_json(personalized_buml)
+            except Exception as conversion_error:
+                logger.exception("Failed to build fallback personalized agent JSON")
+                raise ConversionError(
+                    "personalized_agent_model.json not found after generation "
+                    f"and fallback conversion failed: {conversion_error}"
+                ) from conversion_error
 
         return {
             "model": personalized_json,
@@ -775,14 +800,3 @@ async def transform_agent_model_json(input_data: DiagramInput):
         }
 
 
-def _generate_user_profile_document(user_profile_model: dict) -> dict:
-    """Generate the normalized JSON document for a stored user profile diagram.
-
-    This is a local helper used by transform_agent_model_json. It delegates to
-    the generation router's implementation for the actual user profile generation.
-    """
-    # Import here to avoid circular imports at module level
-    from besser.utilities.web_modeling_editor.backend.routers.generation_router import (
-        _generate_user_profile_document as _gen_user_profile_doc,
-    )
-    return _gen_user_profile_doc(user_profile_model)

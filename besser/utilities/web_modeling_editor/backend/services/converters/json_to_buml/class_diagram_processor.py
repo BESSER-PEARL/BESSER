@@ -587,9 +587,14 @@ def _process_association_classes(
         if not association:
             continue
 
-        # Get attributes and methods from the original class
-        attributes = class_obj.attributes
-        methods = class_obj.methods
+        # Get attributes and methods from the original class.
+        # Copy the sets — the Class.attributes setter re-parents each member by
+        # discarding it from its previous owner's attribute set. If we passed
+        # ``class_obj.attributes`` directly that owner *is* class_obj, so the
+        # discard would mutate the same set being iterated and raise
+        # "set changed size during iteration".
+        attributes = set(class_obj.attributes)
+        methods = set(class_obj.methods)
 
         # Create the association class with attributes and methods
         association_class = AssociationClass(

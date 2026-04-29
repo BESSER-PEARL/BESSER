@@ -48,6 +48,20 @@ The BAF generator supports three generation modes via the ``generation_mode`` pa
   personalization artifacts without generating the agent code.
 
 
+Personalization
+---------------
+
+The BAF generator can adapt the generated agent to an end-user's profile —
+language, style, readability, modality, platform, LLM, and more. The
+personalization flow is opt-in: with no ``config`` passed the generator behaves
+identically to the classic pipeline.
+
+See :doc:`agent_personalization` for the structured configuration schema, the
+two recommendation backends (rule-based and LLM-based), the variant mechanisms
+(languages, variations, configuration variants, personalization mapping), and
+the ``OPENAI_API_KEY`` lookup order.
+
+
 RAG Support
 -----------
 

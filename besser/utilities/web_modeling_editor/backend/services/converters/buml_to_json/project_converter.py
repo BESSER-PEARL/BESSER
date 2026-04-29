@@ -330,14 +330,18 @@ def project_to_json(content: str) -> Dict[str, Any]:
                 "lastUpdate": datetime.now(timezone.utc).isoformat(),
             }]
 
+    current_diagram_indices = {diagram_type: 0 for diagram_type in diagram_defaults}
+
     return {
         "id": project_id,
         "type": "Project",
+        "schemaVersion": 3,
         "name": project_name,
         "description": project_description,
         "owner": project_owner,
         "createdAt": created_at,
         "currentDiagramType": "ClassDiagram",
+        "currentDiagramIndices": current_diagram_indices,
         "diagrams": diagram_jsons,
         "settings": {
             "defaultDiagramType": "ClassDiagram",

@@ -1068,6 +1068,26 @@ async def get_{{x[3]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: in
 {% endfor %}
 {% endif %}
 
+{% if ns.one_to_many %}
+{% for x in ns.one_to_many %}
+@app.get("/{{ class.name | lower}}/{% raw %}{{% endraw %}{{ class.name | lower}}_id{% raw %}}{% endraw %}/{{x[2]}}/", response_model=None, tags=["{{ class.name }} Relationships"])
+async def get_{{x[2]}}_of_{{ class.name | lower}}({{ class.name | lower}}_id: int, database: Session = Depends(get_db)):
+    """Get all {{x[0]}} entities related to this {{ class.name }} through {{x[2]}}"""
+    db_{{ class.name | lower}} = database.query({{ class.name }}).filter({{ class.name }}.id == {{ class.name | lower}}_id).first()
+    if db_{{ class.name | lower}} is None:
+        raise HTTPException(status_code=404, detail="{{ class.name }} not found")
+
+    {{x[2]}}_list = database.query({{x[0]}}).filter({{x[0]}}.{{x[1]}}_id == {{ class.name | lower}}_id).all()
+
+    return {
+        "{{ class.name | lower}}_id": {{ class.name | lower}}_id,
+        "{{x[2]}}_count": len({{x[2]}}_list),
+        "{{x[2]}}": {{x[2]}}_list
+    }
+
+{% endfor %}
+{% endif %}
+
 {% endif %}
 
 {# Generate endpoints for class methods #}

@@ -238,13 +238,21 @@ def process_object_diagram(json_data, domain_model):
                             if type_name in ['int', 'IntegerType']:
                                 try:
                                     converted_value = int(value)
-                                except ValueError:
-                                    converted_value = value
+                                except (TypeError, ValueError) as exc:
+                                    raise ConversionError(
+                                        f"Object '{object_name}' (class '{class_obj.name}'): "
+                                        f"attribute '{attr_name}' expects an integer, "
+                                        f"but received {value!r}."
+                                    ) from exc
                             elif type_name in ['float', 'FloatType']:
                                 try:
                                     converted_value = float(value)
-                                except ValueError:
-                                    converted_value = value
+                                except (TypeError, ValueError) as exc:
+                                    raise ConversionError(
+                                        f"Object '{object_name}' (class '{class_obj.name}'): "
+                                        f"attribute '{attr_name}' expects a number, "
+                                        f"but received {value!r}."
+                                    ) from exc
                             elif type_name in ['bool', 'BooleanType']:
                                 converted_value = value.lower() in ['true', '1', 'yes']
                             elif type_name in ['datetime', 'DateTimeType', 'date', 'DateType', 'time', 'TimeType', 'timedelta', 'TimeDeltaType']:
@@ -256,8 +264,17 @@ def process_object_diagram(json_data, domain_model):
             if attributes_dict:
                 builder = builder.attributes(**attributes_dict)
 
-            # Build the object
-            obj = builder.build()
+            # Build the object. Translate metamodel TypeError/ValueError (e.g. a
+            # datetime/enum value the upstream conversion let through and the
+            # metamodel rejected) into a ConversionError carrying the object
+            # context, so the user sees a 400 with a clear message instead of a
+            # 500 internal error.
+            try:
+                obj = builder.build()
+            except (TypeError, ValueError) as exc:
+                raise ConversionError(
+                    f"Object '{object_name}' (class '{class_obj.name}'): {exc}"
+                ) from exc
             logger.debug("Created object '%s' of class '%s'", object_name, class_obj.name)
 
             # Add the object to the model and track it

@@ -120,6 +120,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
     states = {}  # name -> state_id mapping
     functions = {}  # name -> function_node mapping
     intents = {}  # name -> intent_id mapping
+    # Map Python variable identifier -> declared intent/state name. Needed because
+    # ``agent_model_builder`` emits lowercased identifiers (``muscles_intent``) that
+    # bind to the original PascalCase name passed as the first positional arg
+    # (``agent.new_intent('Muscles_intent', ...)``). Transitions reference the
+    # variable, so without these maps we'd round-trip the slug back to the
+    # frontend as the canonical intent/state name and break casing.
+    intent_var_to_name = {}
+    state_var_to_name = {}
 
 
     # Track metadata for comments
@@ -278,6 +286,11 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                                 "id": intent_id,
                                 "name": intent_name,
                             }
+                            if (
+                                node.targets
+                                and isinstance(node.targets[0], ast.Name)
+                            ):
+                                intent_var_to_name[node.targets[0].id] = intent_name
 
                             elements[intent_id] = {
                                 "id": intent_id,
@@ -499,12 +512,26 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                     state_name = var_name  # Default to variable name
                     is_initial = False
 
+                    # ``agent.new_state('Idle')`` passes the name as a positional
+                    # arg; the builder emits this form, so check positional args
+                    # before falling back to the variable name. Without this,
+                    # round-trips lose the original casing because the builder's
+                    # ``safe_var_name`` lowercases identifiers (``Idle`` -> ``idle``).
+                    if (
+                        node.value.args
+                        and isinstance(node.value.args[0], ast.Constant)
+                        and isinstance(node.value.args[0].value, str)
+                    ):
+                        state_name = node.value.args[0].value
+
                     # Try to extract state name and initial flag from keywords
                     for kw in node.value.keywords:
                         if kw.arg == "name" and isinstance(kw.value, ast.Constant):
                             state_name = kw.value.value
                         elif kw.arg == "initial" and isinstance(kw.value, ast.Constant):
                             is_initial = kw.value.value
+
+                    state_var_to_name[var_name] = state_name
 
                     # Create the state object
                     state_obj = {
@@ -673,7 +700,14 @@ def agent_buml_to_json(content: str) -> Dict[str, Any]:
                             if chain_attr == "when_intent_matched":
                                 condition_name = "when_intent_matched"
                                 if call_chain.args and isinstance(call_chain.args[0], ast.Name):
-                                    transition_payload = call_chain.args[0].id
+                                    intent_var = call_chain.args[0].id
+                                    # Resolve the variable back to its declared
+                                    # intent name. The builder emits lowercased
+                                    # variable identifiers, so without this lookup
+                                    # the round-tripped intentName would not match
+                                    # the intent definition's name and downstream
+                                    # generation would emit an undefined reference.
+                                    transition_payload = intent_var_to_name.get(intent_var, intent_var)
                             elif chain_attr == "when_no_intent_matched":
                                 condition_name = "when_no_intent_matched"
                             elif chain_attr == "when_variable_matches_operation":

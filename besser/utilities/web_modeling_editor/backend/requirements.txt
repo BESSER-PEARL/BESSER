@@ -4,7 +4,7 @@ pydantic
 python-multipart
 PyYAML
 deep_translator
-bocl == 1.0.0
+bocl == 1.0.1
 cryptography
 openpyxl >= 3.1.0
-openai >= 1.0.0
+openai >= 1.40.0

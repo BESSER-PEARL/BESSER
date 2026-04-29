@@ -92,6 +92,11 @@ Choosing a Generator
      - Agent
      - ZIP
      - You need a BESSER Agentic Framework conversational agent
+   * - **BAF Agent (personalized)**
+     - Agent + UserDiagram
+     - ZIP
+     - You want a BAF agent adapted to an end-user profile (language, style,
+       accessibility, modality); see :doc:`generators/agent_personalization`
 
 
 Web Application
@@ -165,6 +170,7 @@ Generate conversational agents:
    :maxdepth: 1
 
    generators/baf
+   generators/agent_personalization
 
 Build Your Own
 --------------

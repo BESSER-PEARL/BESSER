@@ -25,6 +25,60 @@ The frontend is vendored into this repository as a git submodule at
 ``besser/utilities/web_modeling_editor/frontend``, while the backend services live here under
 ``besser/utilities/web_modeling_editor/backend``.
 
+Class Diagram Notation
+----------------------
+
+Class diagrams can be rendered in two equivalent notations, chosen from
+**Project Settings → Display → Class Diagram Notation**. The underlying B-UML
+model is identical in both cases — the notation only affects how the diagram is
+drawn, so switching is lossless.
+
+**UML** (default) — standard UML class notation with visibility prefixes,
+``{id}`` markers on identifier attributes, and ``min..max`` multiplicities.
+
+.. image:: ./img/class_diagram_uml.png
+   :width: 800
+   :alt: Library model rendered in UML notation
+   :align: center
+
+**ER** (Chen-style) — entity/relationship flavor aimed at users with a database
+modeling background. Identifier attributes (``is_id``) are underlined, the
+methods compartment is hidden, associations are drawn as named diamonds, and
+multiplicities are shown as ``(min,max)`` cardinality pairs (with ``*`` rendered
+as ``N``). Inheritance relationships keep their UML rendering since there is no
+direct ER equivalent.
+
+.. image:: ./img/class_diagram_er.png
+   :width: 800
+   :alt: Library model rendered in Chen-style ER notation
+   :align: center
+
+Agent Personalization
+---------------------
+
+The editor exposes the full :doc:`agent personalization <generators/agent_personalization>`
+workflow under the *Agent* diagram type:
+
+- **User diagrams** (see :doc:`buml_language/model_types/user_diagram`) describe
+  an end-user — age, languages, skills, education, disabilities. They can be
+  created alongside the agent diagram in the same project.
+- The **Agent Configuration** panel lets you edit the structured configuration
+  (language, style, readability, modality, platform, LLM…) directly, or ask the
+  backend for a recommendation based on one of the saved user profiles.
+
+  - *Deterministic mapping* produces a configuration from a literature-backed
+    rule table — no OpenAI key needed.
+  - *LLM recommendation* calls the configured OpenAI model. An API key must be
+    set either in the panel or as the ``OPENAI_API_KEY`` environment variable
+    on the backend.
+- When generating or deploying, three variant mechanisms can run in parallel:
+  multi-language output, configuration variants, and per-profile
+  **personalization mappings** that bundle one agent variant per mapped user.
+
+The *Deploy chatbot* action reuses the same pipeline to push a standalone,
+Streamlit-based agent to a GitHub repository with a ready-to-use Render
+blueprint. See :doc:`web_editor_backend` for the underlying endpoints.
+
 Backend API Reference
 ---------------------
 

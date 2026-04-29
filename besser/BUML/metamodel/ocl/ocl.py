@@ -101,7 +101,7 @@ class PropertyCallExpression(OCLExpression):
     """
 
     def __init__(self, name: str, property: Property):
-        super().__init__(name, Type(property.type))
+        super().__init__(name, property.type)
         self.property: Property = property
 
     def __repr__(self):

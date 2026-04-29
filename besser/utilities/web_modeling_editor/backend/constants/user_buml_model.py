@@ -4,7 +4,7 @@
 
 from besser.BUML.metamodel.structural import (
     Class, Property, BinaryAssociation, Generalization, DomainModel,
-    Enumeration, EnumerationLiteral, Multiplicity,
+    Enumeration, EnumerationLiteral, Multiplicity, Constraint,
     StringType, IntegerType, DateTimeType, Metadata
 )
 
@@ -516,12 +516,47 @@ gen_Extraversion_Big_Five_Traits = Generalization(general=Big_Five_Traits, speci
 gen_Agreeableness_Big_Five_Traits = Generalization(general=Big_Five_Traits, specific=Agreeableness)
 gen_OtherTrait_Trait = Generalization(general=Trait, specific=OtherTrait)
 
+# OCL Constraints
+constraint_personal_info_age_range = Constraint(
+    name="pi_age_range",
+    context=Personal_Information,
+    expression="context Personal_Information inv pi_age_range: self.age >= 0 and self.age <= 120",
+    language="OCL",
+)
+
+constraint_skill_name_not_empty = Constraint(
+    name="skill_name_not_empty",
+    context=Skill,
+    expression="context Skill inv skill_name_not_empty: self.name <> ''",
+    language="OCL",
+)
+
+constraint_education_required_fields = Constraint(
+    name="education_required_fields",
+    context=Education,
+    expression="context Education inv education_required_fields: self.degreeName <> '' and self.providedBy <> ''",
+    language="OCL",
+)
+
+constraint_disability_description_not_empty = Constraint(
+    name="disability_description_not_empty",
+    context=Disability,
+    expression="context Disability inv disability_description_not_empty: self.description <> ''",
+    language="OCL",
+)
+
 # Domain Model
 domain_model = DomainModel(
     name="Class_Diagram",
     types={User, Personal_Information, Competence, Preference, Personality, Goal, Accessibility, Culture, EmotionStatus, MoodStatus, Content, Language, Trait, Openness, Input_Modality, Experience, Knowledge, Skill, Output_Modality, Extraversion, OtherTrait, PreferredLanguage, Topic, Agreeableness, Big_Five_Traits, Neuroticism, Conscientiousness, Interaction_Modality, Education, Disability, Characteristic, Design, ReligionEnum, OutputEnum, CharacteristicsEnum, InputEnum, GenderEnum, CEFR, AspectsEnum, StylesEnum, DegreeEnum, TraitsEnum},
     associations={Competence_Skill_association, MoodStatus_User_non_navigable, Input_Modality_Interaction_Modality_non_navigable, Trait_Characteristic_association, Accessibility_User_non_navigable, Personality_Trait_association, Content_PreferredLanguage_association, Competence_Language_association, Competence_Education_association, Preference_Interaction_Modality_association, Personal_Information_User_non_navigable, Competence_User_non_navigable, Preference_Design_association, Competence_Knowledge_association, Preference_User_non_navigable, Preference_Content_association, Accessibility_Disability_association, Goal_User_non_navigable, Personality_User_non_navigable, Knowledge_Topic_association, Output_Modality_Interaction_Modality_non_navigable, EmotionStatus_User_non_navigable, Culture_User_non_navigable, Competence_Experience_association},
     generalizations={gen_Openness_Big_Five_Traits, gen_Neuroticism_Big_Five_Traits, gen_Big_Five_Traits_Trait, gen_Conscientiousness_Big_Five_Traits, gen_Extraversion_Big_Five_Traits, gen_Agreeableness_Big_Five_Traits, gen_OtherTrait_Trait},
+    constraints={
+        constraint_personal_info_age_range,
+        constraint_skill_name_not_empty,
+        constraint_education_required_fields,
+        constraint_disability_description_not_empty,
+    },
     metadata=None
 )
 

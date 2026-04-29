@@ -105,6 +105,13 @@ def nn_model_to_code(model: NN, file_path: str, model_var_name: str = None):
     used_types = _collect_used_types(model)
 
     with open(file_path, 'w', encoding='utf-8') as f:
+        # Section header — required by project_to_json's _extract_all_sections
+        # so that single-NN project exports round-trip through import.
+        # Without this header the importer can't locate the NN section and
+        # silently drops the diagram.
+        f.write("############\n")
+        f.write("# NN MODEL #\n")
+        f.write("############\n")
         # Generate imports for only the used types
         f.write("from besser.BUML.metamodel.nn import (\n")
         f.write(f"    {', '.join(sorted(used_types))},\n")

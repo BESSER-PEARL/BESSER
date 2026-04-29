@@ -22,7 +22,7 @@ from besser.utilities.buml_code_builder.domain_model_builder import (
 from besser.utilities.buml_code_builder.agent_model_builder import agent_model_to_code
 from besser.utilities.buml_code_builder.state_machine_builder import state_machine_to_code
 from besser.utilities.buml_code_builder.quantum_model_builder import quantum_model_to_code
-from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code, _name_to_var
+from besser.utilities.buml_code_builder.nn_model_builder import nn_model_to_code
 
 try:
     from besser.utilities.web_modeling_editor.backend.constants.user_buml_model import (
@@ -350,7 +350,13 @@ def project_to_code(project: Project, file_path: str, sm: str = ""):
             # NN MODELS                                                  #
             # ---------------------------------------------------------- #
             for idx, nm in enumerate(nn_models, start=1):
-                var_name = _suffixed_name(_name_to_var(nm.name), idx, n_nn)
+                # Use the static "nn_model" prefix (suffixed when multiple)
+                # so the resulting Python identifier in `models=[...]` matches
+                # SECTION_CONFIG['nn_model'] in the importer. Previously we
+                # used `_name_to_var(nm.name)` which produced names like
+                # `neural_netwo_rk`, which the importer didn't recognise,
+                # silently dropping the diagram on round-trip.
+                var_name = _suffixed_name("nn_model", idx, n_nn)
 
                 section = ""
                 if n_nn > 1:

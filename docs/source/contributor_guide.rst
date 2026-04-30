@@ -354,7 +354,7 @@ a prefix that matches the type of change:
      - ``chore/bump-fastapi``
 
 Use **lowercase, hyphen-separated, descriptive** names. Avoid personal
-prefixes (``armen/...``) and avoid umbrella branches that bundle unrelated
+prefixes (``arm/...``) and avoid umbrella branches that bundle unrelated
 changes.
 
 Commit conventions

@@ -11,20 +11,40 @@ get set up, how we collaborate, and what we expect from every contribution.
 
 ## 📑 Table of Contents
 
-- [Before You Start](#-before-you-start)
-- [Ways to Contribute](#-ways-to-contribute)
-- [Asking Questions](#-asking-questions)
-- [Reporting Issues & Requesting Features](#-reporting-issues--requesting-features)
-- [Setting Up Your Development Environment](#-setting-up-your-development-environment)
-- [Repository Tour](#-repository-tour)
-- [Development Guidelines](#-development-guidelines)
-- [Testing Your Changes](#-testing-your-changes)
-- [Documentation Updates](#-documentation-updates)
-- [Branching & Commits](#-branching--commits)
-- [Creating Pull Requests](#-creating-pull-requests)
-- [Cross-Repo Changes (Frontend Submodule)](#-cross-repo-changes-frontend-submodule)
-- [Governance](#-governance)
-- [Thank You](#-thank-you)
+- [Contributing to BESSER](#contributing-to-besser)
+  - [📑 Table of Contents](#-table-of-contents)
+  - [📋 Before You Start](#-before-you-start)
+  - [🤝 Ways to Contribute](#-ways-to-contribute)
+  - [🧠 Asking Questions](#-asking-questions)
+  - [🐞 Reporting Issues \& Requesting Features](#-reporting-issues--requesting-features)
+  - [🍴 Setting Up Your Development Environment](#-setting-up-your-development-environment)
+    - [Prerequisites](#prerequisites)
+    - [Fork, clone, and initialize](#fork-clone-and-initialize)
+    - [Create a virtual environment](#create-a-virtual-environment)
+    - [Install dependencies](#install-dependencies)
+    - [Verify the install](#verify-the-install)
+    - [(Optional) Run the full local stack](#optional-run-the-full-local-stack)
+  - [🗂️ Repository Tour](#️-repository-tour)
+  - [💻 Development Guidelines](#-development-guidelines)
+    - [Code style](#code-style)
+    - [Linting](#linting)
+    - [Working in core packages](#working-in-core-packages)
+    - [Validation](#validation)
+  - [✅ Testing Your Changes](#-testing-your-changes)
+  - [🧾 Documentation Updates](#-documentation-updates)
+  - [🌿 Branching \& Commits](#-branching--commits)
+    - [Branch naming](#branch-naming)
+    - [Commit conventions](#commit-conventions)
+  - [🔀 Creating Pull Requests](#-creating-pull-requests)
+    - [Target branch](#target-branch)
+    - [Step-by-step](#step-by-step)
+    - [Writing a good PR description](#writing-a-good-pr-description)
+      - [Tips](#tips)
+      - [Example (good)](#example-good)
+    - [Review \& merging](#review--merging)
+  - [🔗 Cross-Repo Changes (Frontend Submodule)](#-cross-repo-changes-frontend-submodule)
+  - [🧭 Governance](#-governance)
+  - [💖 Thank You!](#-thank-you)
 
 ---
 
@@ -335,7 +355,7 @@ prefix that matches the type of change:
 | `chore/`     | Tooling, CI, dependency bumps, repo maintenance  | `chore/bump-fastapi`                 |
 
 Use **lowercase, hyphen-separated, descriptive** names. Avoid personal
-prefixes (`armen/...`) and avoid umbrella branches that bundle unrelated
+prefixes (`arm/...`) and avoid umbrella branches that bundle unrelated
 changes.
 
 ### Commit conventions

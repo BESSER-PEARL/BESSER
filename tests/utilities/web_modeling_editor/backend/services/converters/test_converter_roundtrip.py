@@ -1519,6 +1519,13 @@ class TestNNDiagramRoundtrip:
             'id': 'fl1e', 'type': 'EndDimAttributeFlatten',
             'attributeName': 'end_dim', 'value': '-1', 'owner': 'fl1',
         }
+        # Connect fl1 into the existing l1 -> l2 chain so the connectivity
+        # check sees a single entry point.
+        base['model']['relationships']['rfl1'] = {
+            'id': 'rfl1', 'type': 'NNNext',
+            'source': {'element': 'l2'}, 'target': {'element': 'fl1'},
+            'name': 'next',
+        }
         out = self._roundtrip(base)
         elements = _resolve_elements(out)
         flat = _extract_elements_by_type(out, 'FlattenLayer')
@@ -1546,9 +1553,17 @@ class TestNNDiagramRoundtrip:
                     'c': {'id': 'c', 'type': 'NNContainer', 'name': 'op',
                           'owner': None,
                           'bounds': {'x': 0, 'y': 0, 'width': 400, 'height': 200}},
+                    'sup': {'id': 'sup', 'type': 'LinearLayer', 'name': 'LinearLayer',
+                            'owner': 'c',
+                            'bounds': {'x': 20, 'y': 60, 'width': 110, 'height': 110},
+                            'attributes': ['supn', 'supo'], 'methods': []},
+                    'supn': {'id': 'supn', 'type': 'NameAttributeLinear',
+                             'attributeName': 'name', 'value': 'other', 'owner': 'sup'},
+                    'supo': {'id': 'supo', 'type': 'OutFeaturesAttributeLinear',
+                             'attributeName': 'out_features', 'value': '4', 'owner': 'sup'},
                     't': {'id': 't', 'type': 'TensorOp', 'name': 'TensorOp',
                           'owner': 'c',
-                          'bounds': {'x': 20, 'y': 60, 'width': 110, 'height': 110},
+                          'bounds': {'x': 160, 'y': 60, 'width': 110, 'height': 110},
                           'attributes': ['tn', 'tt', 'tc', 'tl'], 'methods': []},
                     'tn': {'id': 'tn', 'type': 'NameAttributeTensorOp',
                            'attributeName': 'name', 'value': 'op1', 'owner': 't'},
@@ -1562,7 +1577,11 @@ class TestNNDiagramRoundtrip:
                            'attributeName': 'layers_of_tensors',
                            'value': "[0.5, 'other']", 'owner': 't'},
                 },
-                'relationships': {},
+                'relationships': {
+                    'r1': {'id': 'r1', 'type': 'NNNext',
+                           'source': {'element': 'sup'}, 'target': {'element': 't'},
+                           'name': 'next'},
+                },
                 'interactive': {'elements': {}, 'relationships': {}},
                 'assessments': {},
             },
@@ -1810,10 +1829,38 @@ class TestNNDiagramRoundtrip:
 
     @staticmethod
     def _tensor_op_json(tns_type: str, extra_attrs: list):
-        """Build a minimal NN diagram containing a single TensorOp."""
+        """Build a minimal NN diagram containing a TensorOp preceded by two
+        LinearLayers named ``layer_a`` and ``layer_b``."""
         attrs = [('TensorOp', 'name', f'{tns_type}_op'),
                  ('TensorOp', 'tns_type', tns_type)] + extra_attrs
-        return TestNNDiagramRoundtrip._single_layer_json('TensorOp', attrs)
+        payload = TestNNDiagramRoundtrip._single_layer_json('TensorOp', attrs)
+        elements = payload['model']['elements']
+        for sup_id, sup_name, sup_x in (('supA', 'layer_a', 200), ('supB', 'layer_b', 320)):
+            elements[sup_id] = {
+                'id': sup_id, 'type': 'LinearLayer', 'name': 'LinearLayer', 'owner': 'c',
+                'bounds': {'x': sup_x, 'y': 60, 'width': 110, 'height': 110},
+                'attributes': [f'{sup_id}n', f'{sup_id}o'], 'methods': [],
+            }
+            elements[f'{sup_id}n'] = {
+                'id': f'{sup_id}n', 'type': 'NameAttributeLinear',
+                'attributeName': 'name', 'value': sup_name, 'owner': sup_id,
+            }
+            elements[f'{sup_id}o'] = {
+                'id': f'{sup_id}o', 'type': 'OutFeaturesAttributeLinear',
+                'attributeName': 'out_features', 'value': '4', 'owner': sup_id,
+            }
+        rels = payload['model']['relationships']
+        rels['rel_a_b'] = {
+            'id': 'rel_a_b', 'type': 'NNNext',
+            'source': {'element': 'supA'}, 'target': {'element': 'supB'},
+            'name': 'next',
+        }
+        rels['rel_b_op'] = {
+            'id': 'rel_b_op', 'type': 'NNNext',
+            'source': {'element': 'supB'}, 'target': {'element': 'L'},
+            'name': 'next',
+        }
+        return payload
 
     def test_tensorop_concatenate_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('concatenate', [
@@ -1829,7 +1876,7 @@ class TestNNDiagramRoundtrip:
 
     def test_tensorop_multiply_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('multiply', [
-            ('TensorOp', 'layers_of_tensors', "['a', 'b']"),
+            ('TensorOp', 'layers_of_tensors', "['layer_a', 'layer_b']"),
         ]))
         elements = _resolve_elements(out)
         ops = _extract_elements_by_type(out, 'TensorOp')
@@ -1838,7 +1885,7 @@ class TestNNDiagramRoundtrip:
 
     def test_tensorop_matmultiply_roundtrip(self):
         out = self._roundtrip(self._tensor_op_json('matmultiply', [
-            ('TensorOp', 'layers_of_tensors', "['a', 'b']"),
+            ('TensorOp', 'layers_of_tensors', "['layer_a', 'layer_b']"),
         ]))
         elements = _resolve_elements(out)
         ops = _extract_elements_by_type(out, 'TensorOp')

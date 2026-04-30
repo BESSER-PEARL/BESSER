@@ -687,6 +687,21 @@ def process_nn_diagram(json_data):
             all_module_ids, outgoing_connections, name_by_id=module_name_by_id,
         )
 
+        # At most one module may have no incoming NNNext edge (the entry point).
+        # Multiple zero-in-degree modules indicate disconnected pieces in the
+        # container, which would silently produce dead nodes in the generated code.
+        roots = [mid for mid in all_module_ids
+                 if not incoming_connections.get(mid)]
+        if len(roots) > 1:
+            root_names = sorted(
+                module_name_by_id.get(mid) or mid for mid in roots
+            )
+            raise ValueError(
+                f"Container '{container_name}': {len(roots)} modules have no "
+                f"incoming NNNext edge ({', '.join(root_names)}); all modules "
+                f"after the entry point must be connected via NNNext."
+            )
+
         # Add modules in order
         container_refs_dict = dict(container_refs)
         for module_id in ordered_modules:

@@ -451,7 +451,15 @@ def test_unresolved_nnreference_raises():
             "bounds": {"x": 0, "y": 0, "width": 100, "height": 100},
         },
     }
-    diagram = _minimal_container_json(extra_elements=extra)
+    # Connect l1 -> ref1 so the connectivity check passes and the unresolved-ref
+    # check is the next failure mode.
+    rels = {
+        "rel1": {
+            "id": "rel1", "type": "NNNext",
+            "source": {"element": "l1"}, "target": {"element": "ref1"},
+        },
+    }
+    diagram = _minimal_container_json(extra_elements=extra, extra_relationships=rels)
     with pytest.raises(ValueError, match="NNReference 'ghost'"):
         process_nn_diagram(diagram)
 
@@ -480,6 +488,54 @@ def test_nnnext_cycle_raises():
     diagram = _minimal_container_json(extra_elements=extra, extra_relationships=rels)
     with pytest.raises(ValueError, match="cycle"):
         process_nn_diagram(diagram)
+
+
+def test_disconnected_modules_raise():
+    """Two layers in the same container with no NNNext between them must raise."""
+    extra = {
+        "l2": {
+            "id": "l2", "type": "LinearLayer", "name": "LinearLayer", "owner": "c1",
+            "bounds": {"x": 0, "y": 0, "width": 100, "height": 100},
+            "attributes": ["l2a1", "l2a2"], "methods": [],
+        },
+        "l2a1": {
+            "id": "l2a1", "type": "NameAttributeLinear",
+            "attributeName": "name", "value": "lin2", "owner": "l2",
+        },
+        "l2a2": {
+            "id": "l2a2", "type": "OutFeaturesAttributeLinear",
+            "attributeName": "out_features", "value": "5", "owner": "l2",
+        },
+    }
+    diagram = _minimal_container_json(extra_elements=extra)
+    with pytest.raises(ValueError, match="no incoming NNNext edge"):
+        process_nn_diagram(diagram)
+
+
+def test_connected_modules_pass():
+    """Two layers connected via NNNext must not trigger the connectivity check."""
+    extra = {
+        "l2": {
+            "id": "l2", "type": "LinearLayer", "name": "LinearLayer", "owner": "c1",
+            "bounds": {"x": 0, "y": 0, "width": 100, "height": 100},
+            "attributes": ["l2a1", "l2a2"], "methods": [],
+        },
+        "l2a1": {
+            "id": "l2a1", "type": "NameAttributeLinear",
+            "attributeName": "name", "value": "lin2", "owner": "l2",
+        },
+        "l2a2": {
+            "id": "l2a2", "type": "OutFeaturesAttributeLinear",
+            "attributeName": "out_features", "value": "5", "owner": "l2",
+        },
+    }
+    rels = {
+        "r1": {"id": "r1", "type": "NNNext",
+               "source": {"element": "l1"}, "target": {"element": "l2"}},
+    }
+    diagram = _minimal_container_json(extra_elements=extra, extra_relationships=rels)
+    nn = process_nn_diagram(diagram)
+    assert len(nn.modules) == 2
 
 
 def test_multiple_training_datasets_raises():

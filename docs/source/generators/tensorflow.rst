@@ -24,15 +24,18 @@ method as follows:
 The configuration parameters for the `TFGenerator` are as follows:
 
 - **model**: The neural network model.
-- **output_dir**: The name of the output directory where the ``tf_nn.py`` file will be generated.
+- **output_dir**: The name of the output directory where the generated file will be placed.
 - **generation_type**: The type of NN architecture. Either ``subclassing`` or ``sequential``.
 
+The filename embeds the generation type, so a ``TFGenerator`` invoked with
+``generation_type="subclassing"`` produces ``tf_nn_subclassing.py``, and
+``generation_type="sequential"`` produces ``tf_nn_sequential.py``.
 
-The ``tf_nn.py`` file will be generated inside ``output_folder`` and it will look as follows:
+The generated file will be placed inside ``output_folder`` and it will look as follows:
 
 
 
 .. note::
-   The generated file ``tf_nn.py`` will contain a TensorFlow/Keras model
+   The generated file ``tf_nn_<generation_type>.py`` will contain a TensorFlow/Keras model
    with the layers defined by your B-UML neural network model.
    Run the generated script to train and evaluate the model.
